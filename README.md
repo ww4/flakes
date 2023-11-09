@@ -1,0 +1,2 @@
+# flakes
+Flakes for NixOS
