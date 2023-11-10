@@ -28,7 +28,7 @@ services.nextcloud = {
     hostName = "cloud.rosemaryacres.com";
       # Use HTTPS for links
     # https = true;
-    package = pkgs.nextcloud26
+    package = pkgs.nextcloud27;
     # Auto-update Nextcloud Apps
     autoUpdateApps.enable = true;
     # Set what time makes sense for you
