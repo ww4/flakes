@@ -10,6 +10,8 @@
       ./hardware-configuration.nix
       # Include Nextcloud config
       ./nextcloud.nix
+      # Include Immich config
+      ./immich.nix
       # VS Code server module
       (fetchTarball {
         url = "https://github.com/nix-community/nixos-vscode-server/tarball/master";
