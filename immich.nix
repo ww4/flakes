@@ -1,3 +1,25 @@
+ { config, pkgs, ... }:
+
+{
+  
+  systemd.services.init-filerun-network-and-files = {
+    description = "Create the network bridge for Immich.";
+    after = [ "network.target" ];
+    wantedBy = [ "multi-user.target" ];
+    
+    serviceConfig.Type = "oneshot";
+    script = let dockercli = "${config.virtualisation.docker.package}/bin/docker";
+            in ''
+              # immich-net network
+              check=$(${dockercli} network ls | grep "immich-net" || true)
+              if [ -z "$check" ]; then
+                ${dockercli} network create immich-net
+              else
+                echo "immich-net already exists in docker"
+              fi
+            '';
+  };
+ 
  # Immich
   virtualisation.oci-containers.containers = {
     immich = {
