@@ -236,6 +236,7 @@
      libreoffice-fresh
      yt-dlp
      gimp-with-plugins
+     bsdgames  # Colossal Cave Adventure and others
   ];
 
   # virtualbox
