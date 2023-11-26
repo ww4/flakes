@@ -11,7 +11,7 @@
       # Include Nextcloud config
       ./nextcloud.nix
       # Include Immich config
- #    ./immich.nix  #WIP
+      ./immich.nix  #WIP
       # VS Code server module
       (fetchTarball {
         url = "https://github.com/nix-community/nixos-vscode-server/tarball/master";
@@ -119,7 +119,7 @@
   # Open firewall
   networking.firewall = {
   enable = true;
-  allowedTCPPorts = [ 80 443 3000 8096 9090 ];
+  allowedTCPPorts = [ 80 443 3000 8096 2283 9090 ];
   allowedUDPPortRanges = [
     { from = 2000; to = 4007; }
     { from = 8000; to = 8300; }
@@ -239,6 +239,7 @@
      bsdgames  # Colossal Cave Adventure and others
      frotz    # for infocom / zork
      uudeview # for infocom / zork
+     docker # testing, add Docker for Immich?
   ];
 
   # virtualbox

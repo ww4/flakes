@@ -21,6 +21,7 @@
   };
  
  # Immich
+  virtualisation.oci-containers.backend = "docker";
   virtualisation.oci-containers.containers = {
     immich = {
       autoStart = true;
@@ -34,7 +35,7 @@
       environment = {
         PUID = "1000";
         PGID = "1000";
-        TZ = "Europe/Berlin"; # Change this to your timezone
+        TZ = "America/New_York"; # Change this to your timezone
         DB_HOSTNAME = "postgres14";
         DB_USERNAME = "postgres";
         DB_PASSWORD = "postgres";
