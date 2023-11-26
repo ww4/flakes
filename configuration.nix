@@ -11,7 +11,7 @@
       # Include Nextcloud config
       ./nextcloud.nix
       # Include Immich config
-      ./immich.nix
+ #    ./immich.nix  #WIP
       # VS Code server module
       (fetchTarball {
         url = "https://github.com/nix-community/nixos-vscode-server/tarball/master";
@@ -237,6 +237,8 @@
      yt-dlp
      gimp-with-plugins
      bsdgames  # Colossal Cave Adventure and others
+     frotz    # for infocom / zork
+     uudeview # for infocom / zork
   ];
 
   # virtualbox
