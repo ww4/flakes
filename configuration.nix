@@ -74,6 +74,26 @@
         fsType = "ntfs";
       };
 
+      "/mnt/mergerD6" = {
+        device = "/dev/disk/by-uuid/c9e23776-811b-4dec-9fc5-3e55454a21f0";
+        fsType = "ext4";
+      };
+
+      "/mnt/mergerD7" = {
+        device = "/dev/disk/by-uuid/5411719d-176a-4e59-8ec2-c4efef9d5410";
+        fsType = "ext4";
+      };
+
+      "/mnt/mergerD8" = {
+        device = "/dev/disk/by-uuid/4b986746-3de1-49de-8c02-850adcb9024e";
+        fsType = "ext4";
+      };
+
+      "/mnt/mergerD9" = {
+        device = "/dev/disk/by-uuid/11841ae6-181e-4345-ab89-bea16dcdcc59";
+        fsType = "ext4";
+      };
+
       "/home/chris" = {
         device = "/dev/disk/by-uuid/56c90b01-5f1e-4058-a2c4-c3db4df4deef";
         fsType = "ext4";
@@ -82,7 +102,7 @@
   # mergerfs: merge drives
   
     "/mnt/fusion" = {
-      device = "/mnt/mergerD1:/mnt/mergerD2:/mnt/mergerD3:/mnt/mergerD4:/mnt/mergerD5";
+      device = "/mnt/mergerD*";
       fsType = "fuse.mergerfs";
       options = [
         "defaults"
