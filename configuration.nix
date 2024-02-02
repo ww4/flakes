@@ -260,6 +260,7 @@
      frotz    # for infocom / zork
      uudeview # for infocom / zork
      docker # testing, add Docker for Immich?
+     xfsprogs
   ];
 
   # virtualbox
