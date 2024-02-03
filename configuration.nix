@@ -94,6 +94,11 @@
         fsType = "ext4";
       };
 
+       "/mnt/mergerD10" = {
+        device = "/dev/disk/by-uuid/8976631f-34b3-4192-b979-4012a66f233f";
+        fsType = "xfs";
+      };
+
       "/home/chris" = {
         device = "/dev/disk/by-uuid/56c90b01-5f1e-4058-a2c4-c3db4df4deef";
         fsType = "ext4";
