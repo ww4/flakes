@@ -69,10 +69,10 @@
         fsType = "ext4";
       };
       
-      "/mnt/mergerD5" = {
-        device = "/dev/disk/by-uuid/20b0b177-ab99-45e3-b4fe-1d06e6ce43ca";
-        fsType = "ext4";
-      };
+#      "/mnt/mergerD5" = {
+#        device = "/dev/disk/by-uuid/20b0b177-ab99-45e3-b4fe-1d06e6ce43ca";
+#        fsType = "ext4";
+#      };
 
       "/mnt/mergerD6" = {
         device = "/dev/disk/by-uuid/c9e23776-811b-4dec-9fc5-3e55454a21f0";
@@ -99,10 +99,10 @@
         fsType = "xfs";
       };
 
-       "/mnt/mergerD11" = {
-        device = "/dev/disk/by-uuid/903A27FB3A27DD4A";
-        fsType = "ntfs";
-      };
+#       "/mnt/mergerD11" = {
+#        device = "/dev/disk/by-uuid/903A27FB3A27DD4A";
+#        fsType = "ntfs";
+#      };
 
        "/home/chris" = {
         device = "/dev/disk/by-uuid/56c90b01-5f1e-4058-a2c4-c3db4df4deef";
