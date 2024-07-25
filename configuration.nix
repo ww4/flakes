@@ -121,7 +121,7 @@
         ];
       };
 
-       "/mnt/mergerD10" = {
+       "/mnt/justD10" = {
         device = "/dev/disk/by-uuid/8976631f-34b3-4192-b979-4012a66f233f";
         fsType = "xfs";
         options = [
@@ -278,33 +278,40 @@
   # $ nix search wget 
  environment.systemPackages = with pkgs; [
   #  vim # Do not forget to add an editor to edit configuration.nix! The Nano editor is also installed by default.
-  #  wget
+  # GUI Applications
      google-chrome
      vscode
   #  teams   # deprecated, unmaintained by upstream
      logseq
      bitwarden
      element-desktop
+     libreoffice-fresh
+     gimp-with-plugins
+
+  # Terminal Utilities
      byobu
+     wget
      tmux
      htop
      git
      mergerfs
      tailscale
-     jellyfin
      lf
-#    tandoor-recipes    # not building as of 11/3/23
-     prometheus
-     grafana
-     libreoffice-fresh
      yt-dlp
-     gimp-with-plugins
+     xfsprogs
+     ntfs3g
+     ncdu
      bsdgames  # Colossal Cave Adventure and others
      frotz    # for infocom / zork
      uudeview # for infocom / zork
+     
+  # Web Services
+     jellyfin
+#    tandoor-recipes    # not building as of 11/3/23
+     prometheus
+     grafana
      docker # testing, add Docker for Immich?
-     xfsprogs
-  ];
+    ];
 
   # virtualbox
   virtualisation.virtualbox.host.enable = true;
