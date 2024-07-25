@@ -287,6 +287,7 @@
      element-desktop
      libreoffice-fresh
      gimp-with-plugins
+     vlc
 
   # Terminal Utilities
      byobu
@@ -301,6 +302,8 @@
      xfsprogs
      ntfs3g
      ncdu
+     gparted
+     mergerfs-tools
      bsdgames  # Colossal Cave Adventure and others
      frotz    # for infocom / zork
      uudeview # for infocom / zork
