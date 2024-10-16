@@ -28,7 +28,7 @@ services.nextcloud = {
     hostName = "cloud.rosemaryacres.com";
       # Use HTTPS for links
     # https = true;
-    package = pkgs.nextcloud27;
+    package = pkgs.nextcloud28;
     # Auto-update Nextcloud Apps
     autoUpdateApps.enable = true;
     # Set what time makes sense for you
@@ -54,7 +54,7 @@ services.postgresql = {
     ensureDatabases = [ "nextcloud-db" ];
     ensureUsers = [
      { name = "nextcloud";
-       ensurePermissions."DATABASE \"nextcloud-db\"" = "ALL PRIVILEGES";
+#       ensurePermissions."DATABASE \"nextcloud-db\"" = "ALL PRIVILEGES";
      }
     ];
 };

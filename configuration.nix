@@ -11,7 +11,7 @@
       # Include Nextcloud config
       ./nextcloud.nix
       # Include Immich config
-      ./immich.nix  #WIP
+  #    ./immich.nix  #WIP
       # VS Code server module
       (fetchTarball {
         url = "https://github.com/nix-community/nixos-vscode-server/tarball/master";
@@ -216,18 +216,17 @@
   services.xserver.desktopManager.gnome.enable = true;
 
   # Configure keymap in X11
-  services.xserver = {
+  services.xserver.xkb = {
     layout = "us";
-    xkbVariant = "";
-    xkbOptions = "caps:super";
-
+    variant = "";
+    options = "caps:super";
   };
 
   # Enable CUPS to print documents.
   services.printing.enable = true;
 
   # Enable sound with pipewire.
-  sound.enable = true;
+  # sound.enable = true; # Deprecated as of 10/15/24?
   hardware.pulseaudio.enable = false;
   security.rtkit.enable = true;
   services.pipewire = {
@@ -258,8 +257,8 @@
   };
 
   # Enable automatic login for the user.
-  services.xserver.displayManager.autoLogin.enable = true;
-  services.xserver.displayManager.autoLogin.user = "chris";
+  services.displayManager.autoLogin.enable = true;
+  services.displayManager.autoLogin.user = "chris";
 
   # Workaround for GNOME autologin: https://github.com/NixOS/nixpkgs/issues/103746#issuecomment-945091229
   systemd.services."getty@tty1".enable = false;
@@ -342,6 +341,13 @@
   services.vscode-server.enable = true;
   # Enable the OpenSSH daemon.
   services.openssh.enable = true;
+
+# Immich
+  services.immich = {
+    enable = true;
+    environment.IMMICH_MACHINE_LEARNING_URL = "http://localhost:3003";
+
+  };
 
 # Jellyfin
   services.jellyfin = {
