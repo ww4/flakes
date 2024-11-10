@@ -9,7 +9,7 @@
     [ # Include the results of the hardware scan.
       ./hardware-configuration.nix
       # Include Nextcloud config
-      ./nextcloud.nix
+#      ./nextcloud.nix
       # Include Immich config
   #    ./immich.nix  #WIP
       # VS Code server module
@@ -365,11 +365,11 @@
   services.openssh.enable = true;
 
 # Immich
-  services.immich = {
-    enable = true;
-    environment.IMMICH_MACHINE_LEARNING_URL = "http://localhost:3003";
+#  services.immich = {
+#    enable = true;
+#    environment.IMMICH_MACHINE_LEARNING_URL = "http://localhost:3003";
 
-  };
+#  };
 
 # Jellyfin
   services.jellyfin = {
