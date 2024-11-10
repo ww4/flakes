@@ -203,13 +203,13 @@
 
   # Open firewall
   networking.firewall = {
-  enable = true;
-  allowedTCPPorts = [ 80 443 3000 8096 2283 9090 ];
-  allowedUDPPortRanges = [
-    { from = 2000; to = 4007; }
-    { from = 8000; to = 8300; }
-  ];
-};
+    enable = true;
+    allowedTCPPorts = [ 80 443 3000 8096 2283 9090 ];
+    allowedUDPPortRanges = [
+      { from = 2000; to = 4007; }
+      { from = 8000; to = 8300; }
+    ];
+  };
 
 
   # Set your time zone.
@@ -334,7 +334,7 @@
 #    tandoor-recipes    # not building as of 11/3/23
      prometheus
      grafana
-     docker # testing, add Docker for Immich?
+#     docker # testing, add Docker for Immich?
     ];
 
   # virtualbox
@@ -374,16 +374,16 @@
 # Jellyfin
   services.jellyfin = {
     enable = true;
-    package = pkgs.jellyfin.override {
-      jellyfin-web = pkgs.jellyfin-web.overrideAttrs (oldAttrs: {
-        patches = [
-          (pkgs.fetchpatch {
-            url = "https://github.com/jellyfin/jellyfin-web/compare/v${oldAttrs.version}...ConfusedPolarBear:jellyfin-web:intros.diff";
-            hash = "sha256-qm4N4wMUFc4I53oQJUK1Six0cahVYz3J+FgO2vvSvXM=";
-          })
-        ];
-      });
-    };
+#    package = pkgs.jellyfin.override {
+#      jellyfin-web = pkgs.jellyfin-web.overrideAttrs (oldAttrs: {
+#       patches = [
+#          (pkgs.fetchpatch {
+#            url = "https://github.com/jellyfin/jellyfin-web/compare/v${oldAttrs.version}...ConfusedPolarBear:jellyfin-web:intros.diff";
+#            hash = "sha256-qm4N4wMUFc4I53oQJUK1Six0cahVYz3J+FgO2vvSvXM=";
+#          })
+#        ];
+#      });
+#    };
   };
 
 
