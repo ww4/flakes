@@ -122,8 +122,8 @@
       };
 
        "/mnt/primary/D2" = { # was mergerD11
-        device = "/dev/disk/by-uuid/903A27FB3A27DD4A";
-        fsType = "ntfs";
+        device = "/dev/disk/by-uuid/14559789-ecec-41e6-aef1-c4c445c07193";
+        fsType = "xfs";
         options = [
           "nofail"
         ];
@@ -271,13 +271,15 @@
   users.users.chris = {
     isNormalUser = true;
     description = "chris";
-    extraGroups = [ "networkmanager" "wheel" ];
+    extraGroups = [ "networkmanager" "wheel" "media"];
     packages = with pkgs; [
       firefox
     #  thunderbird
     ];
   };
-
+  # Add Media group for Jellyfin etc
+  users.groups.media = {};
+  
   # Enable automatic login for the user.
   services.displayManager.autoLogin.enable = true;
   services.displayManager.autoLogin.user = "chris";
@@ -304,7 +306,7 @@
      vscode
   #  teams   # deprecated, unmaintained by upstream
      logseq
-     bitwarden
+  #   bitwarden  # having issues triggering a build from scratch, which fails. Not really needed...
      element-desktop
      libreoffice-fresh
      gimp-with-plugins
@@ -374,6 +376,7 @@
 # Jellyfin
   services.jellyfin = {
     enable = true;
+    group = "media";
 #    package = pkgs.jellyfin.override {
 #      jellyfin-web = pkgs.jellyfin-web.overrideAttrs (oldAttrs: {
 #       patches = [
