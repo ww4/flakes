@@ -15,7 +15,7 @@
       # VS Code server module
       (fetchTarball {
         url = "https://github.com/nix-community/nixos-vscode-server/tarball/master";
-        sha256 = "0sz8njfxn5bw89n6xhlzsbxkafb6qmnszj4qxy2w0hw2mgmjp829";
+        sha256 = "09j4kvsxw1d5dvnhbsgih0icbrxqv90nzf0b589rb5z6gnzwjnqf";
       })
 
     ];
@@ -311,6 +311,7 @@
      libreoffice-fresh
      gimp-with-plugins
      vlc
+     feishin
 
   # Terminal Utilities
      byobu
@@ -370,23 +371,12 @@
 #  services.immich = {
 #    enable = true;
 #    environment.IMMICH_MACHINE_LEARNING_URL = "http://localhost:3003";
-
 #  };
 
 # Jellyfin
   services.jellyfin = {
     enable = true;
     group = "media";
-#    package = pkgs.jellyfin.override {
-#      jellyfin-web = pkgs.jellyfin-web.overrideAttrs (oldAttrs: {
-#       patches = [
-#          (pkgs.fetchpatch {
-#            url = "https://github.com/jellyfin/jellyfin-web/compare/v${oldAttrs.version}...ConfusedPolarBear:jellyfin-web:intros.diff";
-#            hash = "sha256-qm4N4wMUFc4I53oQJUK1Six0cahVYz3J+FgO2vvSvXM=";
-#          })
-#        ];
-#      });
-#    };
   };
 
 
