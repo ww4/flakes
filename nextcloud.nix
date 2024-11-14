@@ -1,65 +1,61 @@
-{config, pkgs, ...}:
-{
-# services.nginx = {
-#    enable = true;
-# #
-# # # Use recommended settings
-# #    recommendedGzipSettings = true;
-# #    recommendedOptimisation = true;
-# #    recommendedProxySettings = true;
-# #    recommendedTlsSettings = true;
-# #
-# # # Only allow PFS-enabled ciphers with AES256
-# # #   sslCiphers = "AES256+EECDH:AES256+EDH:!aNULL";
-# #
-# ## Setup Nextcloud virtual host to listen on ports
-#   virtualHosts = {
-# #
-#       "cloud.rosemaryacres.com" = {
-# #       ## Force HTTP redirect to HTTPS
-# #        forceSSL = true;
-# #       ## LetsEncrypt
-# #       # enableACME = true;
-#      };
-#    };
-# };
-services.nextcloud = {
+{ self, config, lib, pkgs, ... }:{
+  security.acme = {
+    acceptTerms = true;
+    defaults = {
+      email = "chris@saenzmail.com";
+      dnsProvider = "cloudflare";
+      # location of your CLOUDFLARE_DNS_API_TOKEN=[value]
+      # https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#EnvironmentFile=
+      environmentFile = "/var/cloudflare-dns-api";
+    };
+  };
+ services = {
+    nginx = {
+      enable = true;
+      virtualHosts = {
+        "cloud.rosemaryacres.com" = {
+  #       ## Force HTTP redirect to HTTPS
+          forceSSL = true;
+          enableACME = true;
+          # Use DNS Challenege.
+          acmeRoot = null;
+        };
+      };
+   };
+    nextcloud = {
+      enable = true;
+      hostName = "cloud.rosemaryacres.com";
+      package = pkgs.nextcloud30;
+      database.createLocally = true;
+      configureRedis = true;
+      maxUploadSize = "16G";
+      https = true;
+      autoUpdateApps.enable = true;
+      extraAppsEnable = true;
+      extraApps = with config.services.nextcloud.package.packages.apps; {
+        # List of apps we want to install and are already packaged in
+        # https://github.com/NixOS/nixpkgs/blob/master/pkgs/servers/nextcloud/packages/nextcloud-apps.json
+        inherit calendar contacts notes onlyoffice tasks cookbook qownnotesapi;
+      };
+  #  datadir = "/mnt/fusion/nextcloud"; # Temporarily disabled to track permissions issues 
+      settings = {
+        overwriteProtocol = "https";
+        default_phone_region = "US";
+        maintenance_window_start = 2; # start at 2AM
+      };
+      config = {
+        # Nextcloud PostegreSQL database configuration, recommended over using SQLite
+        dbtype = "pgsql";
+        adminpassFile = "/var/nextcloud-admin-pass";
+        adminuser = "admin";
+      };
+      # Suggested by Nextcloud's health check.
+      phpOptions."opcache.interned_strings_buffer" = "16";
+  };
+  # Nightly database backups.
+  postgresqlBackup = {
     enable = true;
-    hostName = "cloud.rosemaryacres.com";
-      # Use HTTPS for links
-    # https = true;
-    package = pkgs.nextcloud28;
-    # Auto-update Nextcloud Apps
-    autoUpdateApps.enable = true;
-    # Set what time makes sense for you
-    autoUpdateApps.startAt = "05:00:00";
- #  datadir = "/mnt/fusion/nextcloud"; # Temporarily disabled to track permissions issues 
-    config = {
-      # Further forces Nextcloud to use HTTPS
-      # overwriteProtocol = "https";
-
-      # Nextcloud PostegreSQL database configuration, recommended over using SQLite
-      dbtype = "pgsql";
-      dbuser = "nextcloud";
-      dbhost = "/run/postgresql"; # nextcloud will add /.s.PGSQL.5432 by itself
-      dbname = "nextcloud-db";
-      adminpassFile = "/var/nextcloud-admin-pass";
-      adminuser = "admin";
+    startAt = "*-*-* 01:15:00";
+  };
  };
-};
-services.postgresql = {
-    enable = true;
-
-    # Ensure the database, user, and permissions always exist
-    ensureDatabases = [ "nextcloud-db" ];
-    ensureUsers = [
-     { name = "nextcloud";
-#       ensurePermissions."DATABASE \"nextcloud-db\"" = "ALL PRIVILEGES";
-     }
-    ];
-};
-systemd.services."nextcloud-setup" = {
-    requires = ["postgresql.service"];
-    after = ["postgresql.service"];
-};
 }

@@ -9,7 +9,7 @@
     [ # Include the results of the hardware scan.
       ./hardware-configuration.nix
       # Include Nextcloud config
-#      ./nextcloud.nix
+      ./nextcloud.nix
       # Include Immich config
   #    ./immich.nix  #WIP
       # VS Code server module
@@ -378,7 +378,6 @@
     enable = true;
     group = "media";
   };
-
 
   # Open ports in the firewall.
   # networking.firewall.allowedTCPPorts = [ ... ];
