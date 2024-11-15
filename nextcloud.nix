@@ -58,4 +58,7 @@
     startAt = "*-*-* 01:15:00";
   };
  };
+  systemd.services.nextcloud-setup.serviceConfig = {
+    RequiresMountsFor = [ "/var/lib/nextcloud" ];
+  };
 }

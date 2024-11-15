@@ -11,7 +11,7 @@
       # Include Nextcloud config
       ./nextcloud.nix
       # Include Immich config
-  #    ./immich.nix  #WIP
+      # ./immich.nix  #WIP
       # VS Code server module
       (fetchTarball {
         url = "https://github.com/nix-community/nixos-vscode-server/tarball/master";
@@ -295,6 +295,7 @@
 
   nixpkgs.config.permittedInsecurePackages = [
     "electron-20.3.11"
+    "electron-27.3.11"
   ];
 
   # List packages installed in system profile. To search, run:
@@ -368,10 +369,11 @@
   services.openssh.enable = true;
 
 # Immich
-#  services.immich = {
-#    enable = true;
-#    environment.IMMICH_MACHINE_LEARNING_URL = "http://localhost:3003";
-#  };
+  services.immich = {
+    enable = true;
+    environment.IMMICH_MACHINE_LEARNING_URL = "http://localhost:3003";
+    host = "0.0.0.0";
+  };
 
 # Jellyfin
   services.jellyfin = {
@@ -394,7 +396,7 @@
   system.stateVersion = "22.11"; # Did you read the comment?
 
   nix = {
-    package = pkgs.nixFlakes;
+    package = pkgs.nixVersions.stable;
     extraOptions = "experimental-features = nix-command flakes";
   };
 }
