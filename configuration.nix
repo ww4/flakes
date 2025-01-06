@@ -329,13 +329,14 @@
      ncdu
      gparted
      mergerfs-tools
+     neofetch
+     fastfetch
      bsdgames  # Colossal Cave Adventure and others
      frotz    # for infocom / zork
      uudeview # for infocom / zork
      
   # Web Services
      jellyfin
-#    tandoor-recipes    # not building as of 11/3/23
      prometheus
      grafana
 #     docker # testing, add Docker for Immich?
@@ -371,14 +372,28 @@
 # Immich
   services.immich = {
     enable = true;
+#    mediaLocation = "/mnt/fusion/immich";
     environment.IMMICH_MACHINE_LEARNING_URL = "http://localhost:3003";
     host = "0.0.0.0";
+  };
+
+# Tandoor
+  services.tandoor-recipes = {
+    enable = true;
+    address = "0.0.0.0";
   };
 
 # Jellyfin
   services.jellyfin = {
     enable = true;
     group = "media";
+  };
+
+# AudioBookShelf
+  services.audiobookshelf ={
+    enable = true;
+    group = "media";
+    host = "0.0.0.0";
   };
 
   # Open ports in the firewall.
