@@ -182,6 +182,7 @@
     };  
   };
 
+
   networking.hostName = "gromit"; # Define your hostname.
   # networking.wireless.enable = true;  # Enables wireless support via wpa_supplicant.
 
@@ -313,6 +314,8 @@
      gimp-with-plugins
      vlc
      feishin
+     bitcoin
+     qbittorrent
 
   # Terminal Utilities
      byobu
@@ -371,7 +374,7 @@
 
 # Immich
   services.immich = {
-    enable = true;
+    enable = false;  # WIP
 #    mediaLocation = "/mnt/fusion/immich";
     environment.IMMICH_MACHINE_LEARNING_URL = "http://localhost:3003";
     host = "0.0.0.0";
@@ -413,5 +416,14 @@
   nix = {
     package = pkgs.nixVersions.stable;
     extraOptions = "experimental-features = nix-command flakes";
+    optimise = {
+      automatic = true;
+      dates = [ "03:45" ];
+      };
+    gc = {
+      automatic = true;
+      dates = "weekly";
+      options = "--delete-older-than 30d";
+    };
   };
 }
