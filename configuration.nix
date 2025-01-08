@@ -339,25 +339,11 @@
      frotz    # for infocom / zork
      # uudeview # for infocom / zork - broken as of 1/8/25
      
-  # Web Services
-     jellyfin
-     prometheus
-     grafana
-#     docker # testing, add Docker for Immich?
     ];
 
   # virtualbox
   virtualisation.virtualbox.host.enable = true;
   users.extraGroups.vboxusers.members = [ "chris" ];
-
-
-  # Some programs need SUID wrappers, can be configured further or are
-  # started in user sessions.
-  # programs.mtr.enable = true;
-  # programs.gnupg.agent = {
-  #   enable = true;
-  #   enableSSHSupport = true;
-  # };
 
   # Steam
   programs.steam = {
@@ -368,51 +354,49 @@
 
   # List services that you want to enable:
 
-  # Enable the VS Code server.
-  services.vscode-server.enable = true;
-  # Enable the OpenSSH daemon.
-  services.openssh.enable = true;
+  # VSCode
+  services = {
+    vscode-server.enable = true;
+  
+    #OpenSSH
+    openssh.enable = true;
 
-# Immich
-  services.immich = {
-    enable = false;  # WIP
-    port = 2283;
-#    mediaLocation = "/mnt/fusion/immich";
-#   environment.IMMICH_MACHINE_LEARNING_URL = "http://localhost:3003";
-    host = "0.0.0.0";
+    # Immich
+    immich = {
+      enable = false;  # WIP
+      port = 2283;
+    # mediaLocation = "/mnt/fusion/immich";
+    # environment.IMMICH_MACHINE_LEARNING_URL = "http://localhost:3003";
+      host = "0.0.0.0";
+    };
+
+    # Tandoor
+    tandoor-recipes = {
+      enable = true;
+      address = "0.0.0.0";
+    };
+
+    # Jellyfin
+    jellyfin = {
+      enable = true;
+      group = "media";
+    };
+
+    # AudioBookShelf
+    audiobookshelf = {
+      enable = true;
+      group = "media";
+      host = "0.0.0.0";
+    };
+
+    # Bitcoin Core
+    bitcoind.bitcoin = {
+      enable = true;
+      prune = 5000;
+      dbCache = 8000;
+    };
   };
-
-# Tandoor
-  services.tandoor-recipes = {
-    enable = true;
-    address = "0.0.0.0";
-  };
-
-# Jellyfin
-  services.jellyfin = {
-    enable = true;
-    group = "media";
-  };
-
-# AudioBookShelf
-  services.audiobookshelf = {
-    enable = true;
-    group = "media";
-    host = "0.0.0.0";
-  };
-
-# Bitcoin Core
-  services.bitcoind.bitcoin = {
-    enable = true;
-    prune = 5000;
-  };
-
-  # Open ports in the firewall.
-  # networking.firewall.allowedTCPPorts = [ ... ];
-  # networking.firewall.allowedUDPPorts = [ ... ];
-  # Or disable the firewall altogether.
-  # networking.firewall.enable = false;
-
+ 
   # This value determines the NixOS release from which the default
   # settings for stateful data, like file locations and database versions
   # on your system were taken. It‘s perfectly fine and recommended to leave
