@@ -316,7 +316,6 @@
      gimp       # gimp-with-plugins giving issues as of 1/8/25, switched to GIMP instead
      vlc
      feishin
-     bitcoin
      qbittorrent
 
   # Terminal Utilities
@@ -396,10 +395,16 @@
   };
 
 # AudioBookShelf
-  services.audiobookshelf ={
+  services.audiobookshelf = {
     enable = true;
     group = "media";
     host = "0.0.0.0";
+  };
+
+# Bitcoin Core
+  services.bitcoind.bitcoin = {
+    enable = true;
+    
   };
 
   # Open ports in the firewall.
