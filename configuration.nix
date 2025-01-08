@@ -250,19 +250,21 @@
 
   # Enable sound with pipewire.
   # sound.enable = true; # Deprecated as of 10/15/24?
-  hardware.pulseaudio.enable = false;
   security.rtkit.enable = true;
-  services.pipewire = {
-    enable = true;
-    alsa.enable = true;
-    alsa.support32Bit = true;
-    pulse.enable = true;
-    # If you want to use JACK applications, uncomment this
-    #jack.enable = true;
+  services = {
+    pulseaudio.enable = false;
+    pipewire = {
+      enable = true;
+      alsa.enable = true;
+      alsa.support32Bit = true;
+      pulse.enable = true;
+      # If you want to use JACK applications, uncomment this
+      #jack.enable = true;
 
-    # use the example session manager (no others are packaged yet so this is enabled by default,
-    # no need to redefine it in your config for now)
-    #media-session.enable = true;
+      # use the example session manager (no others are packaged yet so this is enabled by default,
+      # no need to redefine it in your config for now)
+      #media-session.enable = true;
+    };
   };
 
   # Enable touchpad support (enabled default in most desktopManager).
@@ -311,7 +313,7 @@
   #   bitwarden  # having issues triggering a build from scratch, which fails. Not really needed...
      element-desktop
      libreoffice-fresh
-     gimp-with-plugins
+     gimp       # gimp-with-plugins giving issues as of 1/8/25, switched to GIMP instead
      vlc
      feishin
      bitcoin
@@ -336,7 +338,7 @@
      fastfetch
      bsdgames  # Colossal Cave Adventure and others
      frotz    # for infocom / zork
-     uudeview # for infocom / zork
+     # uudeview # for infocom / zork - broken as of 1/8/25
      
   # Web Services
      jellyfin
@@ -375,8 +377,9 @@
 # Immich
   services.immich = {
     enable = false;  # WIP
+    port = 2283;
 #    mediaLocation = "/mnt/fusion/immich";
-    environment.IMMICH_MACHINE_LEARNING_URL = "http://localhost:3003";
+#   environment.IMMICH_MACHINE_LEARNING_URL = "http://localhost:3003";
     host = "0.0.0.0";
   };
 
