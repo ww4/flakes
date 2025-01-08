@@ -404,7 +404,7 @@
 # Bitcoin Core
   services.bitcoind.bitcoin = {
     enable = true;
-    
+    prune = 5000;
   };
 
   # Open ports in the firewall.
