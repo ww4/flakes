@@ -1,12 +1,15 @@
-# Immich photo management — WIP, not yet enabled.
+# Immich — self-hosted photo & video management.
+#
+# Fresh setup (2026-05): the 2024 attempt was abandoned, its photo storage
+# lost, and its orphaned DB renamed to immich_orphaned_2024. This is a clean
+# start — the NixOS module creates a fresh DB (VectorChord) + Redis.
 { config, lib, pkgs, ... }:
 
 {
   services.immich = {
-    enable = false;  # WIP
-    port = 2283;
-  # mediaLocation = "/mnt/fusion/immich";
-  # environment.IMMICH_MACHINE_LEARNING_URL = "http://localhost:3003";
+    enable = true;
     host = "0.0.0.0";
+    port = 2283;                       # already open in the firewall
+    mediaLocation = "/mnt/fusion/immich";
   };
 }

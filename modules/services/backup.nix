@@ -24,6 +24,7 @@ let
     # not covered by /var/lib/nextcloud. /mnt/fusion/nextcloud is ~199 GB.
     "/mnt/fusion/Bitcoin"
     "/mnt/fusion/nextcloud"
+    "/mnt/fusion/immich"               # Immich photo library
 
     # Home folder — irreplaceable personal data only. Caches, VM images, and
     # downloaded media are deliberately left out; see criticalExclude.
