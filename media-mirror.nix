@@ -28,10 +28,11 @@ in
 {
   environment.systemPackages = [ media-mirror ];
 
-  # State + log directory.
+  # State + log directory. World-readable so the deletion review list and
+  # `media-mirror status` work without sudo (contents are just file paths).
   systemd.tmpfiles.rules = [
-    "d /var/lib/media-mirror      0750 root root -"
-    "d /var/lib/media-mirror/logs 0750 root root -"
+    "d /var/lib/media-mirror      0755 root root -"
+    "d /var/lib/media-mirror/logs 0755 root root -"
   ];
 
   # Weekly additive sync (queues any deletions for review — never deletes).
