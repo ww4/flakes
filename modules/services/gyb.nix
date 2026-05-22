@@ -4,13 +4,15 @@
 # covered by restic (see backup.nix).
 #
 # ONE-TIME SETUP — interactive, run as chris, before the timer can work.
-# --config-folder is required: GYB otherwise writes credentials next to its
-# own binary, which is read-only in the Nix store.
-#   gyb --config-folder /home/chris/gyb --action create-project \
+# Each account gets its OWN config-folder so credentials/tokens don't collide;
+# --config-folder is also required because the Nix store (next to the gyb
+# binary, GYB's default) is read-only. Per account:
+#   gyb --config-folder /home/chris/gyb/<account> --action create-project \
 #       --email <account>
-#   gyb --config-folder /home/chris/gyb --email <account> --action backup \
+#   gyb --config-folder /home/chris/gyb/<account> --email <account> \
+#       --action backup \
 #       --local-folder /home/chris/gyb/GYB-GMail-Backup-<account>
-# Once the OAuth token exists, the nightly timer runs unattended.
+# Once each account's OAuth token exists, the nightly timer runs unattended.
 { config, lib, pkgs, ... }:
 
 let
@@ -32,7 +34,7 @@ in
       rc=0
       for acct in ${lib.concatStringsSep " " accounts}; do
         echo "GYB backup: $acct"
-        ${pkgs.gyb}/bin/gyb --config-folder "${gybRoot}" \
+        ${pkgs.gyb}/bin/gyb --config-folder "${gybRoot}/$acct" \
           --email "$acct" --action backup \
           --local-folder "${gybRoot}/GYB-GMail-Backup-$acct" || rc=1
       done
