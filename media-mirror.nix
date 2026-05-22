@@ -19,6 +19,9 @@ let
       gnused
       gromit-notify
     ];
+    # SC2001: the sed calls operate on streams, not single variables, so the
+    # ${var//search/replace} suggestion does not apply.
+    excludeShellChecks = [ "SC2001" ];
     text = builtins.readFile ./media-mirror.sh;
   };
 in
