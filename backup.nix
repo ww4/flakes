@@ -27,14 +27,19 @@ let
 
     # Home folder — irreplaceable personal data only. Caches, VM images, and
     # downloaded media are deliberately left out; see criticalExclude.
-    "/home/chris/projects"          # source repos + relocated personal files
+    "/home/chris/projects"             # source repos + relocated personal files
     "/home/chris/Pictures"
     "/home/chris/Documents"
     "/home/chris/Desktop"
     "/home/chris/Videos"
-    "/home/chris/Music/Recordings"  # personal recordings (not the whole Music dir)
-    "/home/chris/Downloads"         # catch-all; the big media item is excluded
-    "/home/chris/.bitcoin/wallets"  # wallet only — not the blockchain
+    "/home/chris/July 2025"            # homeschool materials
+    "/home/chris/Music/Recordings"     # personal recordings (not the whole Music dir)
+    "/home/chris/Downloads"            # catch-all; the big media item is excluded
+    # Wallets, keys and credentials — small, irreplaceable.
+    "/home/chris/.sparrow"             # Bitcoin wallets (IRA Funds, Multisig)
+    "/home/chris/.local/share/albyhub" # Alby Hub Lightning data
+    "/home/chris/.ssh"                 # SSH keys
+    "/home/chris/.gnupg"               # GPG keys
   ];
 
   # Regenerable junk — transcode scratch, caches, logs — and large downloaded
