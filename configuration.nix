@@ -291,7 +291,10 @@
   };
   # Add Media group for Jellyfin etc
   users.groups.media = {};
-  
+
+  # Passwordless sudo for wheel (single-user homelab, Tailscale-only access)
+  security.sudo.wheelNeedsPassword = false;
+
   # Enable automatic login for the user.
   services.displayManager.autoLogin.enable = true;
   services.displayManager.autoLogin.user = "chris";
