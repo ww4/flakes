@@ -1,11 +1,36 @@
-# Flakes
+# Flakes — Gromit NixOS configuration
 
-This is the next phase of my journey towards "infrasructure as code". I am building flakes to deploy my personal computers, workstations, and laptops. This is a public repo, feel free to copy anything useful here!
+The NixOS flake for **Gromit**, a GNOME workstation that doubles as a homelab
+server. Public repo — feel free to copy anything useful.
 
-I am following a tutorial series from Matthias Benaets
+## Layout
 
-His Github: https://github.com/MatthiasBenaets
+```
+flake.nix                  inputs (nixpkgs, vscode-server) + the gromit host
+configuration.nix          module manifest — just the imports list
+hardware-configuration.nix generated hardware scan
+modules/
+  boot, storage, networking, desktop, users, system,
+  packages, virtualisation                         base system
+  services/
+    jellyfin, audiobookshelf, tandoor, pinchflat,
+    bitcoind, immich, vscode-server, nextcloud,
+    backup, notifications, media-mirror            per-service config
+```
 
-The video on Youtube: https://youtu.be/AGVXJ-TIv3Y
+Each concern is one file. To try something out: add a module under `modules/`,
+add one import to `configuration.nix`, `nixos-rebuild test`, and `git revert`
+if it doesn't work out.
 
-(this will need updated as I continue to add things...)
+## Rebuild
+
+```bash
+cd ~/code/flakes
+sudo nixos-rebuild switch --flake .#gromit
+```
+
+## Notes
+
+- Backups: restic to a local pool repo + offsite Backblaze B2; a guarded
+  weekly media mirror; status/alerts via self-hosted ntfy.
+- Secrets are kept out of this repo — in root-only files on the host.
