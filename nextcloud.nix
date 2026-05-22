@@ -53,9 +53,13 @@
       phpOptions."opcache.interned_strings_buffer" = "16";
   };
   # Nightly database backups.
+  # Dump named databases individually (pg_dump per DB) rather than pg_dumpall.
+  # pg_dumpall aborts entirely if any one database fails, which silently broke
+  # all backups for 16 months when the orphaned `immich` DB became undumpable.
   postgresqlBackup = {
     enable = true;
     startAt = "*-*-* 01:15:00";
+    databases = [ "nextcloud" ];
   };
  };
   systemd.services.nextcloud-setup.serviceConfig = {
