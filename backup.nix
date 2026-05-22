@@ -40,6 +40,7 @@ let
     "/home/chris/.local/share/albyhub" # Alby Hub Lightning data
     "/home/chris/.ssh"                 # SSH keys
     "/home/chris/.gnupg"               # GPG keys
+    "/home/chris/.config/Element"      # Matrix end-to-end encryption keys
   ];
 
   # Regenerable junk — transcode scratch, caches, logs — and large downloaded
