@@ -19,6 +19,10 @@ let
     "/var/lib/jellyfin"
     "/var/backup/postgresql"
     "/home/chris/projects" # source repos + relocated personal files
+    # Nextcloud external storage (the /Bitcoin and /Fusion mounts). Live data
+    # not covered by /var/lib/nextcloud. /mnt/fusion/nextcloud is ~199 GB.
+    "/mnt/fusion/Bitcoin"
+    "/mnt/fusion/nextcloud"
   ];
 
   # Regenerable junk — transcode scratch, caches, logs.

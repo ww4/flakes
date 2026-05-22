@@ -6,7 +6,8 @@
 #
 # Subcommands:
 #   sync                 copy new/changed files; queue any deletions for review
-#   approve              apply queued deletions (moved to a dated graveyard)
+#   approve [<limit>]    apply queued deletions (moved to a dated graveyard);
+#                        optional limit overrides MAX_DELETE for this run
 #   recover [<date>]     restore files from a graveyard snapshot
 #   prune-graveyard      delete graveyard snapshots past the retention window
 #   preflight [which]    check pool drives (which: all | fusion | backup)
@@ -139,6 +140,12 @@ cmd_approve() {
   require_root approve
   [ -s "$PENDING" ] || { echo "nothing queued for deletion"; exit 0; }
 
+  # Optional one-time limit override, for large reviewed reconciliation batches.
+  local limit="${1:-$MAX_DELETE}"
+  case "$limit" in
+    "" | *[!0-9]*) die "approve: limit must be a number (got: $limit)" ;;
+  esac
+
   if ! preflight all; then
     notify "Media mirror approve ABORTED — drive offline" \
       "A mergerfs pool member is missing. Nothing was deleted." \
@@ -148,13 +155,13 @@ cmd_approve() {
 
   local n
   n=$(wc -l < "$PENDING" | tr -d ' ')
-  if [ "$n" -gt "$MAX_DELETE" ]; then
+  if [ "$n" -gt "$limit" ]; then
     notify "Media mirror approve ABORTED — over limit" \
-"$n files are queued for deletion, exceeding the safety limit of $MAX_DELETE.
+"$n files are queued for deletion, exceeding the limit of $limit.
 Nothing was deleted. A pool drive may be offline, or fusion changed a lot.
-Investigate before retrying." \
+If this large batch is expected, re-run: sudo media-mirror approve <limit>" \
       urgent rotating_light
-    die "$n deletions exceeds MAX_DELETE=$MAX_DELETE — aborting"
+    die "$n deletions exceeds limit=$limit — aborting (override: media-mirror approve <limit>)"
   fi
 
   local ts dest
@@ -164,7 +171,7 @@ Investigate before retrying." \
 
   echo "applying up to $n deletions, graveyard: $dest"
   rsync -aH --delete --backup --backup-dir="$dest" \
-    --max-delete="$MAX_DELETE" "${EXCLUDES[@]}" "$SRC/" "$DST/"
+    --max-delete="$limit" "${EXCLUDES[@]}" "$SRC/" "$DST/"
 
   local moved
   moved=$(find "$dest" -type f | wc -l | tr -d ' ')
@@ -259,6 +266,6 @@ case "${1:-}" in
   preflight)       shift; cmd_preflight "$@" ;;
   status)          shift; cmd_status "$@" ;;
   *)
-    echo "usage: media-mirror {sync|approve|recover [<date>]|prune-graveyard|preflight|status}" >&2
+    echo "usage: media-mirror {sync|approve [<limit>]|recover [<date>]|prune-graveyard|preflight|status}" >&2
     exit 1 ;;
 esac
