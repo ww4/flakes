@@ -27,6 +27,7 @@
     ./modules/services/tandoor.nix
     ./modules/services/pinchflat.nix
     ./modules/services/bitcoind.nix
+    ./modules/services/gyb.nix
     ./modules/services/immich.nix
     ./modules/services/vscode-server.nix
     ./modules/services/nextcloud.nix

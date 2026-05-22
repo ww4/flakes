@@ -35,6 +35,7 @@ let
     "/home/chris/July 2025"            # homeschool materials
     "/home/chris/Music/Recordings"     # personal recordings (not the whole Music dir)
     "/home/chris/Downloads"            # catch-all; the big media item is excluded
+    "/home/chris/gyb"                  # GYB Gmail archive (both accounts)
     # Wallets, keys and credentials — small, irreplaceable.
     "/home/chris/.sparrow"             # Bitcoin wallets (IRA Funds, Multisig)
     "/home/chris/.local/share/albyhub" # Alby Hub Lightning data
