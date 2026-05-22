@@ -45,7 +45,7 @@ EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member)
 notify() { gromit-notify "$1" "$2" "${3:-default}" "${4:-}" || true; }
 
 # Generic alert for unexpected (non-die) failures.
-trap 'rc=$?; notify "Media mirror ERROR" "Unexpected failure (exit $rc). Check: journalctl -u media-mirror-sync" urgent rotating_light' ERR
+trap 'notify "Media mirror ERROR" "Unexpected failure — check: journalctl -u media-mirror-sync" urgent rotating_light' ERR
 
 die() {
   echo "media-mirror: $1" >&2
@@ -183,7 +183,10 @@ cmd_recover() {
   local ts="${1:-}"
   if [ -z "$ts" ]; then
     echo "available graveyard snapshots:"
-    ls -1 "$GRAVEYARD" 2>/dev/null | sed 's/^/  /' || echo "  (none)"
+    local snaps
+    snaps=$(find "$GRAVEYARD" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
+              2>/dev/null | sort || true)
+    if [ -n "$snaps" ]; then echo "$snaps" | sed 's/^/  /'; else echo "  (none)"; fi
     echo "usage: sudo media-mirror recover <date>"
     exit 0
   fi
@@ -237,8 +240,12 @@ cmd_status() {
   fi
   echo
   echo "graveyard snapshots:"
-  if [ -d "$GRAVEYARD" ] && [ -n "$(ls -A "$GRAVEYARD" 2>/dev/null)" ]; then
-    du -sh "$GRAVEYARD"/* 2>/dev/null | sed 's/^/  /'
+  local gv=""
+  if [ -d "$GRAVEYARD" ]; then
+    gv=$(find "$GRAVEYARD" -mindepth 1 -maxdepth 1 -type d 2>/dev/null || true)
+  fi
+  if [ -n "$gv" ]; then
+    du -sh "$GRAVEYARD"/*/ 2>/dev/null | sed 's/^/  /'
   else
     echo "  (none)"
   fi
