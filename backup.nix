@@ -13,23 +13,37 @@ let
   # Irreplaceable application state. Postgres is captured via the nightly
   # pg_dump SQL files in /var/backup/postgresql, not the live data directory.
   criticalPaths = [
+    # Application state.
     "/var/lib/nextcloud"
     "/var/lib/audiobookshelf"
     "/var/lib/tandoor-recipes"
     "/var/lib/jellyfin"
     "/var/backup/postgresql"
-    "/home/chris/projects" # source repos + relocated personal files
+
     # Nextcloud external storage (the /Bitcoin and /Fusion mounts). Live data
     # not covered by /var/lib/nextcloud. /mnt/fusion/nextcloud is ~199 GB.
     "/mnt/fusion/Bitcoin"
     "/mnt/fusion/nextcloud"
+
+    # Home folder — irreplaceable personal data only. Caches, VM images, and
+    # downloaded media are deliberately left out; see criticalExclude.
+    "/home/chris/projects"          # source repos + relocated personal files
+    "/home/chris/Pictures"
+    "/home/chris/Documents"
+    "/home/chris/Desktop"
+    "/home/chris/Videos"
+    "/home/chris/Music/Recordings"  # personal recordings (not the whole Music dir)
+    "/home/chris/Downloads"         # catch-all; the big media item is excluded
+    "/home/chris/.bitcoin/wallets"  # wallet only — not the blockchain
   ];
 
-  # Regenerable junk — transcode scratch, caches, logs.
+  # Regenerable junk — transcode scratch, caches, logs — and large downloaded
+  # media that belongs on the media tier, not the offsite critical backup.
   criticalExclude = [
     "/var/lib/jellyfin/transcodes"
     "/var/lib/jellyfin/cache"
     "/var/lib/jellyfin/log"
+    "/home/chris/Downloads/timberframing" # 59 GB downloaded video course
   ];
 
   # Snapshot retention: 7 daily, 4 weekly, 6 monthly.
