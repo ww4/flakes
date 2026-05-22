@@ -14,6 +14,8 @@
       ./backup.nix
       # Include notification infrastructure (self-hosted ntfy)
       ./notifications.nix
+      # Include the guarded media-pool mirror
+      ./media-mirror.nix
       # Include Immich config
       # ./immich.nix  #WIP
       # VS Code server module is now a flake input (see flake.nix)
