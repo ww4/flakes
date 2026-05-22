@@ -10,6 +10,8 @@
       ./hardware-configuration.nix
       # Include Nextcloud config
       ./nextcloud.nix
+      # Include backup config (restic -> local + Backblaze B2)
+      ./backup.nix
       # Include Immich config
       # ./immich.nix  #WIP
       # VS Code server module is now a flake input (see flake.nix)
