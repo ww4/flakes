@@ -15,7 +15,7 @@
       # VS Code server module
       (fetchTarball {
         url = "https://github.com/nix-community/nixos-vscode-server/tarball/master";
-        sha256 = "09j4kvsxw1d5dvnhbsgih0icbrxqv90nzf0b589rb5z6gnzwjnqf";
+        sha256 = "1rdn70jrg5mxmkkrpy2xk8lydmlc707sk0zb35426v1yxxka10by";
       })
 
     ];
@@ -147,7 +147,8 @@
         "moveonenospc=true"
         "dropcacheonclose=true"
         "category.create=mfs"
-        "nofail"
+        "func.getattr=newest"
+        "fsname=mergerfs"
       ];
     };  
 
@@ -162,7 +163,6 @@
         "moveonenospc=true"
         "dropcacheonclose=true"
         "category.create=mfs"
-        "nofail"
       ];
     };  
 
@@ -177,7 +177,6 @@
         "moveonenospc=true"
         "dropcacheonclose=true"
         "category.create=mfs"
-        "nofail"
       ];
     };  
   };
@@ -205,7 +204,7 @@
   # Open firewall
   networking.firewall = {
     enable = true;
-    allowedTCPPorts = [ 80 443 3000 8096 2283 9090 ];
+    allowedTCPPorts = [ 80 443 631 3000 8096 2283 9090 ];
     allowedUDPPortRanges = [
       { from = 2000; to = 4007; }
       { from = 8000; to = 8300; }
@@ -247,9 +246,19 @@
 
   # Enable CUPS to print documents.
   services.printing.enable = true;
+  services.printing.drivers = with pkgs; [
+    gutenprint
+    brlaser
+  ];
+
+  services.avahi = {
+    enable = true;
+    nssmdns4 = true;
+    openFirewall = true;
+    };
+    
 
   # Enable sound with pipewire.
-  # sound.enable = true; # Deprecated as of 10/15/24?
   security.rtkit.enable = true;
   services = {
     pulseaudio.enable = false;
@@ -274,7 +283,7 @@
   users.users.chris = {
     isNormalUser = true;
     description = "chris";
-    extraGroups = [ "networkmanager" "wheel" "media"];
+    extraGroups = [ "networkmanager" "wheel" "media" "lp"];
     packages = with pkgs; [
       firefox
     #  thunderbird
@@ -317,6 +326,9 @@
      vlc
      feishin
      qbittorrent
+     sparrow
+     bitcoind-knots
+     albyhub
 
   # Terminal Utilities
      byobu
@@ -344,6 +356,12 @@
   # virtualbox
   virtualisation.virtualbox.host.enable = true;
   users.extraGroups.vboxusers.members = [ "chris" ];
+
+  # Docker
+  virtualisation.docker.enable = true;
+
+  # fuse Allow Other (for MergerFS)
+  programs.fuse.userAllowOther = true;
 
   # Steam
   programs.steam = {
@@ -389,14 +407,22 @@
       host = "0.0.0.0";
     };
 
-    # Bitcoin Core
-    bitcoind.bitcoin = {
+    # PinchFlat
+    pinchflat = {
       enable = true;
-      prune = 5000;
-      dbCache = 8000;
+      selfhosted = true;
+      mediaDir = "/mnt/fusion/pinchflat";
     };
   };
- 
+
+  # Not great, but needed (per maintainer)
+    users.users.pinchflat = {
+    isSystemUser = true;
+    group = "pinchflat";
+  };
+  systemd.services.pinchflat.serviceConfig.User = "pinchflat";
+  systemd.services.pinchflat.serviceConfig.DynamicUser = lib.mkForce false;
+
   # This value determines the NixOS release from which the default
   # settings for stateful data, like file locations and database versions
   # on your system were taken. It‘s perfectly fine and recommended to leave
