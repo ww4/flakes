@@ -29,7 +29,9 @@ FUSION_MEMBERS=(/mnt/primary/D1 /mnt/primary/D2)
 BACKUP_MEMBERS=(/mnt/backup/D1 /mnt/backup/D2 /mnt/backup/D3 /mnt/backup/D4)
 
 STATE=/var/lib/media-mirror
-PENDING="$STATE/pending-deletions.txt"
+PENDING="$STATE/pending-deletions.txt"   # raw rsync --delete candidates
+MOVED="$STATE/pending-moved.txt"         # candidates whose content moved on SRC
+DELETED="$STATE/pending-deleted.txt"     # genuine deletions — the real review list
 LOGDIR="$STATE/logs"
 GRAVEYARD="$DST/.graveyard"
 GRAVEYARD_RETENTION_DAYS=30
@@ -86,6 +88,32 @@ cmd_preflight() {
   fi
 }
 
+# Split $PENDING into moved (content still present on SRC) vs genuinely
+# deleted. A move/rename keeps identical content, hence identical size+mtime,
+# so this is metadata-only — no hashing — and stays fast across a multi-TB pool.
+classify_deletions() {
+  : > "$MOVED"
+  : > "$DELETED"
+  [ -s "$PENDING" ] || return 0
+
+  # Fingerprint every source file as "size:mtime".
+  local idx
+  idx=$(mktemp)
+  find "$SRC" -type f -printf "%s:%T@\n" 2>/dev/null | cut -d. -f1 | sort -u > "$idx" || true
+
+  local relpath dstfile
+  while IFS= read -r relpath; do
+    case "$relpath" in */) continue ;; esac          # skip directory entries
+    dstfile="$DST/$relpath"
+    if [ -f "$dstfile" ] && grep -qxF "$(stat -c "%s:%Y" "$dstfile")" "$idx"; then
+      echo "$relpath" >> "$MOVED"
+    else
+      echo "$relpath" >> "$DELETED"
+    fi
+  done < "$PENDING"
+  rm -f "$idx"
+}
+
 cmd_sync() {
   require_root sync
   mkdir -p "$STATE" "$LOGDIR"
@@ -115,25 +143,36 @@ Run 'media-mirror status' and check the drives." \
   grep '^\*deleting' "$tmp" | sed 's/^\*deleting *//' > "$PENDING" || true
   rm -f "$tmp"
 
-  local n copied
+  # 3. Classify the candidates: moved/renamed vs genuinely deleted.
+  classify_deletions
+
+  local n nmoved ndeleted copied
   n=$(wc -l < "$PENDING" | tr -d ' ')
+  nmoved=$(wc -l < "$MOVED" | tr -d ' ')
+  ndeleted=$(wc -l < "$DELETED" | tr -d ' ')
   copied=$(grep -E 'files transferred' "$log" \
            | grep -oE '[0-9,]+' | tail -1 | tr -d ',' || true)
   copied=${copied:-0}
 
   if [ "$n" -eq 0 ]; then
     notify "Media mirror OK" \
-      "Weekly sync complete. $copied files copied. No deletions pending." \
+      "Weekly sync complete. $copied files copied. Nothing queued." \
+      low floppy_disk
+  elif [ "$ndeleted" -eq 0 ]; then
+    notify "Media mirror OK — $nmoved moved" \
+"$copied files copied. $nmoved file(s) moved/renamed within fusion
+(content preserved); their stale backup paths are queued for cleanup.
+No genuine deletions." \
       low floppy_disk
   else
-    notify "Media mirror — $n deletions need review" \
-"$copied files copied to the backup.
-$n files on the backup are no longer on fusion and are queued for review.
-Review:  $PENDING
+    notify "Media mirror — $ndeleted deletion(s) need review" \
+"$copied copied. $ndeleted genuine deletion(s) need review.
+$nmoved moved/renamed (content preserved on fusion — safe).
+Review:  $DELETED
 Approve: sudo media-mirror approve" \
       high "warning,floppy_disk"
   fi
-  echo "sync done: $copied copied, $n deletions queued for review"
+  echo "sync done: $copied copied, $nmoved moved, $ndeleted genuine deletions"
 }
 
 cmd_approve() {
@@ -241,9 +280,11 @@ cmd_status() {
   fi
   echo
   if [ -s "$PENDING" ]; then
-    echo "pending deletions: $(wc -l < "$PENDING" | tr -d ' ')  (review: $PENDING)"
+    echo "queued backup-path removals:"
+    [ -f "$MOVED" ]   && echo "  moved/renamed (safe): $(wc -l < "$MOVED" | tr -d ' ')"
+    [ -f "$DELETED" ] && echo "  genuine deletions:    $(wc -l < "$DELETED" | tr -d ' ')  (review: $DELETED)"
   else
-    echo "pending deletions: none"
+    echo "queued backup-path removals: none"
   fi
   echo
   echo "graveyard snapshots:"
