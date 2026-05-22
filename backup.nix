@@ -18,6 +18,7 @@ let
     "/var/lib/tandoor-recipes"
     "/var/lib/jellyfin"
     "/var/backup/postgresql"
+    "/home/chris/projects" # source repos + relocated personal files
   ];
 
   # Regenerable junk — transcode scratch, caches, logs.
