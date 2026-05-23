@@ -61,11 +61,11 @@ let
               enableBlocks: true
         - Audiobookshelf:
             description: Audiobooks & podcasts
-            href: http://100.82.117.116:8000
+            href: https://abs.rosemaryacres.com
             icon: audiobookshelf.png
             widget:
               type: audiobookshelf
-              url: http://100.82.117.116:8000
+              url: https://abs.rosemaryacres.com
               key: {{HOMEPAGE_VAR_AUDIOBOOKSHELF_KEY}}
         - Immich:
             description: Photos & videos
