@@ -111,6 +111,10 @@ let
             description: Push notifications (gromit-alerts)
             href: http://100.82.117.116:8090
             icon: ntfy.png
+            widget:
+              type: ntfy
+              url: http://100.82.117.116:8090
+              topic: gromit-alerts
   '';
 
   bookmarksYaml = pkgs.writeText "homepage-bookmarks.yaml" ''

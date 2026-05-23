@@ -21,8 +21,11 @@ in
     };
   };
 
-  # Reachable only over the Tailscale interface — not the LAN, not the internet.
+  # Reachable only over the Tailscale interface and the Docker bridge — never
+  # the LAN, never the internet. docker0 is open so the Homepage dashboard
+  # container can pull recent messages via the topic JSON API.
   networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ 8090 ];
+  networking.firewall.interfaces."docker0".allowedTCPPorts   = [ 8090 ];
 
   environment.systemPackages = [ gromit-notify ];
 
