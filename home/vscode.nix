@@ -21,11 +21,11 @@
     # The default `package` is pkgs.vscode (proprietary build). Pin'd via
     # flake.lock the same way every other input is.
 
-    profiles.default = {
-      # Preserve the 89-extension reality on disk; HM won't wipe
-      # ~/.vscode/extensions on activation.
-      mutableExtensionsDir = true;
+    # Preserve the 89-extension reality on disk; HM won't wipe
+    # ~/.vscode/extensions on activation.
+    mutableExtensionsDir = true;
 
+    profiles.default = {
       # extensions = with pkgs.vscode-extensions; [
       #   jnoortheen.nix-ide        # example — uncomment when you want a pin
       # ];
