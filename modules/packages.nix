@@ -33,8 +33,7 @@
      ncdu
      gparted
      mergerfs-tools
-     neofetch
-     fastfetch
+     fastfetch  # neofetch removed upstream; fastfetch covers it
      bsdgames  # Colossal Cave Adventure and others
      frotz    # for infocom / zork
      # uudeview # for infocom / zork - broken as of 1/8/25
