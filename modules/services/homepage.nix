@@ -96,7 +96,7 @@ let
         - Tandoor:
             description: Recipes
             href: https://recipes.rosemaryacres.com
-            icon: tandoor.png
+            icon: tandoor-recipes.png
             widget:
               type: tandoor
               url: https://recipes.rosemaryacres.com
