@@ -18,20 +18,8 @@ in
     settings = {
       base-url = "http://100.82.117.116:8090";
       listen-http = ":8090";
-
-      # Web Push (VAPID) — true push; big battery win on the phone app.
-      # The private key lives in /var/lib/ntfy-sh/webpush-secrets.env
-      # (root:root 0600) and is loaded via EnvironmentFile below.
-      enable-web-push = true;
-      web-push-public-key = "BDilFToOpdBsIIutiagxzWO6VPg6cakeIcJRjGOJ-_btDs8Va3GXC_ywiUR3tWGlI6OB9iOjngMY9QkzCJrsN2c";
-      web-push-file = "/var/lib/ntfy-sh/webpush.db";
-      web-push-email-address = "chris@saenzmail.net";
     };
   };
-
-  # Inject the VAPID private key from a root-only file (kept out of git/store).
-  systemd.services.ntfy-sh.serviceConfig.EnvironmentFile =
-    "/var/lib/ntfy-sh/webpush-secrets.env";
 
   # Reachable only over the Tailscale interface — not the LAN, not the internet.
   networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ 8090 ];
