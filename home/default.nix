@@ -7,9 +7,9 @@
 
 {
   imports = [
-    # Phase 2+ modules will be listed here, e.g.:
-    # ./shell.nix
-    # ./git.nix
+    ./shell.nix
+    ./git.nix
+    # Future phases:
     # ./packages.nix
     # ./vscode.nix
     # ./element.nix
