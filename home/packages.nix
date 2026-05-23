@@ -11,7 +11,7 @@
   home.packages = with pkgs; [
     # GUI applications
     google-chrome
-    vscode               # Phase 4 will replace this with programs.vscode + pinned extensions
+    # vscode is now managed by ./vscode.nix (programs.vscode)
     logseq
     element-desktop
     libreoffice-fresh

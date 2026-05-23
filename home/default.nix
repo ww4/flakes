@@ -10,8 +10,8 @@
     ./shell.nix
     ./git.nix
     ./packages.nix
+    ./vscode.nix
     # Future phases:
-    # ./vscode.nix
     # ./element.nix
     # ./ssh.nix
   ];
