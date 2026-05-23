@@ -21,7 +21,14 @@
     locations."/" = {
       proxyPass = "http://127.0.0.1:8080";
       proxyWebsockets = true;
+      # Pass the real Host so Django's ALLOWED_HOSTS check sees
+      # recipes.rosemaryacres.com instead of 127.0.0.1 (would 400).
       extraConfig = ''
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
         client_max_body_size 512M;
         proxy_buffering off;
         proxy_read_timeout 600s;
