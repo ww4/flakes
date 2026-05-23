@@ -18,6 +18,17 @@
     forceSSL = true;
     enableACME = true;
     acmeRoot = null;
+    # Serve uploaded recipe images straight from disk; Tandoor's catch-all
+    # otherwise sends anonymous /media/* requests to the login redirect.
+    # Deny *.sqlite3 because MEDIA_ROOT shares the dir with db.sqlite3.
+    locations."/media/" = {
+      alias = "/var/lib/tandoor-recipes/";
+      extraConfig = ''
+        location ~ \.(sqlite|sqlite3|db)$ { deny all; }
+        expires 7d;
+        access_log off;
+      '';
+    };
     locations."/" = {
       proxyPass = "http://127.0.0.1:8080";
       proxyWebsockets = true;
