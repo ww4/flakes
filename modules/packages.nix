@@ -1,41 +1,25 @@
-# System-wide packages. To search: nix search nixpkgs <name>
+# System-wide packages — anything that must be on root's PATH or available
+# before chris's user profile loads (storage tools, network, admin utilities).
+#
+# Personal apps + CLI tools live in ../home/packages.nix.
+# To search: `nix search nixpkgs <name>`.
 { config, lib, pkgs, ... }:
 
 {
   environment.systemPackages = with pkgs; [
-  # GUI Applications
-     google-chrome
-     vscode
-  #  teams   # deprecated, unmaintained by upstream
-     logseq
-  #   bitwarden  # having issues triggering a build from scratch, which fails. Not really needed...
-     element-desktop
-     libreoffice-fresh
-     gimp       # gimp-with-plugins giving issues as of 1/8/25, switched to GIMP instead
-     vlc
-     feishin
-     qbittorrent
-     sparrow
-     albyhub
+    # Core admin utilities (useful as root, useful in emergencies)
+    wget
+    htop
+    git                # required for nixos-rebuild against this flake
 
-  # Terminal Utilities
-     byobu
-     wget
-     tmux
-     htop
-     git
-     mergerfs
-     tailscale
-     lf
-     yt-dlp
-     xfsprogs
-     ntfs3g
-     ncdu
-     gparted
-     mergerfs-tools
-     fastfetch  # neofetch removed upstream; fastfetch covers it
-     bsdgames  # Colossal Cave Adventure and others
-     frotz    # for infocom / zork
-     # uudeview # for infocom / zork - broken as of 1/8/25
+    # Network
+    tailscale          # the daemon is enabled in modules/networking.nix; CLI lives here
+
+    # Storage
+    mergerfs
+    mergerfs-tools
+    xfsprogs
+    ntfs3g
+    gparted            # GUI partition editor; root-only by nature
   ];
 }

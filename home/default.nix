@@ -9,8 +9,8 @@
   imports = [
     ./shell.nix
     ./git.nix
+    ./packages.nix
     # Future phases:
-    # ./packages.nix
     # ./vscode.nix
     # ./element.nix
     # ./ssh.nix
