@@ -47,6 +47,9 @@ let
       Infrastructure:
         style: row
         columns: 2
+      Recent Alerts:
+        style: row
+        columns: 1
   '';
 
   servicesYaml = pkgs.writeText "homepage-services.yaml" ''
@@ -107,8 +110,10 @@ let
             description: YouTube archiver
             href: http://100.82.117.116:8945
             icon: pinchflat.png
+
+    - Recent Alerts:
         - ntfy:
-            description: Push notifications (gromit-alerts)
+            description: Latest message on gromit-alerts
             href: http://100.82.117.116:8090
             icon: ntfy.png
             widget:
