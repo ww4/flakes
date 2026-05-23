@@ -10,9 +10,16 @@
       url = "github:nix-community/nixos-vscode-server";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # Home Manager — tracks nixpkgs-unstable on master to match our nixpkgs.
+    # Wired in via modules/home-manager.nix; user-level config lives in ./home.
+    home-manager = {
+      url = "github:nix-community/home-manager";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, vscode-server }:
+  outputs = { self, nixpkgs, vscode-server, home-manager }:
     let
       system = "x86_64-linux";
       lib = nixpkgs.lib;
@@ -23,6 +30,7 @@
           modules = [
             ./configuration.nix
             vscode-server.nixosModules.default
+            home-manager.nixosModules.home-manager
           ];
         };
       };

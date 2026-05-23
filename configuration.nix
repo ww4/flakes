@@ -20,6 +20,7 @@
     ./modules/system.nix
     ./modules/packages.nix
     ./modules/virtualisation.nix
+    ./modules/home-manager.nix
 
     # Services.
     ./modules/services/jellyfin.nix
