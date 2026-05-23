@@ -74,9 +74,12 @@ let
             widget:
               # Immich binds 127.0.0.1 only, so the container can't reach
               # it on the Tailscale IP — go through nginx instead.
+              # version: 2 picks the new /api/server/{statistics,version}
+              # endpoints (Immich 1.85+ dropped /api/server-info/*).
               type: immich
               url: https://photos.rosemaryacres.com
               key: {{HOMEPAGE_VAR_IMMICH_KEY}}
+              version: 2
 
     - Cloud:
         - Nextcloud:
@@ -158,6 +161,10 @@ in {
         "${widgetsYaml}:/app/config/widgets.yaml:ro"
         "${dockerYaml}:/app/config/docker.yaml:ro"
         "${kubernetesYaml}:/app/config/kubernetes.yaml:ro"
+        # Mounted so the resources widget can statfs() these — host paths
+        # don't exist inside the container otherwise.
+        "/mnt/fusion:/mnt/fusion:ro"
+        "/mnt/backup/all:/mnt/backup/all:ro"
       ];
       environmentFiles = [ "/var/lib/homepage/secrets.env" ];
       environment = {
