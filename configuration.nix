@@ -36,6 +36,7 @@
     ./modules/services/notifications.nix
     ./modules/services/media-mirror.nix
     ./modules/services/remote-desktop.nix
+    ./modules/services/homepage.nix
   ];
 
   # The NixOS release the system was first installed from. Leave it pinned —
