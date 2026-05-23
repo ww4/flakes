@@ -1,15 +1,32 @@
-# Tandoor Recipes.
+# Tandoor Recipes — fronted by nginx at https://recipes.rosemaryacres.com
+# (Tailscale-only A record on Cloudflare; TLS via Let's Encrypt DNS-01).
 { config, lib, pkgs, ... }:
 
 {
   services.tandoor-recipes = {
     enable = true;
-    address = "0.0.0.0";
-    # Default ALLOWED_HOSTS is restrictive; permit any Host header (the
-    # Tailscale-only firewall is the real perimeter).
-    extraConfig.ALLOWED_HOSTS = "*";
+    address = "127.0.0.1";              # nginx fronts; no direct external access
+    extraConfig = {
+      ALLOWED_HOSTS = "recipes.rosemaryacres.com,localhost";
+      CSRF_TRUSTED_ORIGINS = "https://recipes.rosemaryacres.com";
+    };
   };
 
-  # Reachable only over the Tailscale interface.
-  networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ 8080 ];
+  # Public-facing reverse proxy. ACME via the existing Cloudflare DNS-01
+  # defaults in nextcloud.nix.
+  services.nginx.virtualHosts."recipes.rosemaryacres.com" = {
+    forceSSL = true;
+    enableACME = true;
+    acmeRoot = null;
+    locations."/" = {
+      proxyPass = "http://127.0.0.1:8080";
+      proxyWebsockets = true;
+      extraConfig = ''
+        client_max_body_size 512M;
+        proxy_buffering off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+      '';
+    };
+  };
 }
