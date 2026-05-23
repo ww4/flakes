@@ -35,7 +35,7 @@
     ./modules/services/backup.nix
     ./modules/services/notifications.nix
     ./modules/services/media-mirror.nix
-    ./modules/services/xrdp.nix
+    ./modules/services/remote-desktop.nix
   ];
 
   # The NixOS release the system was first installed from. Leave it pinned —
