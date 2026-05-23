@@ -14,6 +14,7 @@
 #   HOMEPAGE_VAR_NEXTCLOUD_USER=chris
 #   HOMEPAGE_VAR_NEXTCLOUD_PASS=...      # an app-password from Nextcloud
 #   HOMEPAGE_VAR_AUDIOBOOKSHELF_KEY=...
+#   HOMEPAGE_VAR_TANDOOR_KEY=...
 #
 # How to mint each key:
 #   - Jellyfin       → Dashboard → Advanced → API Keys → +
@@ -21,6 +22,7 @@
 #   - Nextcloud      → Personal → Security → Devices & sessions → "Create
 #                      new app password" (use that, not the login password)
 #   - Audiobookshelf → Settings → Users → click user → API Token
+#   - Tandoor        → User dropdown → API Token → Create Token
 #
 # DNS prerequisite on Cloudflare:
 #   A   rosemaryacres.com       100.82.117.116    (Tailscale IP, proxy off)
@@ -95,6 +97,10 @@ let
             description: Recipes
             href: https://recipes.rosemaryacres.com
             icon: tandoor.png
+            widget:
+              type: tandoor
+              url: https://recipes.rosemaryacres.com
+              key: {{HOMEPAGE_VAR_TANDOOR_KEY}}
 
     - Infrastructure:
         - PinchFlat:
