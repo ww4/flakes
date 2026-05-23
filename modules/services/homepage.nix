@@ -51,29 +51,31 @@ let
     - Media:
         - Jellyfin:
             description: Movies, TV, music
-            href: http://gromit:8096
+            href: http://100.82.117.116:8096
             icon: jellyfin.png
             widget:
               type: jellyfin
-              url: http://gromit:8096
+              url: http://100.82.117.116:8096
               key: {{HOMEPAGE_VAR_JELLYFIN_KEY}}
               enableNowPlaying: true
               enableBlocks: true
         - Audiobookshelf:
             description: Audiobooks & podcasts
-            href: http://gromit:8000
+            href: http://100.82.117.116:8000
             icon: audiobookshelf.png
             widget:
               type: audiobookshelf
-              url: http://gromit:8000
+              url: http://100.82.117.116:8000
               key: {{HOMEPAGE_VAR_AUDIOBOOKSHELF_KEY}}
         - Immich:
             description: Photos & videos
             href: https://photos.rosemaryacres.com
             icon: immich.png
             widget:
+              # Immich binds 127.0.0.1 only, so the container can't reach
+              # it on the Tailscale IP — go through nginx instead.
               type: immich
-              url: http://gromit:2283
+              url: https://photos.rosemaryacres.com
               key: {{HOMEPAGE_VAR_IMMICH_KEY}}
 
     - Cloud:
@@ -94,11 +96,11 @@ let
     - Infrastructure:
         - PinchFlat:
             description: YouTube archiver
-            href: http://gromit:8945
+            href: http://100.82.117.116:8945
             icon: pinchflat.png
         - ntfy:
             description: Push notifications (gromit-alerts)
-            href: http://gromit:8090
+            href: http://100.82.117.116:8090
             icon: ntfy.png
   '';
 
@@ -161,9 +163,6 @@ in {
       environment = {
         HOMEPAGE_ALLOWED_HOSTS = "${hostname},www.${hostname}";
       };
-      # Make "gromit" inside the container resolve to the host IP so widgets
-      # can hit local services (Jellyfin :8096, ABS :8000, etc.).
-      extraOptions = [ "--add-host=gromit:host-gateway" ];
     };
   };
 
