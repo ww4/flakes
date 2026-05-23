@@ -25,7 +25,7 @@
     nextcloud = {
       enable = true;
       hostName = "cloud.rosemaryacres.com";
-      package = pkgs.nextcloud30;
+      package = pkgs.nextcloud31;
       database.createLocally = true;
       configureRedis = true;
       maxUploadSize = "16G";
