@@ -109,6 +109,11 @@ in {
 
   services.grafana = {
     enable = true;
+    # Infinity datasource — lets us pull arbitrary JSON (NWPS forecast)
+    # directly into a panel alongside Prometheus observed data.
+    declarativePlugins = with pkgs.grafanaPlugins; [
+      yesoreyeram-infinity-datasource
+    ];
     settings = {
       server = {
         http_addr = "127.0.0.1";
@@ -134,13 +139,29 @@ in {
     };
     provision = {
       enable = true;
-      datasources.settings.datasources = [{
-        name = "Prometheus";
-        type = "prometheus";
-        access = "proxy";
-        url = "http://127.0.0.1:${toString prometheusPort}";
-        isDefault = true;
-      }];
+      datasources.settings.datasources = [
+        {
+          name = "Prometheus";
+          type = "prometheus";
+          access = "proxy";
+          url = "http://127.0.0.1:${toString prometheusPort}";
+          isDefault = true;
+        }
+        {
+          # Used by panel 7 to overlay the NWPS stage forecast.
+          # No base URL — the panel target supplies the full URL per-query.
+          name = "NWPS";
+          uid = "nwps-infinity";
+          type = "yesoreyeram-infinity-datasource";
+          access = "proxy";
+          jsonData = {
+            # Restrict outbound URLs so this datasource can't be misused as
+            # a generic SSRF tool. NWPS only.
+            allowedHosts = [ "https://api.water.noaa.gov" ];
+            timeoutInSeconds = 30;
+          };
+        }
+      ];
     };
   };
 
