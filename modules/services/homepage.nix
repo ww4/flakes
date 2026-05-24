@@ -50,12 +50,9 @@ let
       Monitoring:
         style: row
         columns: 2
-      River Graph:
-        style: row
-        columns: 1
       Riverwatch:
         style: row
-        columns: 2
+        columns: 1
       Recent Alerts:
         style: row
         columns: 1
@@ -133,27 +130,26 @@ let
               type: prometheus
               url: https://prometheus.rosemaryacres.com
 
-    - River Graph:
-        - Kentucky River — last 7 days:
+    - Riverwatch:
+        - Kentucky River — observed + NWPS forecast:
             description: Stage at Lockport & Gratz with flood thresholds
             href: https://grafana.rosemaryacres.com/d/riverwatch
             icon: mdi-chart-line
             widget:
               # Embeds panel 1 (Stage time series + flood-threshold reference
-              # lines) from the Riverwatch Grafana dashboard. Anonymous Viewer
-              # is enabled in monitoring.nix so this loads without auth — fine
-              # because Grafana is Tailscale-only. allow_embedding=true is also
-              # set there so Grafana doesn't send X-Frame-Options: deny.
+              # lines + NWPS 5-day forecast) from the Riverwatch Grafana
+              # dashboard. Anonymous Viewer is enabled in monitoring.nix so
+              # this loads without auth — fine because Grafana is
+              # Tailscale-only. allow_embedding=true is also set there so
+              # Grafana doesn't send X-Frame-Options: deny.
               type: iframe
               name: River Graph
               # `to=now+5d` (URL-encoded) makes room for the NWPS forecast
               # overlay, which extends ~5 days into the future.
-              src: https://grafana.rosemaryacres.com/d-solo/riverwatch/_?orgId=1&panelId=7&theme=dark&from=now-7d&to=now%2B5d&refresh=5m&kiosk
+              src: https://grafana.rosemaryacres.com/d-solo/riverwatch/_?orgId=1&panelId=1&theme=dark&from=now-7d&to=now%2B5d&refresh=5m&kiosk
               classes: h-[640px] w-full
               referrerPolicy: same-origin
               allowScrolling: "no"
-
-    - Riverwatch:
         - Lockport (Lock 2):
             description: Kentucky River
             href: https://water.noaa.gov/gauges/lptk2

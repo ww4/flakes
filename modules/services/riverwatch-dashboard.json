@@ -13,27 +13,83 @@
     {
       "id": 1,
       "type": "timeseries",
-      "title": "Stage (ft)",
-      "datasource": "Prometheus",
+      "title": "Stage (ft) — observed + NWPS forecast",
+      "description": "LPTK2/GSTK2 observed stage from Prometheus + LPTK2 5-day NWPS forecast via Infinity datasource. Threshold lines emitted as vector(N) constants so they render continuously regardless of source-data cadence. This is the canonical stage panel; also embedded on rosemaryacres.com Homepage.",
+      "datasource": { "type": "datasource", "uid": "-- Mixed --" },
       "gridPos": { "h": 10, "w": 18, "x": 0, "y": 0 },
       "targets": [
-        { "expr": "max without(instance,job) (riverwatch_stage_ft{gauge=\"LPTK2\"})",                       "legendFormat": "Lockport (LPTK2)",     "refId": "A" },
-        { "expr": "max without(instance,job) (riverwatch_stage_ft{gauge=\"GSTK2\"})",                       "legendFormat": "Gratz / Lock 3 (GSTK2)", "refId": "B" },
-        { "expr": "max without(instance,job) (riverwatch_flood_threshold_ft{gauge=\"LPTK2\",category=\"action\"})",   "legendFormat": "LPTK2 action",   "refId": "C" },
-        { "expr": "max without(instance,job) (riverwatch_flood_threshold_ft{gauge=\"LPTK2\",category=\"minor\"})",    "legendFormat": "LPTK2 minor",    "refId": "D" },
-        { "expr": "max without(instance,job) (riverwatch_flood_threshold_ft{gauge=\"LPTK2\",category=\"moderate\"})", "legendFormat": "LPTK2 moderate", "refId": "E" },
-        { "expr": "max without(instance,job) (riverwatch_flood_threshold_ft{gauge=\"LPTK2\",category=\"major\"})",    "legendFormat": "LPTK2 major",    "refId": "F" }
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "max without(instance,job) (riverwatch_stage_ft{gauge=\"LPTK2\"})",
+          "legendFormat": "Lockport (LPTK2) observed"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "max without(instance,job) (riverwatch_stage_ft{gauge=\"GSTK2\"})",
+          "legendFormat": "Gratz / Lock 3 (GSTK2) observed"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "nwps-infinity" },
+          "type": "json",
+          "source": "url",
+          "url": "https://api.water.noaa.gov/nwps/v1/gauges/LPTK2/stageflow/forecast",
+          "url_options": { "method": "GET", "data": "" },
+          "parser": "backend",
+          "format": "timeseries",
+          "root_selector": "data",
+          "columns": [
+            { "selector": "validTime", "text": "time", "type": "timestamp" },
+            { "selector": "primary", "text": "LPTK2 NWPS forecast", "type": "number" }
+          ]
+        },
+        { "refId": "D", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "vector(30)", "legendFormat": "LPTK2 action"    },
+        { "refId": "E", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "vector(33)", "legendFormat": "LPTK2 minor"     },
+        { "refId": "F", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "vector(43)", "legendFormat": "LPTK2 moderate"  },
+        { "refId": "G", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "vector(49)", "legendFormat": "LPTK2 major"     }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "lengthft",
-          "custom": { "lineWidth": 2, "fillOpacity": 5, "showPoints": "never" }
+          "custom": { "lineWidth": 2, "fillOpacity": 15, "showPoints": "auto", "spanNulls": true }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "LPTK2 action"   }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }, { "id": "custom.fillOpacity", "value": 0 } ] },
-          { "matcher": { "id": "byName", "options": "LPTK2 minor"    }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }, { "id": "custom.fillOpacity", "value": 0 } ] },
-          { "matcher": { "id": "byName", "options": "LPTK2 moderate" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red"    } }, { "id": "custom.fillOpacity", "value": 0 } ] },
-          { "matcher": { "id": "byName", "options": "LPTK2 major"    }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+          { "matcher": { "id": "byName", "options": "Gratz / Lock 3 (GSTK2) observed" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "dark-blue" } }
+            ] },
+          { "matcher": { "id": "byName", "options": "LPTK2 NWPS forecast" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 6] } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "light-blue" } }
+            ] },
+          { "matcher": { "id": "byName", "options": "LPTK2 action" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }
+            ] },
+          { "matcher": { "id": "byName", "options": "LPTK2 minor" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
+            ] },
+          { "matcher": { "id": "byName", "options": "LPTK2 moderate" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ] },
+          { "matcher": { "id": "byName", "options": "LPTK2 major" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }
+            ] }
         ]
       },
       "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["lastNotNull"] } }
@@ -98,93 +154,6 @@
       "targets": [ { "expr": "max without(instance,job) (riverwatch_stage_ft{gauge=\"GSTK2\"})", "refId": "A" } ],
       "fieldConfig": { "defaults": { "unit": "lengthft" } },
       "options": { "colorMode": "background", "graphMode": "area", "textMode": "auto" }
-    },
-    {
-      "id": 7,
-      "type": "timeseries",
-      "title": "Stage — last 7 days + NWPS forecast (embed)",
-      "description": "Embed-friendly variant: LPTK2/GSTK2 observed stage from Prometheus + NWPS 5-day forecast pulled live via Infinity datasource. Y auto-scales tight to actual data. Surfaced on rosemaryacres.com Homepage.",
-      "datasource": { "type": "datasource", "uid": "-- Mixed --" },
-      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 17 },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "max without(instance,job) (riverwatch_stage_ft{gauge=\"LPTK2\"})",
-          "legendFormat": "Lockport (LPTK2) observed"
-        },
-        {
-          "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "max without(instance,job) (riverwatch_stage_ft{gauge=\"GSTK2\"})",
-          "legendFormat": "Gratz / Lock 3 (GSTK2) observed"
-        },
-        {
-          "refId": "C",
-          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "nwps-infinity" },
-          "type": "json",
-          "source": "url",
-          "url": "https://api.water.noaa.gov/nwps/v1/gauges/LPTK2/stageflow/forecast",
-          "url_options": { "method": "GET", "data": "" },
-          "parser": "backend",
-          "format": "timeseries",
-          "root_selector": "data",
-          "columns": [
-            { "selector": "validTime", "text": "time", "type": "timestamp" },
-            { "selector": "primary", "text": "LPTK2 NWPS forecast", "type": "number" }
-          ]
-        },
-        { "refId": "D", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "vector(30)", "legendFormat": "LPTK2 action"    },
-        { "refId": "E", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "vector(33)", "legendFormat": "LPTK2 minor"     },
-        { "refId": "F", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "vector(43)", "legendFormat": "LPTK2 moderate"  },
-        { "refId": "G", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "vector(49)", "legendFormat": "LPTK2 major"     }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "lengthft",
-          "custom": { "lineWidth": 2, "fillOpacity": 15, "showPoints": "auto", "spanNulls": true },
-          "thresholds": { "mode": "absolute", "steps": [
-            { "color": "green",  "value": null },
-            { "color": "yellow", "value": 30 },
-            { "color": "orange", "value": 33 },
-            { "color": "red",    "value": 43 },
-            { "color": "purple", "value": 49 }
-          ] }
-        },
-        "overrides": [
-          { "matcher": { "id": "byName", "options": "LPTK2 NWPS forecast" },
-            "properties": [
-              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 6] } },
-              { "id": "custom.fillOpacity", "value": 0 },
-              { "id": "color", "value": { "mode": "fixed", "fixedColor": "light-blue" } }
-            ] },
-          { "matcher": { "id": "byName", "options": "LPTK2 action" },
-            "properties": [
-              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
-              { "id": "custom.fillOpacity", "value": 0 },
-              { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }
-            ] },
-          { "matcher": { "id": "byName", "options": "LPTK2 minor" },
-            "properties": [
-              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
-              { "id": "custom.fillOpacity", "value": 0 },
-              { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
-            ] },
-          { "matcher": { "id": "byName", "options": "LPTK2 moderate" },
-            "properties": [
-              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
-              { "id": "custom.fillOpacity", "value": 0 },
-              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
-            ] },
-          { "matcher": { "id": "byName", "options": "LPTK2 major" },
-            "properties": [
-              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
-              { "id": "custom.fillOpacity", "value": 0 },
-              { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }
-            ] }
-        ]
-      },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["lastNotNull"] } }
     },
     {
       "id": 6,
