@@ -177,22 +177,6 @@ let
                     status:
                       observed: floodCategory
                   label: Status
-        - Lock 3 (Gratz):
-            description: Kentucky River
-            href: https://water.noaa.gov/gauges/gstk2
-            icon: mdi-waves
-            widget:
-              type: customapi
-              url: https://api.water.noaa.gov/nwps/v1/gauges/GSTK2
-              refreshInterval: 600000
-              method: GET
-              display: list
-              mappings:
-                - field:
-                    status:
-                      observed: primary
-                  label: Stage (ft)
-
     - Recent Alerts:
         - ntfy:
             description: Latest message on gromit-alerts
