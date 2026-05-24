@@ -13,7 +13,7 @@
     {
       "type": "timeseries",
       "title": "Stage (ft)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": "Prometheus",
       "gridPos": { "h": 10, "w": 18, "x": 0, "y": 0 },
       "targets": [
         { "expr": "riverwatch_stage_ft{gauge=\"LPTK2\"}",                       "legendFormat": "Lockport (LPTK2)",     "refId": "A" },
@@ -40,7 +40,7 @@
     {
       "type": "stat",
       "title": "LPTK2 current stage",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": "Prometheus",
       "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
       "targets": [ { "expr": "riverwatch_stage_ft{gauge=\"LPTK2\"}", "refId": "A" } ],
       "fieldConfig": {
@@ -60,7 +60,7 @@
     {
       "type": "stat",
       "title": "LPTK2 forecast crest",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": "Prometheus",
       "gridPos": { "h": 5, "w": 6, "x": 18, "y": 5 },
       "targets": [ { "expr": "riverwatch_forecast_crest_ft{gauge=\"LPTK2\"}", "refId": "A" } ],
       "fieldConfig": {
@@ -80,7 +80,7 @@
     {
       "type": "timeseries",
       "title": "Flow (LPTK2, kcfs)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": "Prometheus",
       "gridPos": { "h": 7, "w": 12, "x": 0, "y": 10 },
       "targets": [ { "expr": "riverwatch_flow_kcfs{gauge=\"LPTK2\"}", "legendFormat": "Lockport flow", "refId": "A" } ],
       "fieldConfig": { "defaults": { "unit": "none", "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
@@ -88,7 +88,7 @@
     {
       "type": "stat",
       "title": "GSTK2 current stage",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": "Prometheus",
       "gridPos": { "h": 7, "w": 6, "x": 12, "y": 10 },
       "targets": [ { "expr": "riverwatch_stage_ft{gauge=\"GSTK2\"}", "refId": "A" } ],
       "fieldConfig": { "defaults": { "unit": "lengthft" } },
@@ -97,7 +97,7 @@
     {
       "type": "stat",
       "title": "Observation age",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": "Prometheus",
       "gridPos": { "h": 7, "w": 6, "x": 18, "y": 10 },
       "targets": [ { "expr": "riverwatch_observation_age_seconds", "legendFormat": "{{ gauge }}", "refId": "A" } ],
       "fieldConfig": {

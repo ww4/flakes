@@ -119,7 +119,6 @@ in {
       enable = true;
       datasources.settings.datasources = [{
         name = "Prometheus";
-        uid = "prometheus";        # stable uid so provisioned dashboards can reference it
         type = "prometheus";
         access = "proxy";
         url = "http://127.0.0.1:${toString prometheusPort}";
