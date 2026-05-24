@@ -71,7 +71,7 @@ in {
           # meaningful until the shim is wired up. That's OK; we have no
           # alert rules defined yet.
           webhook_configs = [{
-            url = "http://127.0.0.1:9094/alert";
+            url = "http://127.0.0.1:9095/alert";
             send_resolved = true;
           }];
         }];

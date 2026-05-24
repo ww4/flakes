@@ -144,4 +144,109 @@ in {
     # between refreshes; not a problem.
     scrape_interval = "5m";
   }];
+
+  # Alert rules. Routed via Alertmanager → ntfy shim (see
+  # alertmanager-ntfy.nix) onto the gromit-alerts topic.
+  services.prometheus.rules = [
+    (builtins.toJSON {
+      groups = [{
+        name = "riverwatch";
+        interval = "1m";
+        rules = [
+          # Active flood — gauge currently sitting in action/minor/moderate/major.
+          # Severity scales with category.
+          {
+            alert = "RiverFloodAction";
+            expr = ''riverwatch_flood_category_active{category="action"} == 1'';
+            for = "5m";
+            labels.severity = "warning";
+            annotations = {
+              summary = "{{ $labels.gauge }} at ACTION stage";
+              description = "Gauge {{ $labels.gauge }} has entered the ACTION flood category (NOAA-defined threshold). Stage is being monitored.";
+            };
+          }
+          {
+            alert = "RiverFloodMinor";
+            expr = ''riverwatch_flood_category_active{category="minor"} == 1'';
+            for = "5m";
+            labels.severity = "warning";
+            annotations = {
+              summary = "{{ $labels.gauge }} at MINOR flood stage";
+              description = "Gauge {{ $labels.gauge }} has reached MINOR flood category (NOAA threshold).";
+            };
+          }
+          {
+            alert = "RiverFloodModerate";
+            expr = ''riverwatch_flood_category_active{category="moderate"} == 1'';
+            for = "5m";
+            labels.severity = "critical";
+            annotations = {
+              summary = "{{ $labels.gauge }} at MODERATE flood stage";
+              description = "Gauge {{ $labels.gauge }} has reached MODERATE flood category. Property damage possible.";
+            };
+          }
+          {
+            alert = "RiverFloodMajor";
+            expr = ''riverwatch_flood_category_active{category="major"} == 1'';
+            for = "5m";
+            labels.severity = "critical";
+            annotations = {
+              summary = "{{ $labels.gauge }} at MAJOR flood stage";
+              description = "Gauge {{ $labels.gauge }} has reached MAJOR flood category. Significant impact expected.";
+            };
+          }
+
+          # Forecast says we'll cross the action threshold within the forecast
+          # horizon (NWPS forecasts run ~3 days out for these gauges).
+          {
+            alert = "RiverForecastCrestAboveAction";
+            expr = ''riverwatch_forecast_crest_ft >= on(gauge) group_right riverwatch_flood_threshold_ft{category="action"}'';
+            for = "10m";
+            labels.severity = "warning";
+            annotations = {
+              summary = "{{ $labels.gauge }} forecast crest above ACTION stage";
+              description = "NWPS forecast for {{ $labels.gauge }} predicts the river will reach at least the ACTION threshold within the forecast horizon.";
+            };
+          }
+
+          # Rate of rise — stage climbed more than 1.5 ft in the last 6 hours.
+          # Needs at least 6 h of collected data before it can fire.
+          {
+            alert = "RiverRapidRise";
+            expr = ''(riverwatch_stage_ft - (riverwatch_stage_ft offset 6h)) > 1.5'';
+            for = "15m";
+            labels.severity = "warning";
+            annotations = {
+              summary = "{{ $labels.gauge }} rising rapidly";
+              description = "Stage at {{ $labels.gauge }} has risen more than 1.5 ft in the last 6 hours — current value {{ $value }} ft above 6h-ago value.";
+            };
+          }
+
+          # Operational: NWPS observation hasn't updated in 4+ hours.
+          {
+            alert = "RiverObservationStale";
+            expr = "riverwatch_observation_age_seconds > 14400";
+            for = "30m";
+            labels.severity = "info";
+            annotations = {
+              summary = "{{ $labels.gauge }} observation stale (>4 h)";
+              description = "Last NWPS observation for {{ $labels.gauge }} is {{ $value | humanizeDuration }} old. Possible NWPS / NOAA upstream issue.";
+            };
+          }
+
+          # Operational: exporter can't reach NWPS for 30+ minutes.
+          {
+            alert = "RiverwatchFetchFailing";
+            expr = "riverwatch_fetch_success == 0";
+            for = "30m";
+            labels.severity = "warning";
+            annotations = {
+              summary = "Riverwatch exporter can't reach NWPS for {{ $labels.gauge }}";
+              description = "The riverwatch_exporter has been failing to fetch {{ $labels.gauge }} for more than 30 minutes. Check journalctl -u riverwatch-exporter.";
+            };
+          }
+        ];
+      }];
+    })
+  ];
 }
