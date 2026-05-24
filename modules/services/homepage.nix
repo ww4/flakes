@@ -137,12 +137,12 @@ let
                 - field:
                     status:
                       forecast: primary
-                  label: Forecast (ft)
+                  label: Forecast crest (ft)
                 - field:
                     status:
                       observed: floodCategory
                   label: Status
-        - Lock 3 (Gest):
+        - Lock 3 (Gratz):
             description: Kentucky River
             href: https://water.noaa.gov/gauges/gstk2
             icon: mdi-waves
@@ -157,18 +157,6 @@ let
                     status:
                       observed: primary
                   label: Stage (ft)
-                - field:
-                    status:
-                      observed: secondary
-                  label: Flow (kcfs)
-                - field:
-                    status:
-                      forecast: primary
-                  label: Forecast (ft)
-                - field:
-                    status:
-                      observed: floodCategory
-                  label: Status
 
     - Recent Alerts:
         - ntfy:
