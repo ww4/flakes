@@ -116,8 +116,21 @@ in {
         domain = grafanaHost;
         root_url = "https://${grafanaHost}/";
       };
-      security.secret_key = "$__file{/var/lib/grafana/secret_key}";
+      security = {
+        secret_key = "$__file{/var/lib/grafana/secret_key}";
+        # Allow iframe embedding so the Homepage tile can render a panel.
+        # Grafana is already Tailscale-only; nginx isn't adding X-Frame-Options.
+        allow_embedding = true;
+      };
       analytics.reporting_enabled = false;
+      # Anonymous Viewer so the Homepage iframe (no login) can fetch the panel.
+      # Same Tailscale-only perimeter as the rest of Grafana — anyone who can
+      # reach the URL was already trusted.
+      "auth.anonymous" = {
+        enabled = true;
+        org_role = "Viewer";
+        org_name = "Main Org.";
+      };
     };
     provision = {
       enable = true;

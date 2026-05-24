@@ -50,6 +50,9 @@ let
       Monitoring:
         style: row
         columns: 2
+      River Graph:
+        style: row
+        columns: 1
       Riverwatch:
         style: row
         columns: 2
@@ -129,6 +132,24 @@ let
             widget:
               type: prometheus
               url: https://prometheus.rosemaryacres.com
+
+    - River Graph:
+        - Kentucky River — last 7 days:
+            description: Stage at Lockport & Gratz with flood thresholds
+            href: https://grafana.rosemaryacres.com/d/riverwatch
+            icon: mdi-chart-line
+            widget:
+              # Embeds panel 1 (Stage time series + flood-threshold reference
+              # lines) from the Riverwatch Grafana dashboard. Anonymous Viewer
+              # is enabled in monitoring.nix so this loads without auth — fine
+              # because Grafana is Tailscale-only. allow_embedding=true is also
+              # set there so Grafana doesn't send X-Frame-Options: deny.
+              type: iframe
+              name: River Graph
+              src: https://grafana.rosemaryacres.com/d-solo/riverwatch/_?orgId=1&panelId=1&theme=dark&from=now-7d&to=now&refresh=5m&kiosk
+              classes: h-[420px] w-full
+              referrerPolicy: same-origin
+              allowScrolling: "no"
 
     - Riverwatch:
         - Lockport (Lock 2):

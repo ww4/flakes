@@ -11,6 +11,7 @@
   "annotations": { "list": [] },
   "panels": [
     {
+      "id": 1,
       "type": "timeseries",
       "title": "Stage (ft)",
       "datasource": "Prometheus",
@@ -38,6 +39,7 @@
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
     },
     {
+      "id": 2,
       "type": "stat",
       "title": "LPTK2 current stage",
       "datasource": "Prometheus",
@@ -58,6 +60,7 @@
       "options": { "colorMode": "background", "graphMode": "area", "textMode": "auto" }
     },
     {
+      "id": 3,
       "type": "stat",
       "title": "LPTK2 forecast crest",
       "datasource": "Prometheus",
@@ -78,6 +81,7 @@
       "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto" }
     },
     {
+      "id": 4,
       "type": "timeseries",
       "title": "Flow (LPTK2, kcfs)",
       "datasource": "Prometheus",
@@ -86,6 +90,7 @@
       "fieldConfig": { "defaults": { "unit": "none", "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
     },
     {
+      "id": 5,
       "type": "stat",
       "title": "GSTK2 current stage",
       "datasource": "Prometheus",
@@ -95,6 +100,7 @@
       "options": { "colorMode": "background", "graphMode": "area", "textMode": "auto" }
     },
     {
+      "id": 6,
       "type": "stat",
       "title": "Observation age",
       "datasource": "Prometheus",
