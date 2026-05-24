@@ -52,7 +52,7 @@ let
         columns: 2
       Riverwatch:
         style: row
-        columns: 1
+        columns: 2
       Recent Alerts:
         style: row
         columns: 1
