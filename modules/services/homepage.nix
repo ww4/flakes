@@ -146,7 +146,7 @@ let
               name: River Graph
               # `to=now+5d` (URL-encoded) makes room for the NWPS forecast
               # overlay, which extends ~5 days into the future.
-              src: https://grafana.rosemaryacres.com/d-solo/riverwatch/_?orgId=1&panelId=1&theme=dark&from=now-7d&to=now%2B5d&refresh=5m&kiosk
+              src: https://grafana.rosemaryacres.com/d-solo/riverwatch/_?orgId=1&panelId=7&theme=dark&from=now-7d&to=now%2B5d&refresh=5m&kiosk
               classes: h-[640px] w-full
               referrerPolicy: same-origin
               allowScrolling: "no"

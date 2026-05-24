@@ -156,6 +156,62 @@
       "options": { "colorMode": "background", "graphMode": "area", "textMode": "auto" }
     },
     {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Stage (embed) — observed + forecast, no thresholds",
+      "description": "Embed-friendly variant of panel 1 with the flood-threshold lines stripped out so Y auto-scales tight to actual stage values (~8–18 ft) instead of being forced to 0–50 ft to show the action/minor/moderate/major markers. Surfaced on rosemaryacres.com Homepage.",
+      "datasource": { "type": "datasource", "uid": "-- Mixed --" },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 17 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "max without(instance,job) (riverwatch_stage_ft{gauge=\"LPTK2\"})",
+          "legendFormat": "Lockport (LPTK2) observed"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "max without(instance,job) (riverwatch_stage_ft{gauge=\"GSTK2\"})",
+          "legendFormat": "Gratz / Lock 3 (GSTK2) observed"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "nwps-infinity" },
+          "type": "json",
+          "source": "url",
+          "url": "https://api.water.noaa.gov/nwps/v1/gauges/LPTK2/stageflow/forecast",
+          "url_options": { "method": "GET", "data": "" },
+          "parser": "backend",
+          "format": "timeseries",
+          "root_selector": "data",
+          "columns": [
+            { "selector": "validTime", "text": "time", "type": "timestamp" },
+            { "selector": "primary", "text": "LPTK2 NWPS forecast", "type": "number" }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "lengthft",
+          "custom": { "lineWidth": 2, "fillOpacity": 15, "showPoints": "auto", "spanNulls": true }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Gratz / Lock 3 (GSTK2) observed" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "dark-blue" } }
+            ] },
+          { "matcher": { "id": "byName", "options": "LPTK2 NWPS forecast" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 6] } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "light-blue" } }
+            ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    },
+    {
       "id": 6,
       "type": "stat",
       "title": "Observation age",
