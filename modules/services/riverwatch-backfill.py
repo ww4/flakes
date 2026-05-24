@@ -124,11 +124,16 @@ def main():
     # at all and unify in Grafana via `sum without(instance, job) (…)`.
     SCRAPE_LABELS = ""
 
-    # Buffer all (timestamp, line) tuples so we can sort by timestamp at
-    # the end — USGS returns separate time-series per parameter, so writing
-    # in API order produces samples not in monotonic order, which promtool
-    # rejects with "out of order sample".
-    rows: list[tuple[int, str]] = []
+    # Buffer rows keyed by (identity, timestamp) so we can both
+    #   (a) sort by timestamp at the end — USGS returns separate time-series
+    #       per parameter, so writing in API order produces samples not in
+    #       monotonic order, which promtool rejects with "out of order".
+    #   (b) deduplicate — adjacent USGS chunks each include the full
+    #       boundary day inclusively, so without dedup we hit
+    #       "duplicate sample for timestamp ...; overrides not allowed"
+    #       in promtool. Identity = full "metric{labels}" prefix; later
+    #       writes overwrite earlier (last-wins).
+    rows: dict[tuple[str, int], str] = {}
 
     for i, (cs, ce) in enumerate(chunk_range(start, end, args.chunk_days), 1):
         print(f"[{gauge}/{args.freq}] chunk {i}/{total_chunks}: {cs.date()} → {ce.date()}",
@@ -157,25 +162,30 @@ def main():
                     scaled = raw * unit_factor
                     dt = parse_iso(v["dateTime"])
                     unix_ts = int(dt.timestamp())
-                    rows.append((unix_ts, f'{metric_name}{{gauge="{gauge}"}} {scaled} {unix_ts}\n'))
+                    identity = f'{metric_name}{{gauge="{gauge}"}}'
+                    rows[(identity, unix_ts)] = f'{identity} {scaled} {unix_ts}\n'
 
                     if var_code == "00065" and will_compute_categories:
                         cat = active_category(scaled, thresholds)
                         for c in CATEGORIES:
                             val = 1 if c == cat else 0
-                            rows.append((unix_ts, f'riverwatch_flood_category_active{{gauge="{gauge}",category="{c}"}} {val} {unix_ts}\n'))
+                            ident = f'riverwatch_flood_category_active{{gauge="{gauge}",category="{c}"}}'
+                            rows[(ident, unix_ts)] = f'{ident} {val} {unix_ts}\n'
 
-    # Threshold boundary rows at start + end of the range
+    # Threshold rows at every observed timestamp so the threshold series
+    # plots as a continuous horizontal line in Grafana. The alternative —
+    # boundary points only — leaves multi-year gaps and only renders as
+    # dots at the edges, even with --query.lookback-delta bumped.
     if will_emit_thresholds:
+        observed_timestamps = sorted({ts for (_, ts) in rows.keys()})
         for cat, th in thresholds.items():
-            rows.append((int(start.timestamp()),
-                         f'riverwatch_flood_threshold_ft{{gauge="{gauge}",category="{cat}"}} {th} {int(start.timestamp())}\n'))
-            rows.append((int(end.timestamp()),
-                         f'riverwatch_flood_threshold_ft{{gauge="{gauge}",category="{cat}"}} {th} {int(end.timestamp())}\n'))
+            ident = f'riverwatch_flood_threshold_ft{{gauge="{gauge}",category="{cat}"}}'
+            for ts in observed_timestamps:
+                rows[(ident, ts)] = f'{ident} {th} {ts}\n'
 
-    # Sort by timestamp (stable — preserves order of same-timestamp rows).
-    rows.sort(key=lambda x: x[0])
-    samples_emitted = len(rows)
+    # Sort by timestamp for promtool's monotonic-write requirement.
+    sorted_items = sorted(rows.items(), key=lambda kv: kv[0][1])
+    samples_emitted = len(sorted_items)
 
     with out_path.open("w") as f:
         # All # HELP / # TYPE headers up front — OpenMetrics requires them
@@ -190,7 +200,7 @@ def main():
         if will_emit_thresholds:
             f.write("# HELP riverwatch_flood_threshold_ft Stage threshold for this flood category\n")
             f.write("# TYPE riverwatch_flood_threshold_ft gauge\n")
-        for _, line in rows:
+        for _, line in sorted_items:
             f.write(line)
         f.write("# EOF\n")
 

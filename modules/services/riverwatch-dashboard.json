@@ -133,7 +133,11 @@
             { "selector": "validTime", "text": "time", "type": "timestamp" },
             { "selector": "primary", "text": "LPTK2 NWPS forecast", "type": "number" }
           ]
-        }
+        },
+        { "refId": "D", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "vector(30)", "legendFormat": "LPTK2 action"    },
+        { "refId": "E", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "vector(33)", "legendFormat": "LPTK2 minor"     },
+        { "refId": "F", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "vector(43)", "legendFormat": "LPTK2 moderate"  },
+        { "refId": "G", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "vector(49)", "legendFormat": "LPTK2 major"     }
       ],
       "fieldConfig": {
         "defaults": {
@@ -153,6 +157,30 @@
               { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 6] } },
               { "id": "custom.fillOpacity", "value": 0 },
               { "id": "color", "value": { "mode": "fixed", "fixedColor": "light-blue" } }
+            ] },
+          { "matcher": { "id": "byName", "options": "LPTK2 action" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }
+            ] },
+          { "matcher": { "id": "byName", "options": "LPTK2 minor" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
+            ] },
+          { "matcher": { "id": "byName", "options": "LPTK2 moderate" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ] },
+          { "matcher": { "id": "byName", "options": "LPTK2 major" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }
             ] }
         ]
       },

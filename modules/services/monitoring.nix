@@ -25,6 +25,10 @@ in {
     enable = true;
     port = prometheusPort;
     listenAddress = "127.0.0.1";
+    # Default 5m stales out our 15-min-cadence USGS backfill samples when
+    # Grafana picks a >5m step. Bump to 16m so a backfill sample remains
+    # queryable until the next one would have arrived.
+    extraFlags = [ "--query.lookback-delta=16m" ];
     # 110y — covers the riverwatch USGS backfill all the way back to LPTK2's
     # gauge install in 1925 (we don't realistically expect to keep Prometheus
     # itself for 110y, but this stops time-based retention from pruning the
