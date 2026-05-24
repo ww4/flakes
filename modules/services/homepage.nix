@@ -146,7 +146,7 @@ let
               # set there so Grafana doesn't send X-Frame-Options: deny.
               type: iframe
               name: River Graph
-              src: https://grafana.rosemaryacres.com/d-solo/riverwatch/_?orgId=1&panelId=1&theme=dark&from=now-7d&to=now&refresh=5m&kiosk
+              src: https://grafana.rosemaryacres.com/d-solo/riverwatch/_?orgId=1&panelId=7&theme=dark&from=now-7d&to=now&refresh=5m&kiosk
               classes: h-[420px] w-full
               referrerPolicy: same-origin
               allowScrolling: "no"
