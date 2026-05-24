@@ -40,8 +40,10 @@ GRAVEYARD_RETENTION_DAYS=30
 MAX_DELETE=250
 
 # rsync excludes, anchored at the transfer root. Keep the restic repo, the
-# graveyard, and the drive sentinels out of the mirror.
-EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member)
+# graveyard, and the drive sentinels out of the mirror. /arr is tier-3
+# content (mergerfs+snapraid parity protects it; re-download is the DR path)
+# and is deliberately NOT mirrored — keeps the backup pool focused on tier 2.
+EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclude=/arr)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Notification failures must never abort a backup.

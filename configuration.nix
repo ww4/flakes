@@ -40,6 +40,7 @@
     ./modules/services/monitoring.nix
     ./modules/services/riverwatch.nix
     ./modules/services/alertmanager-ntfy.nix
+    ./modules/services/snapraid.nix         # inert until parity drive arrives (enable = false)
   ];
 
   # The NixOS release the system was first installed from. Leave it pinned —

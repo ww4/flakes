@@ -18,6 +18,8 @@ let
     "/var/lib/audiobookshelf"
     "/var/lib/tandoor-recipes"
     "/var/lib/jellyfin"
+    "/var/lib/grafana"                 # dashboards + sqlite state DB
+    "/var/lib/homepage"                # secrets.env — Homepage widget API keys (root 0600)
     "/var/backup/postgresql"
 
     # Nextcloud external storage (the /Bitcoin and /Fusion mounts). Live data
