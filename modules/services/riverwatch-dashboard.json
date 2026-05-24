@@ -1,0 +1,117 @@
+{
+  "title": "Riverwatch — Kentucky River",
+  "uid": "riverwatch",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "tags": ["river", "noaa", "nwps"],
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Stage (ft)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 10, "w": 18, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "riverwatch_stage_ft{gauge=\"LPTK2\"}",                       "legendFormat": "Lockport (LPTK2)",     "refId": "A" },
+        { "expr": "riverwatch_stage_ft{gauge=\"GSTK2\"}",                       "legendFormat": "Gratz / Lock 3 (GSTK2)", "refId": "B" },
+        { "expr": "riverwatch_flood_threshold_ft{gauge=\"LPTK2\",category=\"action\"}",   "legendFormat": "LPTK2 action",   "refId": "C" },
+        { "expr": "riverwatch_flood_threshold_ft{gauge=\"LPTK2\",category=\"minor\"}",    "legendFormat": "LPTK2 minor",    "refId": "D" },
+        { "expr": "riverwatch_flood_threshold_ft{gauge=\"LPTK2\",category=\"moderate\"}", "legendFormat": "LPTK2 moderate", "refId": "E" },
+        { "expr": "riverwatch_flood_threshold_ft{gauge=\"LPTK2\",category=\"major\"}",    "legendFormat": "LPTK2 major",    "refId": "F" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "lengthft",
+          "custom": { "lineWidth": 2, "fillOpacity": 5, "showPoints": "never" }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "LPTK2 action"   }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }, { "id": "custom.fillOpacity", "value": 0 } ] },
+          { "matcher": { "id": "byName", "options": "LPTK2 minor"    }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }, { "id": "custom.fillOpacity", "value": 0 } ] },
+          { "matcher": { "id": "byName", "options": "LPTK2 moderate" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red"    } }, { "id": "custom.fillOpacity", "value": 0 } ] },
+          { "matcher": { "id": "byName", "options": "LPTK2 major"    }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    },
+    {
+      "type": "stat",
+      "title": "LPTK2 current stage",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "targets": [ { "expr": "riverwatch_stage_ft{gauge=\"LPTK2\"}", "refId": "A" } ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "lengthft",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green",  "value": null },
+            { "color": "yellow", "value": 30 },
+            { "color": "orange", "value": 33 },
+            { "color": "red",    "value": 43 },
+            { "color": "purple", "value": 49 }
+          ] }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "area", "textMode": "auto" }
+    },
+    {
+      "type": "stat",
+      "title": "LPTK2 forecast crest",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 5 },
+      "targets": [ { "expr": "riverwatch_forecast_crest_ft{gauge=\"LPTK2\"}", "refId": "A" } ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "lengthft",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green",  "value": null },
+            { "color": "yellow", "value": 30 },
+            { "color": "orange", "value": 33 },
+            { "color": "red",    "value": 43 },
+            { "color": "purple", "value": 49 }
+          ] }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto" }
+    },
+    {
+      "type": "timeseries",
+      "title": "Flow (LPTK2, kcfs)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 10 },
+      "targets": [ { "expr": "riverwatch_flow_kcfs{gauge=\"LPTK2\"}", "legendFormat": "Lockport flow", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
+    },
+    {
+      "type": "stat",
+      "title": "GSTK2 current stage",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 10 },
+      "targets": [ { "expr": "riverwatch_stage_ft{gauge=\"GSTK2\"}", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "lengthft" } },
+      "options": { "colorMode": "background", "graphMode": "area", "textMode": "auto" }
+    },
+    {
+      "type": "stat",
+      "title": "Observation age",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 10 },
+      "targets": [ { "expr": "riverwatch_observation_age_seconds", "legendFormat": "{{ gauge }}", "refId": "A" } ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green",  "value": null },
+            { "color": "yellow", "value": 3600 },
+            { "color": "orange", "value": 7200 },
+            { "color": "red",    "value": 14400 }
+          ] }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" }
+    }
+  ]
+}

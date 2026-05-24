@@ -145,6 +145,20 @@ in {
     scrape_interval = "5m";
   }];
 
+  # Grafana dashboard for the river data, provisioned read-only from the
+  # flake (so the dashboard is reproducible and version-controlled). Live
+  # at https://grafana.rosemaryacres.com/d/riverwatch.
+  services.grafana.provision.dashboards.settings.providers = [{
+    name = "riverwatch";
+    type = "file";
+    folder = "Riverwatch";
+    disableDeletion = true;
+    options.path = pkgs.runCommand "riverwatch-dashboards" { } ''
+      mkdir -p $out
+      ln -s ${./riverwatch-dashboard.json} $out/riverwatch.json
+    '';
+  }];
+
   # Alert rules. Routed via Alertmanager → ntfy shim (see
   # alertmanager-ntfy.nix) onto the gromit-alerts topic.
   services.prometheus.rules = [
