@@ -47,6 +47,9 @@ let
       Infrastructure:
         style: row
         columns: 2
+      Riverwatch:
+        style: row
+        columns: 2
       Recent Alerts:
         style: row
         columns: 1
@@ -110,6 +113,62 @@ let
             description: YouTube archiver
             href: http://100.82.117.116:8945
             icon: pinchflat.png
+
+    - Riverwatch:
+        - Lockport (Lock 2):
+            description: Kentucky River
+            href: https://water.noaa.gov/gauges/lptk2
+            icon: mdi-waves
+            widget:
+              type: customapi
+              url: https://api.water.noaa.gov/nwps/v1/gauges/LPTK2
+              refreshInterval: 600000
+              method: GET
+              display: list
+              mappings:
+                - field:
+                    status:
+                      observed: primary
+                  label: Stage (ft)
+                - field:
+                    status:
+                      observed: secondary
+                  label: Flow (kcfs)
+                - field:
+                    status:
+                      forecast: primary
+                  label: Forecast (ft)
+                - field:
+                    status:
+                      observed: floodCategory
+                  label: Status
+        - Lock 3 (Gest):
+            description: Kentucky River
+            href: https://water.noaa.gov/gauges/gstk2
+            icon: mdi-waves
+            widget:
+              type: customapi
+              url: https://api.water.noaa.gov/nwps/v1/gauges/GSTK2
+              refreshInterval: 600000
+              method: GET
+              display: list
+              mappings:
+                - field:
+                    status:
+                      observed: primary
+                  label: Stage (ft)
+                - field:
+                    status:
+                      observed: secondary
+                  label: Flow (kcfs)
+                - field:
+                    status:
+                      forecast: primary
+                  label: Forecast (ft)
+                - field:
+                    status:
+                      observed: floodCategory
+                  label: Status
 
     - Recent Alerts:
         - ntfy:
