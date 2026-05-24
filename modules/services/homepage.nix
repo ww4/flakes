@@ -15,6 +15,7 @@
 #   HOMEPAGE_VAR_NEXTCLOUD_PASS=...      # an app-password from Nextcloud
 #   HOMEPAGE_VAR_AUDIOBOOKSHELF_KEY=...
 #   HOMEPAGE_VAR_TANDOOR_KEY=...
+#   HOMEPAGE_VAR_GRAFANA_KEY=...        # Grafana service-account API token
 #
 # How to mint each key:
 #   - Jellyfin       → Dashboard → Advanced → API Keys → +
@@ -23,6 +24,8 @@
 #                      new app password" (use that, not the login password)
 #   - Audiobookshelf → Settings → Users → click user → API Token
 #   - Tandoor        → User dropdown → API Token → Create Token
+#   - Grafana        → Administration → Service accounts → Add service
+#                      account (Viewer role) → Add service account token
 #
 # DNS prerequisite on Cloudflare:
 #   A   rosemaryacres.com       100.82.117.116    (Tailscale IP, proxy off)
@@ -47,6 +50,9 @@ let
       Infrastructure:
         style: row
         columns: 2
+      Monitoring:
+        style: row
+        columns: 3
       Riverwatch:
         style: row
         columns: 2
@@ -113,6 +119,32 @@ let
             description: YouTube archiver
             href: http://100.82.117.116:8945
             icon: pinchflat.png
+
+    - Monitoring:
+        - Grafana:
+            description: Dashboards & alerting
+            href: https://grafana.rosemaryacres.com
+            icon: grafana.png
+            widget:
+              type: grafana
+              url: https://grafana.rosemaryacres.com
+              # Generate at Grafana → Administration → Service accounts →
+              # New service account (Viewer role) → Add service account token.
+              # Add as HOMEPAGE_VAR_GRAFANA_KEY in /var/lib/homepage/secrets.env
+              # then `sudo systemctl restart docker-homepage`.
+              username: api_key
+              password: {{HOMEPAGE_VAR_GRAFANA_KEY}}
+        - Prometheus:
+            description: Metrics & queries
+            href: https://prometheus.rosemaryacres.com
+            icon: prometheus.png
+            widget:
+              type: prometheus
+              url: https://prometheus.rosemaryacres.com
+        - Alertmanager:
+            description: Alert routing & silences
+            href: https://grafana.rosemaryacres.com/alerting/list
+            icon: alertmanager.png
 
     - Riverwatch:
         - Lockport (Lock 2):
