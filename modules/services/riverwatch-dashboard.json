@@ -36,7 +36,7 @@
           { "matcher": { "id": "byName", "options": "LPTK2 major"    }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }, { "id": "custom.fillOpacity", "value": 0 } ] }
         ]
       },
-      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["lastNotNull"] } }
     },
     {
       "id": 2,
