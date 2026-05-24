@@ -25,7 +25,11 @@ in {
     enable = true;
     port = prometheusPort;
     listenAddress = "127.0.0.1";
-    retentionTime = "365d";
+    # 110y — covers the riverwatch USGS backfill all the way back to LPTK2's
+    # gauge install in 1925 (we don't realistically expect to keep Prometheus
+    # itself for 110y, but this stops time-based retention from pruning the
+    # historical blocks we'll import).
+    retentionTime = "40150d";
     globalConfig = {
       scrape_interval = "1m";
       evaluation_interval = "1m";
