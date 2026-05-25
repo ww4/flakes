@@ -45,12 +45,12 @@
     # /mnt/fusion. Add D3-onward as you reformat sdk and reclaim the
     # decom Hitachis (3× HUA723030, still reliable enterprise drives).
     dataDisks = {
-      d1 = "/mnt/primary/D1";
-      d2 = "/mnt/primary/D2";
-      # d3 = "/mnt/primary/D3";  # sdk after NTFS-triage + reformat
-      # d4 = "/mnt/primary/D4";  # decom Hitachi #1
-      # d5 = "/mnt/primary/D5";  # decom Hitachi #2
-      # d6 = "/mnt/primary/D6";  # decom Hitachi #3
+      d1 = "/mnt/primary/D1";  # sdf 7.3 TB Seagate Expansion
+      d2 = "/mnt/primary/D2";  # sdg 9.1 TB WD WD100EMAZ
+      d3 = "/mnt/primary/D3";  # sdb 2.7 TB Hitachi HUA723030 (ex-decom, 2026-05-25)
+      d4 = "/mnt/primary/D4";  # sdd 2.7 TB Hitachi HUA723030 (ex-decom)
+      d5 = "/mnt/primary/D5";  # sde 2.7 TB Hitachi HUA723030 (ex-decom)
+      # d6 = "/mnt/primary/D6";  # sdk 3.6 TB WD40EZRX (after NTFS-triage finishes)
     };
 
     # Single 10 TB parity disk to start. Add a second entry for 2-disk
@@ -66,7 +66,9 @@
       "/var/lib/snapraid/snapraid.content"
       "/mnt/primary/D1/snapraid.content"
       "/mnt/primary/D2/snapraid.content"
-      # "/mnt/primary/D3/snapraid.content"  # add alongside dataDisks entries
+      "/mnt/primary/D3/snapraid.content"
+      "/mnt/primary/D4/snapraid.content"
+      "/mnt/primary/D5/snapraid.content"
     ];
 
     exclude = [

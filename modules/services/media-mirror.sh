@@ -25,7 +25,7 @@ DST=/mnt/backup/all
 # Physical member drives of each mergerfs pool. Preflight verifies every one is
 # mounted and carries its .pool-member sentinel before any rsync runs — this is
 # what stops an offline drive from being mistaken for mass deletions.
-FUSION_MEMBERS=(/mnt/primary/D1 /mnt/primary/D2)
+FUSION_MEMBERS=(/mnt/primary/D1 /mnt/primary/D2 /mnt/primary/D3 /mnt/primary/D4 /mnt/primary/D5)
 BACKUP_MEMBERS=(/mnt/backup/D1 /mnt/backup/D2 /mnt/backup/D3 /mnt/backup/D4)
 
 STATE=/var/lib/media-mirror

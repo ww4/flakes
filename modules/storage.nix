@@ -4,36 +4,34 @@
 {
   fileSystems = {
   # Physical drives
-      "/mnt/decom/D1" = {  # was mergerD1
-        device = "/dev/disk/by-uuid/4731e760-fe51-48ef-8e35-5b764b84c249";
-        fsType = "ext4";
-        options = [
-          "nofail"
-        ];
+      # Reclaimed from /mnt/decom (3× Hitachi HUA723030 + 1× WD Green) on
+      # 2026-05-25. The three Hitachis joined fusion as D3-D5; the WD Green
+      # (high load-cycle count, tier-3 trust) became /mnt/scratch — outside
+      # fusion, for transient workloads like *arr downloads/incomplete or
+      # build caches. by-label paths since these were freshly mkfs'd.
+
+      "/mnt/primary/D3" = {  # sdb Hitachi HUA723030 — was /mnt/decom/D3
+        device = "/dev/disk/by-label/primary-D3";
+        fsType = "xfs";
+        options = [ "nofail" ];
       };
 
-      "/mnt/decom/D2" = {  # was mergerD2
-        device = "/dev/disk/by-uuid/d49dac75-4d28-4c56-b2d2-606b3271b9b5";
-        fsType = "ext4";
-        options = [
-          "nofail"
-        ];
+      "/mnt/primary/D4" = {  # sdd Hitachi HUA723030 — was /mnt/decom/D1
+        device = "/dev/disk/by-label/primary-D4";
+        fsType = "xfs";
+        options = [ "nofail" ];
       };
 
-      "/mnt/decom/D3" = {  # was mergerD3
-        device = "/dev/disk/by-uuid/a500d06c-9878-4db3-9873-d0ee7f07dfc0";
-        fsType = "ext4";
-        options = [
-          "nofail"
-        ];
+      "/mnt/primary/D5" = {  # sde Hitachi HUA723030 — was /mnt/decom/D2
+        device = "/dev/disk/by-label/primary-D5";
+        fsType = "xfs";
+        options = [ "nofail" ];
       };
 
-      "/mnt/decom/D4" = { # was mergerD4
-        device = "/dev/disk/by-uuid/f11eeedc-60aa-4567-948a-c19ff0ccf337";
-        fsType = "ext4";
-        options = [
-          "nofail"
-        ];
+      "/mnt/scratch" = {     # sdc WD Green — was /mnt/decom/D4; tier-3 scratch
+        device = "/dev/disk/by-label/scratch";
+        fsType = "xfs";
+        options = [ "nofail" ];
       };
 
       "/mnt/backup/D1" = { # was mergerD6
@@ -89,9 +87,11 @@
         fsType = "ext4";
       };
 
-  # mergerfs: using 3 buckets, rsynced, then remove #3 for archival storage.
+  # mergerfs: two buckets — primary working pool + replica backup pool.
+  # (Decom bucket retired 2026-05-25; its disks were reformatted and
+  # rejoined fusion as D3-D5, with the WD Green as /mnt/scratch.)
 
-    "/mnt/fusion" = {   # Primary Bucket - 16.4 TB (contains 8TB + 10TB drive)
+    "/mnt/fusion" = {   # Primary Bucket - 24.7 TB (sdf 7.3T + sdg 9.1T + 3× sdb/d/e 2.7T each)
       device = "/mnt/primary/D*";
       fsType = "fuse.mergerfs";
       options = [
@@ -109,20 +109,6 @@
 
      "/mnt/backup/all" = {   # Backup Bucket - 22 TB (contains 4x 6TB drives)
       device = "/mnt/backup/D*";
-      fsType = "fuse.mergerfs";
-      options = [
-        "defaults"
-        "allow_other"
-        "use_ino"
-        "cache.files=off"
-        "moveonenospc=true"
-        "dropcacheonclose=true"
-        "category.create=mfs"
-      ];
-    };
-
-     "/mnt/decom/all" = {   # Decom Bucket - 10.8 TB of soon-to-be decommisioned drives. Remove this group once done.
-      device = "/mnt/decom/D*";
       fsType = "fuse.mergerfs";
       options = [
         "defaults"
