@@ -28,6 +28,12 @@
         options = [ "nofail" ];
       };
 
+      "/mnt/primary/D6" = {  # sdk 3.6 TB WD My Book — was NTFS Backup drive (2026-05-25)
+        device = "/dev/disk/by-label/primary-D6";
+        fsType = "xfs";
+        options = [ "nofail" ];
+      };
+
       "/mnt/scratch" = {     # sdc WD Green — was /mnt/decom/D4; tier-3 scratch
         device = "/dev/disk/by-label/scratch";
         fsType = "xfs";
@@ -91,7 +97,7 @@
   # (Decom bucket retired 2026-05-25; its disks were reformatted and
   # rejoined fusion as D3-D5, with the WD Green as /mnt/scratch.)
 
-    "/mnt/fusion" = {   # Primary Bucket - 24.7 TB (sdf 7.3T + sdg 9.1T + 3× sdb/d/e 2.7T each)
+    "/mnt/fusion" = {   # Primary Bucket - 28.3 TB (sdf 7.3T + sdg 9.1T + 3× 2.7T Hitachis + sdk 3.6T)
       device = "/mnt/primary/D*";
       fsType = "fuse.mergerfs";
       options = [

@@ -50,7 +50,7 @@
       d3 = "/mnt/primary/D3";  # sdb 2.7 TB Hitachi HUA723030 (ex-decom, 2026-05-25)
       d4 = "/mnt/primary/D4";  # sdd 2.7 TB Hitachi HUA723030 (ex-decom)
       d5 = "/mnt/primary/D5";  # sde 2.7 TB Hitachi HUA723030 (ex-decom)
-      # d6 = "/mnt/primary/D6";  # sdk 3.6 TB WD40EZRX (after NTFS-triage finishes)
+      d6 = "/mnt/primary/D6";  # sdk 3.6 TB WD My Book (ex-NTFS-Backup, 2026-05-25)
     };
 
     # Single 10 TB parity disk to start. Add a second entry for 2-disk
@@ -69,6 +69,7 @@
       "/mnt/primary/D3/snapraid.content"
       "/mnt/primary/D4/snapraid.content"
       "/mnt/primary/D5/snapraid.content"
+      "/mnt/primary/D6/snapraid.content"
     ];
 
     exclude = [
