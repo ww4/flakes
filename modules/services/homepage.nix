@@ -41,6 +41,9 @@ let
       Media:
         style: row
         columns: 3
+      Media Mgmt:
+        style: row
+        columns: 3
       Cloud:
         style: row
         columns: 2
@@ -91,6 +94,35 @@ let
               url: https://photos.rosemaryacres.com
               key: {{HOMEPAGE_VAR_IMMICH_KEY}}
               version: 2
+
+    # *arr stack — link-only tiles initially. To enable per-service widgets,
+    # mint API keys in each UI (Settings → General → API Key in Sonarr/
+    # Radarr/Prowlarr; Settings → API key in Jellyseerr; qBittorrent uses
+    # username/password), add to /var/lib/homepage/secrets.env as
+    # HOMEPAGE_VAR_{PROWLARR,SONARR,RADARR,JELLYSEERR}_KEY plus
+    # HOMEPAGE_VAR_QBITTORRENT_{USER,PASS}, then add the widget block
+    # under each tile. Reference patterns: gethomepage.dev widget docs.
+    - Media Mgmt:
+        - Prowlarr:
+            description: Indexer hub
+            href: https://prowlarr.rosemaryacres.com
+            icon: prowlarr.png
+        - Sonarr:
+            description: TV
+            href: https://sonarr.rosemaryacres.com
+            icon: sonarr.png
+        - Radarr:
+            description: Movies
+            href: https://radarr.rosemaryacres.com
+            icon: radarr.png
+        - Jellyseerr:
+            description: Requests
+            href: https://requests.rosemaryacres.com
+            icon: jellyseerr.png
+        - qBittorrent:
+            description: Downloads (via Mullvad VPN)
+            href: https://qbittorrent.rosemaryacres.com
+            icon: qbittorrent.png
 
     - Cloud:
         - Nextcloud:
