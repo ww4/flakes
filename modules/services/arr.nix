@@ -59,11 +59,12 @@ let
 
   # Subdomain → backend port
   ports = {
-    prowlarr    = 9696;
-    sonarr      = 8989;
-    radarr      = 7878;
-    jellyseerr  = 5055;
-    qbittorrent = 8080;
+    prowlarr     = 9696;
+    sonarr       = 8989;
+    radarr       = 7878;
+    jellyseerr   = 5055;
+    qbittorrent  = 8085;  # qBit default 8080 collides with Tandoor on this host
+    flaresolverr = 8191;  # headless browser proxy for Cloudflare-protected indexers
   };
 
   # Helper to build a Tailscale-only nginx vhost for a 127.0.0.1 backend.
@@ -113,6 +114,23 @@ in
       ];
     };
 
+    #--- FlareSolverr (Cloudflare challenge solver for protected indexers) ---
+    # Runs a headless Chromium; Prowlarr POSTs requests here when an indexer
+    # is gated by Cloudflare's JS challenge (1337x, RuTracker at times, etc.)
+    # FlareSolverr solves the challenge and returns the cookie+HTML to
+    # Prowlarr. Configure in Prowlarr: Settings → Indexers → FlareSolverr
+    # field → http://flaresolverr:8191/v1
+    # Stays OUTSIDE Gluetun's netns — only does HTTP challenge solving, not
+    # torrent traffic, so it doesn't need VPN routing.
+    flaresolverr = {
+      image = "ghcr.io/flaresolverr/flaresolverr:latest";
+      ports = [ "127.0.0.1:${toString ports.flaresolverr}:8191" ];
+      environment = {
+        inherit TZ;
+        LOG_LEVEL = "info";
+      };
+    };
+
     #--- Sonarr (TV) ---
     sonarr = {
       image = "ghcr.io/linuxserver/sonarr:latest";
@@ -152,7 +170,9 @@ in
     gluetun = {
       image = "qmcgaw/gluetun:latest";
       ports = [
-        "127.0.0.1:${toString ports.qbittorrent}:8080"  # qBittorrent web UI
+        # qBittorrent's web UI. Both sides 8085 (matches WEBUI_PORT below)
+        # because the default 8080 collides with Tandoor on this host.
+        "127.0.0.1:${toString ports.qbittorrent}:${toString ports.qbittorrent}"
         # 6881 TCP/UDP is qBittorrent's torrent listen port; bound on the
         # Mullvad-tunnel side, not the host. No host publishing needed.
       ];
