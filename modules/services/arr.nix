@@ -83,8 +83,33 @@ let
       '';
     };
   };
+  # User-defined Docker network gives the *arr containers DNS-based
+  # service discovery (Prowlarr can reach `flaresolverr:8191`, Sonarr
+  # can reach `prowlarr:9696`, etc.). The default Docker bridge doesn't
+  # do DNS between containers, only by IP — and IPs can shuffle on
+  # restart.
+  arrNet = "arr-net";
+
 in
 {
+  # Create the arr-net Docker network before any *arr container starts.
+  systemd.services.docker-network-arr = {
+    description = "Create the arr-net Docker bridge network";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "docker.service" ];
+    before = map (n: "docker-${n}.service") [
+      "prowlarr" "sonarr" "radarr" "jellyseerr" "gluetun" "flaresolverr"
+    ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      ${pkgs.docker}/bin/docker network inspect ${arrNet} >/dev/null 2>&1 || \
+        ${pkgs.docker}/bin/docker network create --driver bridge ${arrNet}
+    '';
+  };
+
   # State + media + scratch dirs must exist before containers start.
   systemd.tmpfiles.rules = [
     "d ${arrRoot}                         0775 chris users - -"
@@ -112,6 +137,7 @@ in
       volumes = [
         "/var/lib/prowlarr:/config:rw"
       ];
+      extraOptions = [ "--network=${arrNet}" ];
     };
 
     #--- FlareSolverr (Cloudflare challenge solver for protected indexers) ---
@@ -129,6 +155,7 @@ in
         inherit TZ;
         LOG_LEVEL = "info";
       };
+      extraOptions = [ "--network=${arrNet}" ];
     };
 
     #--- Sonarr (TV) ---
@@ -140,6 +167,7 @@ in
         "/var/lib/sonarr:/config:rw"
         dataVolume
       ];
+      extraOptions = [ "--network=${arrNet}" ];
     };
 
     #--- Radarr (movies) ---
@@ -151,6 +179,7 @@ in
         "/var/lib/radarr:/config:rw"
         dataVolume
       ];
+      extraOptions = [ "--network=${arrNet}" ];
     };
 
     #--- Jellyseerr (request UI) ---
@@ -161,6 +190,7 @@ in
       volumes = [
         "/var/lib/jellyseerr:/app/config:rw"
       ];
+      extraOptions = [ "--network=${arrNet}" ];
     };
 
     #--- Gluetun (Mullvad WireGuard) ---
@@ -187,6 +217,7 @@ in
         "--cap-add=NET_ADMIN"
         "--device=/dev/net/tun"
         "--sysctl=net.ipv4.conf.all.rp_filter=2"
+        "--network=${arrNet}"
       ];
     };
 
