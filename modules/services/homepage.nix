@@ -65,11 +65,11 @@ let
     - Media:
         - Jellyfin:
             description: Movies, TV, music
-            href: http://100.82.117.116:8096
+            href: https://jellyfin.rosemaryacres.com
             icon: jellyfin.png
             widget:
               type: jellyfin
-              url: http://100.82.117.116:8096
+              url: https://jellyfin.rosemaryacres.com
               key: {{HOMEPAGE_VAR_JELLYFIN_KEY}}
               enableNowPlaying: true
               enableBlocks: true
