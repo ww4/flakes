@@ -42,6 +42,7 @@
     ./modules/services/alertmanager-ntfy.nix
     ./modules/services/snapraid.nix         # inert until parity drive arrives (enable = false)
     ./modules/services/arr.nix              # Prowlarr + Sonarr + Radarr + Jellyseerr + Gluetun + qBittorrent
+    ./modules/services/recyclarr.nix        # Daily TRaSH-Guides profile sync into Sonarr/Radarr
   ];
 
   # The NixOS release the system was first installed from. Leave it pinned —
