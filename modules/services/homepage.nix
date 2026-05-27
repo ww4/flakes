@@ -147,11 +147,13 @@ let
             icon: qbittorrent.png
             widget:
               # qBit's WebUI lives in Gluetun's netns; both Homepage and
-              # qBit are on arr-net, so this hostname resolves.
+              # qBit are on arr-net, so this hostname resolves. Quote the
+              # creds: passwords containing YAML-reserved leading chars
+              # (*, &, !, %) would otherwise parse as anchors/aliases.
               type: qbittorrent
               url: http://gluetun:8085
-              username: {{HOMEPAGE_VAR_QBITTORRENT_USER}}
-              password: {{HOMEPAGE_VAR_QBITTORRENT_PASS}}
+              username: "{{HOMEPAGE_VAR_QBITTORRENT_USER}}"
+              password: "{{HOMEPAGE_VAR_QBITTORRENT_PASS}}"
 
     - Cloud:
         - Nextcloud:
@@ -161,8 +163,8 @@ let
             widget:
               type: nextcloud
               url: https://cloud.rosemaryacres.com
-              username: {{HOMEPAGE_VAR_NEXTCLOUD_USER}}
-              password: {{HOMEPAGE_VAR_NEXTCLOUD_PASS}}
+              username: "{{HOMEPAGE_VAR_NEXTCLOUD_USER}}"
+              password: "{{HOMEPAGE_VAR_NEXTCLOUD_PASS}}"
         - Tandoor:
             description: Recipes
             href: https://recipes.rosemaryacres.com
