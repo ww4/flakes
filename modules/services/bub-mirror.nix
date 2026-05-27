@@ -3,9 +3,10 @@
 #
 # Companion to media-mirror.nix. Where media-mirror pushes Gromit's own
 # /mnt/fusion → /mnt/backup/all, bub-mirror pulls Bub's /mnt/fusion into
-# a sibling rick-offsite/ tree, but uses rsync --link-dest=/mnt/backup/all
-# so any file that already exists in our local media-mirror (same relative
-# path, same size+mtime) becomes a hardlink instead of a duplicate copy.
+# a sibling rick-offsite/ tree, using rsync --link-dest=/mnt/backup/all/media-mirror
+# so any file that already exists in our local media-mirror at the same
+# relative path (with the same size+mtime) becomes a hardlink instead of
+# a duplicate copy.
 #
 # Combined storage ≈ size(media-mirror) + size(Rick-unique content) + ε.
 # Hardlinks work because /mnt/backup/all uses mergerfs category.create=epmfs
@@ -45,7 +46,14 @@ let
       BUB_PORT=4089
       SRC_PATH=/mnt/fusion/
       DST=/mnt/backup/all/rick-offsite/
-      LINK_DEST=/mnt/backup/all
+      # --link-dest is destination-relative: rsync checks LINK_DEST/<same
+      # relative path> as the destination file. For a SRC file at
+      # Movies/X.mkv written to DST/Movies/X.mkv, rsync looks at
+      # LINK_DEST/Movies/X.mkv. So LINK_DEST must point at media-mirror's
+      # ROOT (the parallel library), NOT at /mnt/backup/all (one level too
+      # high — that would look up /mnt/backup/all/Movies/X.mkv which
+      # doesn't exist).
+      LINK_DEST=/mnt/backup/all/media-mirror
       SSH_KEY=/root/.ssh/id_ed25519
       STATE=/var/lib/bub-mirror
       LOGDIR="$STATE/logs"
