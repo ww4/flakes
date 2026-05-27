@@ -21,7 +21,10 @@
       LDK_NETWORK = "mainnet";
     };
     serviceConfig = {
-      ExecStart = "/run/current-system/sw/bin/albyhub";
+      # Reference via Nix so the path tracks rebuilds. The binary is in
+      # chris's home-manager package set rather than system PATH, so
+      # /run/current-system/sw/bin/albyhub doesn't resolve.
+      ExecStart = "${pkgs.albyhub}/bin/albyhub";
       User = "chris";
       Group = "users";
       Restart = "on-failure";
