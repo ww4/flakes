@@ -107,4 +107,60 @@ in
   # to mount.
   systemd.services.restic-backups-critical-local.unitConfig.RequiresMountsFor =
     "/mnt/backup/all";
+
+  # ----- bub tier-1 push target (Flow 2 in BACKUP-ARCHITECTURE.md) -----
+  #
+  # bub uses SFTP to push its own restic snapshots into the same repo at
+  # /mnt/backup/all/restic, tagged --host=bub --tag=bub-tier1. The repo is
+  # owned root:restic, mode 2770, with default ACLs so new files inherit
+  # group access. mergerfs + FUSE default_permissions on kernel 6.x doesn't
+  # honor supplementary groups, so the SFTP-side user must have restic as
+  # its PRIMARY group — hence a dedicated restic-push system user instead
+  # of just adding chris to the restic group.
+
+  users.groups.restic = {};
+
+  users.users.restic-push = {
+    isSystemUser = true;
+    group = "restic";
+    home = "/var/lib/restic-push";
+    createHome = true;
+    shell = pkgs.bashInteractive;             # nologin breaks SFTP via PAM
+    openssh.authorizedKeys.keys = [
+      # bub's /etc/bub-restic/ssh-key.pub — locked to SFTP only, no
+      # forwarding, no shell, regardless of what the client requests.
+      ''restrict,command="internal-sftp" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO/llcItLigl8cl2ukc2vF/7v4TiiuTBl68Bb9gjscbP bub-restic@bub''
+    ];
+  };
+
+  # chris gets a supplementary 'restic' group membership for manual ops
+  # (e.g. `sg restic -c "restic snapshots"`). Supplementary alone won't
+  # work over FUSE (see above), but it's fine for direct shell access.
+  users.users.chris.extraGroups = [ "restic" ];
+
+  # Own the repo perms idempotently on every activation. Runs after the
+  # backup pool is mounted so the chgrp/chmod target actually exists.
+  systemd.services.restic-repo-perms = {
+    description = "Apply group + ACL perms on the restic repo for bub push";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "mnt-backup-all.mount" ];
+    requires = [ "mnt-backup-all.mount" ];
+    unitConfig.RequiresMountsFor = "/mnt/backup/all";
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    path = with pkgs; [ coreutils acl findutils ];
+    script = ''
+      repo=/mnt/backup/all/restic
+      [ -d "$repo" ] || exit 0
+      chgrp -R restic "$repo"
+      find "$repo" -type d -exec chmod 2770 {} +
+      find "$repo" -type f -exec chmod 0660 {} +
+      # config is conventionally read-only after init — keep group read.
+      [ -f "$repo/config" ] && chmod 0640 "$repo/config" || true
+      # Default ACL so any new entry (by any process) inherits group rwX.
+      setfacl -R -d -m g:restic:rwX "$repo"
+    '';
+  };
 }

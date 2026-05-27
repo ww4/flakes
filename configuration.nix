@@ -35,6 +35,7 @@
     ./modules/services/backup.nix
     ./modules/services/notifications.nix
     ./modules/services/media-mirror.nix
+    ./modules/services/bub-mirror.nix
     ./modules/services/remote-desktop.nix
     ./modules/services/homepage.nix
     ./modules/services/monitoring.nix
