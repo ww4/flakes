@@ -45,6 +45,7 @@
     ./modules/services/arr.nix              # Prowlarr + Sonarr + Radarr + Jellyseerr + Gluetun + qBittorrent
     ./modules/services/recyclarr.nix        # Daily TRaSH-Guides profile sync into Sonarr/Radarr
     ./modules/services/forgejo.nix
+    ./modules/services/glances.nix
   ];
 
   # The NixOS release the system was first installed from. Leave it pinned —

@@ -205,6 +205,54 @@ let
               type: prometheus
               url: https://prometheus.rosemaryacres.com
 
+    - Gromit (live):
+        # Glances exposes a REST API on 172.21.0.1:61208 (the arr-net
+        # bridge gateway = host). Each block below is a separate metric
+        # card with a small sparkline. v4 = Glances API v4.
+        - CPU:
+            icon: glances.png
+            widget:
+              type: glances
+              url: http://172.21.0.1:61208
+              metric: cpu
+              version: 4
+              chart: true
+              pointsLimit: 30
+        - Memory:
+            icon: glances.png
+            widget:
+              type: glances
+              url: http://172.21.0.1:61208
+              metric: memory
+              version: 4
+              chart: true
+              pointsLimit: 30
+        - Disk I/O:
+            icon: glances.png
+            widget:
+              type: glances
+              url: http://172.21.0.1:61208
+              metric: disk:nvme0n1
+              version: 4
+              chart: true
+              pointsLimit: 30
+        - Network (Tailscale):
+            icon: glances.png
+            widget:
+              type: glances
+              url: http://172.21.0.1:61208
+              metric: network:tailscale0
+              version: 4
+              chart: true
+              pointsLimit: 30
+        - Load + uptime:
+            icon: glances.png
+            widget:
+              type: glances
+              url: http://172.21.0.1:61208
+              metric: info
+              version: 4
+
     - Riverwatch:
         - Kentucky River — observed + NWPS forecast:
             description: Stage at Lockport & Gratz with flood thresholds
