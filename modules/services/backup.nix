@@ -20,6 +20,7 @@ let
     "/var/lib/jellyfin"
     "/var/lib/grafana"                 # dashboards + sqlite state DB
     "/var/lib/homepage"                # secrets.env — Homepage widget API keys (root 0600)
+    "/var/lib/forgejo"                 # sqlite DB + bare repos + LFS objects + custom config
     "/var/backup/postgresql"
 
     # Nextcloud external storage (the /Bitcoin and /Fusion mounts). Live data
@@ -53,6 +54,8 @@ let
     "/var/lib/jellyfin/transcodes"
     "/var/lib/jellyfin/cache"
     "/var/lib/jellyfin/log"
+    "/var/lib/forgejo/log"             # forgejo logs — regenerable
+    "/var/lib/forgejo/dump"            # manual admin dumps; would recursively grow the backup
     "/home/chris/Downloads/timberframing" # 59 GB downloaded video course
   ];
 

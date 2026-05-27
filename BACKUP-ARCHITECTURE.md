@@ -34,7 +34,11 @@ perspective: it is the **offsite copy of Rick's media library**, pulled into
 
 ### Flow 1 — Gromit tier-1 → restic (local + B2)
 
-Source: see `criticalPaths` in `modules/services/backup.nix`.
+Source: see `criticalPaths` in `modules/services/backup.nix` — includes
+all small irreplaceable application state (Nextcloud, Audiobookshelf,
+Jellyfin, Grafana, Tandoor, Homepage, **Forgejo** with its sqlite DB +
+bare repos + LFS), plus the `/mnt/fusion/{Bitcoin,nextcloud,immich}`
+external-storage trees and the irreplaceable bits of `/home/chris`.
 Configured via NixOS `services.restic.backups.{critical-local, critical-b2}`.
 
 ```
