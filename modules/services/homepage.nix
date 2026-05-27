@@ -155,6 +155,24 @@ let
               username: "{{HOMEPAGE_VAR_QBITTORRENT_USER}}"
               password: "{{HOMEPAGE_VAR_QBITTORRENT_PASS}}"
 
+    - Productivity:
+        - Vaultwarden:
+            description: Password vault
+            href: https://vault.rosemaryacres.com
+            icon: vaultwarden.png
+        - Paperless:
+            description: OCR document archive
+            href: https://paperless.rosemaryacres.com
+            icon: paperless.png
+        - Uptime Kuma:
+            description: Status board
+            href: https://uptime.rosemaryacres.com
+            icon: uptime-kuma.png
+            widget:
+              type: uptimekuma
+              url: https://uptime.rosemaryacres.com
+              slug: default
+
     - Cloud:
         - Nextcloud:
             description: Files, calendar, notes

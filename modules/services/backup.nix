@@ -21,6 +21,9 @@ let
     "/var/lib/grafana"                 # dashboards + sqlite state DB
     "/var/lib/homepage"                # secrets.env — Homepage widget API keys (root 0600)
     "/var/lib/forgejo"                 # sqlite DB + bare repos + LFS objects + custom config
+    "/var/lib/bitwarden_rs"            # Vaultwarden SQLite vault (NixOS module name is legacy)
+    "/var/lib/paperless"               # OCR'd docs + sqlite index
+    "/var/lib/uptime-kuma"             # monitor history + sqlite
     "/var/backup/postgresql"
 
     # Nextcloud external storage (the /Bitcoin and /Fusion mounts). Live data

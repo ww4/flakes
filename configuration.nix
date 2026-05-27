@@ -46,6 +46,9 @@
     ./modules/services/recyclarr.nix        # Daily TRaSH-Guides profile sync into Sonarr/Radarr
     ./modules/services/forgejo.nix
     ./modules/services/glances.nix
+    ./modules/services/paperless.nix
+    ./modules/services/uptime-kuma.nix
+    ./modules/services/vaultwarden.nix
   ];
 
   # The NixOS release the system was first installed from. Leave it pinned —
