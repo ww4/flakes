@@ -173,6 +173,18 @@ let
               key: {{HOMEPAGE_VAR_TANDOOR_KEY}}
 
     - Infrastructure:
+        - Forgejo:
+            description: Self-hosted Git (mirrors of GitHub)
+            href: https://git.rosemaryacres.com
+            icon: forgejo.png
+            widget:
+              # Forgejo speaks the Gitea API, so the gitea widget works.
+              type: gitea
+              url: https://git.rosemaryacres.com
+              key: {{HOMEPAGE_VAR_FORGEJO_KEY}}
+              showOpen: true
+              showCounters: true
+              showRepoStats: false
         - PinchFlat:
             description: YouTube archiver
             href: http://100.82.117.116:8945
