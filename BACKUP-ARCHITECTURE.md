@@ -114,18 +114,21 @@ side).
 ```
 bub:/mnt/fusion ──(weekly Sun 06:00)──▶ /mnt/backup/all/rick-offsite
                   rsync -aH \
-                    --link-dest=/mnt/backup/all/media-mirror \
+                    --link-dest=/mnt/backup/all \
                     (excludes pinchflat, arr, restic, shows-symlink, junk)
 ```
 
 The clever bit — **`--link-dest`** hardlink dedup:
 
-- For each file rsync would otherwise transfer, it first checks
-  `/mnt/backup/all/media-mirror/<same-relative-path>`. If a
-  same-size + same-mtime file exists there, rsync **hardlinks instead of
-  copying**. `--link-dest` is destination-relative: a SRC file at
-  `Movies/X.mkv` written to `/mnt/backup/all/rick-offsite/Movies/X.mkv`
-  is compared against `/mnt/backup/all/media-mirror/Movies/X.mkv`.
+- `media-mirror.sh` dumps gromit's `/mnt/fusion` contents directly at the
+  root of `/mnt/backup/all` — there is no `media-mirror/` subdir.
+  `/mnt/backup/all/Movies/X.mkv` *is* gromit's mirror of the movie.
+- For each file rsync would otherwise transfer to `rick-offsite/`, it
+  first checks `/mnt/backup/all/<same-relative-path>`. If a same-size +
+  same-mtime file exists there, rsync **hardlinks instead of copying**.
+  `--link-dest` is destination-relative: a SRC file at `Movies/X.mkv`
+  written to `/mnt/backup/all/rick-offsite/Movies/X.mkv` is compared
+  against `/mnt/backup/all/Movies/X.mkv`.
 - Practical effect: any movie/show that exists in both gromit's library
   and bub's library lands as a single inode shared between
   `/mnt/backup/all/media-mirror/Movies/X` and

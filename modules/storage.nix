@@ -125,10 +125,12 @@
         "dropcacheonclose=true"
         # epmfs (Existing-Path Most-Free-Space): when writing a new file,
         # prefer the branch that already contains the parent directory.
-        # This keeps related files (e.g., media-mirror/Movies/X and
-        # rick-offsite/Movies/X) on the same underlying disk so rsync
-        # --link-dest hardlinks between them actually work — mergerfs
-        # hardlinks only function within a single branch.
+        # gromit's media-mirror lives at the root of /mnt/backup/all (e.g.
+        # /mnt/backup/all/Movies/X). bub-mirror writes the parallel copy
+        # under /mnt/backup/all/rick-offsite/Movies/X. epmfs keeps
+        # Movies/X on whatever branch already holds the gromit copy, so
+        # rsync --link-dest=/mnt/backup/all can hardlink between them —
+        # mergerfs hardlinks only function within a single branch.
         "category.create=epmfs"
         # Match fusion's getattr behavior so stat() returns the newest
         # branch's metadata when a path exists in multiple branches.

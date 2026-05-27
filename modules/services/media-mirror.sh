@@ -43,7 +43,7 @@ MAX_DELETE=250
 # graveyard, and the drive sentinels out of the mirror. /arr is tier-3
 # content (mergerfs+snapraid parity protects it; re-download is the DR path)
 # and is deliberately NOT mirrored — keeps the backup pool focused on tier 2.
-EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclude=/arr)
+EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclude=/arr --exclude=/pinchflat --exclude=/rick-offsite)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Notification failures must never abort a backup.
