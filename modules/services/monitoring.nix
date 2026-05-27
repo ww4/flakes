@@ -50,12 +50,53 @@ in {
       static_configs = [{ targets = [ "127.0.0.1:${toString alertmanagerPort}" ]; }];
     }];
 
+    # Generic systemd-unit-failure alert. node_exporter's systemd collector
+    # publishes node_systemd_unit_state{name=...,state=...} with value 1 for
+    # the current state. We fire when any unit has state="failed" for 5 min.
+    # This is the unified replacement for per-service onFailure wiring —
+    # any new systemd job that goes red gets surfaced without bespoke
+    # plumbing in each module.
+    #
+    # Lives in its own file via ruleFiles instead of services.prometheus.rules
+    # because the rules option concatenates list entries into a single file as
+    # separate JSON documents, which Prometheus parses as only the first doc —
+    # silently dropping later entries (like this one if riverwatch comes first).
+    ruleFiles = [
+      (pkgs.writeText "systemd-rules.yml" (builtins.toJSON {
+        groups = [{
+          name = "systemd";
+          interval = "1m";
+          rules = [
+            {
+              alert = "SystemdUnitFailed";
+              expr = ''node_systemd_unit_state{state="failed"} == 1'';
+              "for" = "5m";
+              labels = { severity = "warning"; };
+              annotations = {
+                summary = "{{ $labels.name }} in failed state";
+                description = "Systemd unit {{ $labels.name }} on {{ $labels.instance }} has been in 'failed' state for 5 minutes. Check: journalctl -u {{ $labels.name }} --no-pager | tail";
+              };
+            }
+          ];
+        }];
+      }))
+    ];
+
     # node_exporter — host metrics (CPU, RAM, disk, network).
     exporters.node = {
       enable = true;
       port = nodeExporterPort;
       listenAddress = "127.0.0.1";
       enabledCollectors = [ "systemd" "processes" ];
+      # node_exporter's default systemd collector excludes mount/device/
+      # automount/scope/slice. Override to include mount units so the
+      # SystemdUnitFailed alert catches mount failures too (e.g. the WD My
+      # Book on /mnt/primary/D6 that drops out on reboot). Keep
+      # device/automount/scope/slice excluded — those are noisy and not
+      # actionable.
+      extraFlags = [
+        ''--collector.systemd.unit-exclude=.+\.(automount|device|scope|slice)''
+      ];
     };
 
     # Alertmanager — routes alerts to receivers. Receiver wiring is in a
