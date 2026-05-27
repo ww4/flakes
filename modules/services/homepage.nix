@@ -253,11 +253,11 @@ let
     - Recent Alerts:
         - ntfy:
             description: Latest message on gromit-alerts
-            href: http://100.82.117.116:8090
+            href: https://ntfy.rosemaryacres.com
             icon: ntfy.png
             widget:
               type: ntfy
-              url: http://100.82.117.116:8090
+              url: https://ntfy.rosemaryacres.com
               topic: gromit-alerts
   '';
 

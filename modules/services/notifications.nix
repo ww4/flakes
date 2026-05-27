@@ -21,11 +21,32 @@ in
     };
   };
 
-  # Reachable only over the Tailscale interface and the Docker bridge — never
-  # the LAN, never the internet. docker0 is open so the Homepage dashboard
-  # container can pull recent messages via the topic JSON API.
+  # Reachable only over the Tailscale interface and Docker bridges. The
+  # extraCommands rule covers user-defined networks like arr-net (which
+  # get auto-named bridges br-<id>) — the homepage container lives there.
   networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ 8090 ];
   networking.firewall.interfaces."docker0".allowedTCPPorts   = [ 8090 ];
+  networking.firewall.extraCommands = ''
+    iptables -I nixos-fw 1 -i br-+ -p tcp --dport 8090 -j nixos-fw-accept
+  '';
+
+  # nginx vhost so anything reaching for ntfy can use the familiar
+  # https://ntfy.rosemaryacres.com pattern with a real cert, matching
+  # every other rosemaryacres.com service. The /var/cloudflare-dns-api
+  # already used for other ACME challenges supplies the DNS-01 token.
+  services.nginx.virtualHosts."ntfy.rosemaryacres.com" = {
+    forceSSL = true;
+    enableACME = true;
+    acmeRoot = null;
+    locations."/" = {
+      proxyPass = "http://127.0.0.1:8090";
+      recommendedProxySettings = true;
+      extraConfig = ''
+        proxy_buffering off;
+        proxy_read_timeout 1h;     # ntfy event-stream connections are long-lived
+      '';
+    };
+  };
 
   environment.systemPackages = [ gromit-notify ];
 

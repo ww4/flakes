@@ -59,15 +59,20 @@
   };
 
   # nginx reverse proxy. Same pattern as cloud.rosemaryacres.com.
+  # NB: recommendedProxySettings is set at the location level only, NOT
+  # globally — setting it at the services.nginx level pushes proxy_*
+  # directives into the http {} block, which expands every vhost's
+  # proxy_headers_hash beyond nginx's default bucket size and causes
+  # those vhosts to return 400 on every request.
   services.nginx = {
     enable = true;
-    recommendedProxySettings = true;
     virtualHosts."git.rosemaryacres.com" = {
       forceSSL = true;
       enableACME = true;
       acmeRoot = null;                  # DNS-01 (inherited defaults)
       locations."/" = {
         proxyPass = "http://127.0.0.1:3002";
+        recommendedProxySettings = true;
         # Forgejo's git smart-HTTP can push large objects; lift the cap.
         extraConfig = ''
           client_max_body_size 4G;
