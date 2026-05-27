@@ -57,6 +57,14 @@ let
   # tree gives Sonarr/Radarr/qBittorrent matching paths for hardlinks.
   dataVolume = "${arrRoot}:/data:rw";
 
+  # Tier-2 "keepers" mounts — promotion targets when you mark a release as
+  # long-term-keeper. In Sonarr/Radarr → Settings → Media Management →
+  # Root Folders, add /keepers/{movies,tv} alongside /data/media/{movies,tv}.
+  # Promote in the UI: right-click → Edit → Root Folder dropdown. *arr
+  # moves the file + updates its DB; media-mirror picks it up on next sync.
+  keepersMoviesVolume = "/mnt/fusion/Movies:/keepers/movies:rw";
+  keepersTvVolume     = "/mnt/fusion/TV Shows:/keepers/tv:rw";
+
   # Subdomain → backend port
   ports = {
     prowlarr     = 9696;
@@ -99,6 +107,7 @@ in
     after = [ "docker.service" ];
     before = map (n: "docker-${n}.service") [
       "prowlarr" "sonarr" "radarr" "jellyseerr" "gluetun" "flaresolverr"
+      "homepage"   # Homepage joins arr-net to resolve *arr widget hostnames
     ];
     serviceConfig = {
       Type = "oneshot";
@@ -166,6 +175,7 @@ in
       volumes = [
         "/var/lib/sonarr:/config:rw"
         dataVolume
+        keepersTvVolume   # tier-2 promotion target
       ];
       extraOptions = [ "--network=${arrNet}" ];
     };
@@ -178,6 +188,7 @@ in
       volumes = [
         "/var/lib/radarr:/config:rw"
         dataVolume
+        keepersMoviesVolume   # tier-2 promotion target
       ];
       extraOptions = [ "--network=${arrNet}" ];
     };

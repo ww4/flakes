@@ -95,34 +95,65 @@ let
               key: {{HOMEPAGE_VAR_IMMICH_KEY}}
               version: 2
 
-    # *arr stack — link-only tiles initially. To enable per-service widgets,
-    # mint API keys in each UI (Settings → General → API Key in Sonarr/
-    # Radarr/Prowlarr; Settings → API key in Jellyseerr; qBittorrent uses
-    # username/password), add to /var/lib/homepage/secrets.env as
-    # HOMEPAGE_VAR_{PROWLARR,SONARR,RADARR,JELLYSEERR}_KEY plus
-    # HOMEPAGE_VAR_QBITTORRENT_{USER,PASS}, then add the widget block
-    # under each tile. Reference patterns: gethomepage.dev widget docs.
+    # *arr stack — widgets pull live stats from each service via API.
+    # Mint API keys in each UI:
+    #   Sonarr/Radarr/Prowlarr   Settings → General → API Key
+    #   Jellyseerr               Settings → "API Key" panel
+    # qBittorrent uses username/password (no API key model).
+    # Add to /var/lib/homepage/secrets.env:
+    #   HOMEPAGE_VAR_PROWLARR_KEY=...
+    #   HOMEPAGE_VAR_SONARR_KEY=...
+    #   HOMEPAGE_VAR_RADARR_KEY=...
+    #   HOMEPAGE_VAR_JELLYSEERR_KEY=...
+    #   HOMEPAGE_VAR_QBITTORRENT_USER=admin
+    #   HOMEPAGE_VAR_QBITTORRENT_PASS=...
+    # Then: sudo systemctl restart docker-homepage
     - Media Mgmt:
         - Prowlarr:
             description: Indexer hub
             href: https://prowlarr.rosemaryacres.com
             icon: prowlarr.png
+            widget:
+              type: prowlarr
+              url: http://prowlarr:9696
+              key: {{HOMEPAGE_VAR_PROWLARR_KEY}}
         - Sonarr:
             description: TV
             href: https://sonarr.rosemaryacres.com
             icon: sonarr.png
+            widget:
+              type: sonarr
+              url: http://sonarr:8989
+              key: {{HOMEPAGE_VAR_SONARR_KEY}}
+              enableQueue: true
         - Radarr:
             description: Movies
             href: https://radarr.rosemaryacres.com
             icon: radarr.png
+            widget:
+              type: radarr
+              url: http://radarr:7878
+              key: {{HOMEPAGE_VAR_RADARR_KEY}}
+              enableQueue: true
         - Jellyseerr:
             description: Requests
             href: https://requests.rosemaryacres.com
             icon: jellyseerr.png
+            widget:
+              type: jellyseerr
+              url: http://jellyseerr:5055
+              key: {{HOMEPAGE_VAR_JELLYSEERR_KEY}}
         - qBittorrent:
             description: Downloads (via Mullvad VPN)
             href: https://qbittorrent.rosemaryacres.com
             icon: qbittorrent.png
+            widget:
+              # qBit's WebUI lives in Gluetun's netns; both Homepage and
+              # qBit are on arr-net, so this hostname resolves.
+              type: qbittorrent
+              url: http://gluetun:8085
+              username: {{HOMEPAGE_VAR_QBITTORRENT_USER}}
+              password: {{HOMEPAGE_VAR_QBITTORRENT_PASS}}
 
     - Cloud:
         - Nextcloud:
@@ -283,6 +314,9 @@ in {
       environment = {
         HOMEPAGE_ALLOWED_HOSTS = "${hostname},www.${hostname}";
       };
+      # Join arr-net (created by modules/services/arr.nix) so the *arr stack
+      # widgets can resolve `prowlarr`, `sonarr`, `gluetun`, etc. by name.
+      extraOptions = [ "--network=arr-net" ];
     };
   };
 
