@@ -125,7 +125,6 @@ let
               type: sonarr
               url: http://sonarr:8989
               key: {{HOMEPAGE_VAR_SONARR_KEY}}
-              enableQueue: true
         - Radarr:
             description: Movies
             href: https://radarr.rosemaryacres.com
@@ -134,7 +133,6 @@ let
               type: radarr
               url: http://radarr:7878
               key: {{HOMEPAGE_VAR_RADARR_KEY}}
-              enableQueue: true
         - Jellyseerr:
             description: Requests
             href: https://requests.rosemaryacres.com
