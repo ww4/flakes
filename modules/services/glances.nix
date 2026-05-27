@@ -21,11 +21,25 @@
     ];
   };
 
-  # Homepage runs on arr-net (docker bridge br-<hash>) and reaches Glances
-  # at the bridge gateway (172.21.0.1). Tailscale clients reach it on
-  # 100.82.117.116:61208 — keep that accessible too.
+  # Tailscale clients reach Glances on 100.82.117.116:61208 directly. The
+  # bridge rule is what lets the Homepage container (on arr-net) poll
+  # through the bridge gateway.
   networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ 61208 ];
   networking.firewall.extraCommands = ''
     iptables -I nixos-fw 1 -i br-+ -p tcp --dport 61208 -j nixos-fw-accept
   '';
+
+  # nginx vhost so Homepage (and Tailscale clients) can use the familiar
+  # https://glances.rosemaryacres.com URL with a real cert. The
+  # rosemaryacres.com zone resolves only to the Tailscale IP, so this is
+  # not internet-exposed even though Glances itself has no auth.
+  services.nginx.virtualHosts."glances.rosemaryacres.com" = {
+    forceSSL = true;
+    enableACME = true;
+    acmeRoot = null;
+    locations."/" = {
+      proxyPass = "http://127.0.0.1:61208";
+      recommendedProxySettings = true;
+    };
+  };
 }

@@ -206,50 +206,57 @@ let
               url: https://prometheus.rosemaryacres.com
 
     - Gromit (live):
-        # Glances exposes a REST API on 172.21.0.1:61208 (the arr-net
-        # bridge gateway = host). Each block below is a separate metric
-        # card with a small sparkline. v4 = Glances API v4.
+        # Glances exposes a REST API at https://glances.rosemaryacres.com
+        # (DNS resolves to the Tailscale IP, so this is not internet-
+        # exposed). Each block below is a separate metric card with a
+        # small sparkline. v4 = Glances API v4. Cards link to the full
+        # Glances HTML UI on click.
         - CPU:
+            href: https://glances.rosemaryacres.com
             icon: glances.png
             widget:
               type: glances
-              url: http://172.21.0.1:61208
+              url: https://glances.rosemaryacres.com
               metric: cpu
               version: 4
               chart: true
               pointsLimit: 30
         - Memory:
+            href: https://glances.rosemaryacres.com
             icon: glances.png
             widget:
               type: glances
-              url: http://172.21.0.1:61208
+              url: https://glances.rosemaryacres.com
               metric: memory
               version: 4
               chart: true
               pointsLimit: 30
         - Disk I/O:
+            href: https://glances.rosemaryacres.com
             icon: glances.png
             widget:
               type: glances
-              url: http://172.21.0.1:61208
+              url: https://glances.rosemaryacres.com
               metric: disk:nvme0n1
               version: 4
               chart: true
               pointsLimit: 30
-        - Network (Tailscale):
+        - Network (LAN):
+            href: https://glances.rosemaryacres.com
             icon: glances.png
             widget:
               type: glances
-              url: http://172.21.0.1:61208
-              metric: network:tailscale0
+              url: https://glances.rosemaryacres.com
+              metric: network:enp3s0
               version: 4
               chart: true
               pointsLimit: 30
         - Load + uptime:
+            href: https://glances.rosemaryacres.com
             icon: glances.png
             widget:
               type: glances
-              url: http://172.21.0.1:61208
+              url: https://glances.rosemaryacres.com
               metric: info
               version: 4
 
