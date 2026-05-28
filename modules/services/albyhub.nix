@@ -18,7 +18,12 @@
     environment = {
       WORK_DIR = "/home/chris/.local/share/albyhub";
       PORT = "8086";          # 8080 is taken
-      LDK_NETWORK = "mainnet";
+      # LDK_NETWORK omitted on purpose — Alby Hub defaults to "bitcoin"
+      # and passes the literal env-var string to api.getalby.com's LSP
+      # API. The LSPs are registered under "bitcoin", so setting
+      # "mainnet" (even though LDK accepts it via the switch fallthrough)
+      # makes GetLSPInfo call /internal/lsp/<lsp>/mainnet/v1/get_info
+      # which 404s. Keep the default.
     };
     serviceConfig = {
       # Reference via Nix so the path tracks rebuilds. The binary is in
