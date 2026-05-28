@@ -239,6 +239,13 @@ in
       environment = {
         inherit PUID PGID TZ;
         WEBUI_PORT = toString ports.qbittorrent;
+        # VueTorrent replaces qBit's default WebUI with the nicer Vue.js
+        # alternative. The mod downloads VueTorrent at container start and
+        # sets WebUI\AlternativeUIEnabled + WebUI\RootFolder in qBit's
+        # config automatically — no manual qBittorrent.conf edits needed.
+        # Backend API unchanged, so Sonarr/Radarr download-client and the
+        # Homepage widget keep working through the same endpoints.
+        DOCKER_MODS = "ghcr.io/gabe565/linuxserver-mod-vuetorrent:latest";
       };
       volumes = [
         "/var/lib/qbittorrent:/config:rw"
