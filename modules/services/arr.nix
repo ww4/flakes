@@ -260,6 +260,30 @@ in
     };
   };
 
+  # The gabe565 vuetorrent mod drops files at /vuetorrent/public, but its
+  # s6-init step that flips qBit's WebUI\AlternativeUIEnabled fails on the
+  # linuxserver:latest base (s6 v3 vs v2 layout mismatch). In practice
+  # qBit serves VueTorrent fine just from WebUI\RootFolder being set, even
+  # if the AlternativeUIEnabled flag in the conf reads `false` — qBit
+  # validates the path on startup and serves the alt UI from memory. This
+  # post-start poke is belt-and-suspenders: API-set both keys after qBit
+  # is up. Never fails the unit (|| true) so a stuck startup window doesn't
+  # cause a restart loop.
+  systemd.services.docker-qbittorrent.serviceConfig.ExecStartPost = [
+    "+${pkgs.writeShellScript "qbit-enable-vuetorrent" ''
+      for i in $(seq 1 60); do
+        ${pkgs.curl}/bin/curl -fsS --max-time 2 \
+          -o /dev/null http://127.0.0.1:8085/api/v2/app/version && break
+        sleep 1
+      done
+      # Subnet whitelist (set elsewhere) lets us call without auth from host.
+      # JSON body must be url-encoded under the json= param per qBit API docs.
+      ${pkgs.curl}/bin/curl -fsS -X POST \
+        --data-urlencode 'json={"alternative_webui_enabled":true,"alternative_webui_path":"/vuetorrent/public"}' \
+        http://127.0.0.1:8085/api/v2/app/setPreferences || true
+    ''}"
+  ];
+
   #--- nginx vhosts (Cloudflare DNS-01 ACME, Tailscale-only) ---
   services.nginx.virtualHosts = {
     "prowlarr.rosemaryacres.com"    = vhost ports.prowlarr;
