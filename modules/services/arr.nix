@@ -260,7 +260,7 @@ in
     };
   };
 
-  # The gabe565 vuetorrent mod drops files at /vuetorrent/public, but its
+  # The gabe565 vuetorrent mod drops files at /vuetorrent, but its
   # s6-init step that flips qBit's WebUI\AlternativeUIEnabled fails on the
   # linuxserver:latest base (s6 v3 vs v2 layout mismatch). In practice
   # qBit serves VueTorrent fine just from WebUI\RootFolder being set, even
@@ -279,7 +279,7 @@ in
       # Subnet whitelist (set elsewhere) lets us call without auth from host.
       # JSON body must be url-encoded under the json= param per qBit API docs.
       ${pkgs.curl}/bin/curl -fsS -X POST \
-        --data-urlencode 'json={"alternative_webui_enabled":true,"alternative_webui_path":"/vuetorrent/public"}' \
+        --data-urlencode 'json={"alternative_webui_enabled":true,"alternative_webui_path":"/vuetorrent"}' \
         http://127.0.0.1:8085/api/v2/app/setPreferences || true
     ''}"
   ];
