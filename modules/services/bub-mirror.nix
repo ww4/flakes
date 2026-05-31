@@ -141,7 +141,6 @@ in
   # 04:00 so the local mirror is settled and visible as link-dest targets.
   systemd.services.bub-mirror-sync = {
     description = "Pull bub /mnt/fusion → /mnt/backup/all/rick-offsite (hardlink-deduped)";
-    onFailure = [ "notify-failure@%N.service" ];
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${bubMirror}/bin/bub-mirror";

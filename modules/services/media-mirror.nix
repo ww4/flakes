@@ -74,9 +74,7 @@ in
   services.restic.backups.critical-local.backupPrepareCommand =
     "${media-mirror}/bin/media-mirror preflight backup";
 
-  # Alert if either restic backup fails.
-  systemd.services.restic-backups-critical-local.onFailure =
-    [ "notify-failure@%N.service" ];
-  systemd.services.restic-backups-critical-b2.onFailure =
-    [ "notify-failure@%N.service" ];
+  # restic failures (like every other unit) surface through Grafana Alerting
+  # via the systemd collector + SystemdUnitFailed rule in monitoring.nix, so
+  # no per-unit onFailure wiring is needed here.
 }

@@ -90,7 +90,6 @@ in
 
   systemd.services.recyclarr-sync = {
     description = "Recyclarr — sync TRaSH-Guides profiles into Sonarr & Radarr";
-    onFailure = [ "notify-failure@%N.service" ];
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${syncWrapper}";

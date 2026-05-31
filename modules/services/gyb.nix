@@ -24,7 +24,6 @@ in
 
   systemd.services.gyb-backup = {
     description = "GYB — incremental Gmail backup";
-    onFailure = [ "notify-failure@%N.service" ];
     serviceConfig = {
       Type = "oneshot";
       User = "chris";

@@ -97,9 +97,7 @@
     "d /var/lib/snapraid 0755 root root - -"
   ];
 
-  # Notify on sync/scrub failure via the existing notify-failure@ template.
-  systemd.services.snapraid-sync.onFailure =
-    lib.mkIf config.services.snapraid.enable [ "notify-failure@%N.service" ];
-  systemd.services.snapraid-scrub.onFailure =
-    lib.mkIf config.services.snapraid.enable [ "notify-failure@%N.service" ];
+  # Sync/scrub failures surface through Grafana Alerting now (the systemd
+  # collector + SystemdUnitFailed rule in monitoring.nix), so no per-unit
+  # onFailure wiring is needed here.
 }

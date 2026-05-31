@@ -50,37 +50,14 @@ in {
       static_configs = [{ targets = [ "127.0.0.1:${toString alertmanagerPort}" ]; }];
     }];
 
-    # Generic systemd-unit-failure alert. node_exporter's systemd collector
-    # publishes node_systemd_unit_state{name=...,state=...} with value 1 for
-    # the current state. We fire when any unit has state="failed" for 5 min.
-    # This is the unified replacement for per-service onFailure wiring —
-    # any new systemd job that goes red gets surfaced without bespoke
-    # plumbing in each module.
-    #
-    # Lives in its own file via ruleFiles instead of services.prometheus.rules
-    # because the rules option concatenates list entries into a single file as
-    # separate JSON documents, which Prometheus parses as only the first doc —
-    # silently dropping later entries (like this one if riverwatch comes first).
-    ruleFiles = [
-      (pkgs.writeText "systemd-rules.yml" (builtins.toJSON {
-        groups = [{
-          name = "systemd";
-          interval = "1m";
-          rules = [
-            {
-              alert = "SystemdUnitFailed";
-              expr = ''node_systemd_unit_state{state="failed"} == 1'';
-              "for" = "5m";
-              labels = { severity = "warning"; };
-              annotations = {
-                summary = "{{ $labels.name }} in failed state";
-                description = "Systemd unit {{ $labels.name }} on {{ $labels.instance }} has been in 'failed' state for 5 minutes. Check: journalctl -u {{ $labels.name }} --no-pager | tail";
-              };
-            }
-          ];
-        }];
-      }))
-    ];
+    # The systemd-unit-failure alert (and all other alerting) is owned by
+    # Grafana Alerting now, not Prometheus rules + Alertmanager. node_exporter
+    # still publishes node_systemd_unit_state{name=...,state=...}; a
+    # Grafana-managed rule queries it, and Grafana's notification policy adds
+    # the 22:00–07:00 mute timing + routes to the ntfy contact point. Keeping
+    # the rule in Grafana (rather than here) is what makes the schedule and
+    # severity editable from the web UI. Alertmanager stays installed but
+    # idle (no Prometheus rules feed it).
 
     # node_exporter — host metrics (CPU, RAM, disk, network).
     exporters.node = {
@@ -142,12 +119,24 @@ in {
       RemainAfterExit = true;
     };
     script = ''
+      install -d -o grafana -g grafana -m 0750 /var/lib/grafana
       KEY=/var/lib/grafana/secret_key
       if [ ! -s "$KEY" ]; then
-        install -d -o grafana -g grafana -m 0750 /var/lib/grafana
         ${pkgs.openssl}/bin/openssl rand -base64 32 > "$KEY"
         chown grafana:grafana "$KEY"
         chmod 0640 "$KEY"
+      fi
+      # Admin password — needed to log in and edit alert rules / policies /
+      # mute timings in the GUI (anonymous access is Viewer-only). Generated
+      # once; referenced via $__file below. Change it by editing this file
+      # (Grafana re-applies it on restart) or rotate in the UI.
+      PW=/var/lib/grafana/admin_password
+      if [ ! -s "$PW" ]; then
+        # No trailing newline — Grafana's $__file{} uses the bytes verbatim as
+        # the admin password, so a stray newline makes the password un-typeable.
+        ${pkgs.openssl}/bin/openssl rand -base64 18 | tr -d '\n' > "$PW"
+        chown grafana:grafana "$PW"
+        chmod 0640 "$PW"
       fi
     '';
   };
@@ -168,6 +157,8 @@ in {
       };
       security = {
         secret_key = "$__file{/var/lib/grafana/secret_key}";
+        admin_user = "admin";
+        admin_password = "$__file{/var/lib/grafana/admin_password}";
         # Allow iframe embedding so the Homepage tile can render a panel.
         # Grafana is already Tailscale-only; nginx isn't adding X-Frame-Options.
         allow_embedding = true;
