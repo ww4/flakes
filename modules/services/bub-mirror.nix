@@ -106,8 +106,15 @@ let
       # --link-dest: rsync looks for matching files at the same relative path
       # under LINK_DEST and hardlinks instead of copying. Mergerfs's epmfs
       # placement ensures the hardlink target is on the same branch.
+      # --size-only: match files by size alone, ignoring mtime. Bub's media is
+      # immutable (a finished movie never changes size), and its mtimes differ
+      # from our independently-acquired copies — without this, the default
+      # size+mtime check treats every content-identical file as "changed" and
+      # re-pulls it over the network just to hardlink it (wasteful). size-only
+      # also makes future runs immune to mtime drift triggering a re-pull storm.
       rsync \
         -aH --info=progress2,stats2 \
+        --size-only \
         --partial --partial-dir=.rsync-partial \
         --link-dest="$LINK_DEST" \
         "''${EXCLUDES[@]}" \
