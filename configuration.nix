@@ -44,6 +44,7 @@
     ./modules/services/snapraid.nix         # inert until parity drive arrives (enable = false)
     ./modules/services/arr.nix              # Prowlarr + Sonarr + Radarr + Jellyseerr + Gluetun + qBittorrent
     ./modules/services/recyclarr.nix        # Daily TRaSH-Guides profile sync into Sonarr/Radarr
+    ./modules/services/decluttarr.nix       # auto-reaps stalled+failed downloads, re-searches
     ./modules/services/forgejo.nix
     ./modules/services/albyhub.nix
     ./modules/services/glances.nix
