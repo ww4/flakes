@@ -105,6 +105,7 @@ let
     #   HOMEPAGE_VAR_SONARR_KEY=...
     #   HOMEPAGE_VAR_RADARR_KEY=...
     #   HOMEPAGE_VAR_JELLYSEERR_KEY=...
+    #   HOMEPAGE_VAR_LIDARR_KEY=...     # Lidarr → Settings → General → API Key
     #   HOMEPAGE_VAR_QBITTORRENT_USER=admin
     #   HOMEPAGE_VAR_QBITTORRENT_PASS=...
     # Then: sudo systemctl restart docker-homepage
@@ -154,6 +155,19 @@ let
               url: http://gluetun:8085
               username: "{{HOMEPAGE_VAR_QBITTORRENT_USER}}"
               password: "{{HOMEPAGE_VAR_QBITTORRENT_PASS}}"
+        - Lidarr:
+            description: Music
+            href: https://lidarr.rosemaryacres.com
+            icon: lidarr.png
+            widget:
+              type: lidarr
+              url: http://lidarr:8686
+              key: {{HOMEPAGE_VAR_LIDARR_KEY}}
+        - LazyLibrarian:
+            description: Audiobooks & ebooks
+            href: https://lazylibrarian.rosemaryacres.com
+            icon: lazylibrarian.png
+            # Link-only: Homepage has no LazyLibrarian widget (no API integration).
 
     - Productivity:
         - Vaultwarden:
