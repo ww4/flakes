@@ -132,6 +132,13 @@
         # rsync --link-dest=/mnt/backup/all can hardlink between them —
         # mergerfs hardlinks only function within a single branch.
         "category.create=epmfs"
+        # Reserve headroom: mergerfs won't place a NEW file on a branch with
+        # less than this much free. Hardlinks to existing files and growth of
+        # existing files are unaffected (link() co-locates with its target
+        # regardless of free space). Must exceed the largest single file so a
+        # create never hits ENOSPC mid-write — the 4 GiB default let bub-mirror
+        # fill D1 until a movie temp file no longer fit.
+        "minfreespace=100G"
         # Match fusion's getattr behavior so stat() returns the newest
         # branch's metadata when a path exists in multiple branches.
         "func.getattr=newest"
