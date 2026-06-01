@@ -142,6 +142,11 @@ let
               type: jellyseerr
               url: http://jellyseerr:5055
               key: {{HOMEPAGE_VAR_JELLYSEERR_KEY}}
+        - Music Requests:
+            description: Request music (Aurral → Lidarr)
+            href: https://music.rosemaryacres.com
+            icon: mdi-music
+            # Link-only: Aurral has no Homepage widget integration.
         - qBittorrent:
             description: Downloads (via Mullvad VPN)
             href: https://qbittorrent.rosemaryacres.com

@@ -47,6 +47,7 @@
     ./modules/services/decluttarr.nix       # auto-reaps stalled+failed downloads, re-searches
     ./modules/services/lidarr.nix           # music manager (Lidarr)
     ./modules/services/lazylibrarian.nix    # ebook/audiobook manager (Readarr successor)
+    ./modules/services/aurral.nix           # Jellyseerr-for-music (Aurral -> Lidarr)
     ./modules/services/forgejo.nix
     ./modules/services/albyhub.nix
     ./modules/services/glances.nix
