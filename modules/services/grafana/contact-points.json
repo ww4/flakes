@@ -1,0 +1,1 @@
+{"apiVersion":1,"contactPoints":[{"orgId":1,"name":"ntfy","receivers":[{"uid":"afnqi2p8rsk5cd","type":"webhook","settings":{"httpMethod":"POST","url":"http://127.0.0.1:9095/alert"},"disableResolveMessage":false}]}]}

@@ -178,6 +178,9 @@ in {
       datasources.settings.datasources = [
         {
           name = "Prometheus";
+          # Pinned so the codified alert rules + dashboards (which reference
+          # this uid) always resolve, regardless of provisioning order.
+          uid = "PBFA97CFB590B2093";
           type = "prometheus";
           access = "proxy";
           url = "http://127.0.0.1:${toString prometheusPort}";
@@ -198,6 +201,30 @@ in {
           };
         }
       ];
+
+      # Dashboards codified from the live DB (riverwatch weather + gromit-temps).
+      dashboards.settings.providers = [
+        {
+          name = "flake";
+          options.path = ./grafana/dashboards;
+        }
+      ];
+
+      # Alerting codified from the live DB so it's no longer set up ad hoc.
+      # Exported in provisioning format and embedded via fromJSON so the
+      # working config is reproduced verbatim. Provisioned alerting is
+      # file-managed (read-only in the GUI), which is the point.
+      #   contact-points : ntfy webhook -> the ntfy shim
+      #   mute-timings   : "nights" (22:00-07:00 America/New_York)
+      #   policies       : two-tier — severity=critical bypasses the mute,
+      #                    everything else routes through the muted catch-all
+      #   alert-rules    : systemd unit failures + temperature warn/critical
+      alerting = {
+        contactPoints.settings = builtins.fromJSON (builtins.readFile ./grafana/contact-points.json);
+        muteTimings.settings   = builtins.fromJSON (builtins.readFile ./grafana/mute-timings.json);
+        policies.settings      = builtins.fromJSON (builtins.readFile ./grafana/policies.json);
+        rules.settings         = builtins.fromJSON (builtins.readFile ./grafana/alert-rules.json);
+      };
     };
   };
 
