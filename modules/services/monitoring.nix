@@ -202,13 +202,16 @@ in {
         }
       ];
 
-      # Dashboards codified from the live DB (riverwatch weather + gromit-temps).
-      dashboards.settings.providers = [
-        {
-          name = "flake";
-          options.path = ./grafana/dashboards;
-        }
-      ];
+      # NOTE: dashboards are intentionally NOT provisioned. Grafana 13's
+      # apiserver does not grant the anonymous Viewer read access to
+      # provisioned dashboards in the root/General folder (the Homepage iframe
+      # 403s), and its resource manager wedges provisioned dashboards so they
+      # can't be moved or deleted. Imperative dashboards (live in
+      # /var/lib/grafana) work fine for anonymous embeds — that's why the
+      # Riverwatch graph works. gromit-temps lives in the "Temperatures" folder
+      # (which grants Viewer:View). JSON snapshots are kept under
+      # ./grafana/dashboards/ as re-import references. Alerting (above) IS
+      # provisioned — it has no such limitation.
 
       # Alerting codified from the live DB so it's no longer set up ad hoc.
       # Exported in provisioning format and embedded via fromJSON so the
