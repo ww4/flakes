@@ -296,6 +296,21 @@ let
               url: https://glances.rosemaryacres.com
               metric: info
               version: 4
+        - Temperatures:
+            description: CPU / NVMe / ambient °C — warn & critical alerts armed
+            href: https://grafana.rosemaryacres.com/d/gromit-temps
+            icon: mdi-thermometer
+            widget:
+              # Same embed pattern as the Riverwatch graph below: panel 1 of
+              # the gromit-temps Grafana dashboard via d-solo. Anonymous Viewer
+              # + allow_embedding are set in monitoring.nix, so it loads without
+              # auth (Grafana is Tailscale-only).
+              type: iframe
+              name: Temps
+              src: https://grafana.rosemaryacres.com/d-solo/gromit-temps/_?orgId=1&panelId=1&theme=dark&from=now-24h&to=now&refresh=1m&kiosk
+              classes: h-[360px] w-full
+              referrerPolicy: same-origin
+              allowScrolling: "no"
 
     - Riverwatch:
         - Kentucky River — observed + NWPS forecast:
