@@ -61,6 +61,17 @@ require_root() {
   [ "$(id -u)" -eq 0 ] || die "must run as root — try: sudo media-mirror $1"
 }
 
+# serialize_pool — take an exclusive lock shared by every heavy backup-pool
+# writer (this script's mutating subcommands + bub-mirror). The backup drives
+# hang off one self-powered USB hub whose PSU can hold them spinning but trips
+# over-current if several are driven hard at once. Serializing keeps only one
+# job hammering the drives at a time. Waits up to 6h for an in-flight job
+# rather than piling on. Held until the script exits (fd stays open).
+serialize_pool() {
+  exec 9>/run/lock/backup-pool.lock
+  flock -w 21600 9 || die "backup pool busy >6h (another sync running?) — aborting"
+}
+
 # preflight <all|fusion|backup> — returns non-zero if any member drive is
 # missing. Prints offending drives to stderr.
 preflight() {
@@ -302,10 +313,10 @@ cmd_status() {
 }
 
 case "${1:-}" in
-  sync)            shift; cmd_sync "$@" ;;
-  approve)         shift; cmd_approve "$@" ;;
-  recover)         shift; cmd_recover "$@" ;;
-  prune-graveyard) shift; cmd_prune_graveyard "$@" ;;
+  sync)            shift; serialize_pool; cmd_sync "$@" ;;
+  approve)         shift; serialize_pool; cmd_approve "$@" ;;
+  recover)         shift; serialize_pool; cmd_recover "$@" ;;
+  prune-graveyard) shift; serialize_pool; cmd_prune_graveyard "$@" ;;
   preflight)       shift; cmd_preflight "$@" ;;
   status)          shift; cmd_status "$@" ;;
   *)

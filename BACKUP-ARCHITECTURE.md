@@ -109,7 +109,7 @@ Configured via `modules/services/media-mirror.nix`.
   this rsync — critical: a `--delete` mirror would otherwise wipe the
   encrypted repo if a path collision happened.
 
-### Flow 4 — Bub tier-2 → rick-offsite (rsync --link-dest dedup)
+### Flow 4 — Bub tier-2 → rick-offsite (two-pass: link pass + copy pass)
 
 Configured via `modules/services/bub-mirror.nix` on Gromit. Gromit pulls
 from Bub, not the other way around (keeps SSH initiated from the trusted
@@ -117,32 +117,49 @@ side).
 
 ```
 bub:/mnt/fusion ──(weekly Sun 06:00)──▶ /mnt/backup/all/rick-offsite
-                  rsync -aH \
-                    --link-dest=/mnt/backup/all \
-                    (excludes pinchflat, arr, restic, shows-symlink, junk)
+  Phase 1  bub-link-pass  — hardlink overlap, co-located on master's branch
+  Phase 2  rsync --compare-dest=/mnt/backup/all — copy ONLY Rick-unique files
+           (both phases under flock /run/lock/backup-pool.lock)
 ```
 
-The clever bit — **`--link-dest`** hardlink dedup:
+**Why two passes (and not the old `rsync --link-dest`):** the original
+single `rsync --link-dest=/mnt/backup/all` *silently fell back to a full
+copy* whenever mergerfs placed the rick-offsite copy on a **different
+branch** than the master. Hardlinks cannot cross mergerfs branches
+(`func.link=epall` + `link-exdev=passthrough` → the kernel returns `EXDEV`
+→ rsync copies). A 2026-06-01 audit found ~16% of the overlap had been
+duplicated this way (≈475 GB reclaimed by the fix). `category.create=epmfs`
+does **not** prevent this — it's the *create* policy and has no effect on
+where `link()` lands.
 
-- `media-mirror.sh` dumps gromit's `/mnt/fusion` contents directly at the
-  root of `/mnt/backup/all` — there is no `media-mirror/` subdir.
-  `/mnt/backup/all/Movies/X.mkv` *is* gromit's mirror of the movie.
-- For each file rsync would otherwise transfer to `rick-offsite/`, it
-  first checks `/mnt/backup/all/<same-relative-path>`. If a same-size +
-  same-mtime file exists there, rsync **hardlinks instead of copying**.
-  `--link-dest` is destination-relative: a SRC file at `Movies/X.mkv`
-  written to `/mnt/backup/all/rick-offsite/Movies/X.mkv` is compared
-  against `/mnt/backup/all/Movies/X.mkv`.
-- Practical effect: any movie/show that exists in both gromit's library
-  and bub's library lands as a single inode shared between
-  `/mnt/backup/all/media-mirror/Movies/X` and
-  `/mnt/backup/all/rick-offsite/Movies/X`. Storage cost = max(library) +
-  uniques(rick), not sum.
-- For hardlinks to work, both files must be on the **same mergerfs
-  branch** (same underlying disk). This is why `/mnt/backup/all` is
-  configured with `category.create=epmfs` (existing-path most-free-space):
-  if a parent dir like `Movies/X/` already exists on disk D2, new files
-  for `Movies/X/` also land on D2, so the hardlink target is reachable.
+The fix splits the work so a wasteful copy is structurally impossible:
+
+- **Phase 1 — link pass (`bub-link-pass.sh`).** `media-mirror.sh` dumps
+  gromit's `/mnt/fusion` directly at the root of `/mnt/backup/all`, so
+  `/mnt/backup/all/Movies/X.mkv` *is* gromit's mirror of that movie. The
+  link pass fetches Rick's inventory and, for every Rick file matching a
+  gromit master (path + size), creates the rick-offsite hardlink **directly
+  on the master's physical branch** (`/mnt/backup/D?/...`, bypassing
+  mergerfs `link()` entirely) — so `EXDEV` can never happen. Stray
+  cross-branch copies from earlier runs are deleted and re-linked. This is
+  metadata-only (no data moves), so it cannot stress the USB hub.
+- **Phase 2 — copy pass.** `rsync --compare-dest=/mnt/backup/all` **skips**
+  anything already in gromit's media-mirror (the overlap Phase 1 just
+  hardlinked) and copies **only Rick-unique content** — it can no longer
+  duplicate the overlap because it never considers those files. Tolerates
+  rsync exit 23/24 (some of Rick's files are unreadable on his box).
+- Practical effect unchanged & now reliable: any title in both libraries is
+  a single inode shared between `/mnt/backup/all/Movies/X` and
+  `/mnt/backup/all/rick-offsite/Movies/X`. Storage = max(library) +
+  uniques(rick), not sum. Matching is **size-only** (immutable media).
+- **Deletion semantics:** pruning gromit's media-mirror copy of a file just
+  drops that inode's link count by one; if rick-offsite still links it, the
+  data persists as rick-offsite's *sole, normal-file* link and Rick's backup
+  stays intact. A library restore pulls from `/mnt/backup/all/Movies/` (not
+  `rick-offsite/`), so a file pruned from the media-mirror won't reappear in
+  the library.
+- `bub-link-pass` is also a manual command:
+  `sudo DRYRUN=1 bub-link-pass "TV Shows/Some Show"` previews the dedup.
 
 ### Flow 5 — Bub local Plex serves files
 

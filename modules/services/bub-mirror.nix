@@ -26,6 +26,21 @@
 let
   gromit-notify = import ./notify-pkg.nix { inherit pkgs; };
 
+  # Phase 1 tool: hardlink Rick's files that gromit already has, CO-LOCATED on
+  # the master's branch (direct on-branch ln — no mergerfs link(), so EXDEV is
+  # impossible). Metadata-only, never copies. See bub-link-pass.sh.
+  bubLinkPass = pkgs.writeShellApplication {
+    name = "bub-link-pass";
+    runtimeInputs = with pkgs; [ openssh coreutils util-linux ];
+    excludeShellChecks = [ "SC2010" "SC2012" ];
+    # No errexit: `find` over bub returns non-zero on permission-denied dirs
+    # (expected — some of Rick's files aren't readable) yet still lists every
+    # readable file. The script handles failures explicitly (|| / if), so a
+    # non-zero find must NOT abort it. Matches how it was developed/tested.
+    bashOptions = [ "nounset" "pipefail" ];
+    text = builtins.readFile ./bub-link-pass.sh;
+  };
+
   bubMirror = pkgs.writeShellApplication {
     name = "bub-mirror";
     runtimeInputs = with pkgs; [
@@ -35,12 +50,21 @@ let
       util-linux
       gnugrep
       gromit-notify
+      bubLinkPass
     ];
     excludeShellChecks = [ "SC2001" ];
     text = ''
       # bub-mirror — pull bub:/mnt/fusion → /mnt/backup/all/rick-offsite/
       # with --link-dest hardlink dedup against /mnt/backup/all media-mirror.
       set -o errexit -o nounset -o pipefail -o errtrace
+
+      # Serialize against media-mirror and any manual pool job: the backup
+      # drives share one self-powered USB hub that trips over-current if
+      # several are driven hard at once. This lock (shared with media-mirror's
+      # serialize_pool) ensures only one heavy job hits the drives at a time;
+      # wait up to 6h for an in-flight sync rather than piling on.
+      exec 9>/run/lock/backup-pool.lock
+      flock -w 21600 9 || { echo "bub-mirror: backup pool busy >6h, aborting"; exit 1; }
 
       BUB_USER=chris
       BUB_HOST=100.112.10.93
@@ -101,41 +125,54 @@ let
       echo "bub-mirror: pulling $BUB_HOST:$SRC_PATH → $DST"
       echo "            link-dest=$LINK_DEST (hardlink dedup against media-mirror)"
 
-      # rsync via SSH, hardlink dedup against local media-mirror, archive +
-      # hardlinks-preserved + partial-on-fail + bandwidth-friendly opts.
-      # --link-dest: rsync looks for matching files at the same relative path
-      # under LINK_DEST and hardlinks instead of copying. Mergerfs's epmfs
-      # placement ensures the hardlink target is on the same branch.
-      # --size-only: match files by size alone, ignoring mtime. Bub's media is
-      # immutable (a finished movie never changes size), and its mtimes differ
-      # from our independently-acquired copies — without this, the default
-      # size+mtime check treats every content-identical file as "changed" and
-      # re-pulls it over the network just to hardlink it (wasteful). size-only
-      # also makes future runs immune to mtime drift triggering a re-pull storm.
+      # Two-pass sync. The old single `rsync --link-dest` silently fell back to
+      # a full COPY whenever mergerfs placed the rick-offsite copy on a
+      # different branch than the master (hardlink EXDEV) — duplicating ~16% of
+      # the overlap. We split the work so a wasteful copy is impossible:
+      #
+      #   Phase 1 (link pass): hardlink every file gromit already has, placed
+      #   DIRECTLY on the master's branch (no mergerfs link(), so no EXDEV).
+      #   Metadata-only — no data moves, so it can't stress the USB hub.
+      #
+      #   Phase 2 (copy pass): rsync pulls ONLY Rick-unique content.
+      #   --compare-dest makes rsync SKIP anything already in the media-mirror
+      #   (the overlap Phase 1 hardlinked), so it can never duplicate it.
+      #   --size-only: immutable media, ignore mtime drift.
+
+      echo "phase 1: hardlinking overlap (co-located on master's branch, no copies)"
+      DRYRUN=0 bub-link-pass .
+
+      echo "phase 2: pulling Rick-unique content (--compare-dest skips the overlap)"
+      rc=0
       rsync \
         -aH --info=progress2,stats2 \
         --size-only \
         --partial --partial-dir=.rsync-partial \
-        --link-dest="$LINK_DEST" \
+        --compare-dest="$LINK_DEST" \
+        --log-file="$log" --log-file-format='%i %n%L' \
         "''${EXCLUDES[@]}" \
         -e "ssh -i $SSH_KEY -p $BUB_PORT -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10" \
-        "$BUB_USER@$BUB_HOST:$SRC_PATH" "$DST" \
-        2>&1 | tee "$log"
+        "$BUB_USER@$BUB_HOST:$SRC_PATH" "$DST" || rc=$?
+      # Tolerate 23 (partial — unreadable source files on bub) and 24 (source
+      # files vanished mid-run); anything else is a real failure.
+      if [ "$rc" -ne 0 ] && [ "$rc" -ne 23 ] && [ "$rc" -ne 24 ]; then
+        echo "phase 2 rsync failed: exit $rc"; exit "$rc"
+      fi
+      [ "$rc" -eq 0 ] || echo "phase 2 rsync exit $rc (partial — some bub files unreadable; non-fatal)"
 
-      # Tally: how many files were hardlinked (no transfer) vs new bytes copied.
-      hl_count=$(grep -cE "^h[fL]" "$log" || true)
-      copied=$(grep -E "Number of regular files transferred" "$log" | grep -oE "[0-9,]+" | tail -1 | tr -d ',' || true)
-      bytes=$(grep -E "Total transferred file size" "$log" | grep -oE "[0-9,]+ bytes" | head -1 || true)
-
+      # Tally Rick-unique files actually transferred (itemize '>f...' lines).
+      copied=$(grep -cE '>f' "$log" 2>/dev/null || true)
       notify "bub-mirror OK" \
-        "Pulled bub → rick-offsite. Hardlinked: $hl_count. Copied: ''${copied:-0} new files (''${bytes:-0})." \
+        "rick-offsite synced. Overlap hardlinked (phase 1); Rick-unique copied: ''${copied:-0} files." \
         low floppy_disk
-      echo "bub-mirror done"
+      echo "bub-mirror done (itemized copy log: $log)"
     '';
   };
 in
 {
-  environment.systemPackages = [ bubMirror ];
+  # bubMirror is the scheduled job; bubLinkPass is also exposed for manual ops
+  # (e.g. `sudo DRYRUN=1 bub-link-pass "TV Shows/Some Show"` to preview dedup).
+  environment.systemPackages = [ bubMirror bubLinkPass ];
 
   systemd.tmpfiles.rules = [
     "d /var/lib/bub-mirror      0755 root root - -"
@@ -151,9 +188,10 @@ in
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${bubMirror}/bin/bub-mirror";
-      # Network + the backup pool need to be up.
-      RequiresMountsFor = "/mnt/backup/all";
     };
+    # RequiresMountsFor belongs in [Unit], not [Service] — in serviceConfig it
+    # was silently ignored, so the backup pool dependency never applied.
+    unitConfig.RequiresMountsFor = "/mnt/backup/all";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
   };
