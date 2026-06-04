@@ -28,6 +28,21 @@
     "electron-27.3.11"
   ];
 
+  # nix-ld: provide a real dynamic loader at /lib64/ld-linux-x86-64.so.2 so
+  # generic (non-Nix) dynamically-linked binaries can run. NixOS otherwise
+  # ships a stub loader that refuses them with a "cannot run dynamically linked
+  # executable" error. Needed for binaries bundled inside VS Code extensions
+  # (the auto-fix-vscode-server patcher only fixes VS Code's own server, not
+  # extension payloads) — e.g. the Claude Code extension's native `claude`
+  # binary (a Bun single-file exe needing only glibc). Added 2026-06-04.
+  programs.nix-ld = {
+    enable = true;
+    libraries = with pkgs; [
+      stdenv.cc.cc.lib   # libstdc++ / libgcc_s
+      zlib
+    ];
+  };
+
   nix = {
     package = pkgs.nixVersions.stable;
     extraOptions = "experimental-features = nix-command flakes";
