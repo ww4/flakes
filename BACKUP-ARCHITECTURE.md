@@ -15,7 +15,7 @@ location changes.
 | Gromit | Primary homelab, media, backups        | NixOS           | 100.82.117.116  |
 | Bub    | Offsite Plex for Rick, offsite backup  | Ubuntu 22.04.5  | 100.112.10.93   |
 
-SSH from openclaw to bub uses ProxyJump through gromit. Gromit has `Host bub`
+SSH from mcp-server to bub uses ProxyJump through gromit. Gromit has `Host bub`
 aliased in `~/.ssh/config`. See `reference_bub_access` in memory.
 
 ## Data classes and tiers

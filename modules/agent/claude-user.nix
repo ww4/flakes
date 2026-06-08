@@ -28,7 +28,7 @@
     # The agent connects as claude@ with this key (moved here from root/chris on
     # activation). Public key — safe in the world-readable store.
     openssh.authorizedKeys.keys = [
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII72tYB6OdaFY3kAOYk7A/AEa9hrbckKe6gCoeM1SRhB chris@openclaw-claude-20260515"
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII72tYB6OdaFY3kAOYk7A/AEa9hrbckKe6gCoeM1SRhB chris@mcp-server-claude-20260515"
     ];
   };
 

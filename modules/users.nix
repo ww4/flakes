@@ -21,7 +21,7 @@
   # reaches root (security review 2026-06-04): privileged automation logs in as
   # root@ directly, human logins use the chris account where sudo now prompts.
   users.users.root.openssh.authorizedKeys.keys = [
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII72tYB6OdaFY3kAOYk7A/AEa9hrbckKe6gCoeM1SRhB chris@openclaw-claude-20260515"
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII72tYB6OdaFY3kAOYk7A/AEa9hrbckKe6gCoeM1SRhB chris@mcp-server-claude-20260515"
   ];
 
   # Passwordless sudo for wheel — restored 2026-06-07 (the root automation key
