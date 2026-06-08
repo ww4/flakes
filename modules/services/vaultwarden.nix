@@ -12,10 +12,10 @@
 # Use `vaultwarden hash` to compute the argon2 hash from a plaintext token
 # before placing into env; that keeps the on-disk version one-way-hashed.
 #
-# Outbound email (SendGrid SMTP) is configured below. The non-secret SMTP_*
-# settings live in `config`; the API key is the only secret and goes in the same
-# env file as one line: SMTP_PASSWORD=<SendGrid Mail-Send API key>. See the note
-# at the SMTP block for the SendGrid-verified-sender requirement and sequencing.
+# Outbound email (Postmark SMTP) is configured below. The non-secret SMTP_*
+# settings live in `config`; Postmark uses its Server API token as BOTH the SMTP
+# username and password, so BOTH go in the env file (SMTP_USERNAME + SMTP_PASSWORD).
+# See the note at the SMTP block for the verified-sender requirement and sequencing.
 { config, lib, pkgs, ... }:
 
 {
@@ -36,24 +36,27 @@
       # Send the favicon at the right place.
       SHOW_PASSWORD_HINT = false;
 
-      # --- Outbound email via SendGrid (SMTP) ---
+      # --- Outbound email via Postmark (SMTP) ---
       # Enables: org/user invite emails, new-device login alerts, email 2FA,
       # emergency access, and password-hint delivery. Outbound only (no inbound
       # port), so it does NOT change the Tailscale-only posture.
       #
-      # The API key is the ONLY secret and must NOT live here (this attrset is
-      # rendered into the world-readable nix store). Put it in the existing
-      # environmentFile /var/lib/vaultwarden/env (root 0600) as a single line:
-      #   SMTP_PASSWORD=<SendGrid "Mail Send"-scoped API key>
-      # Upstream rule: once SMTP_USERNAME is set, SMTP_PASSWORD is mandatory — so
-      # add that line BEFORE this merges, or vaultwarden errors on the SMTP config.
+      # Postmark authenticates with the server's API token used as BOTH the SMTP
+      # username AND password — so BOTH are secrets and must NOT live here (this
+      # attrset renders into the world-readable nix store). Put both lines in the
+      # existing environmentFile /var/lib/vaultwarden/env (root 0600):
+      #   SMTP_USERNAME=<Postmark Server API token>
+      #   SMTP_PASSWORD=<same Postmark Server API token>
+      # Upstream rule: once SMTP_USERNAME is set, SMTP_PASSWORD is mandatory — add
+      # both BEFORE this merges, or vaultwarden errors on the SMTP config.
       #
-      # SMTP_FROM must be a SendGrid-verified sender (a verified single sender, or
-      # an address under an authenticated domain), or SendGrid rejects the mail.
-      SMTP_HOST = "smtp.sendgrid.net";
+      # SMTP_FROM must be a Postmark-verified sender: a confirmed Sender Signature
+      # for that exact address, or an address under a domain with verified DKIM /
+      # Return-Path. Host is the transactional stream (smtp.postmarkapp.com);
+      # broadcasts use smtp-broadcasts.postmarkapp.com — not what we want here.
+      SMTP_HOST = "smtp.postmarkapp.com";
       SMTP_PORT = 587;
       SMTP_SECURITY = "starttls";        # 587 = STARTTLS (use force_tls + 465 for implicit TLS)
-      SMTP_USERNAME = "apikey";          # SendGrid uses the literal string "apikey"
       SMTP_FROM = "vault@rosemaryacres.com";
       SMTP_FROM_NAME = "Rosemary Acres Vault";
     };
