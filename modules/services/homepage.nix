@@ -177,7 +177,7 @@ let
     - Productivity:
         - Vaultwarden:
             description: Password vault
-            href: https://vault.rosemaryacres.com
+            href: https://keys.rosemaryacres.com
             icon: vaultwarden.png
         - Paperless:
             description: OCR document archive
