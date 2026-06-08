@@ -17,9 +17,13 @@
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # comin — GitOps applier: pulls this repo and rebuilds when `main` advances
+    # (i.e. when a reviewed PR is merged). See modules/agent/.
+    comin.url = "github:nlewo/comin";
   };
 
-  outputs = { self, nixpkgs, vscode-server, home-manager }:
+  outputs = { self, nixpkgs, vscode-server, home-manager, comin }:
     let
       system = "x86_64-linux";
       lib = nixpkgs.lib;
@@ -31,6 +35,7 @@
             ./configuration.nix
             vscode-server.nixosModules.default
             home-manager.nixosModules.home-manager
+            comin.nixosModules.comin
           ];
         };
       };

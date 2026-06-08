@@ -23,9 +23,9 @@
     ./modules/home-manager.nix
 
     # Agent access (scoped, non-root Claude agent) — see modules/agent/README.md.
-    # comin.nix (GitOps applier) is intentionally NOT imported yet — Phase 2.
     ./modules/agent/claude-user.nix
     ./modules/agent/sudo.nix
+    ./modules/agent/comin.nix               # GitOps applier — rebuilds on merge to main
 
     # Services.
     ./modules/services/nginx-access.nix     # source-gate all vhosts to Tailscale + LAN (security review 2026-06-04)
