@@ -1,8 +1,9 @@
 # Litestream — continuous replication of the Vaultwarden SQLite vault to B2.
 #
-# STATUS: STAGED / INERT. This module is NOT imported in configuration.nix yet,
-# so it has zero effect until you add the import line and fill in the B2 details
-# below. Sketched 2026-06-07 (Chris was on mobile); see [[vaultwarden-selfhosted]].
+# STATUS: WIRED 2026-06-08 (imported in configuration.nix). It will not actually
+# replicate until the B2 prerequisites below are done — the unit needs
+# /var/lib/litestream/b2.env to start, and the bucket/endpoint must be real.
+# Sketched 2026-06-07; see [[vaultwarden-selfhosted]].
 #
 # WHY: Vaultwarden's DB is already in the nightly restic→B2 backup, but that's a
 # ~24h RPO and a file-level copy of a live SQLite DB (can be torn mid-write).
@@ -56,5 +57,13 @@
 
   # litestream needs to open the vaultwarden-owned (0600) DB and write its shadow
   # WAL alongside it — run it as the vaultwarden user. Verify after first rebuild.
+  # (The B2 key in environmentFile is read by systemd as root before dropping to
+  # this User, so b2.env stays root:root 0600 — vaultwarden need not read it.)
   systemd.services.litestream.serviceConfig.User = lib.mkForce "vaultwarden";
+
+  # Start after vaultwarden so db.sqlite3 exists (vaultwarden runs migrations on
+  # startup). Soft `after` only — litestream is a backup sidecar, so a vaultwarden
+  # failure shouldn't cascade-stop it, and litestream retries if the DB is missing.
+  systemd.services.litestream.after = [ "vaultwarden.service" ];
+  systemd.services.litestream.wants = [ "vaultwarden.service" ];
 }

@@ -62,6 +62,7 @@
     ./modules/services/paperless.nix
     ./modules/services/uptime-kuma.nix
     ./modules/services/vaultwarden.nix
+    ./modules/services/litestream.nix       # continuous SQLite replication of the vault to B2
   ];
 
   # The NixOS release the system was first installed from. Leave it pinned —
