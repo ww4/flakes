@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# PreToolUse guard for the `claude` agent (STAGED — install at
-# /home/claude/.claude/pretooluse-guard.sh and reference it from settings.json).
+# PreToolUse guard for the `claude` agent. Deployed root-owned (0555) by
+# claude-harness.nix to /etc/claude-code/pretooluse-guard.sh and referenced from
+# the managed settings hook — so the agent cannot edit or remove its own backstop.
 #
 # Programmatic backstop ABOVE the settings allow/deny lists: hard-deny destructive
 # commands no matter how they're phrased, so a single typo or clever rephrase
