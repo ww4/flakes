@@ -43,7 +43,18 @@ MAX_DELETE=250
 # graveyard, and the drive sentinels out of the mirror. /arr is tier-3
 # content (mergerfs+snapraid parity protects it; re-download is the DR path)
 # and is deliberately NOT mirrored — keeps the backup pool focused on tier 2.
-EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclude=/arr --exclude=/pinchflat --exclude=/rick-offsite)
+# /bitcoind is the live Bitcoin Core datadir (blocks + churning LevelDB
+# chainstate): fully regenerable by re-syncing from the network, so it's
+# excluded — backing it up was pure waste and the live chainstate also caused
+# spurious rsync exit-24 failures. (NB: this is the *node* datadir, distinct
+# from /mnt/fusion/Bitcoin, the wallet path still in the restic critical set.)
+# /archive and /legacy are backup-pool-only COLD STORAGE (old 2022 home snapshot,
+# A2Hosting/Drupal/driveonwood migration dumps, ntfs-loose, GATEWAY-keeper) that
+# never lived in /mnt/fusion. Without excluding them, the --delete pass flagged
+# them as ~339k "deletions" (the backup pool is their only home — approving would
+# have destroyed them). Same treatment as /restic and /rick-offsite, also
+# backup-only. Excluded 2026-06-07.
+EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclude=/arr --exclude=/pinchflat --exclude=/rick-offsite --exclude=/bitcoind --exclude=/archive --exclude=/legacy)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Notification failures must never abort a backup.
@@ -143,16 +154,30 @@ Run 'media-mirror status' and check the drives." \
   ts=$(date +%Y-%m-%d_%H%M%S)
   log="$LOGDIR/sync-$ts.log"
 
-  # 1. Additive copy — never deletes anything.
+  # 1. Additive copy — never deletes anything. rsync exit 24 ("some files
+  #    vanished before they could be transferred") is benign here: bitcoind
+  #    rewrites its live LevelDB chainstate mid-run, so .ldb files appear and
+  #    vanish between the file-list and the transfer. Treat 24 as success; any
+  #    other non-zero is a real failure.
   echo "additive sync: $SRC/ -> $DST/"
-  rsync -aH --stats "${EXCLUDES[@]}" "$SRC/" "$DST/" | tee "$log"
+  local rc=0
+  rsync -aH --stats "${EXCLUDES[@]}" "$SRC/" "$DST/" | tee "$log" || rc=${PIPESTATUS[0]}
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 24 ]; then
+    echo "rsync (additive copy) failed with exit $rc" >&2
+    exit "$rc"
+  fi
 
   # 2. Compute what a --delete pass would remove; queue it for review.
   echo "computing deletions ..."
   local tmp
   tmp=$(mktemp)
+  rc=0
   rsync -aH --delete --dry-run --itemize-changes "${EXCLUDES[@]}" \
-    "$SRC/" "$DST/" > "$tmp"
+    "$SRC/" "$DST/" > "$tmp" || rc=$?
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 24 ]; then
+    echo "rsync (deletion dry-run) failed with exit $rc" >&2
+    exit "$rc"
+  fi
   grep '^\*deleting' "$tmp" | sed 's/^\*deleting *//' > "$PENDING" || true
   rm -f "$tmp"
 
