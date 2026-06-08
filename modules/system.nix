@@ -22,11 +22,11 @@
   # Allow unfree packages.
   nixpkgs.config.allowUnfree = true;
 
-  # Allow insecure packages (added 11/3/23 for error updating).
-  nixpkgs.config.permittedInsecurePackages = [
-    "electron-20.3.11"
-    "electron-27.3.11"
-  ];
+  # (Removed the electron-20.3.11 / electron-27.3.11 insecure-package pins on
+  # 2026-06-08 — added 11/3/23, now stale: a full system build evaluates clean
+  # without them, i.e. nothing in the closure pulls those electron versions.
+  # If a future package needs an insecure electron, the build will fail loudly
+  # and name it — re-pin the exact version here then.)
 
   # nix-ld: provide a real dynamic loader at /lib64/ld-linux-x86-64.so.2 so
   # generic (non-Nix) dynamically-linked binaries can run. NixOS otherwise
