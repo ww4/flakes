@@ -24,12 +24,11 @@
   networking.firewall = {
     enable = true;
     allowedTCPPorts = [ 80 443 ];
-    allowedUDPPortRanges = [
-      # FIXME(security-review 2026-06-04): undocumented broad ranges, origin
-      # unknown -- left intact pending investigation. Candidates to narrow/drop.
-      { from = 2000; to = 4007; }
-      { from = 8000; to = 8300; }
-    ];
+    # (Removed the undocumented UDP ranges 2000-4007 and 8000-8300 on 2026-06-08:
+    # investigation found NOTHING listening on UDP in either range — every UDP
+    # listener on the box (68/546/5353/7359/9094/41641/ephemeral) is outside them,
+    # and all web services are loopback-bound behind nginx. They were dead inbound
+    # holes. Re-add a scoped range here if a future service needs inbound UDP.)
     # LAN + Tailscale only (no longer world-open):
     #   22   - SSH (key-only; see services.openssh below)
     #   8096 - Jellyfin direct (http://<ip>:8096) for Roku/TV clients
