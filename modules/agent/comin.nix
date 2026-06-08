@@ -21,6 +21,11 @@
           # `main` → full `nixos-rebuild switch` (persists + boots). main is
           # branch-protected, so only a reviewed PR merge can advance it.
           main.name = "main";
+          # `testing` → ephemeral `nixos-rebuild test` (applied live, auto-reverts
+          # on reboot, no bootloader change). NOT branch-protected: the agent
+          # pushes here to iterate live WITHOUT a PR. Only `main` persists, and
+          # only via a reviewed merge. This is the fast-iteration path.
+          testing.name = "testing";
         };
       }
     ];
