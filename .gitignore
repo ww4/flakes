@@ -1,0 +1,5 @@
+# nixos-rebuild / nix build output symlinks — local build artifacts, never commit.
+# (These point into /nix/store and change every build; tracking them caused
+# cross-PR merge conflicts. Added 2026-06-08.)
+result
+result-*
