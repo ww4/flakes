@@ -1,8 +1,9 @@
 # Vaultwarden — Rust re-implementation of the Bitwarden server.
 #
 # Tiny (~10 MB resident), single SQLite DB at /var/lib/bitwarden_rs.
-# Reachable at https://vault.rosemaryacres.com (DNS only resolves to the
+# Reachable at https://keys.rosemaryacres.com (DNS only resolves to the
 # Tailscale IP — same posture as the other rosemaryacres.com vhosts).
+# (Renamed from vault.* — Chrome Safe Browsing kept flagging the "vault" name.)
 #
 # Admin panel: /admin — requires ADMIN_TOKEN from /var/lib/vaultwarden/env.
 # Generate that token once with `openssl rand -base64 48` and store in:
@@ -24,7 +25,7 @@
     dbBackend = "sqlite";
     environmentFile = "/var/lib/vaultwarden/env";   # holds ADMIN_TOKEN + SMTP creds
     config = {
-      DOMAIN = "https://vault.rosemaryacres.com";
+      DOMAIN = "https://keys.rosemaryacres.com";
       ROCKET_ADDRESS = "127.0.0.1";
       ROCKET_PORT = 8222;
       # WebSockets for live-sync between clients (deprecated in upstream;
@@ -62,7 +63,7 @@
     };
   };
 
-  services.nginx.virtualHosts."vault.rosemaryacres.com" = {
+  services.nginx.virtualHosts."keys.rosemaryacres.com" = {
     forceSSL = true;
     enableACME = true;
     acmeRoot = null;
