@@ -32,6 +32,7 @@ deny() {
 # through a flake edit + PR (comin applies on merge), never an ad-hoc command.
 case "$cmd" in
   *"rm -rf"*|*"rm -fr"*|*" rm "*"-rf"*) deny "Destructive delete — make the change via a flake PR, or ask Chris to run it." ;;
+  *"find "*" -delete"*|*" shred "*|*"truncate "*) deny "Bulk/in-place destroy — make the change via a flake PR, or ask Chris to run it." ;;
   *mkfs*|*" dd "*|*"of=/dev/"*|*" wipefs"*|*" fdisk"*|*" parted"*) deny "Disk/format op — must be run by Chris." ;;
   *"nixos-rebuild switch"*|*"nixos-rebuild boot"*) deny "Applying config is comin's job after a PR merge to main — don't switch directly." ;;
   *"git push"*"--force"*|*"git push"*" main"*|*"git push"*":main"*) deny "Never force-push or push to main directly — open a PR; Chris merges." ;;
