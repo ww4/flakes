@@ -1,7 +1,14 @@
 {
   "_comment": "ROOT-OWNED, TAMPER-PROOF Claude Code policy for the `claude` agent. Deployed by claude-harness.nix to /etc/claude-code/managed-settings.json — the HIGHEST settings tier; the claude user cannot override or edit it (it owns neither this file nor the hook script). Rules evaluate deny -> ask -> allow, first match wins; an unmatched tool call prompts when interactive and FAILS CLOSED (deny) in a headless/autonomous run. There is no `ask` list on purpose: every action is resolved to an explicit allow or deny so behaviour is well-defined with or without a human at the keyboard. See ./README.md and ./pretooluse-guard.sh.",
 
+  "_comment_lockdown": "allowManagedPermissionRulesOnly: user/project allow|ask|deny rules are IGNORED — only the rules below apply, so the agent cannot self-grant permissions in its own ~/.claude/settings.json. allowManagedHooksOnly: user/project PreToolUse hooks are suppressed — only this file's hook runs, so the agent cannot inject an auto-allow hook to bypass the guard (the root-owned guard below still fires). permissions.disableBypassPermissionsMode='disable': --dangerously-skip-permissions / bypassPermissions mode is rejected at startup. (Doc-verified against code.claude.com/docs permissions.md + permission-modes.md.)",
+
+  "allowManagedPermissionRulesOnly": true,
+  "allowManagedHooksOnly": true,
+
   "permissions": {
+    "disableBypassPermissionsMode": "disable",
+
     "allow": [
       "Read",
       "Grep",

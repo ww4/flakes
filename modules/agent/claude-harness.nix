@@ -17,10 +17,17 @@
 # Precedence reminder: deny -> ask -> allow, first match wins. A managed `deny`
 # cannot be overridden by any user/project allow.
 #
-# Follow-ups deliberately NOT included here (verify against current Claude Code
-# docs, then add in a later PR): `allowManagedPermissionRulesOnly` (ignore any
-# user/project rules entirely) and `disableBypassPermissionsMode` (block
-# --dangerously-skip-permissions). Both are managed-only hardening knobs.
+# Hardening knobs now ENABLED in managed-settings.json (doc-verified):
+#   - allowManagedPermissionRulesOnly: only this file's allow/ask/deny apply;
+#     user/project permission rules are ignored (agent can't self-grant).
+#   - allowManagedHooksOnly: only this file's hook runs; user/project hooks are
+#     suppressed (agent can't inject an auto-allow PreToolUse hook).
+#   - permissions.disableBypassPermissionsMode = "disable": blocks
+#     --dangerously-skip-permissions / bypassPermissions mode at startup.
+# Not enabled (would need scoping first): allowManagedMcpServersOnly (no managed
+# MCP allowlist defined → would block all MCP), sandbox.* read/network locks, and
+# forceRemoteSettingsRefresh (that one is for REMOTE server-managed settings; we
+# ship a local /etc file, so it would fail closed on every startup).
 { config, lib, pkgs, ... }:
 
 {
