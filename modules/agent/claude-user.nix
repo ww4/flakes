@@ -1,4 +1,4 @@
-# Dedicated `claude` agent user (STAGED / INERT — not imported anywhere).
+# Dedicated `claude` agent user.
 #
 # Runs the Claude Code agent under its own uid instead of `chris`, so it does NOT
 # inherit chris's SSH keys, wallets, GPG, or GUI session. Standing access is
@@ -12,6 +12,14 @@
     description = "Claude Code agent (scoped, non-root)";
     home = "/home/claude";
     shell = pkgs.bashInteractive;
+
+    # The agent's runtime + tooling. claude-code is the agent itself; jq is
+    # required by the PreToolUse guard hook. (git/curl/openssh come from the
+    # system profile.) Auth is a one-time `claude login` (OAuth) as this user.
+    packages = with pkgs; [
+      claude-code
+      jq
+    ];
 
     # Read-only diagnostics without sudo: journald. Deliberately NOT in `wheel`,
     # `docker` (root-equivalent), or chris's data groups.
