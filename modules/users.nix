@@ -16,15 +16,19 @@
   # Media group — shared by Jellyfin, Audiobookshelf, etc.
   users.groups.media = { };
 
-  # Passwordless sudo for wheel (single-user homelab, Tailscale-only access).
+  # Root is key-only (PermitRootLogin prohibit-password, set in networking.nix).
+  # This automation key replaces chris's passwordless sudo as the way tooling
+  # reaches root (security review 2026-06-04): privileged automation logs in as
+  # root@ directly, human logins use the chris account where sudo now prompts.
+  users.users.root.openssh.authorizedKeys.keys = [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII72tYB6OdaFY3kAOYk7A/AEa9hrbckKe6gCoeM1SRhB chris@openclaw-claude-20260515"
+  ];
+
+  # Passwordless sudo for wheel — restored 2026-06-07 (the root automation key
+  # can't be used from on-box tooling, so chris→root via sudo is the working
+  # path). Single-user, Tailscale-only/key-only access; see security review.
   security.sudo.wheelNeedsPassword = false;
 
-  # Automatic login.
-  services.displayManager.autoLogin.enable = true;
-  services.displayManager.autoLogin.user = "chris";
-
-  # Workaround for GNOME autologin:
-  # https://github.com/NixOS/nixpkgs/issues/103746#issuecomment-945091229
-  systemd.services."getty@tty1".enable = false;
-  systemd.services."autovt@tty1".enable = false;
+  # Automatic login is OFF (2026-06-04) — GDM prompts for chris's password.
+  services.displayManager.autoLogin.enable = false;
 }

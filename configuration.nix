@@ -23,6 +23,7 @@
     ./modules/home-manager.nix
 
     # Services.
+    ./modules/services/nginx-access.nix     # source-gate all vhosts to Tailscale + LAN (security review 2026-06-04)
     ./modules/services/jellyfin.nix
     ./modules/services/audiobookshelf.nix
     ./modules/services/tandoor.nix
