@@ -38,10 +38,27 @@
     };
   };
 
-  # Steam.
+  # Steam. Security review 2026-06-04: the openFirewall flags opened the Steam
+  # ports on ALL interfaces (LAN + public IPv6). Disabled them and re-opened the
+  # same port set scoped to the LAN + Tailscale only.
   programs.steam = {
     enable = true;
-    remotePlay.openFirewall = true;       # Steam Remote Play
-    dedicatedServer.openFirewall = true;  # Source Dedicated Server
+    remotePlay.openFirewall = false;       # Steam Remote Play (scoped below)
+    dedicatedServer.openFirewall = false;  # Source Dedicated Server (scoped below)
   };
+  networking.firewall.interfaces =
+    let
+      steamTCP = [ 27015 27036 27040 ];
+      steamUDP = [ 27015 27036 ];
+      steamUDPRanges = [ { from = 27031; to = 27036; } ];  # Remote Play streaming
+      steam = {
+        allowedTCPPorts = steamTCP;
+        allowedUDPPorts = steamUDP;
+        allowedUDPPortRanges = steamUDPRanges;
+      };
+    in
+    {
+      enp3s0 = steam;      # LAN
+      tailscale0 = steam;  # Tailscale
+    };
 }
