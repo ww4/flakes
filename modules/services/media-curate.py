@@ -55,6 +55,7 @@ MOVIE_RE = re.compile(r"^(?P<title>.+) \((?P<year>(?:19|20)\d{2})\)$")
 TV_RE = re.compile(r"^(?P<show>.+?) [Ss](?P<s>\d{1,2})[Ee](?P<e>\d{1,3})$")
 
 VIDEO_TYPES = "Movie,Episode,Video,MusicVideo,Audio"
+LEAF_TYPES = {"Movie", "Episode", "Video", "MusicVideo", "Audio"}
 
 
 def die(msg):
@@ -116,7 +117,23 @@ def collection_members(cid):
         "Fields": "Path,Tags",
         "EnableTotalRecordCount": "false",
     })
-    return [i for i in (res or {}).get("Items", []) if i.get("Path")]
+    return (res or {}).get("Items", [])
+
+
+def leaf_items(member):
+    """A collection member may be a single video OR a folder/season/series
+    (much faster to add a whole playlist). Expand containers into their actual
+    video files so each is handled individually."""
+    if member.get("IsFolder") or member.get("Type") not in LEAF_TYPES:
+        res = api("GET", "/Items", {
+            "ParentId": member["Id"],
+            "Recursive": "true",
+            "IncludeItemTypes": VIDEO_TYPES,
+            "Fields": "Path",
+            "EnableTotalRecordCount": "false",
+        })
+        return [i for i in (res or {}).get("Items", []) if i.get("Path")]
+    return [member] if member.get("Path") else []
 
 
 def set_tags(item_id, tags):
@@ -193,14 +210,16 @@ def cmd_tag_sweep(apply):
 
 # --------------------------------------------------------------------------- #
 def sidecars(path):
-    """info.json + thumbnail next to a media file (yt-dlp sidecars)."""
+    """Companion files next to a media file: yt-dlp's info.json/description, an
+    existing PinchFlat/Jellyfin .nfo, and thumbnails. Carried along on a move so
+    metadata/posters aren't lost."""
     base, _ = os.path.splitext(path)
     out = []
-    info = base + ".info.json"
-    if os.path.exists(info):
-        out.append(info)
-    for ext in (".jpg", ".webp", ".png"):
-        for cand in (base + ext, path + ext):  # name.jpg or name.ext.jpg
+    for suffix in (".info.json", ".nfo", ".description"):
+        if os.path.exists(base + suffix):
+            out.append(base + suffix)
+    for ext in (".jpg", ".jpeg", ".webp", ".png"):
+        for cand in (base + ext, base + "-thumb" + ext, base + "-poster" + ext, path + ext):
             if os.path.exists(cand):
                 out.append(cand)
     return out
@@ -217,74 +236,80 @@ def move(src, dst, apply):
 def cmd_promote(apply):
     failures = []  # (name, reason)
 
-    # ----- Lane A: Promote -> Library (Movies / TV) -----
-    cid = collection_id(COLL_LIBRARY)
-    if cid:
-        for it in collection_members(cid):
-            name = it["Name"]
-            path = it["Path"]
-            ext = os.path.splitext(path)[1]
-            m = MOVIE_RE.match(name)
-            t = TV_RE.match(name)
-            if m:
-                folder = os.path.join(MOVIES_DIR, name)
-                dst = os.path.join(folder, os.path.basename(path))
-                print(f"[movie] {name}")
-                move(path, dst, apply)
-                for s in sidecars(path):
-                    move(s, os.path.join(folder, os.path.basename(s)), apply)
-                if apply:
-                    remove_from_collection(cid, it["Id"])
-            elif t:
-                show = t.group("show").strip()
-                season = int(t.group("s"))
-                ep = int(t.group("e"))
-                folder = os.path.join(TV_DIR, show, f"Season {season:02d}")
-                newbase = f"{show} S{season:02d}E{ep:02d}"
-                dst = os.path.join(folder, newbase + ext)
-                print(f"[tv] {show} S{season:02d}E{ep:02d}")
-                move(path, dst, apply)
-                for s in sidecars(path):
-                    sext = s[len(os.path.splitext(path)[0]):]  # preserve .info.json etc.
-                    move(s, os.path.join(folder, newbase + sext), apply)
-                if apply:
-                    remove_from_collection(cid, it["Id"])
-            else:
-                reason = (f"title not canonical — expected 'Name (Year)' or "
-                          f"'Show S01E01', got '{name}'")
-                failures.append((name, reason))
-
-    # ----- Lane B: Promote -> Keep (home video + NFO) -----
-    kid = collection_id(COLL_KEEP)
-    if kid:
-        for it in collection_members(kid):
-            path = it["Path"]
-            base = os.path.splitext(path)[0]
-            info_path = base + ".info.json"
-            channel = "Unknown"
-            info = None
-            if os.path.exists(info_path):
-                try:
-                    info = json.load(open(info_path))
-                    channel = info.get("uploader") or info.get("channel") or "Unknown"
-                except (OSError, ValueError):
-                    pass
-            channel = re.sub(r"[/\\]", "_", channel)
-            folder = os.path.join(KEEP_DIR, channel)
-            dst = os.path.join(folder, os.path.basename(path))
-            print(f"[keep] {it['Name']}  (channel: {channel})")
-            move(path, dst, apply)
+    def handle_library_leaf(it):
+        """File a single video into Movies/TV by its canonical title.
+        Returns True if moved, False if it still needs naming."""
+        name, path = it["Name"], it["Path"]
+        ext = os.path.splitext(path)[1]
+        base = os.path.splitext(path)[0]
+        m, t = MOVIE_RE.match(name), TV_RE.match(name)
+        if m:
+            folder = os.path.join(MOVIES_DIR, name)
+            print(f"[movie] {name}")
+            move(path, os.path.join(folder, os.path.basename(path)), apply)
             for s in sidecars(path):
                 move(s, os.path.join(folder, os.path.basename(s)), apply)
-            if info is not None and apply:
-                write_nfo(os.path.splitext(dst)[0] + ".nfo", info)
-            if apply:
-                remove_from_collection(kid, it["Id"])
+            return True
+        if t:
+            show, season, ep = t.group("show").strip(), int(t.group("s")), int(t.group("e"))
+            folder = os.path.join(TV_DIR, show, f"Season {season:02d}")
+            newbase = f"{show} S{season:02d}E{ep:02d}"
+            print(f"[tv] {show} S{season:02d}E{ep:02d}")
+            move(path, os.path.join(folder, newbase + ext), apply)
+            for s in sidecars(path):
+                move(s, os.path.join(folder, newbase + s[len(base):]), apply)
+            return True
+        failures.append((name, f"title not canonical (got '{name}')"))
+        return False
+
+    def handle_keep_leaf(it):
+        """Organize a single video as a home video under its channel + NFO."""
+        path = it["Path"]
+        base = os.path.splitext(path)[0]
+        info, channel = None, "Unknown"
+        if os.path.exists(base + ".info.json"):
+            try:
+                info = json.load(open(base + ".info.json"))
+                channel = info.get("uploader") or info.get("channel") or "Unknown"
+            except (OSError, ValueError):
+                pass
+        channel = re.sub(r"[/\\]", "_", channel).strip() or "Unknown"
+        folder = os.path.join(KEEP_DIR, channel)
+        dst = os.path.join(folder, os.path.basename(path))
+        print(f"[keep] {it['Name']}  (channel: {channel})")
+        move(path, dst, apply)
+        for s in sidecars(path):
+            move(s, os.path.join(folder, os.path.basename(s)), apply)
+        # Only synthesize an NFO if none travelled with the file.
+        nfo = os.path.splitext(dst)[0] + ".nfo"
+        if apply and info is not None and not os.path.exists(nfo):
+            write_nfo(nfo, info)
+        return True
+
+    for coll_name, handler in ((COLL_LIBRARY, handle_library_leaf),
+                               (COLL_KEEP, handle_keep_leaf)):
+        cid = collection_id(coll_name)
+        if cid is None:
+            print(f"(collection '{coll_name}' not found — skipping)")
+            continue
+        for member in collection_members(cid):
+            leaves = leaf_items(member)
+            if not leaves:
+                failures.append((member.get("Name", "?"), "no video files found in folder"))
+                continue
+            kind = "folder" if (member.get("IsFolder") or member.get("Type") not in LEAF_TYPES) else "item"
+            if kind == "folder":
+                print(f"== {coll_name}: folder '{member['Name']}' -> {len(leaves)} videos ==")
+            results = [handler(it) for it in leaves]
+            # Clear the member from the collection only if every leaf was handled,
+            # so a folder with some still-unnamed videos stays queued.
+            if apply and all(results):
+                remove_from_collection(cid, member["Id"])
 
     if failures:
-        lines = "; ".join(f"{n} ({r.split('got')[-1].strip()})" for n, r in failures)
-        msg = (f"{len(failures)} item(s) left in '{COLL_LIBRARY}' — need a "
-               f"canonical title first: {lines}")
+        brief = "; ".join(f"{n} [{r}]" for n, r in failures[:10])
+        more = "" if len(failures) <= 10 else f" (+{len(failures) - 10} more)"
+        msg = f"{len(failures)} item(s) need a canonical title before promotion: {brief}{more}"
         print(msg)
         notify("media-curate: items need naming", msg, "default", "clapper,warning")
     if not apply:
