@@ -24,6 +24,16 @@
       zmqpubrawblock=tcp://127.0.0.1:28332
       zmqpubrawtx=tcp://127.0.0.1:28333
       zmqpubhashblock=tcp://127.0.0.1:28334
+      # RPC reachability for the mempool backend container, which connects via
+      # the docker host gateway (172.17.0.1:8332). Bind all interfaces but gate
+      # with rpcallowip to loopback + docker bridge subnets only. Port 8332 is
+      # NOT in the firewall allowlist (allowedTCPPorts=[80 443]), so the LAN and
+      # internet can't reach it regardless — rpcallowip is the second layer.
+      # 0.0.0.0 (not 172.17.0.1) avoids a boot-ordering dependency on docker0
+      # existing before bitcoind starts.
+      rpcbind=0.0.0.0
+      rpcallowip=127.0.0.1
+      rpcallowip=172.16.0.0/12
     '';
   };
 
