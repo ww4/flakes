@@ -40,6 +40,9 @@ in
     wantedBy = [ "multi-user.target" ];
     after = [ "bitcoind-bitcoin.service" ];
     requires = [ "bitcoind-bitcoin.service" ];
+    # bitcoind regenerates its .cookie on every restart, so restart fulcrum
+    # with it — the cookie-stage ExecStartPre then picks up the fresh cookie.
+    partOf = [ "bitcoind-bitcoin.service" ];
     unitConfig.RequiresMountsFor = "/mnt/fusion";
     serviceConfig = {
       User = "fulcrum";

@@ -20,11 +20,14 @@ in
     mempool-db = {
       image = "mariadb:11";
       environment = {
-        MARIADB_DATABASE     = "mempool";
-        MARIADB_USER         = "mempool";
-        MARIADB_PASSWORD     = "mempool";              # local-only network
-        MARIADB_ROOT_PASSWORD = "admin";
+        MARIADB_DATABASE = "mempool";
+        MARIADB_USER     = "mempool";
       };
+      # MARIADB_PASSWORD / MARIADB_ROOT_PASSWORD come from a generated env file
+      # (mempool-db-secrets, below) so no secrets land in the world-readable
+      # Nix store. The DB is on an internal docker network, but kept out of the
+      # store on principle (per the security review).
+      environmentFiles = [ "/var/lib/mempool/db.env" ];
       volumes = [ "/var/lib/mempool/mysql:/var/lib/mysql" ];
       extraOptions = [ "--network=${mempoolNet}" ];
     };
@@ -47,9 +50,10 @@ in
         MYSQL_HOST     = "mempool-db";
         MYSQL_DATABASE = "mempool";
         MYSQL_USER     = "mempool";
-        MYSQL_PASSWORD = "mempool";
         STATISTICS_ENABLED = "true";
       };
+      # MYSQL_PASSWORD comes from the same generated env file as mempool-db.
+      environmentFiles = [ "/var/lib/mempool/db.env" ];
       volumes = [
         "/var/lib/mempool/cache:/backend/cache"
         "/run/mempool-cookie:/run/mempool-cookie:ro"
@@ -76,6 +80,9 @@ in
     wantedBy = [ "multi-user.target" ];
     after = [ "bitcoind-bitcoin.service" ];
     requires = [ "bitcoind-bitcoin.service" ];
+    # Re-stage the cookie whenever bitcoind restarts (it rotates the cookie).
+    partOf = [ "bitcoind-bitcoin.service" ];
+    path = [ pkgs.coreutils ];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
@@ -87,6 +94,42 @@ in
       cut -d: -f2 /mnt/fusion/bitcoind/.cookie > /run/mempool-cookie
       chmod 0644 /run/mempool-cookie
     '';
+  };
+
+  # Generate the MariaDB credentials once into a root-only env file the two
+  # containers read — keeps secrets out of the Nix store. Runs before the db
+  # (which initialises with them) and the api (which connects with them).
+  systemd.services.mempool-db-secrets = {
+    description = "Generate mempool MariaDB credentials (out of the Nix store)";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "docker-mempool-db.service" "docker-mempool-api.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      set -e
+      envf=/var/lib/mempool/db.env
+      [ -s "$envf" ] && exit 0
+      gen() { ${pkgs.coreutils}/bin/tr -dc 'A-Za-z0-9' < /dev/urandom | ${pkgs.coreutils}/bin/head -c 32; }
+      pw=$(gen); rootpw=$(gen)
+      umask 077
+      ${pkgs.coreutils}/bin/printf 'MARIADB_PASSWORD=%s\nMARIADB_ROOT_PASSWORD=%s\nMYSQL_PASSWORD=%s\n' \
+        "$pw" "$rootpw" "$pw" > "$envf"
+    '';
+  };
+
+  # Ordering: containers must wait for their prerequisite oneshots (the env
+  # file + the staged cookie) so docker doesn't bind-mount a missing path.
+  systemd.services.docker-mempool-db = {
+    after = [ "mempool-db-secrets.service" ];
+    requires = [ "mempool-db-secrets.service" ];
+  };
+  systemd.services.docker-mempool-api = {
+    after = [ "mempool-db-secrets.service" "mempool-cookie-sync.service" ];
+    requires = [ "mempool-db-secrets.service" "mempool-cookie-sync.service" ];
+    # Restart with bitcoind so it re-reads the freshly-staged cookie.
+    partOf = [ "bitcoind-bitcoin.service" ];
   };
 
   systemd.tmpfiles.rules = [

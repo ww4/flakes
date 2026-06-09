@@ -36,6 +36,7 @@
     ./modules/services/pinchflat.nix
     ./modules/services/bitcoind.nix
     ./modules/services/fulcrum.nix          # Electrum server (mempool.space backend + Sparrow); indexes the chain
+    ./modules/services/mempool.nix          # mempool.space explorer (mariadb+backend+frontend via docker)
     ./modules/services/gyb.nix
     ./modules/services/immich.nix
     ./modules/services/vscode-server.nix
