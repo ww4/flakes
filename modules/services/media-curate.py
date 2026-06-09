@@ -88,14 +88,23 @@ def notify(title, message, priority="default", tags=""):
 
 
 def all_items():
-    """Every media item with a file path + its tags."""
-    res = api("GET", "/Items", {
-        "Recursive": "true",
-        "IncludeItemTypes": VIDEO_TYPES,
-        "Fields": "Path,Tags",
-        "EnableTotalRecordCount": "false",
-    })
-    return [i for i in (res or {}).get("Items", []) if i.get("Path")]
+    """Every media item with a file path + its tags, fetched in pages (the
+    whole library in one request times out)."""
+    out, start, page = [], 0, 500
+    while True:
+        res = api("GET", "/Items", {
+            "Recursive": "true",
+            "IncludeItemTypes": VIDEO_TYPES,
+            "Fields": "Path,Tags",
+            "EnableTotalRecordCount": "false",
+            "StartIndex": str(start),
+            "Limit": str(page),
+        })
+        batch = (res or {}).get("Items", [])
+        out.extend(i for i in batch if i.get("Path"))
+        if len(batch) < page:
+            return out
+        start += page
 
 
 def collection_id(name):
@@ -335,15 +344,23 @@ def write_nfo(nfo_path, info):
 
 
 def cmd_status(_apply):
-    for name in (COLL_LIBRARY, COLL_KEEP):
-        cid = collection_id(name)
-        members = collection_members(cid) if cid else []
-        print(f"{name}: {'(missing)' if cid is None else len(members)}")
-        for it in members:
-            print(f"  - {it['Name']}")
+    # List ALL collections with Jellyfin's child count vs what our membership
+    # query returns — reveals naming mismatches or items Jellyfin didn't accept.
+    boxsets = api("GET", "/Items", {
+        "Recursive": "true",
+        "IncludeItemTypes": "BoxSet",
+        "Fields": "ChildCount",
+        "EnableTotalRecordCount": "false",
+    }) or {}
+    print("Collections (BoxSets):")
+    for c in boxsets.get("Items", []):
+        members = collection_members(c["Id"])
+        leaves = sum(len(leaf_items(m)) for m in members)
+        print(f"  {c['Name']!r}  childCount={c.get('ChildCount')}  "
+              f"members={len(members)}  expanded_videos={leaves}  id={c['Id']}")
     items = all_items()
     tagged = sum(1 for i in items if BACKUP_TAG in (i.get("Tags") or []))
-    print(f"backed-up tag: {tagged}/{len(items)} items")
+    print(f"items scanned: {len(items)}; backed-up tag: {tagged}")
 
 
 def main():
