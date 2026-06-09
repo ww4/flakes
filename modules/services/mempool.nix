@@ -42,21 +42,25 @@ in
         ELECTRUM_TLS_ENABLED = "false";
         CORE_RPC_HOST   = "172.17.0.1";
         CORE_RPC_PORT   = "8332";
+        # bitcoind cookie auth = HTTP basic with user "__cookie__" and the cookie
+        # password. CORE_RPC_PASSWORD is injected from rpc.env (written fresh by
+        # mempool-cookie-sync on each bitcoind restart); this container is partOf
+        # bitcoind, so it restarts and re-reads the rotated password.
         CORE_RPC_USERNAME = "__cookie__";
-        # cookie value is filled in at runtime by the systemd ExecStartPre
-        # below — it changes every bitcoind restart, so we read it fresh.
-        CORE_RPC_PASSWORD_FILE = "/run/mempool-cookie";
-        DATABASE_ENABLED = "true";
-        MYSQL_HOST     = "mempool-db";
-        MYSQL_DATABASE = "mempool";
-        MYSQL_USER     = "mempool";
+        DATABASE_ENABLED  = "true";
+        # mempool backend uses DATABASE_* env names (NOT MYSQL_*); with MYSQL_*
+        # it silently fell back to 127.0.0.1:3306 and crash-looped.
+        DATABASE_HOST     = "mempool-db";
+        DATABASE_PORT     = "3306";
+        DATABASE_DATABASE = "mempool";
+        DATABASE_USERNAME = "mempool";
         STATISTICS_ENABLED = "true";
       };
-      # MYSQL_PASSWORD comes from the same generated env file as mempool-db.
-      environmentFiles = [ "/var/lib/mempool/db.env" ];
+      # DATABASE_PASSWORD (db.env) + CORE_RPC_PASSWORD (rpc.env) come from
+      # generated env files, kept out of the Nix store.
+      environmentFiles = [ "/var/lib/mempool/db.env" "/var/lib/mempool/rpc.env" ];
       volumes = [
         "/var/lib/mempool/cache:/backend/cache"
-        "/run/mempool-cookie:/run/mempool-cookie:ro"
       ];
       extraOptions = [ "--network=${mempoolNet}" ];
     };
@@ -73,10 +77,10 @@ in
     };
   };
 
-  # Cookie-shim: every bitcoind restart rewrites the cookie. Copy it into
-  # a fixed path the mempool-api container can read.
+  # Cookie-shim: every bitcoind restart rewrites the cookie. Write the cookie
+  # password into an env file (CORE_RPC_PASSWORD=...) the mempool-api reads.
   systemd.services.mempool-cookie-sync = {
-    description = "Stage bitcoind cookie for mempool-api";
+    description = "Write bitcoind cookie password into mempool rpc.env";
     wantedBy = [ "multi-user.target" ];
     after = [ "bitcoind-bitcoin.service" ];
     requires = [ "bitcoind-bitcoin.service" ];
@@ -90,9 +94,10 @@ in
     script = ''
       set -e
       until [ -f /mnt/fusion/bitcoind/.cookie ] ; do sleep 2 ; done
-      # Cookie format: __cookie__:<password>. Strip prefix.
-      cut -d: -f2 /mnt/fusion/bitcoind/.cookie > /run/mempool-cookie
-      chmod 0644 /run/mempool-cookie
+      # Cookie format: __cookie__:<password>. Strip the prefix; emit as env.
+      pw=$(cut -d: -f2 /mnt/fusion/bitcoind/.cookie)
+      umask 077
+      printf 'CORE_RPC_PASSWORD=%s\n' "$pw" > /var/lib/mempool/rpc.env
     '';
   };
 
@@ -107,14 +112,22 @@ in
       Type = "oneshot";
       RemainAfterExit = true;
     };
+    path = [ pkgs.coreutils pkgs.gnugrep ];
     script = ''
       set -e
       envf=/var/lib/mempool/db.env
-      [ -s "$envf" ] && exit 0
-      gen() { ${pkgs.coreutils}/bin/tr -dc 'A-Za-z0-9' < /dev/urandom | ${pkgs.coreutils}/bin/head -c 32; }
-      pw=$(gen); rootpw=$(gen)
       umask 077
-      ${pkgs.coreutils}/bin/printf 'MARIADB_PASSWORD=%s\nMARIADB_ROOT_PASSWORD=%s\nMYSQL_PASSWORD=%s\n' \
+      if [ -s "$envf" ]; then
+        # Preserve existing creds (the DB volume was initialised with them);
+        # just regenerate the file so DATABASE_PASSWORD mirrors MARIADB_PASSWORD.
+        pw=$(grep '^MARIADB_PASSWORD=' "$envf" | cut -d= -f2-)
+        rootpw=$(grep '^MARIADB_ROOT_PASSWORD=' "$envf" | cut -d= -f2-)
+      else
+        gen() { tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32; }
+        pw=$(gen); rootpw=$(gen)
+      fi
+      # mempool-db reads MARIADB_*; mempool-api reads DATABASE_PASSWORD — same value.
+      printf 'MARIADB_PASSWORD=%s\nMARIADB_ROOT_PASSWORD=%s\nDATABASE_PASSWORD=%s\n' \
         "$pw" "$rootpw" "$pw" > "$envf"
     '';
   };
