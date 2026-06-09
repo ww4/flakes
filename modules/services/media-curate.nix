@@ -47,16 +47,15 @@ in
   # Tag sweep is non-destructive (only sets Jellyfin tags) → safe to schedule.
   # Promote moves files, so it stays manual (`sudo media-curate promote`) until
   # we've validated it; we can add a timer for it later.
-  # NOTE: runs in DRY-RUN (no --apply) until the tag-writing path has been
-  # validated live against the real library. Flipping to `--apply` is then a
-  # one-line change. With no key present it exits 0 (no failed-unit alert).
+  # Tag sweep: maintain the backed-up tag (backfill + verify). With no key it
+  # exits 0 (no failed-unit alert). Daily, after the weekly media-mirror.
   systemd.services.media-curate-tag-sweep = {
     description = "media-curate: maintain the backed-up tag (backfill + verify)";
     after = [ "media-mirror-sync.service" ];
     unitConfig.RequiresMountsFor = "/mnt/fusion /mnt/backup/all";
     serviceConfig = {
       Type = "oneshot";
-      ExecStart = "${media-curate}/bin/media-curate tag-sweep";
+      ExecStart = "${media-curate}/bin/media-curate tag-sweep --apply";
     };
   };
   systemd.timers.media-curate-tag-sweep = {
@@ -64,6 +63,26 @@ in
     wantedBy = [ "timers.target" ];
     timerConfig = {
       OnCalendar = "*-*-* 06:30:00";
+      Persistent = true;
+    };
+  };
+
+  # Promote: process the two collections on a schedule so dropping an item into
+  # a collection just works. Only canonically-named Library items move (others
+  # wait + ntfy); a run that moves nothing is cheap (no rescan).
+  systemd.services.media-curate-promote = {
+    description = "media-curate: promote queued collection items";
+    unitConfig.RequiresMountsFor = "/mnt/fusion";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${media-curate}/bin/media-curate promote --apply";
+    };
+  };
+  systemd.timers.media-curate-promote = {
+    description = "media-curate promote, every 30 min";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "*:0/30";
       Persistent = true;
     };
   };

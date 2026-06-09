@@ -326,12 +326,31 @@ def cmd_promote(apply):
     if apply and did_move:
         api("POST", "/Library/Refresh")
 
+    state = "/var/lib/media-curate/pending.txt"
     if failures:
         brief = "; ".join(f"{n} [{r}]" for n, r in failures[:10])
         more = "" if len(failures) <= 10 else f" (+{len(failures) - 10} more)"
         msg = f"{len(failures)} item(s) need a canonical title before promotion: {brief}{more}"
         print(msg)
-        notify("media-curate: items need naming", msg, "default", "clapper,warning")
+        # Only ntfy when the pending set changes, so the 30-min timer doesn't
+        # re-ping about the same un-named items every run.
+        if apply:
+            cur = "\n".join(sorted(n for n, _ in failures))
+            try:
+                prev = open(state).read()
+            except OSError:
+                prev = ""
+            if cur != prev:
+                notify("media-curate: items need naming", msg, "default", "clapper,warning")
+                try:
+                    open(state, "w").write(cur)
+                except OSError:
+                    pass
+    elif apply:
+        try:
+            open(state, "w").write("")  # nothing pending; reset so it re-alerts next time
+        except OSError:
+            pass
     if not apply:
         print("(dry-run; pass --apply to move files)")
 
