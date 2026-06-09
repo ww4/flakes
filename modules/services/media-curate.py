@@ -1,0 +1,339 @@
+#!/usr/bin/env python3
+"""media-curate — maintain the `backed-up` tag and promote YouTube downloads.
+
+Subcommands:
+  tag-sweep   Set/clear the backup tag on every library item based on whether
+              its file ACTUALLY exists in the backup pool. This both backfills
+              existing items and continuously verifies (a tagged item whose file
+              vanished from the pool gets un-tagged). Truth is derived from the
+              filesystem, never hand-maintained.
+
+  promote     Act on the two promote collections:
+                Promote→Library: file a YouTube download into Movies / TV Shows,
+                  but ONLY if it's been named canonically in Jellyfin
+                  ("Name (Year)" → movie, "Show S01E01" → TV). Anything else is
+                  left in place and reported (with the reason) via ntfy.
+                Promote→Keep: organize as a home video under <channel>/ and
+                  build a Jellyfin NFO + poster from the captured .info.json.
+
+  status      Print collection contents and tag stats.
+
+Dry-run by default. Pass --apply to make changes. Config is via environment
+(see media-curate.nix).
+"""
+import argparse
+import html
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "http://127.0.0.1:8096").rstrip("/")
+API_KEY = os.environ.get("JELLYFIN_API_KEY", "")
+FUSION = os.environ.get("FUSION", "/mnt/fusion").rstrip("/")
+BACKUP = os.environ.get("BACKUP", "/mnt/backup/all").rstrip("/")
+BACKUP_TAG = os.environ.get("BACKUP_TAG", "backed-up")
+MOVIES_DIR = os.environ.get("MOVIES_DIR", FUSION + "/Movies")
+TV_DIR = os.environ.get("TV_DIR", FUSION + "/TV Shows")
+KEEP_DIR = os.environ.get("KEEP_DIR", FUSION + "/youtube/promoted")
+COLL_LIBRARY = os.environ.get("COLL_LIBRARY", "Promote Library")
+COLL_KEEP = os.environ.get("COLL_KEEP", "Promote Keep")
+NOTIFY_BIN = os.environ.get("NOTIFY_BIN", "gromit-notify")
+
+# Paths under FUSION that media-mirror does NOT back up (tier 3). Mirrors the
+# EXCLUDES in media-mirror.sh — keep in sync.
+EXCLUDES = ["arr", "pinchflat", "bitcoind", "archive", "legacy", "restic",
+            ".graveyard", "rick-offsite"]
+
+# Strict canonical-name patterns. No loose matching: a near-miss is a failure.
+MOVIE_RE = re.compile(r"^(?P<title>.+) \((?P<year>(?:19|20)\d{2})\)$")
+TV_RE = re.compile(r"^(?P<show>.+?) [Ss](?P<s>\d{1,2})[Ee](?P<e>\d{1,3})$")
+
+VIDEO_TYPES = "Movie,Episode,Video,MusicVideo,Audio"
+
+
+def die(msg):
+    print(f"media-curate: error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def api(method, path, params=None, body=None):
+    url = JELLYFIN_URL + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("X-Emby-Token", API_KEY)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            raw = r.read()
+            return json.loads(raw) if raw else None
+    except urllib.error.HTTPError as e:
+        die(f"{method} {path} -> HTTP {e.code}: {e.read().decode(errors='replace')[:300]}")
+
+
+def notify(title, message, priority="default", tags=""):
+    try:
+        subprocess.run([NOTIFY_BIN, title, message, priority, tags], check=False)
+    except FileNotFoundError:
+        print(f"[ntfy unavailable] {title}: {message}", file=sys.stderr)
+
+
+def all_items():
+    """Every media item with a file path + its tags."""
+    res = api("GET", "/Items", {
+        "Recursive": "true",
+        "IncludeItemTypes": VIDEO_TYPES,
+        "Fields": "Path,Tags",
+        "EnableTotalRecordCount": "false",
+    })
+    return [i for i in (res or {}).get("Items", []) if i.get("Path")]
+
+
+def collection_id(name):
+    res = api("GET", "/Items", {
+        "Recursive": "true",
+        "IncludeItemTypes": "BoxSet",
+        "Fields": "Name",
+        "EnableTotalRecordCount": "false",
+    })
+    for c in (res or {}).get("Items", []):
+        if c.get("Name") == name:
+            return c["Id"]
+    return None
+
+
+def collection_members(cid):
+    res = api("GET", "/Items", {
+        "ParentId": cid,
+        "Fields": "Path,Tags",
+        "EnableTotalRecordCount": "false",
+    })
+    return [i for i in (res or {}).get("Items", []) if i.get("Path")]
+
+
+def set_tags(item_id, tags):
+    """Replace an item's Tags. Jellyfin wants the full DTO POSTed back."""
+    dto = api("GET", f"/Items/{item_id}")
+    dto["Tags"] = sorted(set(tags))
+    api("POST", f"/Items/{item_id}", body=dto)
+
+
+def remove_from_collection(cid, item_id):
+    api("DELETE", f"/Collections/{cid}/Items", {"ids": item_id})
+
+
+def under_fusion(path):
+    return path == FUSION or path.startswith(FUSION + "/")
+
+
+def is_excluded(rel):
+    first = rel.split("/", 1)[0]
+    return first in EXCLUDES
+
+
+def backup_present(rel):
+    """File exists in the backup pool with a matching size (cheap verify)."""
+    bpath = os.path.join(BACKUP, rel)
+    src = os.path.join(FUSION, rel)
+    if not os.path.exists(bpath):
+        return False
+    try:
+        return os.path.getsize(bpath) == os.path.getsize(src)
+    except OSError:
+        return os.path.exists(bpath)
+
+
+# --------------------------------------------------------------------------- #
+def cmd_tag_sweep(apply):
+    items = all_items()
+    add = []      # should be tagged but isn't
+    drop = []     # tagged but shouldn't be
+    pending = 0   # in scope, not yet in the pool
+    for it in items:
+        path = it["Path"]
+        if not under_fusion(path):
+            continue
+        rel = os.path.relpath(path, FUSION)
+        tags = it.get("Tags", []) or []
+        has = BACKUP_TAG in tags
+        if is_excluded(rel):
+            should = False
+        else:
+            should = backup_present(rel)
+            if not should:
+                pending += 1
+        if should and not has:
+            add.append((it, tags))
+        elif has and not should:
+            drop.append((it, tags))
+
+    print(f"tag-sweep: {len(items)} items | +tag {len(add)} | -tag {len(drop)} "
+          f"| pending(in scope, not yet mirrored) {pending}")
+    for it, _ in add:
+        print(f"  + {it['Name']}")
+    for it, _ in drop:
+        print(f"  - {it['Name']}")
+    if not apply:
+        print("(dry-run; pass --apply to write tags)")
+        return
+    for it, tags in add:
+        set_tags(it["Id"], list(tags) + [BACKUP_TAG])
+    for it, tags in drop:
+        set_tags(it["Id"], [t for t in tags if t != BACKUP_TAG])
+    print(f"applied: +{len(add)} / -{len(drop)}")
+
+
+# --------------------------------------------------------------------------- #
+def sidecars(path):
+    """info.json + thumbnail next to a media file (yt-dlp sidecars)."""
+    base, _ = os.path.splitext(path)
+    out = []
+    info = base + ".info.json"
+    if os.path.exists(info):
+        out.append(info)
+    for ext in (".jpg", ".webp", ".png"):
+        for cand in (base + ext, path + ext):  # name.jpg or name.ext.jpg
+            if os.path.exists(cand):
+                out.append(cand)
+    return out
+
+
+def move(src, dst, apply):
+    print(f"  mv {src}\n   -> {dst}")
+    if not apply:
+        return
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.move(src, dst)
+
+
+def cmd_promote(apply):
+    failures = []  # (name, reason)
+
+    # ----- Lane A: Promote -> Library (Movies / TV) -----
+    cid = collection_id(COLL_LIBRARY)
+    if cid:
+        for it in collection_members(cid):
+            name = it["Name"]
+            path = it["Path"]
+            ext = os.path.splitext(path)[1]
+            m = MOVIE_RE.match(name)
+            t = TV_RE.match(name)
+            if m:
+                folder = os.path.join(MOVIES_DIR, name)
+                dst = os.path.join(folder, os.path.basename(path))
+                print(f"[movie] {name}")
+                move(path, dst, apply)
+                for s in sidecars(path):
+                    move(s, os.path.join(folder, os.path.basename(s)), apply)
+                if apply:
+                    remove_from_collection(cid, it["Id"])
+            elif t:
+                show = t.group("show").strip()
+                season = int(t.group("s"))
+                ep = int(t.group("e"))
+                folder = os.path.join(TV_DIR, show, f"Season {season:02d}")
+                newbase = f"{show} S{season:02d}E{ep:02d}"
+                dst = os.path.join(folder, newbase + ext)
+                print(f"[tv] {show} S{season:02d}E{ep:02d}")
+                move(path, dst, apply)
+                for s in sidecars(path):
+                    sext = s[len(os.path.splitext(path)[0]):]  # preserve .info.json etc.
+                    move(s, os.path.join(folder, newbase + sext), apply)
+                if apply:
+                    remove_from_collection(cid, it["Id"])
+            else:
+                reason = (f"title not canonical — expected 'Name (Year)' or "
+                          f"'Show S01E01', got '{name}'")
+                failures.append((name, reason))
+
+    # ----- Lane B: Promote -> Keep (home video + NFO) -----
+    kid = collection_id(COLL_KEEP)
+    if kid:
+        for it in collection_members(kid):
+            path = it["Path"]
+            base = os.path.splitext(path)[0]
+            info_path = base + ".info.json"
+            channel = "Unknown"
+            info = None
+            if os.path.exists(info_path):
+                try:
+                    info = json.load(open(info_path))
+                    channel = info.get("uploader") or info.get("channel") or "Unknown"
+                except (OSError, ValueError):
+                    pass
+            channel = re.sub(r"[/\\]", "_", channel)
+            folder = os.path.join(KEEP_DIR, channel)
+            dst = os.path.join(folder, os.path.basename(path))
+            print(f"[keep] {it['Name']}  (channel: {channel})")
+            move(path, dst, apply)
+            for s in sidecars(path):
+                move(s, os.path.join(folder, os.path.basename(s)), apply)
+            if info is not None and apply:
+                write_nfo(os.path.splitext(dst)[0] + ".nfo", info)
+            if apply:
+                remove_from_collection(kid, it["Id"])
+
+    if failures:
+        lines = "; ".join(f"{n} ({r.split('got')[-1].strip()})" for n, r in failures)
+        msg = (f"{len(failures)} item(s) left in '{COLL_LIBRARY}' — need a "
+               f"canonical title first: {lines}")
+        print(msg)
+        notify("media-curate: items need naming", msg, "default", "clapper,warning")
+    if not apply:
+        print("(dry-run; pass --apply to move files)")
+
+
+def write_nfo(nfo_path, info):
+    def esc(x):
+        return html.escape(str(x or ""))
+    up = info.get("upload_date", "")
+    premiered = f"{up[0:4]}-{up[4:6]}-{up[6:8]}" if len(up) == 8 else ""
+    xml = f"""<?xml version="1.0" encoding="utf-8"?>
+<movie>
+  <title>{esc(info.get('title'))}</title>
+  <plot>{esc(info.get('description'))}</plot>
+  <studio>{esc(info.get('uploader') or info.get('channel'))}</studio>
+  <premiered>{esc(premiered)}</premiered>
+  <year>{esc(up[0:4])}</year>
+</movie>
+"""
+    with open(nfo_path, "w") as f:
+        f.write(xml)
+
+
+def cmd_status(_apply):
+    for name in (COLL_LIBRARY, COLL_KEEP):
+        cid = collection_id(name)
+        members = collection_members(cid) if cid else []
+        print(f"{name}: {'(missing)' if cid is None else len(members)}")
+        for it in members:
+            print(f"  - {it['Name']}")
+    items = all_items()
+    tagged = sum(1 for i in items if BACKUP_TAG in (i.get("Tags") or []))
+    print(f"backed-up tag: {tagged}/{len(items)} items")
+
+
+def main():
+    if not API_KEY:
+        print("media-curate: JELLYFIN_API_KEY not set — skipping (add it to "
+              "/var/lib/media-curate/secrets.env to activate).", file=sys.stderr)
+        sys.exit(0)
+    ap = argparse.ArgumentParser(prog="media-curate")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    for c in ("tag-sweep", "promote", "status"):
+        p = sub.add_parser(c)
+        p.add_argument("--apply", action="store_true", help="make changes (default: dry-run)")
+    args = ap.parse_args()
+    {"tag-sweep": cmd_tag_sweep, "promote": cmd_promote, "status": cmd_status}[args.cmd](args.apply)
+
+
+if __name__ == "__main__":
+    main()

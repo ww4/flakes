@@ -45,6 +45,7 @@
     ./modules/services/backup.nix
     ./modules/services/notifications.nix
     ./modules/services/media-mirror.nix
+    ./modules/services/media-curate.nix      # backed-up tag sweep + YouTube promote (needs Jellyfin key to activate)
     ./modules/services/bub-mirror.nix
     ./modules/services/remote-desktop.nix
     ./modules/services/homepage.nix
