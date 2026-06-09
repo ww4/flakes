@@ -33,8 +33,19 @@ in
       UID   = toString config.users.users.metube.uid;
       GID   = toString mediaGid;
       UMASK = "022";                       # world-readable files for Jellyfin
-      # Flat, Jellyfin-friendly naming; id keeps titles from colliding.
+      # Flat, Jellyfin-friendly naming; id keeps titles from colliding and lets
+      # us re-fetch metadata later by id even for older files.
       OUTPUT_TEMPLATE = "%(title)s [%(id)s].%(ext)s";
+      # Capture all metadata up front so downloads aren't "raw": write the full
+      # .info.json + thumbnail sidecars (used later to build Jellyfin NFOs) and
+      # embed basic tags into the file. YTDL_OPTIONS is a JSON object merged into
+      # yt-dlp's params. (EmbedThumbnail is omitted — unreliable for webm; the
+      # sidecar thumbnail is what the promote pipeline uses for the poster.)
+      YTDL_OPTIONS = builtins.toJSON {
+        writeinfojson = true;
+        writethumbnail = true;
+        postprocessors = [ { key = "FFmpegMetadata"; } ];
+      };
     };
     volumes = [ "${downloadDir}:/downloads" ];
     ports = [ "127.0.0.1:8092:8081" ];     # nginx fronts this
