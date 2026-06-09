@@ -173,6 +173,11 @@ let
             href: https://lazylibrarian.rosemaryacres.com
             icon: lazylibrarian.png
             # Link-only: Homepage has no LazyLibrarian widget (no API integration).
+        - MeTube:
+            description: One-off YouTube/video downloads (yt-dlp)
+            href: https://metube.rosemaryacres.com
+            icon: metube.png
+            # Link-only: Homepage has no MeTube widget.
 
     - Productivity:
         - Vaultwarden:
