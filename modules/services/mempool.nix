@@ -119,17 +119,40 @@ in
     '';
   };
 
-  # Ordering: containers must wait for their prerequisite oneshots (the env
-  # file + the staged cookie) so docker doesn't bind-mount a missing path.
+  # The containers share a user-defined docker network (for inter-container DNS
+  # by name). oci-containers doesn't create it, so make it here, idempotently.
+  systemd.services.init-mempool-net = {
+    description = "Create the mempool-net docker network";
+    after = [ "docker.service" ];
+    requires = [ "docker.service" ];
+    before = [ "docker-mempool-db.service" "docker-mempool-api.service" "docker-mempool-web.service" ];
+    wantedBy = [ "multi-user.target" ];
+    path = [ pkgs.docker ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      docker network inspect ${mempoolNet} >/dev/null 2>&1 || docker network create ${mempoolNet}
+    '';
+  };
+
+  # Ordering: containers must wait for their prerequisite oneshots (the docker
+  # network, the env file, the staged cookie) so docker doesn't fail to start
+  # or bind-mount a missing path.
   systemd.services.docker-mempool-db = {
-    after = [ "mempool-db-secrets.service" ];
-    requires = [ "mempool-db-secrets.service" ];
+    after = [ "init-mempool-net.service" "mempool-db-secrets.service" ];
+    requires = [ "init-mempool-net.service" "mempool-db-secrets.service" ];
   };
   systemd.services.docker-mempool-api = {
-    after = [ "mempool-db-secrets.service" "mempool-cookie-sync.service" ];
-    requires = [ "mempool-db-secrets.service" "mempool-cookie-sync.service" ];
+    after = [ "init-mempool-net.service" "mempool-db-secrets.service" "mempool-cookie-sync.service" ];
+    requires = [ "init-mempool-net.service" "mempool-db-secrets.service" "mempool-cookie-sync.service" ];
     # Restart with bitcoind so it re-reads the freshly-staged cookie.
     partOf = [ "bitcoind-bitcoin.service" ];
+  };
+  systemd.services.docker-mempool-web = {
+    after = [ "init-mempool-net.service" ];
+    requires = [ "init-mempool-net.service" ];
   };
 
   systemd.tmpfiles.rules = [
