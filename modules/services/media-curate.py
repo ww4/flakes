@@ -50,9 +50,14 @@ NOTIFY_BIN = os.environ.get("NOTIFY_BIN", "gromit-notify")
 EXCLUDES = ["arr", "pinchflat", "bitcoind", "archive", "legacy", "restic",
             ".graveyard", "rick-offsite"]
 
-# Strict canonical-name patterns. No loose matching: a near-miss is a failure.
+# Canonical-name patterns. Movies stay strict ("Name (Year)"). TV matches a
+# SxxExx token with an optional episode title after it, e.g.
+#   "DARK MATTER S2E1 'Welcome to Your New Home'"  ->  show / s2 / e1
+# Separator before SxxExx may be space/dot/dash/underscore; the episode number
+# must be followed by end-of-title or a non-word char (so S2E1 vs S2E15 parse
+# right and "S2E1abc" is rejected as ambiguous).
 MOVIE_RE = re.compile(r"^(?P<title>.+) \((?P<year>(?:19|20)\d{2})\)$")
-TV_RE = re.compile(r"^(?P<show>.+?) [Ss](?P<s>\d{1,2})[Ee](?P<e>\d{1,3})$")
+TV_RE = re.compile(r"^(?P<show>.+?)[ ._-]+[Ss](?P<s>\d{1,2})[Ee](?P<e>\d{1,3})(?:\W.*)?$")
 
 VIDEO_TYPES = "Movie,Episode,Video,MusicVideo,Audio"
 
