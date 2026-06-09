@@ -55,7 +55,6 @@ MOVIE_RE = re.compile(r"^(?P<title>.+) \((?P<year>(?:19|20)\d{2})\)$")
 TV_RE = re.compile(r"^(?P<show>.+?) [Ss](?P<s>\d{1,2})[Ee](?P<e>\d{1,3})$")
 
 VIDEO_TYPES = "Movie,Episode,Video,MusicVideo,Audio"
-LEAF_TYPES = {"Movie", "Episode", "Video", "MusicVideo", "Audio"}
 
 
 def die(msg):
@@ -120,29 +119,32 @@ def collection_id(name):
     return None
 
 
-def collection_members(cid):
+_USER_ID = None
+
+
+def user_id():
+    """Collection-membership queries need a user context (an API key alone
+    returns nothing). Cache the first admin (or first) user's id."""
+    global _USER_ID
+    if _USER_ID is None:
+        users = api("GET", "/Users") or []
+        admins = [u for u in users if u.get("Policy", {}).get("IsAdministrator")]
+        _USER_ID = (admins or users)[0]["Id"]
+    return _USER_ID
+
+
+def collection_videos(cid):
+    """The leaf video files in a collection. Recursive+userId flattens any
+    folders/seasons the user added, so we get the actual files directly."""
     res = api("GET", "/Items", {
         "ParentId": cid,
-        "Fields": "Path,Tags",
+        "Recursive": "true",
+        "userId": user_id(),
+        "IncludeItemTypes": VIDEO_TYPES,
+        "Fields": "Path",
         "EnableTotalRecordCount": "false",
     })
-    return (res or {}).get("Items", [])
-
-
-def leaf_items(member):
-    """A collection member may be a single video OR a folder/season/series
-    (much faster to add a whole playlist). Expand containers into their actual
-    video files so each is handled individually."""
-    if member.get("IsFolder") or member.get("Type") not in LEAF_TYPES:
-        res = api("GET", "/Items", {
-            "ParentId": member["Id"],
-            "Recursive": "true",
-            "IncludeItemTypes": VIDEO_TYPES,
-            "Fields": "Path",
-            "EnableTotalRecordCount": "false",
-        })
-        return [i for i in (res or {}).get("Items", []) if i.get("Path")]
-    return [member] if member.get("Path") else []
+    return [i for i in (res or {}).get("Items", []) if i.get("Path")]
 
 
 def set_tags(item_id, tags):
@@ -150,10 +152,6 @@ def set_tags(item_id, tags):
     dto = api("GET", f"/Items/{item_id}")
     dto["Tags"] = sorted(set(tags))
     api("POST", f"/Items/{item_id}", body=dto)
-
-
-def remove_from_collection(cid, item_id):
-    api("DELETE", f"/Collections/{cid}/Items", {"ids": item_id})
 
 
 def under_fusion(path):
@@ -275,13 +273,27 @@ def cmd_promote(apply):
         """Organize a single video as a home video under its channel + NFO."""
         path = it["Path"]
         base = os.path.splitext(path)[0]
-        info, channel = None, "Unknown"
+        info, channel = None, None
         if os.path.exists(base + ".info.json"):
             try:
                 info = json.load(open(base + ".info.json"))
-                channel = info.get("uploader") or info.get("channel") or "Unknown"
+                channel = info.get("uploader") or info.get("channel")
             except (OSError, ValueError):
                 pass
+        if not channel and os.path.exists(base + ".nfo"):  # PinchFlat writes NFO
+            try:
+                mm = re.search(r"<(?:studio|channel|showtitle)>(.*?)</",
+                               open(base + ".nfo").read())
+                channel = mm.group(1).strip() if mm else None
+            except OSError:
+                pass
+        if not channel:
+            # Fall back to the containing folder (PinchFlat groups by channel on
+            # disk), skipping a generic "Season YYYY" wrapper.
+            parent = os.path.basename(os.path.dirname(path))
+            if re.match(r"(?i)season[ _-]?\d", parent):
+                parent = os.path.basename(os.path.dirname(os.path.dirname(path)))
+            channel = parent or "Unknown"
         channel = re.sub(r"[/\\]", "_", channel).strip() or "Unknown"
         folder = os.path.join(KEEP_DIR, channel)
         dst = os.path.join(folder, os.path.basename(path))
@@ -295,25 +307,24 @@ def cmd_promote(apply):
             write_nfo(nfo, info)
         return True
 
+    did_move = False
     for coll_name, handler in ((COLL_LIBRARY, handle_library_leaf),
                                (COLL_KEEP, handle_keep_leaf)):
         cid = collection_id(coll_name)
         if cid is None:
             print(f"(collection '{coll_name}' not found — skipping)")
             continue
-        for member in collection_members(cid):
-            leaves = leaf_items(member)
-            if not leaves:
-                failures.append((member.get("Name", "?"), "no video files found in folder"))
-                continue
-            kind = "folder" if (member.get("IsFolder") or member.get("Type") not in LEAF_TYPES) else "item"
-            if kind == "folder":
-                print(f"== {coll_name}: folder '{member['Name']}' -> {len(leaves)} videos ==")
-            results = [handler(it) for it in leaves]
-            # Clear the member from the collection only if every leaf was handled,
-            # so a folder with some still-unnamed videos stays queued.
-            if apply and all(results):
-                remove_from_collection(cid, member["Id"])
+        vids = collection_videos(cid)  # recursive+userId flattens added folders
+        print(f"== {coll_name}: {len(vids)} video(s) ==")
+        for it in vids:
+            if not os.path.exists(it["Path"]):
+                continue  # already moved, awaiting a Jellyfin rescan
+            if handler(it):
+                did_move = True
+    # A library rescan clears moved items from their collections (old paths are
+    # gone) and indexes the new locations; unmoved/unnamed items simply stay.
+    if apply and did_move:
+        api("POST", "/Library/Refresh")
 
     if failures:
         brief = "; ".join(f"{n} [{r}]" for n, r in failures[:10])
@@ -354,10 +365,8 @@ def cmd_status(_apply):
     }) or {}
     print("Collections (BoxSets):")
     for c in boxsets.get("Items", []):
-        members = collection_members(c["Id"])
-        leaves = sum(len(leaf_items(m)) for m in members)
-        print(f"  {c['Name']!r}  childCount={c.get('ChildCount')}  "
-              f"members={len(members)}  expanded_videos={leaves}  id={c['Id']}")
+        vids = collection_videos(c["Id"])
+        print(f"  {c['Name']!r}  videos={len(vids)}  id={c['Id']}")
     items = all_items()
     tagged = sum(1 for i in items if BACKUP_TAG in (i.get("Tags") or []))
     print(f"items scanned: {len(items)}; backed-up tag: {tagged}")
