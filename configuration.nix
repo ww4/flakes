@@ -34,6 +34,7 @@
     ./modules/services/audiobookshelf.nix
     ./modules/services/tandoor.nix
     ./modules/services/pinchflat.nix
+    ./modules/services/metube.nix           # yt-dlp web GUI for one-off downloads -> /mnt/fusion/youtube/metube
     ./modules/services/bitcoind.nix
     ./modules/services/fulcrum.nix          # Electrum server (mempool.space backend + Sparrow); indexes the chain
     ./modules/services/mempool.nix          # mempool.space explorer (mariadb+backend+frontend via docker)
