@@ -9,7 +9,10 @@
 
 let
   downloadDir = "/mnt/fusion/youtube/metube";
-  mediaGid = config.users.groups.media.gid;
+  # Jellyfin's group. Hardcoded: the media group is created elsewhere without an
+  # explicit gid, so config.users.groups.media.gid is null at eval (which would
+  # leave the container's GID env empty → it falls back to gid 1000).
+  mediaGid = 984;
 in
 {
   # Dedicated user; primary group `media` so output is readable by Jellyfin.
