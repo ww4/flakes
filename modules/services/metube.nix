@@ -13,8 +13,11 @@ let
 in
 {
   # Dedicated user; primary group `media` so output is readable by Jellyfin.
+  # Fixed uid: an auto-allocated system uid is null at eval, which made the
+  # UID env empty and the container fall back to uid 1000 (chris).
   users.users.metube = {
     isSystemUser = true;
+    uid = 987;
     group = "media";
   };
 
