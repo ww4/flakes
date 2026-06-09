@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 
 JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "http://127.0.0.1:8096").rstrip("/")
-API_KEY = os.environ.get("JELLYFIN_API_KEY", "")
+API_KEY = os.environ.get("JELLYFIN_API_KEY", "").strip()
 FUSION = os.environ.get("FUSION", "/mnt/fusion").rstrip("/")
 BACKUP = os.environ.get("BACKUP", "/mnt/backup/all").rstrip("/")
 BACKUP_TAG = os.environ.get("BACKUP_TAG", "backed-up")
