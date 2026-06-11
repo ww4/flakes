@@ -147,6 +147,22 @@ def collection_videos(cid):
     return [i for i in (res or {}).get("Items", []) if i.get("Path")]
 
 
+def remove_from_collection(cid, item_id, apply):
+    """Detach an item from a collection (BoxSet). A Jellyfin library rescan does
+    NOT prune a collection's linked children when their files move away, so
+    promote must remove them explicitly — otherwise the BoxSet keeps dangling
+    path-links that Jellyfin re-warns about ("Unable to find linked item") on
+    every scan. Endpoint verified against the live server's OpenAPI spec."""
+    if not apply:
+        print(f"  (would detach item {item_id} from collection {cid})")
+        return
+    try:
+        api("DELETE", f"/Collections/{cid}/Items", {"ids": item_id})
+        print(f"  detached item {item_id} from collection")
+    except ApiError as e:
+        print(f"  WARN: could not detach {item_id}: {e}", file=sys.stderr)
+
+
 def set_tags(item_id, tags):
     """Replace an item's Tags. Jellyfin wants the full DTO POSTed back."""
     dto = api("GET", f"/Items/{item_id}")
@@ -318,11 +334,19 @@ def cmd_promote(apply):
         print(f"== {coll_name}: {len(vids)} video(s) ==")
         for it in vids:
             if not os.path.exists(it["Path"]):
-                continue  # already moved, awaiting a Jellyfin rescan
+                # File was moved on a prior run but the item is still linked in
+                # the collection — detach it now (self-heals stragglers within
+                # the window before Jellyfin rescans the old item away).
+                remove_from_collection(cid, it["Id"], apply)
+                continue
             if handler(it):
                 did_move = True
-    # A library rescan clears moved items from their collections (old paths are
-    # gone) and indexes the new locations; unmoved/unnamed items simply stay.
+                # Detach while the item still resolves (its file just moved, but
+                # Jellyfin hasn't rescanned yet) so the collection never keeps a
+                # dangling link. A rescan alone does NOT prune collection links.
+                remove_from_collection(cid, it["Id"], apply)
+    # Index the new locations and drop the now-fileless source items. (The
+    # detach above is what clears the collection — the refresh does not.)
     if apply and did_move:
         api("POST", "/Library/Refresh")
 
