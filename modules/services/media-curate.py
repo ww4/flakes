@@ -50,11 +50,20 @@ NOTIFY_BIN = os.environ.get("NOTIFY_BIN", "gromit-notify")
 EXCLUDES = ["arr", "pinchflat", "bitcoind", "archive", "legacy", "restic",
             ".graveyard", "rick-offsite"]
 
-# Strict canonical-name patterns. No loose matching: a near-miss is a failure.
+# Canonical-name patterns. Movies stay strict ("Name (Year)"). TV matches a
+# SxxExx token with an optional episode title after it, e.g.
+#   "DARK MATTER S2E1 'Welcome to Your New Home'"  ->  show / s2 / e1
+# Separator before SxxExx may be space/dot/dash/underscore; the episode number
+# must be followed by end-of-title or a non-word char (so S2E1 vs S2E15 parse
+# right and "S2E1abc" is rejected as ambiguous).
 MOVIE_RE = re.compile(r"^(?P<title>.+) \((?P<year>(?:19|20)\d{2})\)$")
-TV_RE = re.compile(r"^(?P<show>.+?) [Ss](?P<s>\d{1,2})[Ee](?P<e>\d{1,3})$")
+TV_RE = re.compile(r"^(?P<show>.+?)[ ._-]+[Ss](?P<s>\d{1,2})[Ee](?P<e>\d{1,3})(?:\W.*)?$")
 
 VIDEO_TYPES = "Movie,Episode,Video,MusicVideo,Audio"
+
+
+class ApiError(Exception):
+    pass
 
 
 def die(msg):
@@ -76,7 +85,7 @@ def api(method, path, params=None, body=None):
             raw = r.read()
             return json.loads(raw) if raw else None
     except urllib.error.HTTPError as e:
-        die(f"{method} {path} -> HTTP {e.code}: {e.read().decode(errors='replace')[:300]}")
+        raise ApiError(f"{method} {path} -> HTTP {e.code}: {e.read().decode(errors='replace')[:300]}")
 
 
 def notify(title, message, priority="default", tags=""):
@@ -148,8 +157,9 @@ def collection_videos(cid):
 
 
 def set_tags(item_id, tags):
-    """Replace an item's Tags. Jellyfin wants the full DTO POSTed back."""
-    dto = api("GET", f"/Items/{item_id}")
+    """Replace an item's Tags. The full DTO must be fetched with a user context
+    (the bare GET /Items/{id} is a 400), modified, and POSTed back."""
+    dto = api("GET", f"/Users/{user_id()}/Items/{item_id}")
     dto["Tags"] = sorted(set(tags))
     api("POST", f"/Items/{item_id}", body=dto)
 
@@ -208,11 +218,23 @@ def cmd_tag_sweep(apply):
     if not apply:
         print("(dry-run; pass --apply to write tags)")
         return
+    ok_add = ok_drop = errs = 0
     for it, tags in add:
-        set_tags(it["Id"], list(tags) + [BACKUP_TAG])
+        try:
+            set_tags(it["Id"], list(tags) + [BACKUP_TAG]); ok_add += 1
+        except ApiError as e:
+            errs += 1
+            if errs <= 5:
+                print(f"  ! {it['Name']}: {e}")
     for it, tags in drop:
-        set_tags(it["Id"], [t for t in tags if t != BACKUP_TAG])
-    print(f"applied: +{len(add)} / -{len(drop)}")
+        try:
+            set_tags(it["Id"], [t for t in tags if t != BACKUP_TAG]); ok_drop += 1
+        except ApiError as e:
+            errs += 1
+            if errs <= 5:
+                print(f"  ! {it['Name']}: {e}")
+    print(f"applied: +{ok_add} / -{ok_drop}" +
+          (f"; {errs} item(s) errored and were skipped" if errs else ""))
 
 
 # --------------------------------------------------------------------------- #
@@ -402,7 +424,10 @@ def main():
         p = sub.add_parser(c)
         p.add_argument("--apply", action="store_true", help="make changes (default: dry-run)")
     args = ap.parse_args()
-    {"tag-sweep": cmd_tag_sweep, "promote": cmd_promote, "status": cmd_status}[args.cmd](args.apply)
+    try:
+        {"tag-sweep": cmd_tag_sweep, "promote": cmd_promote, "status": cmd_status}[args.cmd](args.apply)
+    except ApiError as e:
+        die(str(e))
 
 
 if __name__ == "__main__":
