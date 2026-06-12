@@ -39,4 +39,17 @@
 
   systemd.services.bitcoind-bitcoin.unitConfig.RequiresMountsFor =
     "/mnt/fusion";
+
+  # The mempool backend container (on a docker bridge, e.g. mempool-net) reaches
+  # bitcoind RPC via the host gateway 172.17.0.1:8332. rpcbind=0.0.0.0 + the
+  # rpcallowip above are necessary but NOT sufficient: nixos-fw default-drops the
+  # container's packets at the INPUT layer before rpcallowip is ever consulted,
+  # so the connection silently times out (ETIMEDOUT in mempool-api). Fulcrum's
+  # 50001 already has this accept; 8332 was missing it (latent until Fulcrum
+  # finished indexing). Accept 8332 from docker bridges ONLY — never tailscale0
+  # or the LAN; cookie auth + rpcallowip remain the gate for who can actually use
+  # it. Mirrors modules/services/fulcrum.nix.
+  networking.firewall.extraCommands = ''
+    iptables -I nixos-fw 1 -i br-+ -p tcp --dport 8332 -j nixos-fw-accept
+  '';
 }
