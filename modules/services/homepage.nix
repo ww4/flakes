@@ -47,6 +47,9 @@ let
       Cloud:
         style: row
         columns: 2
+      Bitcoin:
+        style: row
+        columns: 2
       Infrastructure:
         style: row
         columns: 2
