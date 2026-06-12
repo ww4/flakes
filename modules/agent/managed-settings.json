@@ -3,6 +3,8 @@
 
   "_comment_lockdown": "allowManagedPermissionRulesOnly: user/project allow|ask|deny rules are IGNORED — only this file's rules apply (the agent can't self-grant OR self-narrow outside a reviewed PR). allowManagedHooksOnly: only this file's hook runs (the agent can't inject an auto-allow PreToolUse hook). permissions.disableBypassPermissionsMode='disable': --dangerously-skip-permissions / bypassPermissions mode is rejected at startup. Doc-verified: code.claude.com/docs permissions.md + permission-modes.md.",
 
+  "_comment_delete": "Plain `rm` is intentionally NOT in the deny list: the PreToolUse guard now allows deletes only when confined to the agent's /home/claude workspace (its own scratch files) and hard-denies any delete that reaches Chris's files, system paths, runs as root, or matches a catastrophic pattern. `sudo rm`/shred/truncate stay denied here. Per Chris 2026-06-11: the agent may delete files it created; files Chris created stay protected (also enforced by OS perms).",
+
   "allowManagedPermissionRulesOnly": true,
   "allowManagedHooksOnly": true,
 
@@ -21,7 +23,6 @@
     ],
 
     "deny": [
-      "Bash(rm:*)",
       "Bash(sudo rm:*)",
       "Bash(shred:*)",
       "Bash(truncate:*)",
