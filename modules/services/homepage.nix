@@ -47,6 +47,9 @@ let
       Cloud:
         style: row
         columns: 2
+      Bitcoin:
+        style: row
+        columns: 2
       Infrastructure:
         style: row
         columns: 2
@@ -215,6 +218,22 @@ let
               type: tandoor
               url: https://recipes.rosemaryacres.com
               key: {{HOMEPAGE_VAR_TANDOOR_KEY}}
+
+    # Bitcoin / Lightning. mempool has a native Homepage widget (fee + block
+    # stats, no key). Alby Hub has no widget, so it's an href tile. bitcoind and
+    # Fulcrum have no web UI (RPC / Electrum TCP only), so they get no tile.
+    - Bitcoin:
+        - mempool:
+            description: Blocks, fees & explorer
+            href: https://mempool.rosemaryacres.com
+            icon: mempool.png
+            widget:
+              type: mempool
+              url: https://mempool.rosemaryacres.com
+        - Alby Hub:
+            description: Lightning node & Nostr Wallet Connect
+            href: https://alby.rosemaryacres.com
+            icon: alby.png
 
     - Infrastructure:
         - Forgejo:
