@@ -7,8 +7,9 @@
 #
 # Output handling (ntfy has no markdown + a tiny body): the full markdown is
 # rendered to a styled HTML page at /var/lib/digest/index.html (served at
-# rosemaryacres.com/digest/), and the ntfy notification is just the one-line TLDR
-# + a link to that page.
+# digest.rosemaryacres.com — its OWN subdomain, separate origin from the homepage
+# PWA so the link isn't captured/404'd by the installed dashboard app), and the
+# ntfy notification is just the one-line TLDR + a link to that page.
 #
 # WorkingDirectory is the docs-repo project dir so the agent's memory loads (a run
 # from the wrong dir produced inaccurate results in testing). PATH mirrors the
@@ -62,7 +63,7 @@ TLDR: Weekly digest came back empty."
       tldr="$(printf '%s' "$md" | grep -m1 -iE '^TLDR:' | sed -E 's/^[Tt][Ll][Dd][Rr]:[[:space:]]*//')"
       [ -n "$tldr" ] || tldr="Weekly homelab digest is ready."
       gromit-notify "Homelab weekly digest" "$tldr
-Full report: https://rosemaryacres.com/digest/" default "calendar"
+Full report: https://digest.rosemaryacres.com/" default "calendar"
     '';
   };
 
@@ -76,14 +77,20 @@ Full report: https://rosemaryacres.com/digest/" default "calendar"
     };
   };
 
-  # Serve the rendered digest at rosemaryacres.com/digest/ (no new DNS; inherits
-  # the apex cert + the global Tailscale/LAN source-gate). Merges with the apex
-  # vhost defined in homepage.nix.
-  services.nginx.virtualHosts."rosemaryacres.com".locations."/digest/" = {
-    alias = "/var/lib/digest/";
-    extraConfig = ''
-      autoindex on;
+  # Serve the rendered digest on its OWN subdomain — a separate origin from the
+  # homepage PWA, so the notification link opens as a normal page instead of being
+  # captured (and 404'd) by the installed dashboard app's service worker/SPA.
+  # PREREQ (Chris): Cloudflare A record `digest.rosemaryacres.com` -> Tailscale IP
+  # (100.82.117.116), proxy off — same as every other vhost. Inherits the global
+  # source-gate; gets its own ACME cert.
+  services.nginx.virtualHosts."digest.rosemaryacres.com" = {
+    forceSSL = true;
+    enableACME = true;
+    acmeRoot = null;
+    root = "/var/lib/digest";
+    locations."/".extraConfig = ''
       index index.html;
+      autoindex on;
     '';
   };
 }
