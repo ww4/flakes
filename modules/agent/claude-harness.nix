@@ -40,4 +40,13 @@
     source = ./pretooluse-guard.sh;
     mode = "0555";                       # force a copy with the exec bit (a bare
   };                                     # symlink would inherit the source's 0644)
+
+  # Stop hook: automatic self-improvement checkpoint (Hermes' 5th pillar). Fires
+  # at session end and, on a cadence / friction-count trigger, forces a brief
+  # /retro so logged friction gets distilled. Loop-safe + headless-safe; grants
+  # no new power (just nudges). See ./reflection-hook.sh.
+  environment.etc."claude-code/reflection-hook.sh" = {
+    source = ./reflection-hook.sh;
+    mode = "0555";
+  };
 }

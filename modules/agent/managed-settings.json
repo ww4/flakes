@@ -52,6 +52,13 @@
           { "type": "command", "command": "/etc/claude-code/pretooluse-guard.sh" }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "/etc/claude-code/reflection-hook.sh" }
+        ]
+      }
     ]
   }
 }
