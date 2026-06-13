@@ -31,6 +31,10 @@
       Environment = [
         "HOME=/home/claude"
         "PATH=/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin:/usr/bin:/bin"
+        # Marks this as a headless/scheduled run so the agent's Stop reflection
+        # hook (claude-harness.nix) no-ops — a digest must never be derailed into
+        # doing /retro work. See modules/agent/reflection-hook.sh.
+        "CLAUDE_AUTONOMOUS=1"
       ];
     };
     script = ''
