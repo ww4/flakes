@@ -80,9 +80,9 @@ Full report: https://digest.rosemaryacres.com/" default "calendar"
   # Serve the rendered digest on its OWN subdomain — a separate origin from the
   # homepage PWA, so the notification link opens as a normal page instead of being
   # captured (and 404'd) by the installed dashboard app's service worker/SPA.
-  # PREREQ (Chris): Cloudflare A record `digest.rosemaryacres.com` -> Tailscale IP
-  # (100.82.117.116), proxy off — same as every other vhost. Inherits the global
-  # source-gate; gets its own ACME cert.
+  # DNS: `digest.rosemaryacres.com` -> 100.82.117.116 (proxy off) ALREADY created by
+  # the agent via the Cloudflare token (/var/cloudflare-dns-api). Inherits the global
+  # source-gate; gets its own ACME cert on deploy.
   services.nginx.virtualHosts."digest.rosemaryacres.com" = {
     forceSSL = true;
     enableACME = true;
