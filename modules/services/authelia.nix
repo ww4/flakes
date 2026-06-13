@@ -120,11 +120,14 @@ EOF
         inactivity = "1h";
       }];
 
-      storage.local.path = "${secDir}/db.sqlite3";
+      # Runtime-writable files go in the service's StateDirectory (/var/lib/
+      # authelia-main); ProtectSystem=strict makes everything else (incl. the
+      # read-only secrets dir) non-writable, so the DB + notifier must live here.
+      storage.local.path = "/var/lib/authelia-main/db.sqlite3";
 
       # filesystem notifier: 2FA-registration link is written to a file the admin
       # reads once (avoids an SMTP dependency for a single user).
-      notifier.filesystem.filename = "${secDir}/notification.txt";
+      notifier.filesystem.filename = "/var/lib/authelia-main/notification.txt";
 
       access_control = {
         default_policy = "deny";
