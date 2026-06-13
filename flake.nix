@@ -21,9 +21,16 @@
     # comin — GitOps applier: pulls this repo and rebuilds when `main` advances
     # (i.e. when a reviewed PR is merged). See modules/agent/.
     comin.url = "github:nlewo/comin";
+
+    # sops-nix — secrets encrypted in this repo, decrypted at activation with
+    # gromit's SSH host key. See modules/sops.nix and ./.sops.yaml.
+    sops-nix = {
+      url = "github:Mic92/sops-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, vscode-server, home-manager, comin }:
+  outputs = { self, nixpkgs, vscode-server, home-manager, comin, sops-nix }:
     let
       system = "x86_64-linux";
       lib = nixpkgs.lib;
@@ -36,6 +43,7 @@
             vscode-server.nixosModules.default
             home-manager.nixosModules.home-manager
             comin.nixosModules.comin
+            sops-nix.nixosModules.sops
           ];
         };
       };

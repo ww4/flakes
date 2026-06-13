@@ -1,0 +1,19 @@
+# sops creation rules — which recipients can decrypt secrets/*.yaml.
+# Used by the `sops` CLI when creating/editing; NOT read by nix or at activation
+# (activation decrypts the encrypted files with gromit's host key — see
+# modules/sops.nix). Every secret is encrypted to BOTH recipients so the box can
+# decrypt at runtime AND Chris can edit.
+keys:
+  # gromit's host key (derived from /etc/ssh/ssh_host_ed25519_key.pub)
+  - &gromit age1sq7xs9vspukgduhuefhnca5h35tr88nqsz882ke75gmp8c0gd50s2ea8cc
+  # TODO(Chris, Mon 2026-06-15): generate your admin key and paste its PUBLIC
+  # recipient here, replacing this placeholder:
+  #   age-keygen -o ~/.config/sops/age/keys.txt      # prints the age1... pubkey
+  #   # or derive from your SSH key: ssh-to-age < ~/.ssh/id_ed25519.pub
+  - &chris_admin age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqsckchris
+creation_rules:
+  - path_regex: secrets/[^/]+\.(yaml|json|env)$
+    key_groups:
+      - age:
+          - *gromit
+          - *chris_admin
