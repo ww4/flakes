@@ -21,6 +21,7 @@
     ./modules/packages.nix
     ./modules/virtualisation.nix
     ./modules/home-manager.nix
+    ./modules/sops.nix                       # encrypted secrets (sops-nix) — see ./.sops.yaml
 
     # Agent access (scoped, non-root Claude agent) — see modules/agent/README.md.
     ./modules/agent/claude-user.nix
