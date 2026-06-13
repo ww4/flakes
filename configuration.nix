@@ -63,6 +63,7 @@
     ./modules/services/forgejo.nix
     ./modules/services/albyhub.nix
     ./modules/services/glances.nix
+    ./modules/services/authelia.nix         # SSO / forward-auth gateway (Phase 1)
     ./modules/services/paperless.nix
     ./modules/services/uptime-kuma.nix
     ./modules/services/vaultwarden.nix
