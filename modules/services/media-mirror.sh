@@ -247,7 +247,11 @@ If this large batch is expected, re-run: sudo media-mirror approve <limit>" \
   mkdir -p "$dest"
 
   echo "applying up to $n deletions, graveyard: $dest"
+  # --info=progress2 gives a live aggregate progress line (%, rate, ETA, and a
+  # to-chk=remaining/total file counter) since `approve` runs interactively and
+  # the pool scan over USB takes many minutes — otherwise the terminal looks hung.
   rsync -aH --delete --backup --backup-dir="$dest" \
+    --info=progress2 --human-readable \
     --max-delete="$limit" "${EXCLUDES[@]}" "$SRC/" "$DST/"
 
   local moved
