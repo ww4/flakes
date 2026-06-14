@@ -246,20 +246,40 @@ If this large batch is expected, re-run: sudo media-mirror approve <limit>" \
   dest="$GRAVEYARD/$ts"
   mkdir -p "$dest"
 
-  echo "applying up to $n deletions, graveyard: $dest"
-  rsync -aH --delete --backup --backup-dir="$dest" \
-    --max-delete="$limit" "${EXCLUDES[@]}" "$SRC/" "$DST/"
+  echo "applying up to $n reviewed deletion(s); graveyard: $dest"
+  # Apply EXACTLY the reviewed list ($PENDING) — do NOT re-run `rsync --delete`.
+  # A fresh --delete recomputes against the LIVE pool, so if a USB drive flaps
+  # mid-run (it does — pool-autoremount fires throughout), rsync graveyards the
+  # backup copies of files that still exist in source but were momentarily
+  # invisible — i.e. it deletes things that were never reviewed. (2026-06-14
+  # incident: an approve graveyarded JAG/NCIS/Numb3rs/North&South backups, all
+  # still fully present in source, none in the reviewed queue.) Two safeguards:
+  #   1. touch ONLY paths from the reviewed $PENDING list (bounded blast radius);
+  #   2. per path, re-confirm it is genuinely ABSENT from source NOW — a path
+  #      that reappeared in source is a false positive, so skip it and never
+  #      delete its backup. This also makes approve fast (no full-tree rescan).
+  local moved=0 skipped_present=0 already_gone=0 rel
+  while IFS= read -r rel; do
+    case "$rel" in */ | "") continue ;; esac          # dir entries / blank lines
+    if [ -e "$SRC/$rel" ]; then                        # reappeared in source
+      skipped_present=$((skipped_present + 1)); continue
+    fi
+    if [ ! -e "$DST/$rel" ]; then                      # already gone from backup
+      already_gone=$((already_gone + 1)); continue
+    fi
+    mkdir -p "$dest/$(dirname "$rel")"
+    mv "$DST/$rel" "$dest/$rel" && moved=$((moved + 1))
+  done < "$PENDING"
 
-  local moved
-  moved=$(find "$dest" -type f | wc -l | tr -d ' ')
   mv "$PENDING" "$STATE/approved-$ts.txt"
 
   notify "Media mirror — $moved files moved to graveyard" \
 "Graveyard: $dest
+Skipped (reappeared in source — NOT deleted): $skipped_present
 Recover:   sudo media-mirror recover $ts
 Auto-pruned after $GRAVEYARD_RETENTION_DAYS days." \
     default wastebasket
-  echo "approve done: $moved files moved to $dest"
+  echo "approve done: $moved graveyarded, $skipped_present skipped (present in source), $already_gone already gone -> $dest"
 }
 
 cmd_recover() {
