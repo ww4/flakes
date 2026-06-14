@@ -150,7 +150,7 @@ def collection_videos(cid):
         "Recursive": "true",
         "userId": user_id(),
         "IncludeItemTypes": VIDEO_TYPES,
-        "Fields": "Path",
+        "Fields": "Path,ProductionYear",
         "EnableTotalRecordCount": "false",
     })
     return [i for i in (res or {}).get("Items", []) if i.get("Path")]
@@ -297,6 +297,23 @@ def cmd_promote(apply):
             return True
         if t:
             show, season, ep = t.group("show").strip(), int(t.group("s")), int(t.group("e"))
+            # Keep the series YEAR so Jellyfin matches the right show — e.g. Dark
+            # Matter (2015) vs the unrelated Dark Matter (2024); a year-less folder
+            # gets mis-identified. If the title doesn't already carry "(YYYY)",
+            # recover it from the source path (Sonarr/Radarr name folders
+            # "Show (YYYY)") or the Jellyfin item's ProductionYear. If no year can
+            # be found, refuse rather than create an ambiguous folder.
+            if not re.search(r"\((?:19|20)\d{2}\)\s*$", show):
+                pm = re.search(r"\((19|20)\d{2}\)", path)
+                year = pm.group(0)[1:-1] if pm else (
+                    str(it["ProductionYear"]) if it.get("ProductionYear") else None)
+                if year:
+                    show = f"{show} ({year})"
+                else:
+                    failures.append((name, f"TV show has no year — would mis-match in "
+                                     f"Jellyfin (got '{show}'). Add (YYYY) to the title "
+                                     f"and re-promote."))
+                    return False
             folder = os.path.join(TV_DIR, show, f"Season {season:02d}")
             newbase = f"{show} S{season:02d}E{ep:02d}"
             print(f"[tv] {show} S{season:02d}E{ep:02d}")
