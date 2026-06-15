@@ -116,8 +116,12 @@ EOF
         authelia_url = "https://${authHost}";
         default_redirection_url = "https://${domain}";
         name = "authelia_session";
-        expiration = "8h";
-        inactivity = "1h";
+        # Relaxed for convenience — the real perimeter is the Tailscale source-gate
+        # (only Chris can reach these vhosts), so long sessions are fine. A positive
+        # remember_me also enables the "Remember me" checkbox on the login portal.
+        expiration = "1M";      # hard session cap
+        inactivity = "1w";      # idle timeout
+        remember_me = "3M";     # "Remember me" extended lifetime + enables the checkbox
       }];
 
       # Runtime-writable files go in the service's StateDirectory (/var/lib/
