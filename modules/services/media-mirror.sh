@@ -39,6 +39,14 @@ GRAVEYARD_RETENTION_DAYS=30
 # Safety cap: approve aborts if more files than this are queued for deletion.
 MAX_DELETE=250
 
+# Flap watchdog: if the fusion pool drops/remounts members more than this many
+# times DURING a sync/approve run, kill rsync and abort — a flapping pool makes
+# rsync mis-read briefly-absent files as deletions (the 2026-06-14 incident).
+# pool-autoremount records each successful remount as a timestamp line in
+# /var/lib/pool-autoremount/<drive>.remounts; we count those since run start.
+FLAP_LIMIT=2
+AUTOREMOUNT_STATE=/var/lib/pool-autoremount
+
 # rsync excludes, anchored at the transfer root. Keep the restic repo, the
 # graveyard, and the drive sentinels out of the mirror. /arr is tier-3
 # content (mergerfs+snapraid parity protects it; re-download is the DR path)
@@ -82,6 +90,42 @@ serialize_pool() {
   exec 9>/run/lock/backup-pool.lock
   flock -w 21600 9 || die "backup pool busy >6h (another sync running?) — aborting"
 }
+
+# Count pool remounts that happened at/after epoch $1 (across all drives).
+remounts_since() {
+  cat "$AUTOREMOUNT_STATE"/*.remounts 2>/dev/null \
+    | awk -v t="$1" '($1+0) >= t { c++ } END { print c+0 }'
+}
+
+# start_flap_watchdog — background monitor that kills our rsync (and thus aborts
+# the run) if the pool flaps more than FLAP_LIMIT times during it. rsync against
+# a flapping pool reads briefly-absent files as deletions; killing it fast is the
+# safe response. Targeted pkill (only rsync writing to $DST) — serialize_pool
+# guarantees no other backup-pool rsync is concurrent.
+WATCHDOG_PID=""
+start_flap_watchdog() {
+  local run_start; run_start=$(date +%s)
+  (
+    while sleep 20; do
+      local n; n=$(remounts_since "$run_start")
+      if [ "$n" -gt "$FLAP_LIMIT" ]; then
+        echo "FLAP WATCHDOG: $n pool remount(s) since run start (> $FLAP_LIMIT) — killing rsync" >&2
+        notify "Media mirror ABORTED — pool flapping" \
+"$n drive remount(s) during the run (limit $FLAP_LIMIT). Killed rsync to prevent
+bogus deletions from a drive dropping mid-scan. Re-run when the pool is stable." \
+          urgent rotating_light
+        pkill -TERM -f "rsync -aH.*${DST}/" 2>/dev/null || true
+        exit 0
+      fi
+    done
+  ) &
+  WATCHDOG_PID=$!
+}
+stop_flap_watchdog() {
+  [ -n "$WATCHDOG_PID" ] && kill "$WATCHDOG_PID" 2>/dev/null || true
+  WATCHDOG_PID=""
+}
+trap 'stop_flap_watchdog' EXIT
 
 # preflight <all|fusion|backup> — returns non-zero if any member drive is
 # missing. Prints offending drives to stderr.
@@ -149,6 +193,8 @@ Run 'media-mirror status' and check the drives." \
       urgent rotating_light
     die "preflight failed — a pool member drive is offline"
   fi
+
+  start_flap_watchdog   # abort if the pool flaps mid-run
 
   local ts log
   ts=$(date +%Y-%m-%d_%H%M%S)
@@ -230,6 +276,8 @@ cmd_approve() {
     die "preflight failed — a pool member drive is offline"
   fi
 
+  start_flap_watchdog   # abort if the pool flaps mid-run
+
   local n
   n=$(wc -l < "$PENDING" | tr -d ' ')
   if [ "$n" -gt "$limit" ]; then
@@ -246,20 +294,40 @@ If this large batch is expected, re-run: sudo media-mirror approve <limit>" \
   dest="$GRAVEYARD/$ts"
   mkdir -p "$dest"
 
-  echo "applying up to $n deletions, graveyard: $dest"
-  rsync -aH --delete --backup --backup-dir="$dest" \
-    --max-delete="$limit" "${EXCLUDES[@]}" "$SRC/" "$DST/"
+  echo "applying up to $n reviewed deletion(s); graveyard: $dest"
+  # Apply EXACTLY the reviewed list ($PENDING) — do NOT re-run `rsync --delete`.
+  # A fresh --delete recomputes against the LIVE pool, so if a USB drive flaps
+  # mid-run (it does — pool-autoremount fires throughout), rsync graveyards the
+  # backup copies of files that still exist in source but were momentarily
+  # invisible — i.e. it deletes things that were never reviewed. (2026-06-14
+  # incident: an approve graveyarded JAG/NCIS/Numb3rs/North&South backups, all
+  # still fully present in source, none in the reviewed queue.) Two safeguards:
+  #   1. touch ONLY paths from the reviewed $PENDING list (bounded blast radius);
+  #   2. per path, re-confirm it is genuinely ABSENT from source NOW — a path
+  #      that reappeared in source is a false positive, so skip it and never
+  #      delete its backup. This also makes approve fast (no full-tree rescan).
+  local moved=0 skipped_present=0 already_gone=0 rel
+  while IFS= read -r rel; do
+    case "$rel" in */ | "") continue ;; esac          # dir entries / blank lines
+    if [ -e "$SRC/$rel" ]; then                        # reappeared in source
+      skipped_present=$((skipped_present + 1)); continue
+    fi
+    if [ ! -e "$DST/$rel" ]; then                      # already gone from backup
+      already_gone=$((already_gone + 1)); continue
+    fi
+    mkdir -p "$dest/$(dirname "$rel")"
+    mv "$DST/$rel" "$dest/$rel" && moved=$((moved + 1))
+  done < "$PENDING"
 
-  local moved
-  moved=$(find "$dest" -type f | wc -l | tr -d ' ')
   mv "$PENDING" "$STATE/approved-$ts.txt"
 
   notify "Media mirror — $moved files moved to graveyard" \
 "Graveyard: $dest
+Skipped (reappeared in source — NOT deleted): $skipped_present
 Recover:   sudo media-mirror recover $ts
 Auto-pruned after $GRAVEYARD_RETENTION_DAYS days." \
     default wastebasket
-  echo "approve done: $moved files moved to $dest"
+  echo "approve done: $moved graveyarded, $skipped_present skipped (present in source), $already_gone already gone -> $dest"
 }
 
 cmd_recover() {
