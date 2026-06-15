@@ -6,11 +6,8 @@
 keys:
   # gromit's host key (derived from /etc/ssh/ssh_host_ed25519_key.pub)
   - &gromit age1sq7xs9vspukgduhuefhnca5h35tr88nqsz882ke75gmp8c0gd50s2ea8cc
-  # TODO(Chris, Mon 2026-06-15): generate your admin key and paste its PUBLIC
-  # recipient here, replacing this placeholder:
-  #   age-keygen -o ~/.config/sops/age/keys.txt      # prints the age1... pubkey
-  #   # or derive from your SSH key: ssh-to-age < ~/.ssh/id_ed25519.pub
-  - &chris_admin age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqsckchris
+  # Chris's admin key (private half in ~/.config/sops/age/keys.txt — set 2026-06-15)
+  - &chris_admin age1rmpk5w7fe93clrsanm5vwss9388gafztwmd5f28cjhypzhghcqrsrvs7ar
 creation_rules:
   - path_regex: secrets/[^/]+\.(yaml|json|env)$
     key_groups:
