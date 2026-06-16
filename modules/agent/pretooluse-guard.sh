@@ -63,7 +63,31 @@ esac
 case "$cmd" in
   *mkfs*|*" dd "*|*"of=/dev/"*|*" wipefs"*|*" fdisk"*|*" parted"*) deny "Disk/format op — must be run by Chris." ;;
   *"nixos-rebuild switch"*|*"nixos-rebuild boot"*) deny "Applying config is comin's job after a PR merge to main — don't switch directly." ;;
-  *"git push"*"--force"*|*"git push"*" main"*|*"git push"*":main"*) deny "Never force-push or push to main directly — open a PR; Chris merges." ;;
+  *"git push"*)
+    # Match the PUSH REFSPEC, not the word "main" anywhere on the line. The old
+    # rule was a whole-line substring match, so a chained `git switch main`, a
+    # push to a non-main branch (`main:testing`), an `echo`/`curl` mentioning
+    # main, or a heredoc body all tripped it. Scope to the push invocation: take
+    # everything after the last "git push" up to the next shell separator.
+    seg="${cmd##*git push}"
+    seg="${seg%%[;&|]*}"
+    seg="${seg%%$'\n'*}"
+    # Deny only a push that actually writes to main (`:main` dst, or a bare
+    # `main`/`origin main` target). Reading FROM main (`main:testing`) is fine.
+    case "$seg" in
+      *":main"|*":main "*|*" main"|*" main "*) deny "Direct push to main — open a PR; Chris merges." ;;
+    esac
+    # Force-push is fine to testing / feature branches (needed for testing resets)
+    # but never to main. main is also branch-protected server-side (defense in
+    # depth). NOTE: a refspec-less `git push -f` while checked out on main isn't
+    # caught here by string alone — server branch protection covers that case.
+    case "$seg" in
+      *"--force"*|*" -f "*|*" -f")
+        case "$seg" in
+          *":main"|*":main "*|*" main"|*" main "*) deny "Force-push to main is never allowed." ;;
+        esac ;;
+    esac
+    ;;
   *"userdel"*|*"passwd "*|*"chpasswd"*|*"/etc/shadow"*) deny "Account/credential change — Chris only." ;;
   *">/dev/sd"*|*"> /dev/sd"*|*"> /dev/nvme"*) deny "Raw block-device write — Chris only." ;;
 esac
