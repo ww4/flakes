@@ -16,8 +16,7 @@
 # reaches qBittorrent via gluetun:8085 (qBit shares gluetun's netns; the
 # arr-net subnet is in qBit's WebUI auth whitelist, so no qBit password).
 #
-# Secrets — NOT in git. Create before first rebuild (root 0600):
-#   /var/lib/decluttarr/secrets.env
+# Secrets — in sops (`secrets/decluttarr-env.yaml`, edit with `sops`). Keys:
 #     SONARR_API_KEY=<Sonarr → Settings → General → API Key>
 #     RADARR_API_KEY=<Radarr → Settings → General → API Key>
 { config, lib, pkgs, ... }:
@@ -74,7 +73,6 @@ in
 
   systemd.tmpfiles.rules = [
     "d /var/lib/decluttarr            0700 root root - -"
-    "f /var/lib/decluttarr/secrets.env 0600 root root - -"
   ];
 
   virtualisation.oci-containers.containers.decluttarr = {

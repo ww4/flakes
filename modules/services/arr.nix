@@ -19,10 +19,7 @@
 # mergerfs. incomplete/ lives on /mnt/scratch (separate FS, the WD Green
 # tier-3 disk) — qBittorrent does a one-time copy when a torrent completes.
 #
-# Secrets — NOT in git. Drop these on the host (root 0600) before first
-# rebuild after this lands:
-#   /var/lib/gluetun/wg.env          Mullvad WireGuard config
-#       Required keys:
+# Secrets — in sops (`secrets/gluetun-wg.yaml`, edit with `sops`). Keys:
 #         WIREGUARD_PRIVATE_KEY=<from Mullvad account WireGuard config>
 #         WIREGUARD_ADDRESSES=10.x.x.x/32
 #         SERVER_CITIES=Atlanta            (or whichever Mullvad city)
@@ -142,7 +139,6 @@ in
     "d /var/lib/jellyseerr                0750 chris users - -"
     "d /var/lib/qbittorrent               0750 chris users - -"
     "d /var/lib/gluetun                   0700 root  root  - -"
-    "f /var/lib/gluetun/wg.env            0600 root  root  - -"
   ];
 
   virtualisation.oci-containers.containers = {
@@ -228,7 +224,7 @@ in
       environment = {
         VPN_SERVICE_PROVIDER = "mullvad";
         VPN_TYPE             = "wireguard";
-        # Specific city pinned via /var/lib/gluetun/wg.env (SERVER_CITIES=...)
+        # Specific city pinned via the sops gluetun-wg secret (SERVER_CITIES=...)
         # along with WIREGUARD_PRIVATE_KEY and WIREGUARD_ADDRESSES.
       };
       environmentFiles = [ config.sops.secrets."gluetun-wg".path ];

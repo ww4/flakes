@@ -46,8 +46,11 @@ gromit critical paths ──(02:30)──▶ /mnt/backup/all/restic        (loca
                        └─(03:00)──▶ b2:gromit-restic              (B2 repo)
 ```
 
-- Both repos use the same passphrase at `/var/lib/restic/password`.
-- B2 credentials: `/var/lib/restic/b2-env`.
+- Both repos use the same passphrase, now in **sops** (`secrets/restic-password.yaml`,
+  decrypts to `/run/secrets/restic-password` at activation). For bare-metal DR
+  (gromit's disk gone), recover the passphrase on any machine with the admin age
+  key: `sops -d secrets/restic-password.yaml`.
+- B2 credentials: sops `secrets/restic-b2.yaml` → `/run/secrets/restic-b2`.
 - Retention: 7 daily / 4 weekly / 6 monthly.
 - Snapshots tagged with `--host=gromit` (restic default).
 
@@ -183,40 +186,46 @@ runs:
 
 ## Credentials inventory
 
-All credential files are **root-only, mode 0600** except where noted.
+Gromit's credentials live in **sops** (`secrets/*.yaml`, committed encrypted;
+decrypt at activation to `/run/secrets/<name>`, root 0400). Bub's are plain
+root-only files (bub is a separate Ubuntu host, not on sops).
 
-| Path on host        | Host    | Purpose                                |
+| Path / source       | Host    | Purpose                                |
 |---------------------|---------|----------------------------------------|
-| `/var/lib/restic/password` | Gromit | restic repo passphrase (shared by both gromit repos) |
-| `/var/lib/restic/b2-env`   | Gromit | B2_ACCOUNT_ID / B2_ACCOUNT_KEY         |
+| sops `restic-password` → `/run/secrets/restic-password` | Gromit | restic repo passphrase (shared by both gromit repos) |
+| sops `restic-b2` → `/run/secrets/restic-b2`   | Gromit | B2_ACCOUNT_ID / B2_ACCOUNT_KEY         |
 | `/root/.ssh/id_ed25519`    | Gromit | SSH key authorized on bub for bub-mirror pulls |
 | `/var/lib/restic-push/.ssh/authorized_keys` | Gromit | SFTP-only key entry for bub's tier-1 push (locked with `restrict,command="internal-sftp"`) |
 | `/etc/bub-restic/password` | Bub    | Same passphrase as gromit (offsite copy of the same key material) |
 | `/etc/bub-restic/b2-env`   | Bub    | Same B2 creds as gromit                |
 | `/etc/bub-restic/ssh-key`  | Bub    | Dedicated key authorized for restic-push@gromit |
 
-The restic passphrase exists in three places (gromit, bub, plus the user's
-password manager). Loss of all three = data is encrypted bricks. Verify
-the passphrase is in the password manager before relying on this.
+The restic passphrase exists in several places: gromit's sops (recoverable with
+the **admin age key** via `sops -d secrets/restic-password.yaml` on any machine,
+even if gromit's disk is gone), bub (`/etc/bub-restic/password`), and the user's
+password manager. Loss of all of them = data is encrypted bricks. Verify the
+passphrase is in the password manager before relying on this.
 
 ## Recovery procedures
 
 ### Restore tier 1 from gromit-local restic
+On a running gromit (`/run/secrets/restic-password` is the live decrypted copy).
+For bare-metal DR, first recover the passphrase to a file with the admin age key:
+`sops -d --extract '["restic-password"]' secrets/restic-password.yaml > /tmp/pw`.
 ```
 sudo restic -r /mnt/backup/all/restic \
-  --password-file /var/lib/restic/password \
+  --password-file /run/secrets/restic-password \
   snapshots
 sudo restic -r /mnt/backup/all/restic \
-  --password-file /var/lib/restic/password \
+  --password-file /run/secrets/restic-password \
   restore latest --host gromit --target /tmp/restore
 ```
 
 ### Restore tier 1 from B2 (gromit-side fire scenario)
-Same commands, point at `b2:gromit-restic` and source the
-`b2-env`:
+Same commands, point at `b2:gromit-restic` and source the B2 env:
 ```
-sudo bash -c 'set -a; . /var/lib/restic/b2-env; restic -r b2:gromit-restic \
-  --password-file /var/lib/restic/password snapshots'
+sudo bash -c 'set -a; . /run/secrets/restic-b2; restic -r b2:gromit-restic \
+  --password-file /run/secrets/restic-password snapshots'
 ```
 
 ### Restore tier 1 from bub's side (gromit dead)
@@ -232,10 +241,10 @@ On gromit (bub's snapshots live in the gromit-local repo, tagged
 `bub-tier1`):
 ```
 sudo restic -r /mnt/backup/all/restic \
-  --password-file /var/lib/restic/password \
+  --password-file /run/secrets/restic-password \
   snapshots --host bub --tag bub-tier1
 sudo restic -r /mnt/backup/all/restic \
-  --password-file /var/lib/restic/password \
+  --password-file /run/secrets/restic-password \
   restore latest --host bub --tag bub-tier1 --target /tmp/bub-restore
 ```
 
@@ -273,37 +282,21 @@ sudo rsync -aH -e "ssh -i /root/.ssh/id_ed25519 -p 4089" \
   preventing rsync from writing to the bare mountpoint and slowly filling
   the root filesystem.
 
-## Pending flake changes (to apply in step 3)
+## Flake state — fully declarative on gromit's side ✅
 
-The deployment for Flow 2 (bub tier-1) currently has some imperative
-state on gromit that needs to be encoded in the flake so it survives
-`nixos-rebuild`:
+What were once "pending" items are now in the flake (`backup.nix` /
+`storage.nix`):
 
-1. **`backup.nix` — declare the restic group and push user.** Roughly:
-   ```nix
-   users.groups.restic = {};
-   users.users.restic-push = {
-     isSystemUser = true;
-     group = "restic";
-     home = "/var/lib/restic-push";
-     createHome = true;
-     shell = pkgs.bashInteractive;
-     openssh.authorizedKeys.keys = [
-       "restrict,command=\"internal-sftp\" ssh-ed25519 AAAA...bub-restic@bub"
-     ];
-   };
-   # Optional: add chris to restic group for manual `sg restic -c ...`
-   # access. Not strictly required since restic-push handles automated push.
-   users.users.chris.extraGroups = [ "restic" ];
-   ```
-2. **`backup.nix` — own the repo group + setgid + default ACL.** Currently
-   set imperatively (`chgrp -R restic`, `chmod 2770`, `setfacl -R -d -m
-   g:restic:rwX`). Encode via `systemd.tmpfiles.rules` or a one-shot
-   `systemd.services.restic-repo-perms.script` that idempotently applies
-   these on boot.
-3. **`storage.nix`** — already updated: `category.create=epmfs` +
-   `func.getattr=newest` on `/mnt/backup/all`. No more pending storage
-   changes.
+1. **`backup.nix`** declares `users.groups.restic`, the `restic-push` SFTP user
+   with bub's locked-down authorized key, and `chris`'s `restic` group membership.
+2. **`backup.nix`** owns the repo group/setgid/ACLs idempotently via the
+   `restic-repo-perms` oneshot (runs after the backup pool mounts).
+3. **`storage.nix`** sets `category.create=epmfs` + `func.getattr=newest` +
+   `minfreespace=100G` on `/mnt/backup/all`.
+
+The remaining imperative piece is **bub's own side** (restic install, its
+`/etc/bub-restic/*` creds, its push timer) — bub is a separate Ubuntu host, so
+that lives on bub, not in this flake.
 4. **`bub-mirror.nix`** — already drafted, needs to be added to
    `configuration.nix` imports.
 

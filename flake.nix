@@ -1,5 +1,5 @@
 {
-  description = "NixOS workstation configuration using Home Manager and Flakes";
+  description = "gromit — NixOS homelab server (with GNOME desktop), Home Manager + flakes";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
