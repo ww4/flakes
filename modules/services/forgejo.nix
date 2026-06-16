@@ -19,7 +19,39 @@
 # script /tmp/mirror-github-to-forgejo.sh.
 { config, lib, pkgs, ... }:
 
+let
+  # Idempotently register the Authelia OIDC source (Phase 2c). Runs as an
+  # ExecStartPost in the forgejo unit so it inherits the service's env +
+  # credentials (SECRET_KEY etc., needed to encrypt the stored client secret).
+  # Non-fatal (the unit prefixes it with '-' and the script always exits 0) so a
+  # hiccup never takes Forgejo down. Reads the client secret from sops at runtime.
+  oauthSetup = pkgs.writeShellScript "forgejo-oauth-authelia" ''
+    set -u
+    fj=${config.services.forgejo.package}/bin/forgejo
+    secret=$(cat /run/secrets/forgejo-oidc-secret 2>/dev/null) || exit 0
+    [ -n "$secret" ] || exit 0
+    # already present? (match the source name in `admin auth list`)
+    if "$fj" admin auth list 2>/dev/null | grep -qiw 'authelia'; then exit 0; fi
+    "$fj" admin auth add-oauth \
+      --name authelia \
+      --provider openidConnect \
+      --key forgejo \
+      --secret "$secret" \
+      --auto-discover-url https://auth.rosemaryacres.com/.well-known/openid-configuration \
+      --scopes "openid email profile groups" || true
+    exit 0
+  '';
+in
 {
+  # OIDC client secret (Phase 2c). owner=forgejo so the ExecStartPost can read it.
+  sops.secrets."forgejo-oidc-secret" = {
+    sopsFile = ../../secrets/forgejo-oidc-secret.yaml;
+    key = "forgejo-oidc-secret";
+    owner = "forgejo";
+  };
+
+  systemd.services.forgejo.serviceConfig.ExecStartPost = [ "-${oauthSetup}" ];
+
   services.forgejo = {
     enable = true;
     # SQLite is fine for personal scale (single user, dozens of repos).

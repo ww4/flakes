@@ -6,6 +6,21 @@
 { config, lib, pkgs, ... }:
 
 {
+  # OIDC client secret (Phase 2c). NOT wired into Immich declaratively on
+  # purpose: services.immich.settings would write a FULL config.json and reset
+  # every other system setting you've tuned in the admin UI. Instead enable OAuth
+  # in the Immich admin UI (Administration → Settings → OAuth) with:
+  #   Issuer URL:   https://auth.rosemaryacres.com/.well-known/openid-configuration
+  #   Client ID:    immich
+  #   Client secret: sudo cat /run/secrets/immich-oidc-secret
+  #   Scope: openid email profile   (Button text e.g. "Login with Authelia")
+  # The Authelia client (+ redirect URIs incl. the mobile app) is already wired.
+  sops.secrets."immich-oidc-secret" = {
+    sopsFile = ../../secrets/immich-oidc-secret.yaml;
+    key = "immich-oidc-secret";
+    mode = "0400";   # root-owned; read it with sudo for the UI step
+  };
+
   services.immich = {
     enable = true;
     host = "127.0.0.1";                # nginx fronts; no direct external access

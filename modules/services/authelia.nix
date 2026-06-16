@@ -143,6 +143,63 @@ EOF
             consent_mode = "pre-configured";
             pre_configured_consent_duration = "1y";
           }
+          {
+            client_id = "paperless";
+            client_name = "Paperless";
+            # hash of the secret in sops:paperless-oidc-env (see paperless.nix)
+            client_secret = "$pbkdf2-sha512$310000$LgpCpOKDW/t4QM8eUXeonA$hfWVb9HDQczx6WgLlhAMIasYanUcGD6f48S0bcJBjZ7HuOByN3Qxyy6b/qkCj8x/IXNZ2XEzyDKIv6tspOtqzw";
+            public = false;
+            authorization_policy = "two_factor";
+            # allauth openid_connect callback: /accounts/oidc/<provider_id>/login/callback/
+            redirect_uris = [ "https://paperless.${domain}/accounts/oidc/authelia/login/callback/" ];
+            scopes = [ "openid" "profile" "email" "groups" ];
+            userinfo_signed_response_alg = "none";
+            consent_mode = "pre-configured";
+            pre_configured_consent_duration = "1y";
+          }
+          {
+            client_id = "forgejo";
+            client_name = "Forgejo";
+            # hash of sops:forgejo-oidc-secret (added to Forgejo by a oneshot)
+            client_secret = "$pbkdf2-sha512$310000$WZbMWTU2heGL4wBXuVyZuw$ntAra1S22bx7x1db22aY/DlEz3kDYgNoJCN2dlHPQhE6ZDaYPIh3D6OXIq7nFbVOSssM/ObQgBhhx2oLkLRuQw";
+            public = false;
+            authorization_policy = "two_factor";
+            redirect_uris = [ "https://git.${domain}/user/oauth2/authelia/callback" ];
+            scopes = [ "openid" "profile" "email" "groups" ];
+            userinfo_signed_response_alg = "none";
+            consent_mode = "pre-configured";
+            pre_configured_consent_duration = "1y";
+          }
+          {
+            client_id = "nextcloud";
+            client_name = "Nextcloud";
+            # hash of sops:nextcloud-oidc-secret (added via occ user_oidc oneshot)
+            client_secret = "$pbkdf2-sha512$310000$nyWAbCd3XLd6/m2aw6rCsQ$X3jJPvIOjw7ZjT4jlUedbOy3.7BTcmJyY7mQMKIfE4uPpfQKlsWaJPCNQ5AM.3ufMqu41PTLj6tAqjTWQ5JUSg";
+            public = false;
+            authorization_policy = "two_factor";
+            redirect_uris = [ "https://cloud.${domain}/apps/user_oidc/code" ];
+            scopes = [ "openid" "profile" "email" "groups" ];
+            userinfo_signed_response_alg = "none";
+            consent_mode = "pre-configured";
+            pre_configured_consent_duration = "1y";
+          }
+          {
+            client_id = "immich";
+            client_name = "Immich";
+            # hash of sops:immich-oidc-secret (enabled in Immich admin UI — see PR)
+            client_secret = "$pbkdf2-sha512$310000$27oes9TlfWsZP.q/Mi3RUQ$t0g3rYXOoqz5FKLiYp/4Lez/rLxIKK0kcusmaEbxMaynDcX6KOYntQKhjZZ8P9MeXCz2eq4VUW//.HOKtgjywA";
+            public = false;
+            authorization_policy = "two_factor";
+            redirect_uris = [
+              "https://photos.${domain}/auth/login"
+              "https://photos.${domain}/user-settings"
+              "app.immich:///oauth-callback"
+            ];
+            scopes = [ "openid" "profile" "email" "groups" ];
+            userinfo_signed_response_alg = "none";
+            consent_mode = "pre-configured";
+            pre_configured_consent_duration = "1y";
+          }
         ];
       };
 

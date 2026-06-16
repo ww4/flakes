@@ -21,7 +21,19 @@
     owner = "paperless";
   };
 
+  # OIDC SSO via Authelia (Phase 2). The secret-bearing PAPERLESS_SOCIALACCOUNT_
+  # PROVIDERS JSON (it embeds the client secret) goes in an environmentFile, NOT
+  # in `settings` — settings render into the world-readable systemd unit. This
+  # file is read by systemd (root) AND sourced by the paperless-manage wrapper as
+  # the paperless user → owner=paperless. Matching client hash in authelia.nix.
+  sops.secrets."paperless-oidc-env" = {
+    sopsFile = ../../secrets/paperless-oidc-env.yaml;
+    key = "paperless-oidc-env";
+    owner = "paperless";
+  };
+
   services.paperless = {
+    environmentFile = config.sops.secrets."paperless-oidc-env".path;
     enable = true;
     address = "127.0.0.1";
     port = 28981;
@@ -39,6 +51,13 @@
       PAPERLESS_TIME_ZONE = "America/New_York";
       PAPERLESS_CONSUMER_POLLING = 60;           # seconds; inotify is unreliable on NFS/mergerfs
       PAPERLESS_FILENAME_FORMAT = "{created_year}/{correspondent}/{title}";
+
+      # --- OIDC SSO via Authelia (Phase 2) — non-secret settings. ---
+      # The provider JSON (with the client secret) is in the environmentFile
+      # above. Regular admin login stays enabled (not disabled) as a fallback.
+      PAPERLESS_APPS = "allauth.socialaccount.providers.openid_connect";
+      PAPERLESS_SOCIAL_AUTO_SIGNUP = true;             # skip the intermediate signup form
+      PAPERLESS_SOCIALACCOUNT_ALLOW_SIGNUPS = true;    # allow first-time SSO users
     };
   };
 
