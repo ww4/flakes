@@ -1,6 +1,6 @@
 # Backup Architecture
 
-Last updated: 2026-05-27
+Last updated: 2026-06-16
 
 This document describes how data flows between **Gromit** (NixOS, primary
 homelab at home) and **Bub** (Ubuntu 22.04, secondary Plex server at Rick's
