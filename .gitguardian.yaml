@@ -1,0 +1,34 @@
+# GitGuardian / ggshield config.
+#
+# Why these are ignored (both are FALSE POSITIVES of GG's high-entropy
+# "Generic Password" heuristic, not real exposures):
+#
+#  1. secrets/** — sops-nix files. Every value is AES-256 ciphertext
+#     (ENC[AES256_GCM,…]). Committing them is BY DESIGN: the decryption keys
+#     (gromit's SSH host private key + the admin age private key) are NOT in
+#     this repo, so the locked box is safe in git. See modules/sops.nix.
+#
+#  2. The five Authelia OIDC client_secret values inline in the nix modules are
+#     ONE-WAY pbkdf2-sha512 hashes of random 256-bit secrets; the usable
+#     plaintext lives in sops. Inline hashed client secrets are Authelia's
+#     documented pattern, and a hash isn't a usable credential.
+#
+# NOTE: GG's hosted GitHub monitoring is driven by the dashboard; if alert
+# emails persist after this lands, also exclude secrets/** (or mark the
+# occurrence a false positive) in the GitGuardian dashboard. This file fully
+# covers ggshield (local/CI) scans.
+version: 2
+secret:
+  ignored-paths:
+    - 'secrets/**'
+  ignored-matches:
+    - name: 'Authelia grafana client_secret (pbkdf2 hash; plaintext in sops)'
+      match: '$pbkdf2-sha512$310000$h.XQqknlgymykM29CKxJ1A$zD3BTX23n0WXZbjoHN4V9Pg/9ET6H2FIPMOejCmHMnbe.gdvaQ6bWUvkIhPNZxx5WQ6sLYbPmHT8tYIxMJGIQw'
+    - name: 'Authelia paperless client_secret (pbkdf2 hash; plaintext in sops)'
+      match: '$pbkdf2-sha512$310000$LgpCpOKDW/t4QM8eUXeonA$hfWVb9HDQczx6WgLlhAMIasYanUcGD6f48S0bcJBjZ7HuOByN3Qxyy6b/qkCj8x/IXNZ2XEzyDKIv6tspOtqzw'
+    - name: 'Authelia forgejo client_secret (pbkdf2 hash; plaintext in sops)'
+      match: '$pbkdf2-sha512$310000$WZbMWTU2heGL4wBXuVyZuw$ntAra1S22bx7x1db22aY/DlEz3kDYgNoJCN2dlHPQhE6ZDaYPIh3D6OXIq7nFbVOSssM/ObQgBhhx2oLkLRuQw'
+    - name: 'Authelia nextcloud client_secret (pbkdf2 hash; plaintext in sops)'
+      match: '$pbkdf2-sha512$310000$nyWAbCd3XLd6/m2aw6rCsQ$X3jJPvIOjw7ZjT4jlUedbOy3.7BTcmJyY7mQMKIfE4uPpfQKlsWaJPCNQ5AM.3ufMqu41PTLj6tAqjTWQ5JUSg'
+    - name: 'Authelia immich client_secret (pbkdf2 hash; plaintext in sops)'
+      match: '$pbkdf2-sha512$310000$27oes9TlfWsZP.q/Mi3RUQ$t0g3rYXOoqz5FKLiYp/4Lez/rLxIKK0kcusmaEbxMaynDcX6KOYntQKhjZZ8P9MeXCz2eq4VUW//.HOKtgjywA'
