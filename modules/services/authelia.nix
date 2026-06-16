@@ -137,6 +137,11 @@ EOF
             redirect_uris = [ "https://grafana.${domain}/login/generic_oauth" ];
             scopes = [ "openid" "profile" "email" "groups" ];
             userinfo_signed_response_alg = "none";
+            # Remember the consent grant instead of prompting on every login.
+            # Stored in Authelia's DB per user+client+scopes (survives logout),
+            # re-prompts once a year. (Default is "explicit" = prompt every time.)
+            consent_mode = "pre-configured";
+            pre_configured_consent_duration = "1y";
           }
         ];
       };
