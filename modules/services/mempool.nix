@@ -16,6 +16,12 @@ let
   mempoolNet = "mempool-net";
 in
 {
+  # NOTE: mempool's db.env + rpc.env are deliberately NOT in sops — they're
+  # runtime-generated/self-managing (mempool-db-secrets generates+preserves the
+  # MariaDB creds coupled to the DB volume; mempool-cookie-sync rewrites rpc.env
+  # with the rotating bitcoind cookie on each restart). They're already kept out
+  # of git + the Nix store, so sops would only add a fragile second source of
+  # truth. Left as /var/lib/mempool/*.env on purpose.
   virtualisation.oci-containers.containers = {
     mempool-db = {
       image = "mariadb:11";

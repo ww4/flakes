@@ -436,6 +436,13 @@ let
   kubernetesYaml = pkgs.writeText "homepage-kubernetes.yaml" "";
 
 in {
+  # Homepage widget API keys via sops (migrated 2026-06-16). Read by root (docker
+  # --env-file) before the container starts → root:0400.
+  sops.secrets."homepage-env" = {
+    sopsFile = ../../secrets/homepage-env.yaml;
+    key = "homepage-env";
+  };
+
   virtualisation.oci-containers = {
     backend = "docker";
     containers.homepage = {
@@ -453,7 +460,7 @@ in {
         "/mnt/fusion:/mnt/fusion:ro"
         "/mnt/backup/all:/mnt/backup/all:ro"
       ];
-      environmentFiles = [ "/var/lib/homepage/secrets.env" ];
+      environmentFiles = [ config.sops.secrets."homepage-env".path ];
       environment = {
         HOMEPAGE_ALLOWED_HOSTS = "${hostname},www.${hostname}";
       };

@@ -100,6 +100,14 @@ let
 
 in
 {
+  # Gluetun WireGuard creds (WIREGUARD_PRIVATE_KEY / _ADDRESSES) via sops
+  # (migrated 2026-06-16). Read by root (docker --env-file) before the gluetun
+  # container starts → root:0400.
+  sops.secrets."gluetun-wg" = {
+    sopsFile = ../../secrets/gluetun-wg.yaml;
+    key = "gluetun-wg";
+  };
+
   # Create the arr-net Docker network before any *arr container starts.
   systemd.services.docker-network-arr = {
     description = "Create the arr-net Docker bridge network";
@@ -223,7 +231,7 @@ in
         # Specific city pinned via /var/lib/gluetun/wg.env (SERVER_CITIES=...)
         # along with WIREGUARD_PRIVATE_KEY and WIREGUARD_ADDRESSES.
       };
-      environmentFiles = [ "/var/lib/gluetun/wg.env" ];
+      environmentFiles = [ config.sops.secrets."gluetun-wg".path ];
       extraOptions = [
         "--cap-add=NET_ADMIN"
         "--device=/dev/net/tun"

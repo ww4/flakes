@@ -65,6 +65,13 @@ let
   '';
 in
 {
+  # Decluttarr API keys via sops (migrated 2026-06-16). Read by root (docker
+  # --env-file) before the container starts → root:0400.
+  sops.secrets."decluttarr-env" = {
+    sopsFile = ../../secrets/decluttarr-env.yaml;
+    key = "decluttarr-env";
+  };
+
   systemd.tmpfiles.rules = [
     "d /var/lib/decluttarr            0700 root root - -"
     "f /var/lib/decluttarr/secrets.env 0600 root root - -"
@@ -76,7 +83,7 @@ in
       inherit TZ;
       IN_DOCKER = "true";
     };
-    environmentFiles = [ "/var/lib/decluttarr/secrets.env" ];
+    environmentFiles = [ config.sops.secrets."decluttarr-env".path ];
     volumes = [ "${configYaml}:/app/config/config.yaml:ro" ];
     dependsOn = [ "sonarr" "radarr" "gluetun" ];
     extraOptions = [ "--network=${arrNet}" ];

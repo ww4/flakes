@@ -20,10 +20,17 @@
 { config, lib, pkgs, ... }:
 
 {
+  # ADMIN_TOKEN + SMTP creds via sops (migrated 2026-06-16). systemd reads the
+  # environmentFile as root before dropping to the vaultwarden user → root:0400.
+  sops.secrets."vaultwarden-env" = {
+    sopsFile = ../../secrets/vaultwarden-env.yaml;
+    key = "vaultwarden-env";
+  };
+
   services.vaultwarden = {
     enable = true;
     dbBackend = "sqlite";
-    environmentFile = "/var/lib/vaultwarden/env";   # holds ADMIN_TOKEN + SMTP creds
+    environmentFile = config.sops.secrets."vaultwarden-env".path;   # ADMIN_TOKEN + SMTP creds
     config = {
       DOMAIN = "https://keys.rosemaryacres.com";
       ROCKET_ADDRESS = "127.0.0.1";

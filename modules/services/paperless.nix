@@ -11,11 +11,20 @@
 { config, lib, pkgs, ... }:
 
 {
+  # Paperless admin password via sops (migrated 2026-06-16). owner=paperless so
+  # the paperless service user can read it directly (the module reads passwordFile
+  # to set the Django superuser password).
+  sops.secrets."paperless-admin" = {
+    sopsFile = ../../secrets/paperless-admin.yaml;
+    key = "paperless-admin";
+    owner = "paperless";
+  };
+
   services.paperless = {
     enable = true;
     address = "127.0.0.1";
     port = 28981;
-    passwordFile = "/var/lib/paperless/admin-password";
+    passwordFile = config.sops.secrets."paperless-admin".path;
     consumptionDir = "/var/lib/paperless/consume";
     consumptionDirIsPublic = false;
     mediaDir = "/var/lib/paperless/media";       # holds originals + archives
