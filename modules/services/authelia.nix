@@ -143,6 +143,20 @@ EOF
             consent_mode = "pre-configured";
             pre_configured_consent_duration = "1y";
           }
+          {
+            client_id = "paperless";
+            client_name = "Paperless";
+            # hash of the secret in sops:paperless-oidc-env (see paperless.nix)
+            client_secret = "$pbkdf2-sha512$310000$LgpCpOKDW/t4QM8eUXeonA$hfWVb9HDQczx6WgLlhAMIasYanUcGD6f48S0bcJBjZ7HuOByN3Qxyy6b/qkCj8x/IXNZ2XEzyDKIv6tspOtqzw";
+            public = false;
+            authorization_policy = "two_factor";
+            # allauth openid_connect callback: /accounts/oidc/<provider_id>/login/callback/
+            redirect_uris = [ "https://paperless.${domain}/accounts/oidc/authelia/login/callback/" ];
+            scopes = [ "openid" "profile" "email" "groups" ];
+            userinfo_signed_response_alg = "none";
+            consent_mode = "pre-configured";
+            pre_configured_consent_duration = "1y";
+          }
         ];
       };
 
