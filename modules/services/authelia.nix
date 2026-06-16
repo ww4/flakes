@@ -70,6 +70,11 @@ in
       for s in jwt session storage; do
         [ -s ${secDir}/$s ] || openssl rand -hex 48 > ${secDir}/$s
       done
+      # OIDC (Phase 2) machine secrets — generated on-box like the others, so no
+      # key material lives in git. hmac signs OIDC tokens; the RSA key is the
+      # issuer JWKS private key (the module templates it into the oidc config).
+      [ -s ${secDir}/oidc-hmac ]       || openssl rand -hex 32 > ${secDir}/oidc-hmac
+      [ -s ${secDir}/oidc-issuer.pem ] || openssl genrsa -out ${secDir}/oidc-issuer.pem 4096
       if [ ! -s ${secDir}/users.yml ]; then
         # Seed a temp user with a RANDOM password (nobody can log in — Chris
         # replaces this file with his own). Lets Authelia start + lets us verify
@@ -98,6 +103,10 @@ EOF
       jwtSecretFile            = "${secDir}/jwt";
       sessionSecretFile        = "${secDir}/session";
       storageEncryptionKeyFile = "${secDir}/storage";
+      # OIDC (Phase 2): the module env-injects the hmac and templates the issuer
+      # key into identity_providers.oidc.jwks for us.
+      oidcHmacSecretFile        = "${secDir}/oidc-hmac";
+      oidcIssuerPrivateKeyFile  = "${secDir}/oidc-issuer.pem";
     };
     settings = {
       theme = "dark";
@@ -110,6 +119,27 @@ EOF
 
       totp.issuer = domain;
       webauthn.display_name = "Gromit";
+
+      # --- OIDC provider (Phase 2): true SSO web-login for OIDC-capable apps. ---
+      # hmac_secret + jwks come from the secret files above (module-wired). Each
+      # app is a client below. The client_secret here is a pbkdf2 HASH (safe in
+      # the store — it's a one-way hash of a 256-bit random secret); the matching
+      # plaintext lives in sops for the app to send (e.g. grafana-oidc-secret).
+      identity_providers.oidc = {
+        clients = [
+          {
+            client_id = "grafana";
+            client_name = "Grafana";
+            # hash of the secret in sops:grafana-oidc-secret (see monitoring.nix)
+            client_secret = "$pbkdf2-sha512$310000$h.XQqknlgymykM29CKxJ1A$zD3BTX23n0WXZbjoHN4V9Pg/9ET6H2FIPMOejCmHMnbe.gdvaQ6bWUvkIhPNZxx5WQ6sLYbPmHT8tYIxMJGIQw";
+            public = false;
+            authorization_policy = "two_factor";
+            redirect_uris = [ "https://grafana.${domain}/login/generic_oauth" ];
+            scopes = [ "openid" "profile" "email" "groups" ];
+            userinfo_signed_response_alg = "none";
+          }
+        ];
+      };
 
       session.cookies = [{
         domain = domain;

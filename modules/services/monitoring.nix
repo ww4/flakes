@@ -141,6 +141,15 @@ in {
     '';
   };
 
+  # OIDC client secret for Grafana's generic_oauth (Phase 2 SSO). Grafana reads
+  # it via $__file as the grafana user → owner=grafana. The matching pbkdf2 hash
+  # is in the Authelia client config (authelia.nix).
+  sops.secrets."grafana-oidc-secret" = {
+    sopsFile = ../../secrets/grafana-oidc-secret.yaml;
+    key = "grafana-oidc-secret";
+    owner = "grafana";
+  };
+
   services.grafana = {
     enable = true;
     # Infinity datasource — lets us pull arbitrary JSON (NWPS forecast)
@@ -171,6 +180,25 @@ in {
         enabled = true;
         org_role = "Viewer";
         org_name = "Main Org.";
+      };
+      # OIDC SSO via Authelia (Phase 2). Adds a "Sign in with Authelia" button
+      # ALONGSIDE anon-viewer (the Homepage embed) and the admin login form —
+      # none are removed. Authelia group `admins` → Grafana Admin, else Viewer.
+      "auth.generic_oauth" = {
+        enabled = true;
+        name = "Authelia";
+        icon = "signin";
+        client_id = "grafana";
+        client_secret = "$__file{${config.sops.secrets."grafana-oidc-secret".path}}";
+        scopes = "openid profile email groups";
+        auth_url = "https://auth.rosemaryacres.com/api/oidc/authorization";
+        token_url = "https://auth.rosemaryacres.com/api/oidc/token";
+        api_url = "https://auth.rosemaryacres.com/api/oidc/userinfo";
+        login_attribute_path = "preferred_username";
+        groups_attribute_path = "groups";
+        role_attribute_path = "contains(groups[*], 'admins') && 'Admin' || 'Viewer'";
+        allow_sign_up = true;
+        use_pkce = true;
       };
     };
     provision = {
