@@ -20,6 +20,41 @@
     owner = "nextcloud";
     mode = "0400";
   };
+  # OIDC client secret (Phase 2c). owner=nextcloud so the occ oneshot can read it.
+  sops.secrets."nextcloud-oidc-secret" = {
+    sopsFile = ../../secrets/nextcloud-oidc-secret.yaml;
+    key = "nextcloud-oidc-secret";
+    owner = "nextcloud";
+    mode = "0400";
+  };
+
+  # Configure the Authelia OIDC provider in user_oidc, idempotently, after setup.
+  # Non-fatal (always exits 0) so it never blocks Nextcloud. `user_oidc:provider`
+  # creates-or-updates by identifier, so re-running is safe. unique-uid=0 +
+  # uid=preferred_username keeps usernames stable/matchable.
+  systemd.services.nextcloud-oidc-setup = {
+    description = "Configure Nextcloud user_oidc Authelia provider";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "nextcloud-setup.service" "phpfpm-nextcloud.service" ];
+    requires = [ "nextcloud-setup.service" ];
+    serviceConfig = { Type = "oneshot"; RemainAfterExit = true; };
+    script = ''
+      set -u
+      secret=$(cat ${config.sops.secrets."nextcloud-oidc-secret".path} 2>/dev/null) || exit 0
+      [ -n "$secret" ] || exit 0
+      ${lib.getExe config.services.nextcloud.occ} app:enable user_oidc || true
+      ${lib.getExe config.services.nextcloud.occ} user_oidc:provider authelia \
+        --clientid="nextcloud" \
+        --clientsecret="$secret" \
+        --discoveryuri="https://auth.rosemaryacres.com/.well-known/openid-configuration" \
+        --scope="openid email profile" \
+        --unique-uid=0 \
+        --mapping-uid=preferred_username \
+        --mapping-email=email \
+        --mapping-display-name=name || true
+      exit 0
+    '';
+  };
 
   security.acme = {
     acceptTerms = true;
@@ -58,6 +93,7 @@
         # List of apps we want to install and are already packaged in
         # https://github.com/NixOS/nixpkgs/blob/master/pkgs/servers/nextcloud/packages/nextcloud-apps.json
         inherit calendar contacts notes onlyoffice tasks cookbook qownnotesapi;
+        inherit user_oidc;   # OIDC SSO via Authelia (Phase 2c)
       };
   #  datadir = "/mnt/fusion/nextcloud"; # Temporarily disabled to track permissions issues 
       settings = {
