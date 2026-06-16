@@ -1,12 +1,34 @@
 { self, config, lib, pkgs, ... }:{
+  # Cloudflare DNS-01 token for ACME, migrated to sops 2026-06-16 from the old
+  # plaintext /var/cloudflare-dns-api (which was 0644 = world-readable — closing
+  # that hole is the point). owner=claude/0400 because this token is DUAL-USE:
+  # ACME (systemd reads environmentFile as root before dropping to the acme user,
+  # so root can read it regardless of owner) AND the claude agent's own DNS
+  # automation, which reads the file directly (see memory cloudflare-api-access).
+  sops.secrets."cloudflare-dns-api" = {
+    sopsFile = ../../secrets/cloudflare-dns-api.yaml;
+    key = "cloudflare-dns-api";
+    owner = "claude";
+    mode = "0400";
+  };
+  # Nextcloud admin password — sops 2026-06-16 (was 0644 plaintext). Only read at
+  # first install (Nextcloud is long since set up), but kept wired to satisfy the
+  # module's required adminpassFile and to retire the plaintext.
+  sops.secrets."nextcloud-admin-pass" = {
+    sopsFile = ../../secrets/nextcloud-admin-pass.yaml;
+    key = "nextcloud-admin-pass";
+    owner = "nextcloud";
+    mode = "0400";
+  };
+
   security.acme = {
     acceptTerms = true;
     defaults = {
       email = "chris@saenzmail.com";
       dnsProvider = "cloudflare";
-      # location of your CLOUDFLARE_DNS_API_TOKEN=[value]
+      # CLOUDFLARE_DNS_API_TOKEN=[value], now decrypted to /run/secrets/ by sops.
       # https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#EnvironmentFile=
-      environmentFile = "/var/cloudflare-dns-api";
+      environmentFile = config.sops.secrets."cloudflare-dns-api".path;
     };
   };
  services = {
@@ -46,7 +68,7 @@
       config = {
         # Nextcloud PostegreSQL database configuration, recommended over using SQLite
         dbtype = "pgsql";
-        adminpassFile = "/var/nextcloud-admin-pass";
+        adminpassFile = config.sops.secrets."nextcloud-admin-pass".path;
         adminuser = "admin";
       };
       # Suggested by Nextcloud's health check.
