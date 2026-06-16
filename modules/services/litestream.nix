@@ -15,9 +15,10 @@
 #   1. Create a DEDICATED B2 bucket, e.g. "gromit-vaultwarden-litestream".
 #   2. Create a B2 application key scoped to THAT bucket only (least privilege).
 #   3. Note the bucket's S3 endpoint, e.g. s3.us-west-002.backblazeb2.com.
-#   4. Put the key in /var/lib/litestream/b2.env (root 0600):
+#   4. Store the key in secrets/litestream-b2.yaml via sops (root 0400 at runtime):
 #        LITESTREAM_ACCESS_KEY_ID=<keyID>
 #        LITESTREAM_SECRET_ACCESS_KEY=<applicationKey>
+#      (migrated from the old plaintext /var/lib/litestream/b2.env on 2026-06-15)
 #   5. Set the bucket/endpoint below, add `./modules/services/litestream.nix`
 #      to configuration.nix, and `nixos-rebuild test` first.
 #
@@ -34,9 +35,21 @@
 { config, lib, pkgs, ... }:
 
 {
+  # B2 application key, now sourced from sops (migrated 2026-06-15 from the manual
+  # root:0600 /var/lib/litestream/b2.env). The file holds the two LITESTREAM_*
+  # vars; it decrypts to /run/secrets/litestream-b2 at activation. systemd reads
+  # environmentFile as root before dropping to the vaultwarden User, so the secret
+  # stays root-owned 0400 (vaultwarden never needs to read it). Chris owns the
+  # value via `sops secrets/litestream-b2.yaml`; the agent only wires the path.
+  sops.secrets."litestream-b2" = {
+    sopsFile = ../../secrets/litestream-b2.yaml;
+    key = "litestream-b2";
+    # default owner root / mode 0400 is correct here.
+  };
+
   services.litestream = {
     enable = true;
-    environmentFile = "/var/lib/litestream/b2.env";   # holds LITESTREAM_ACCESS_KEY_ID / _SECRET_ACCESS_KEY
+    environmentFile = config.sops.secrets."litestream-b2".path;   # holds LITESTREAM_ACCESS_KEY_ID / _SECRET_ACCESS_KEY
     settings = {
       dbs = [
         {
