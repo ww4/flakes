@@ -456,8 +456,8 @@ def cmd_status(_apply):
 
 def main():
     if not API_KEY:
-        print("media-curate: JELLYFIN_API_KEY not set — skipping (add it to "
-              "/var/lib/media-curate/secrets.env to activate).", file=sys.stderr)
+        print("media-curate: JELLYFIN_API_KEY not set — skipping (add it via "
+              "`sops secrets/media-curate-env.yaml` to activate).", file=sys.stderr)
         sys.exit(0)
     ap = argparse.ArgumentParser(prog="media-curate")
     sub = ap.add_subparsers(dest="cmd", required=True)

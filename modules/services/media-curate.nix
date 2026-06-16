@@ -6,8 +6,8 @@
 # sweep derives the `backed-up` tag purely from "does the file exist in the
 # backup pool", so it both backfills and verifies.
 #
-# ACTIVATION: drop the Jellyfin API key in /var/lib/media-curate/secrets.env
-# (root 0600):   JELLYFIN_API_KEY=<key>
+# ACTIVATION: the Jellyfin API key lives in sops (secrets/media-curate-env.yaml,
+# JELLYFIN_API_KEY=<key>); edit with `sops`. Decrypts to /run/secrets at runtime.
 # Then `sudo media-curate status` to smoke-test, `media-curate promote` (dry-run)
 # before `--apply`. The tag-sweep timer is safe (it only sets Jellyfin tags).
 { config, lib, pkgs, ... }:
@@ -30,9 +30,9 @@ let
       export COLL_LIBRARY="Promote Library"
       export COLL_KEEP="Promote Keep"
       export NOTIFY_BIN="gromit-notify"
-      # JELLYFIN_API_KEY comes from the root-only secrets file.
-      if [ -r /var/lib/media-curate/secrets.env ]; then
-        set -a; . /var/lib/media-curate/secrets.env; set +a
+      # JELLYFIN_API_KEY comes from the sops secret (root-only, run as root).
+      if [ -r ${config.sops.secrets."media-curate-env".path} ]; then
+        set -a; . ${config.sops.secrets."media-curate-env".path}; set +a
       fi
       exec ${pkgs.python3}/bin/python3 ${./media-curate.py} "$@"
     '';
@@ -41,7 +41,14 @@ in
 {
   environment.systemPackages = [ media-curate ];
 
-  # Holds secrets.env (Jellyfin API key). root-only.
+  # JELLYFIN_API_KEY via sops (migrated 2026-06-16). The tool runs as root
+  # (`sudo media-curate`), so root:0400 is readable.
+  sops.secrets."media-curate-env" = {
+    sopsFile = ../../secrets/media-curate-env.yaml;
+    key = "media-curate-env";
+  };
+
+  # State dir for pending.txt (the secret now comes from sops, not this dir).
   systemd.tmpfiles.rules = [ "d /var/lib/media-curate 0700 root root - -" ];
 
   # Tag sweep is non-destructive (only sets Jellyfin tags) → safe to schedule.

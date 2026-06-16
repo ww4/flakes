@@ -15,6 +15,13 @@ let
   hostPort = 3007;   # container listens on 3001; 3001 is taken by Grafana
 in
 {
+  # LIDARR_API_KEY via sops (migrated 2026-06-16). Read by root (docker
+  # --env-file) before the container starts → root:0400.
+  sops.secrets."aurral-env" = {
+    sopsFile = ../../secrets/aurral-env.yaml;
+    key = "aurral-env";
+  };
+
   systemd.tmpfiles.rules = [
     "d /var/lib/aurral             0750 chris users - -"
     "f /var/lib/aurral/secrets.env 0600 root  root  - -"
@@ -27,7 +34,7 @@ in
       LIDARR_URL = "http://lidarr:8686";
       CONTACT_EMAIL = "admin@rosemaryacres.com";  # MusicBrainz API User-Agent contact
     };
-    environmentFiles = [ "/var/lib/aurral/secrets.env" ];  # LIDARR_API_KEY
+    environmentFiles = [ config.sops.secrets."aurral-env".path ];  # LIDARR_API_KEY
     volumes = [ "/var/lib/aurral:/app/data:rw" ];
     dependsOn = [ "lidarr" ];
     extraOptions = [ "--network=${arrNet}" ];

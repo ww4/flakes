@@ -76,13 +76,24 @@ in
   # restic CLI available for manual restore / inspection.
   environment.systemPackages = [ pkgs.restic ];
 
+  # Secrets via sops (migrated 2026-06-16). restic backups run as root, so the
+  # passwordFile/environmentFile are read as root — default root:0400 is fine.
+  sops.secrets."restic-password" = {
+    sopsFile = ../../secrets/restic-password.yaml;
+    key = "restic-password";
+  };
+  sops.secrets."restic-b2" = {
+    sopsFile = ../../secrets/restic-b2.yaml;
+    key = "restic-b2";
+  };
+
   services.restic.backups = {
     # Local repository on the backup drive pool — fast restores, survives an
     # nvme failure. NOTE: when the media rsync mirror is configured it MUST
     # exclude /mnt/backup/all/restic so a --delete sync cannot wipe this repo.
     critical-local = {
       repository = "/mnt/backup/all/restic";
-      passwordFile = "/var/lib/restic/password";
+      passwordFile = config.sops.secrets."restic-password".path;
       paths = criticalPaths;
       exclude = criticalExclude;
       initialize = true;
@@ -96,8 +107,8 @@ in
     # Offsite repository on Backblaze B2 — survives fire / theft / ransomware.
     critical-b2 = {
       repository = "b2:gromit-restic";
-      passwordFile = "/var/lib/restic/password";
-      environmentFile = "/var/lib/restic/b2-env";
+      passwordFile = config.sops.secrets."restic-password".path;
+      environmentFile = config.sops.secrets."restic-b2".path;
       paths = criticalPaths;
       exclude = criticalExclude;
       initialize = true;
