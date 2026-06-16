@@ -23,8 +23,10 @@ in
   };
 
   systemd.tmpfiles.rules = [
+    # Data dir for the aurral container volume. (The old secrets.env tmpfiles
+    # rule was dropped 2026-06-16 — LIDARR_API_KEY is in sops now; the rule only
+    # recreated an empty file post-migration.)
     "d /var/lib/aurral             0750 chris users - -"
-    "f /var/lib/aurral/secrets.env 0600 root  root  - -"
   ];
 
   virtualisation.oci-containers.containers.aurral = {

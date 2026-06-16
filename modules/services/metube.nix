@@ -18,9 +18,14 @@ in
   # Dedicated user; primary group `media` so output is readable by Jellyfin.
   # Fixed uid: an auto-allocated system uid is null at eval, which made the
   # UID env empty and the container fall back to uid 1000 (chris).
+  # Pinned to 971 — the value the user was ACTUALLY auto-allocated before it was
+  # pinned. NixOS refuses to change an existing user's uid (declaring 987 left a
+  # recurring "not applying UID change 971 -> 987" warning and a mismatch between
+  # the host user (971) and the container's UID env (987)). Pinning to 971
+  # reserves the real value, silences the warning, and aligns host + container.
   users.users.metube = {
     isSystemUser = true;
-    uid = 987;
+    uid = 971;
     group = "media";
   };
 
