@@ -6,8 +6,9 @@
 # Storage: /var/lib/paperless/originals + /var/lib/paperless/archive
 # DB: SQLite by default; switch to postgres if you ever cross ~50k docs.
 #
-# Initial admin: password read from /var/lib/paperless/admin-password
-# (root 0600). Generate with `openssl rand -base64 24 > .../admin-password`.
+# Initial admin: password from sops (`secrets/paperless-admin.yaml`, migrated
+# 2026-06-16); edit with `sops`. Wired via `passwordFile` below. OIDC SSO is also
+# available (user_oidc via Authelia) — see the OIDC block.
 { config, lib, pkgs, ... }:
 
 {

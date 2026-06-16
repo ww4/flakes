@@ -5,17 +5,11 @@
 # Tailscale IP — same posture as the other rosemaryacres.com vhosts).
 # (Renamed from vault.* — Chrome Safe Browsing kept flagging the "vault" name.)
 #
-# Admin panel: /admin — requires ADMIN_TOKEN from /var/lib/vaultwarden/env.
-# Generate that token once with `openssl rand -base64 48` and store in:
-#   /var/lib/vaultwarden/env   (root 0600)
-# with format:
-#   ADMIN_TOKEN=<argon2-hashed-token>
-# Use `vaultwarden hash` to compute the argon2 hash from a plaintext token
-# before placing into env; that keeps the on-disk version one-way-hashed.
-#
-# Outbound email (Postmark SMTP) is configured below. The non-secret SMTP_*
-# settings live in `config`; Postmark uses its Server API token as BOTH the SMTP
-# username and password, so BOTH go in the env file (SMTP_USERNAME + SMTP_PASSWORD).
+# Admin panel: /admin — requires ADMIN_TOKEN. The ADMIN_TOKEN + SMTP creds now
+# live in sops (`secrets/vaultwarden-env.yaml`, migrated 2026-06-16); edit with
+# `sops`. They decrypt to /run/secrets at activation and are passed via the
+# `environmentFile` below. (Token is a one-way `vaultwarden hash` argon2 value;
+# Postmark uses its Server API token as BOTH SMTP_USERNAME and SMTP_PASSWORD.)
 # See the note at the SMTP block for the verified-sender requirement and sequencing.
 { config, lib, pkgs, ... }:
 

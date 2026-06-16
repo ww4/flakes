@@ -3,3 +3,8 @@
 # cross-PR merge conflicts. Added 2026-06-08.)
 result
 result-*
+
+# stray artifacts — never commit
+photorec.*
+__pycache__/
+*.pyc

@@ -1,7 +1,5 @@
 {
-  # Forgejo→GitHub→comin loop smoke test (2026-06-15). Harmless no-op comment to
-  # verify: PR on Forgejo → merge → mirror to GitHub → comin deploys. Safe to remove.
-  description = "NixOS workstation configuration using Home Manager and Flakes";
+  description = "gromit — NixOS homelab server (with GNOME desktop), Home Manager + flakes";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";

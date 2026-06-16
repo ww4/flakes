@@ -91,6 +91,7 @@
        "/home/chris" = {
         device = "/dev/disk/by-uuid/56c90b01-5f1e-4058-a2c4-c3db4df4deef";
         fsType = "ext4";
+        options = [ "nofail" ];   # don't block boot on different hardware
       };
 
   # mergerfs: two buckets — primary working pool + replica backup pool.

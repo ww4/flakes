@@ -10,22 +10,20 @@
 # values. Chris edits values with `sops` using his key. (Same split we used for
 # the ww4-bot token: agent adds the reference, Chris adds the value.)
 #
-# Phase 0 (this commit): infrastructure only — NO real secrets migrated yet.
-# Migrate one at a time:
-#   1. Chris: `sops secrets/<name>.yaml`  -> add the value (decrypts with his key)
-#   2. declare it here:
-#        sops.secrets."<name>" = {
-#          sopsFile = ./secrets/<name>.yaml;
-#          owner = "<service-user>"; mode = "0400";
-#        };
-#   3. point the service at `config.sops.secrets."<name>".path`; drop the old
-#      /var/lib/... file and its manual-drop note.
+# Migration: COMPLETE (2026-06-16). All static secrets live in secrets/*.yaml
+# (restic, vaultwarden, homepage, paperless, litestream, gluetun, aurral,
+# decluttarr, media-curate, nextcloud-admin, the Cloudflare token, the OIDC
+# client secrets). Deliberately NOT migrated — they're runtime-generated/self-
+# managing, so sops would be a fragile second source of truth: mempool db/rpc
+# env (regenerated each boot / rotating bitcoind cookie) and grafana
+# admin_password + secret_key (generated once on the box).
 #
-# Migration backlog (today's hand-dropped secrets):
-#   restic/{password,b2-env}, vaultwarden/env, homepage/secrets.env,
-#   grafana/admin_password, paperless/admin-password, litestream/b2.env,
-#   gluetun/wg.env, mempool/{db,rpc}.env, aurral/decluttarr/media-curate env,
-#   the Cloudflare ACME token, and (optionally) the Authelia secrets.
+# To add a NEW secret, declared next to its consumer module:
+#   1. encrypt the value: `sops secrets/<name>.yaml` (needs the admin age key)
+#   2. declare it: sops.secrets."<name>" = {
+#        sopsFile = ../../secrets/<name>.yaml; owner = "<svc-user>"; mode = "0400";
+#      };
+#   3. point the service's *File option at `config.sops.secrets."<name>".path`.
 { ... }:
 {
   # Use gromit's SSH host key as the age identity for decryption at activation.
