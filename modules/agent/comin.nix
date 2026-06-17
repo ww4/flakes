@@ -1,4 +1,5 @@
-# comin — GitOps applier for gromit.
+# comin — GitOps applier. Shared by both hosts (gromit + wallace); each builds
+# nixosConfigurations.<its-hostname> from the same repo.
 #
 # This is the approval gate's enforcement arm: the agent (ww4-bot) pushes
 # branches/PRs but applies nothing. comin (running as root) polls the public
