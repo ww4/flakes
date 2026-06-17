@@ -13,8 +13,8 @@
       proxyWebsockets = true;                        # streaming responses + live updates
       extraConfig = ''
         client_max_body_size 1024M;                  # document uploads for RAG
-        proxy_read_timeout 600s;
-        proxy_send_timeout 600s;
+        proxy_read_timeout 1800s;                     # 32B-on-CPU answers take minutes (async)
+        proxy_send_timeout 1800s;
       '';
     };
   };
