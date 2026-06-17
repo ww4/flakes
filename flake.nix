@@ -28,14 +28,22 @@
       url = "github:Mic92/sops-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # Declarative disk partitioning — used by the wallace host's install.
+    disko = {
+      url = "git+https://github.com/nix-community/disko";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, vscode-server, home-manager, comin, sops-nix }:
+  outputs = { self, nixpkgs, vscode-server, home-manager, comin, sops-nix, disko }:
     let
       system = "x86_64-linux";
       lib = nixpkgs.lib;
     in {
       nixosConfigurations = {
+        # gromit — the storage + services host (the original box). Holds the
+        # mergerfs media/backup pools and all data-resident services.
         gromit = lib.nixosSystem {
           inherit system;
           modules = [
@@ -44,6 +52,19 @@
             home-manager.nixosModules.home-manager
             comin.nixosModules.comin
             sops-nix.nixosModules.sops
+          ];
+        };
+
+        # wallace — the compute node (Ryzen 9 5900X / RX 580), dual-boot with
+        # Windows. Bootstrap config for now; heavy CPU/GPU loads land here per
+        # the wallace/gromit split. No media pool yet — drives stay on gromit.
+        wallace = lib.nixosSystem {
+          inherit system;
+          modules = [
+            disko.nixosModules.disko
+            ./hosts/wallace/disko.nix
+            ./hosts/wallace/hardware-configuration.nix
+            ./hosts/wallace/configuration.nix
           ];
         };
       };
