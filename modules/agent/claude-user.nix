@@ -21,9 +21,12 @@
       jq
     ];
 
-    # Read-only diagnostics without sudo: journald. Deliberately NOT in `wheel`,
-    # `docker` (root-equivalent), or chris's data groups.
-    extraGroups = [ "systemd-journal" ];
+    # Read-only diagnostics without sudo: journald. Deliberately NOT in `wheel`
+    # or `docker` (root-equivalent). `media` lets the agent write the shared media
+    # tree (/mnt/fusion media-group dirs) for tasks like media-curate and data
+    # rescues — declared here so it survives rebuilds (an earlier imperative
+    # `usermod -aG media` got wiped by comin, silently breaking fusion writes).
+    extraGroups = [ "systemd-journal" "media" ];
 
     # The agent connects as claude@ with this key (moved here from root/chris on
     # activation). Public key — safe in the world-readable store.
