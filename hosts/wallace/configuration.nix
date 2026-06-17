@@ -43,6 +43,22 @@
   # Bootstrap convenience — passwordless sudo for wheel; tighten once settled.
   security.sudo.wheelNeedsPassword = false;
 
+  # Remote Nix builder account — gromit's nix-daemon offloads builds here over
+  # Tailscale (gromit side: modules/nix-remote-builder.nix). trusted-user so it
+  # can import build inputs + realise outputs.
+  users.groups.nixremote = {};
+  users.users.nixremote = {
+    isSystemUser = true;
+    group = "nixremote";
+    home = "/var/lib/nixremote";
+    createHome = true;
+    shell = pkgs.bashInteractive;          # nologin breaks nix-store --serve over ssh
+    openssh.authorizedKeys.keys = [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGuN6T9uUZNWmr1nbO/K5eo3kgMKKCzLXazCKU4BUKNY gromit-nix-builder->wallace"
+    ];
+  };
+  nix.settings.trusted-users = [ "root" "nixremote" ];
+
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
   environment.systemPackages = with pkgs; [ git vim htop tmux efibootmgr ];
 
