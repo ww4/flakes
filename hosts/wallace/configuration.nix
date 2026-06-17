@@ -5,6 +5,7 @@
 {
   imports = [
     ./immich-ml.nix   # Immich ML inference offloaded from gromit (CPU on the 5900X)
+    ./llm.nix         # local LLM stack (llama.cpp GPU+CPU + Open WebUI)
   ];
 
   # Dual-boot: GRUB (EFI) with os-prober so the menu lists NixOS + Windows.
