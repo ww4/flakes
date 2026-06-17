@@ -19,7 +19,12 @@ let
 
   # gromit's immich-ml proves the pattern; here the Vulkan ICD must be visible to
   # llama-server so RADV is found. hardware.graphics populates /run/opengl-driver.
-  vkEnv = { VK_ICD_FILENAMES = "/run/opengl-driver/share/vulkan/icd.d/radeon_icd.x86_64.json"; };
+  # HOME → the StateDirectory so RADV can persist its shader cache (otherwise it
+  # tries //.cache on the read-only root and recompiles shaders every start).
+  vkEnv = {
+    VK_ICD_FILENAMES = "/run/opengl-driver/share/vulkan/icd.d/radeon_icd.x86_64.json";
+    HOME = "/var/lib/llama-gpu";
+  };
 
   mkFetch = name: url: pkgs.writeShellScript "fetch-${name}" ''
     set -eu
@@ -54,7 +59,7 @@ in
           --model ''${STATE_DIRECTORY}/Qwen2.5-3B-Instruct-Q4_K_M.gguf \
           --alias qwen2.5-3b-gpu \
           --host 127.0.0.1 --port 8080 \
-          --n-gpu-layers 99 --ctx-size 8192 --flash-attn
+          --n-gpu-layers 99 --ctx-size 8192
       '';
       Restart = "on-failure";
       RestartSec = "10s";
