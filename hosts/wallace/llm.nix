@@ -109,6 +109,7 @@ in
       OPENAI_API_KEYS = "sk-local;sk-local";
       WEBUI_URL = "https://chat.rosemaryacres.com";
       WEBUI_AUTH = "True";       # first account created becomes admin
+      ENABLE_API_KEYS = "True";  # off by default in 0.9.x; needed for agent/API automation
       # No phoning home.
       ANONYMIZED_TELEMETRY = "False";
       DO_NOT_TRACK = "True";

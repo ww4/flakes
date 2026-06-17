@@ -35,6 +35,17 @@
     ];
   };
 
+  # Open WebUI API key — the agent uses this to drive Open WebUI's API (RAG
+  # knowledge-base ingestion + automation). Agent-only, so claude-readable at
+  # /run/secrets/openwebui-api. Populated via a staging file then migrated here
+  # (see the secrets-handling-preference memory; same model as cloudflare-dns-api).
+  sops.secrets."openwebui-api" = {
+    sopsFile = ../../secrets/openwebui-api.yaml;
+    key = "openwebui-api";
+    owner = "claude";
+    mode = "0400";
+  };
+
   # The agent works on its OWN checkout of the flake under its home, pushes
   # branches, and opens PRs — it never edits chris's ~/code/flakes or touches main
   # directly. (Clone + a git-push deploy key are set up at activation, not here.)
