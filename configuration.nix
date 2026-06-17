@@ -22,6 +22,7 @@
     ./modules/virtualisation.nix
     ./modules/home-manager.nix
     ./modules/sops.nix                       # encrypted secrets (sops-nix) — see ./.sops.yaml
+    ./modules/nix-remote-builder.nix         # offload builds to wallace (Ryzen 9 5900X) over Tailscale
 
     # Agent access (scoped, non-root Claude agent) — see modules/agent/README.md.
     ./modules/agent/claude-user.nix
