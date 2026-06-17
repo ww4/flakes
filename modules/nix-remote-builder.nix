@@ -13,6 +13,12 @@
 
   nix.distributedBuilds = true;
   nix.settings.builders-use-substitutes = true;   # wallace pulls its own deps from caches
+  # NOTE: `claude` is intentionally NOT a trusted nix user. comin/root (the only
+  # actor that matters for offload) build through the root daemon and offload
+  # regardless. The `--max-jobs 0` "no builders" symptom that made root look
+  # broken was a nix-2.34 CLI quirk (that flag disables building instead of
+  # forcing remote), NOT a trust/daemon problem — verified by a capability-forced
+  # build dispatching to wallace. So no privilege bump is warranted here.
   # nix 2.34's `builders` defaults EMPTY and nix.buildMachines only writes the
   # /etc/nix/machines file — without this the daemon never reads it, so offload
   # silently no-ops. Point it at the machines file explicitly. (Verified 2026-06-17:
