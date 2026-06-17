@@ -41,6 +41,7 @@
     isNormalUser = true;
     extraGroups = [ "wheel" "networkmanager" ];
     openssh.authorizedKeys.keys = [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFbsMI9lXpM1bi2fR2Ew1DnubEMGcdl3MuFNbqyyn0xI chris@saenzmail.net"   # Chris's personal workstation key (same key declared on gromit)
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII72tYB6OdaFY3kAOYk7A/AEa9hrbckKe6gCoeM1SRhB chris@mcp-server-claude-20260515"
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINVktIfvgHToKIFCsdw1IsuE9e88Yps9oMdY2px622Nf claude-gromit-tmp-dadpc-recon"
     ];

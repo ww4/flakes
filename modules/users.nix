@@ -7,6 +7,10 @@
     isNormalUser = true;
     description = "chris";
     extraGroups = [ "networkmanager" "wheel" "media" "lp" ];
+    openssh.authorizedKeys.keys = [
+      # Chris's personal workstation key (same key declared on wallace).
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFbsMI9lXpM1bi2fR2Ew1DnubEMGcdl3MuFNbqyyn0xI chris@saenzmail.net"
+    ];
     packages = with pkgs; [
       firefox
     #  thunderbird
