@@ -21,6 +21,11 @@
   networking.networkmanager.enable = true;
   time.timeZone = "America/New_York";
 
+  # Tailscale — stable identity on the tailnet (`wallace`), for management, the
+  # gromit↔wallace remote Nix builder, and NFS. One-time auth after first deploy:
+  # `sudo tailscale up` (interactive) or with a pre-auth key.
+  services.tailscale.enable = true;
+
   services.openssh = {
     enable = true;
     settings.PermitRootLogin = "no";

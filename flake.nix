@@ -62,9 +62,11 @@
           inherit system;
           modules = [
             disko.nixosModules.disko
+            comin.nixosModules.comin
             ./hosts/wallace/disko.nix
             ./hosts/wallace/hardware-configuration.nix
             ./hosts/wallace/configuration.nix
+            ./modules/agent/comin.nix   # GitOps applier — builds nixosConfigurations.wallace
           ];
         };
       };
