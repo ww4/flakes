@@ -28,6 +28,16 @@
     mediaLocation = "/mnt/fusion/immich";
   };
 
+  # ML inference is offloaded to wallace (Ryzen 9 5900X) — local ML is disabled
+  # to free gromit's CPU, and the server calls wallace's ML container over
+  # Tailscale. See hosts/wallace/immich-ml.nix (the version is kept in lockstep
+  # via pkgs.immich.version). If wallace is down, ML jobs queue/fail but photo
+  # serving, upload, and browsing are unaffected. (To add a local fallback later,
+  # the Immich admin UI accepts multiple ML URLs.)
+  services.immich.machine-learning.enable = false;
+  services.immich.environment.IMMICH_MACHINE_LEARNING_URL =
+    lib.mkForce "http://100.66.171.120:3003";   # wallace on the tailnet
+
   # Trust the local nginx so Immich honors X-Forwarded-Proto and generates
   # https:// URLs in the UI / share links.
   systemd.services.immich-server.environment.IMMICH_TRUSTED_PROXIES = "127.0.0.1";
