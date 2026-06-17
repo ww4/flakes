@@ -3,6 +3,11 @@
 # loads offloaded from gromit. See docs: wallace-gromit-split.
 { config, lib, pkgs, ... }:
 {
+  imports = [
+    ./immich-ml.nix   # Immich ML inference offloaded from gromit (CPU on the 5900X)
+    ./llm.nix         # local LLM stack (llama.cpp GPU+CPU + Open WebUI)
+  ];
+
   # Dual-boot: GRUB (EFI) with os-prober so the menu lists NixOS + Windows.
   # Windows lives on its own ESP (980 PRO); os-prober finds bootmgfw.efi and
   # adds a "Windows Boot Manager" entry — switch OS from the menu, no BIOS.

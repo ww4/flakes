@@ -43,6 +43,7 @@
     ./modules/services/mempool.nix          # mempool.space explorer (mariadb+backend+frontend via docker)
     ./modules/services/gyb.nix
     ./modules/services/immich.nix
+    ./modules/services/open-webui-proxy.nix  # TLS front door for wallace's Open WebUI (local-LLM chat)
     ./modules/services/vscode-server.nix
     ./modules/services/nextcloud.nix
     ./modules/services/backup.nix
