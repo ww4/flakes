@@ -13,6 +13,11 @@
 
   nix.distributedBuilds = true;
   nix.settings.builders-use-substitutes = true;   # wallace pulls its own deps from caches
+  # nix 2.34's `builders` defaults EMPTY and nix.buildMachines only writes the
+  # /etc/nix/machines file — without this the daemon never reads it, so offload
+  # silently no-ops. Point it at the machines file explicitly. (Verified 2026-06-17:
+  # the SSH/key/host-key/transport all work; this was the missing piece.)
+  nix.settings.builders = "@/etc/nix/machines";
   nix.buildMachines = [{
     hostName = "100.66.171.120";          # wallace on the tailnet (stable)
     sshUser = "nixremote";
