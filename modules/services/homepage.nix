@@ -47,6 +47,9 @@ let
       Cloud:
         style: row
         columns: 2
+      AI:
+        style: row
+        columns: 2
       Bitcoin:
         style: row
         columns: 2
@@ -199,6 +202,13 @@ let
               type: uptimekuma
               url: https://uptime.rosemaryacres.com
               slug: default
+
+    - AI:
+        - Open WebUI:
+            description: Local LLM chat + book RAG (Qwen 3B-GPU / 32B-CPU, on Wallace)
+            href: https://chat.rosemaryacres.com
+            icon: open-webui.png
+            # Link-only: the Open WebUI widget needs an API key; not wired here.
 
     - Cloud:
         - Nextcloud:
