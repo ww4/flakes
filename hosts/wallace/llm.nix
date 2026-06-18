@@ -66,22 +66,27 @@ in
     };
   };
 
-  # ---- CPU instance: Qwen2.5-7B on the 5900X ----
+  # ---- CPU instance: Qwen2.5-32B on the 5900X (the "quality, async" model) ----
+  # ~20 GB Q4 in system RAM (fits 31 GB), ~2 tok/s on the 5900X → email-paced:
+  # ask, walk away, come back to a much better answer than the 3B can give. This
+  # is the realistic "good conversation / book-RAG" model on this hardware (no GPU
+  # big enough). Model is pre-staged into the StateDirectory (wallace's HF pulls
+  # are flaky for big files); the fetch is a fallback that skips if present.
   systemd.services.llama-cpu = {
-    description = "llama.cpp — Qwen2.5-7B on the 5900X (CPU)";
+    description = "llama.cpp — Qwen2.5-32B on the 5900X (CPU, async/quality)";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
       DynamicUser = true;
       StateDirectory = "llama-cpu";
-      TimeoutStartSec = "3600";
-      ExecStartPre = mkFetch "Qwen2.5-7B-Instruct-Q4_K_M"
-        "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf";
+      TimeoutStartSec = "7200";   # 20 GB first-run download fallback
+      ExecStartPre = mkFetch "Qwen2.5-32B-Instruct-Q4_K_M"
+        "https://huggingface.co/bartowski/Qwen2.5-32B-Instruct-GGUF/resolve/main/Qwen2.5-32B-Instruct-Q4_K_M.gguf";
       ExecStart = ''
         ${llamaVulkan}/bin/llama-server \
-          --model ''${STATE_DIRECTORY}/Qwen2.5-7B-Instruct-Q4_K_M.gguf \
-          --alias qwen2.5-7b-cpu \
+          --model ''${STATE_DIRECTORY}/Qwen2.5-32B-Instruct-Q4_K_M.gguf \
+          --alias qwen2.5-32b-cpu \
           --host 127.0.0.1 --port 8081 \
           --n-gpu-layers 0 --threads 12 --ctx-size 8192
       '';
@@ -107,6 +112,9 @@ in
       # Two OpenAI-compatible backends (semicolon-separated, keys positionally matched).
       OPENAI_API_BASE_URLS = "http://127.0.0.1:8080/v1;http://127.0.0.1:8081/v1";
       OPENAI_API_KEYS = "sk-local;sk-local";
+      # 32B on CPU is slow (~2 tok/s); allow long single requests so a multi-minute
+      # async answer isn't cut off mid-generation.
+      AIOHTTP_CLIENT_TIMEOUT = "1800";
       WEBUI_URL = "https://chat.rosemaryacres.com";
       WEBUI_AUTH = "True";       # first account created becomes admin
       ENABLE_API_KEYS = "True";  # off by default in 0.9.x; needed for agent/API automation
