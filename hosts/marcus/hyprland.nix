@@ -71,6 +71,12 @@ in
     xwayland.enable = true;
     systemd.enable = true; # binds graphical-session.target so user services start
 
+    # Write hyprland.conf (hyprlang), which the system Hyprland reads. As of HM
+    # with home.stateVersion >= 26.05 the configType default FLIPPED to "lua"
+    # (writes hyprland.lua, which a standard Hyprland ignores) — our shared home
+    # pins 26.05, so without this the entire config silently never applied.
+    configType = "hyprlang";
+
     settings = {
       # Laptop display: let Hyprland auto-pick the preferred mode. Bump the last
       # number to 1.25/1.5 if you want HiDPI scaling on the T480 panel.
