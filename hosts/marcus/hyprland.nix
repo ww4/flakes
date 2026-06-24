@@ -50,6 +50,14 @@ in
     theme = { name = "Nordic"; package = pkgs.nordic; };
     iconTheme = { name = "Papirus-Dark"; package = pkgs.papirus-icon-theme; };
   };
+  # KDE's appearance settings rewrite these GTK files as real files, so HM's
+  # backup-on-activation keeps colliding with a stale *.hm-backup from the first
+  # run — which FAILS the whole activation (blocking every comin deploy). HM owns
+  # these declaratively; force-overwrite instead of backing up. (Cosmetic
+  # side-effect: GTK apps use the Nordic theme inside KDE sessions too.)
+  gtk.gtk2.force = true;                                  # ~/.gtkrc-2.0 (module's own option)
+  xdg.configFile."gtk-3.0/settings.ini".force = true;
+  xdg.configFile."gtk-4.0/settings.ini".force = true;
 
   # --- Terminal (sane defaults so Super+Return "just works") ---
   programs.kitty = {
@@ -97,6 +105,7 @@ in
         "swaybg -m solid_color -c \"#${bgColor}\""
         "wl-paste --watch cliphist store"
         "udiskie --tray"
+        "nm-applet --indicator"   # NetworkManager tray applet — manage/reconnect wifi from Hyprland
         "${pkgs.polkit_gnome}/libexec/polkit-gnome/polkit-gnome-authentication-agent-1"
       ];
 
