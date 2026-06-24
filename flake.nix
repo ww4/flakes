@@ -34,9 +34,25 @@
       url = "git+https://github.com/nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # Pinned 25.05 nixpkgs — ONLY for the T480 fingerprint flake below. Its
+    # python-validity daemon predates the nixpkgs Python "pyproject" change and
+    # won't build against unstable's stricter Python builder. Building that one
+    # self-contained daemon against 25.05 (where it's known-good) and injecting
+    # it into marcus's otherwise-unstable system is the least-invasive fix.
+    nixpkgs-2505.url = "github:nixos/nixpkgs/nixos-25.05";
+
+    # ThinkPad T480 fingerprint reader (06cb:009a) — used only by the marcus
+    # host. The upstream flake is a nixpkgs fork that adds the sensor's package +
+    # module; pin its 25.05 release branch and point it at nixpkgs-2505 (NOT our
+    # unstable nixpkgs) so python-validity builds.
+    nixos-06cb-009a-fingerprint-sensor = {
+      url = "github:ahbnr/nixos-06cb-009a-fingerprint-sensor?ref=25.05";
+      inputs.nixpkgs.follows = "nixpkgs-2505";
+    };
   };
 
-  outputs = { self, nixpkgs, vscode-server, home-manager, comin, sops-nix, disko }:
+  outputs = { self, nixpkgs, nixpkgs-2505, vscode-server, home-manager, comin, sops-nix, disko, nixos-06cb-009a-fingerprint-sensor }:
     let
       system = "x86_64-linux";
       lib = nixpkgs.lib;
@@ -67,6 +83,22 @@
             ./hosts/wallace/hardware-configuration.nix
             ./hosts/wallace/configuration.nix
             ./modules/agent/comin.nix   # GitOps applier — builds nixosConfigurations.wallace
+          ];
+        };
+
+        # marcus — ThinkPad T480 laptop (chris + mary), intermittently online.
+        # KDE Plasma 6 + Hyprland; T480 fingerprint unlock. Joined the fleet
+        # 2026-06-24 (was its own nixpkgs-25.05 flake); now rides unstable and
+        # applies `main` via comin whenever it's online. The fingerprint module
+        # is wired only here. home-manager + the agent modules are imported from
+        # ./hosts/marcus/configuration.nix.
+        marcus = lib.nixosSystem {
+          inherit system;
+          modules = [
+            comin.nixosModules.comin
+            home-manager.nixosModules.home-manager
+            nixos-06cb-009a-fingerprint-sensor.nixosModules."06cb-009a-fingerprint-sensor"
+            ./hosts/marcus/configuration.nix
           ];
         };
       };

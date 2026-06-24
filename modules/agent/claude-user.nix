@@ -35,16 +35,10 @@
     ];
   };
 
-  # Open WebUI API key — the agent uses this to drive Open WebUI's API (RAG
-  # knowledge-base ingestion + automation). Agent-only, so claude-readable at
-  # /run/secrets/openwebui-api. Populated via a staging file then migrated here
-  # (see the secrets-handling-preference memory; same model as cloudflare-dns-api).
-  sops.secrets."openwebui-api" = {
-    sopsFile = ../../secrets/openwebui-api.yaml;
-    key = "openwebui-api";
-    owner = "claude";
-    mode = "0400";
-  };
+  # NOTE: the agent's Open WebUI API key (sops) used to live here, but it's a
+  # gromit-only need, and dragging a sops secret into this shared module breaks
+  # activation on hosts whose SSH host key isn't a sops recipient (e.g. marcus).
+  # It now lives in ./openwebui-secret.nix, imported only by gromit.
 
   # The agent works on its OWN checkout of the flake under its home, pushes
   # branches, and opens PRs — it never edits chris's ~/code/flakes or touches main

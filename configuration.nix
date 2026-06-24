@@ -26,6 +26,7 @@
 
     # Agent access (scoped, non-root Claude agent) — see modules/agent/README.md.
     ./modules/agent/claude-user.nix
+    ./modules/agent/openwebui-secret.nix    # gromit-only: agent's Open WebUI API key (sops)
     ./modules/agent/sudo.nix
     ./modules/agent/comin.nix               # GitOps applier — rebuilds on merge to main
     ./modules/agent/claude-harness.nix      # root-owned managed settings + guard for the agent
