@@ -82,7 +82,9 @@ in
       "$menu" = "wofi --show drun";
 
       # Autostart: bar, notifications, wallpaper, clipboard watcher, automount,
-      # polkit agent (GUI auth prompts), idle daemon.
+      # polkit agent (GUI auth prompts). NOTE: hypridle is intentionally NOT here
+      # — services.hypridle (below) runs it as a systemd user service bound to
+      # graphical-session.target; listing it here too would start a second daemon.
       exec-once = [
         "waybar"
         "mako"
@@ -90,7 +92,6 @@ in
         "wl-paste --watch cliphist store"
         "udiskie --tray"
         "${pkgs.polkit_gnome}/libexec/polkit-gnome/polkit-gnome-authentication-agent-1"
-        "hypridle"
       ];
 
       env = [
