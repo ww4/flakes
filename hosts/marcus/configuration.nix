@@ -13,8 +13,8 @@
     ./hardware-configuration.nix
     ./network-tools.nix                       # iwd WiFi backend + network troubleshooting tools
 
-    # Shared fleet infra.
-    ../../modules/home-manager.nix            # chris's Home-Manager config (../../home)
+    # Shared fleet infra. (Home-Manager for chris is configured inline below so
+    # marcus can layer ./hyprland.nix on top of the shared ../../home config.)
 
     # Scoped Claude agent — same model as gromit (own uid, no wheel, read-only
     # standing access; privileged actions go through comin or the sudo allowlist).
@@ -114,6 +114,18 @@
     packages = with pkgs; [ kdePackages.kate ];
   };
   security.sudo.wheelNeedsPassword = false;   # marcus's existing behavior (physical, single-household)
+
+  # Home-Manager for chris: the shared fleet home (../../home: shell/git/vscode/
+  # packages) PLUS marcus's Hyprland desktop (./hyprland.nix). Mirrors the knobs
+  # from modules/home-manager.nix. mary keeps plain KDE (no HM).
+  home-manager = {
+    useGlobalPkgs = true;
+    useUserPackages = true;
+    backupFileExtension = "hm-backup";
+    users.chris = {
+      imports = [ ../../home ./hyprland.nix ];
+    };
+  };
 
   programs.firefox.enable = true;
   programs.appimage = {
