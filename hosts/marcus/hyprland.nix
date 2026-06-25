@@ -11,7 +11,7 @@
 #   - hyprlock    lock screen   + hypridle (auto-lock / DPMS / suspend)
 #   - hyprpaper   wallpaper (solid Nord background via swaybg, can't break)
 #   - kitty       terminal (Super+Return); Konsole/Dolphin from KDE still work
-#   - grim/slurp/swappy screenshots; cliphist clipboard history; udiskie automount;
+#   - grim/slurp/swappy screenshots; cliphist clipboard history;
 #     polkit-gnome auth agent (GUI password prompts)
 #
 # The system-level `programs.hyprland.enable` (in configuration.nix) provides the
@@ -81,7 +81,6 @@ in
     grim slurp swappy  # screenshots
     cliphist         # clipboard history
     wl-clipboard     # wl-copy / wl-paste
-    udiskie          # USB automount tray
     upower           # detailed battery readout (the Waybar battery click target)
     libnotify        # notify-send (used by some keybinds/scripts)
   ];
@@ -152,8 +151,8 @@ in
         "mako"
         "swaybg -m fill -i ${wallpaper}"
         "wl-paste --watch cliphist store"
-        "udiskie --tray"
-        "nm-applet --indicator"   # NetworkManager tray applet — manage/reconnect wifi from Hyprland
+        # (nm-applet removed — the Waybar network module already shows the wifi
+        # icon + SSID and opens nmtui on click; udiskie removed per Chris.)
         "${pkgs.polkit_gnome}/libexec/polkit-gnome/polkit-gnome-authentication-agent-1"
       ];
 
