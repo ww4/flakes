@@ -19,14 +19,16 @@
 # manages the *config* and reuses that system Hyprland (no second copy / no skew).
 { config, lib, pkgs, ... }:
 let
-  # Foolproof wallpaper: a solid Nord-dark fill via swaybg — no image file to
-  # go missing. Swap for an image later (hyprpaper) once you have one you like.
-  bgColor = "2e3440";
+  # Wallpaper: the NixOS "nineish dark gray" still image (matches the Nord theme).
+  # Swap by pointing this at another pkgs.nixos-artwork.wallpapers.<name>, or at
+  # your own file (e.g. "${./my-wallpaper.png}").
+  wallpaper = "${pkgs.nixos-artwork.wallpapers.nineish-dark-gray}/share/backgrounds/nixos/nix-wallpaper-nineish-dark-gray.png";
 in
 {
   home.packages = with pkgs; [
     kitty            # terminal
-    swaybg           # wallpaper (solid colour)
+    swaybg           # wallpaper
+    nerd-fonts.jetbrains-mono   # glyphs for the Waybar icons (else they render as boxes)
     pavucontrol      # GUI volume mixer (Waybar volume click target)
     wofi             # launcher (also in system list; harmless)
     brightnessctl    # backlight keys
@@ -88,7 +90,7 @@ in
     settings = {
       # Laptop display: let Hyprland auto-pick the preferred mode. Bump the last
       # number to 1.25/1.5 if you want HiDPI scaling on the T480 panel.
-      monitor = ",preferred,auto,1";
+      monitor = ",preferred,auto,1.25";   # 1.25x scaling — the T480 1080p/14" panel is tiny at 1x
 
       "$mod" = "SUPER";
       "$terminal" = "kitty";
@@ -102,7 +104,7 @@ in
       exec-once = [
         "waybar"
         "mako"
-        "swaybg -m solid_color -c \"#${bgColor}\""
+        "swaybg -m fill -i ${wallpaper}"
         "wl-paste --watch cliphist store"
         "udiskie --tray"
         "nm-applet --indicator"   # NetworkManager tray applet — manage/reconnect wifi from Hyprland
@@ -277,6 +279,7 @@ in
       "hyprland/workspaces" = {
         on-click = "activate";
         format = "{id}";
+        persistent-workspaces = { "*" = 5; };   # always show 1–5 (even empty) so they're visibly clickable
       };
       "hyprland/window" = {
         max-length = 60;
