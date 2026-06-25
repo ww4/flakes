@@ -162,7 +162,8 @@ in
       };
 
       dwindle = {
-        pseudotile = true;
+        # `pseudotile` was removed as a dwindle option in Hyprland 0.55 (it's now
+        # per-window only — via the `pseudo` dispatcher, bound to $mod+P below).
         preserve_split = true;
       };
 
@@ -171,7 +172,9 @@ in
         force_default_wallpaper = 0;
       };
 
-      gestures.workspace_swipe = true;
+      # Hyprland 0.51 replaced the `gestures {}` block with the `gesture` keyword:
+      # `gesture = <fingers>, <direction>, <action>`. 3-finger horizontal = workspaces.
+      gesture = [ "3, horizontal, workspace" ];
 
       # --- Keybindings (Super-based, discoverable) ---
       bind = [
@@ -183,7 +186,7 @@ in
         "$mod, V, togglefloating"
         "$mod, F, fullscreen"
         "$mod, P, pseudo"
-        "$mod, J, togglesplit"
+        "$mod, J, layoutmsg, togglesplit"   # togglesplit became a layoutmsg in Hyprland 0.54
         "$mod SHIFT, Q, exit"            # log out of Hyprland
         "$mod, L, exec, loginctl lock-session"
         "$mod, B, exec, google-chrome-stable"
