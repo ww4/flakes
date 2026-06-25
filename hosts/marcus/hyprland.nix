@@ -45,8 +45,14 @@ let
         Discharging) mark="↓" ;;
         *) mark="" ;;
       esac
+      # Battery glyph by charge level (Font Awesome range, in the Nerd Font).
+      if   [ "''${cap:-0}" -ge 90 ]; then ico=$''
+      elif [ "''${cap:-0}" -ge 60 ]; then ico=$''
+      elif [ "''${cap:-0}" -ge 40 ]; then ico=$''
+      elif [ "''${cap:-0}" -ge 20 ]; then ico=$''
+      else                                ico=$''; fi
       if [ -n "$text" ]; then text="$text  ·  "; fi
-      text="$text''${name} ''${cap}%''${mark}"
+      text="$text''${ico} ''${cap}%''${mark}"
       if [ -n "$tip" ]; then tip="$tip
 "; fi
       tip="$tip''${name}: ''${cap}%  ''${status}  ''${pw} W"
@@ -319,31 +325,33 @@ in
       "hyprland/workspaces" = {
         on-click = "activate";
         format = "{id}";
-        persistent-workspaces = { "*" = 5; };   # always show 1–5 (even empty) so they're visibly clickable
+        # No persistent workspaces: show only workspaces that actually exist
+        # (occupied + the focused one). When you only have one open, that's just
+        # a lone "1"; numbers appear as you spread windows across workspaces.
       };
       "hyprland/window" = {
         max-length = 60;
         separate-outputs = true;
       };
       clock = {
-        format = "{:%a %d %b  %H:%M}";
+        format = "{:%a %b %d  %I:%M %p}";   # American: weekday, month day, 12-hour AM/PM
         tooltip-format = "<tt><small>{calendar}</small></tt>";
       };
       pulseaudio = {
-        format = "{volume}% {icon}";
-        format-muted = "muted ";
-        format-icons.default = [ "" "" "" ];
+        format = "{icon}";
+        format-muted = "";
+        format-icons.default = [ "" "" ];
         on-click = "pavucontrol";
         scroll-step = 5;
       };
       backlight = {
-        format = "{percent}% {icon}";
-        format-icons = [ "" "" "" ];
+        format = "{icon}";
+        format-icons = [ "" ];
         on-scroll-up = "brightnessctl s 5%+";
         on-scroll-down = "brightnessctl s 5%-";
       };
       network = {
-        format-wifi = "{essid} ({signalStrength}%) ";
+        format-wifi = "  {essid}";
         format-ethernet = "wired ";
         format-disconnected = "offline ";
         tooltip-format = "{ifname}: {ipaddr}";
