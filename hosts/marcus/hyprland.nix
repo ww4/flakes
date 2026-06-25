@@ -23,6 +23,45 @@ let
   # Swap by pointing this at another pkgs.nixos-artwork.wallpapers.<name>, or at
   # your own file (e.g. "${./my-wallpaper.png}").
   wallpaper = "${pkgs.nixos-artwork.wallpapers.nineish-dark-gray}/share/backgrounds/nixos/nix-wallpaper-nineish-dark-gray.png";
+
+  # Waybar custom battery module: emit JSON describing EVERY present battery
+  # (BAT0, and BAT1 if/when the firmware accepts the removable cell again), so
+  # the bar adapts to whatever's reported. text = per-battery "name pct% arrow";
+  # tooltip = per-battery status + watts; class drives warning/critical CSS.
+  batteryStatus = pkgs.writeShellScriptBin "waybar-batteries" ''
+    text=""
+    tip=""
+    low=100
+    for b in /sys/class/power_supply/BAT*; do
+      [ -d "$b" ] || continue
+      [ "$(cat "$b/present" 2>/dev/null)" = "1" ] || continue
+      name="$(basename "$b")"
+      cap="$(cat "$b/capacity" 2>/dev/null || echo 0)"
+      status="$(cat "$b/status" 2>/dev/null || echo Unknown)"
+      pw_uw="$(cat "$b/power_now" 2>/dev/null || echo 0)"
+      pw="$(${pkgs.gawk}/bin/awk "BEGIN{printf \"%.1f\", ''${pw_uw:-0}/1000000}")"
+      case "$status" in
+        Charging) mark="↑" ;;
+        Discharging) mark="↓" ;;
+        *) mark="" ;;
+      esac
+      if [ -n "$text" ]; then text="$text  ·  "; fi
+      text="$text''${name} ''${cap}%''${mark}"
+      if [ -n "$tip" ]; then tip="$tip
+"; fi
+      tip="$tip''${name}: ''${cap}%  ''${status}  ''${pw} W"
+      if [ "''${cap:-100}" -lt "$low" ]; then low="$cap"; fi
+    done
+    if [ -z "$text" ]; then
+      ${pkgs.jq}/bin/jq -cn '{text:"no batt",tooltip:"No battery present"}'
+    else
+      cls="good"
+      if [ "$low" -lt 30 ]; then cls="warning"; fi
+      if [ "$low" -lt 15 ]; then cls="critical"; fi
+      ${pkgs.jq}/bin/jq -cn --arg t "$text" --arg tip "$tip" --arg c "$cls" --argjson p "$low" \
+        '{text:$t,tooltip:$tip,class:$c,percentage:$p}'
+    fi
+  '';
 in
 {
   home.packages = with pkgs; [
@@ -37,6 +76,7 @@ in
     cliphist         # clipboard history
     wl-clipboard     # wl-copy / wl-paste
     udiskie          # USB automount tray
+    upower           # detailed battery readout (the Waybar battery click target)
     libnotify        # notify-send (used by some keybinds/scripts)
   ];
 
@@ -274,7 +314,7 @@ in
       spacing = 6;
       modules-left = [ "hyprland/workspaces" "hyprland/window" ];
       modules-center = [ "clock" ];
-      modules-right = [ "tray" "pulseaudio" "backlight" "network" "battery" ];
+      modules-right = [ "tray" "pulseaudio" "backlight" "network" "custom/battery" ];
 
       "hyprland/workspaces" = {
         on-click = "activate";
@@ -309,11 +349,18 @@ in
         tooltip-format = "{ifname}: {ipaddr}";
         on-click = "kitty -e nmtui";
       };
-      battery = {
-        states = { warning = 30; critical = 15; };
-        format = "{capacity}% {icon}";
-        format-charging = "{capacity}% ";
-        format-icons = [ "" "" "" "" "" ];
+      # Battery: a CUSTOM module (waybar-batteries, defined in the let block)
+      # that reads /sys/class/power_supply/BAT* live and renders ONE entry per
+      # present battery — so it shows BAT0 today, and the removable BAT1 will
+      # appear on its own if/when the T480 firmware accepts it again (Chris is
+      # trying a deep-discharge reset of the aftermarket cell). Per-battery %,
+      # status arrow, and discharge/charge rate (W) in the tooltip; click for the
+      # full live readout of every battery (upower -d).
+      "custom/battery" = {
+        exec = "${batteryStatus}/bin/waybar-batteries";
+        return-type = "json";
+        interval = 30;
+        on-click = "kitty --title battery -e watch -n 2 upower -d";
       };
       tray = { spacing = 10; };
     };
@@ -336,11 +383,11 @@ in
         color: #eceff4;
         border-radius: 6px;
       }
-      #clock, #pulseaudio, #backlight, #network, #battery, #tray {
+      #clock, #pulseaudio, #backlight, #network, #custom-battery, #tray {
         padding: 0 10px;
       }
-      #battery.warning  { color: #ebcb8b; }
-      #battery.critical { color: #bf616a; }
+      #custom-battery.warning  { color: #ebcb8b; }
+      #custom-battery.critical { color: #bf616a; }
     '';
   };
 
