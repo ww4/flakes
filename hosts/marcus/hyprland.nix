@@ -81,7 +81,7 @@ in
     grim slurp swappy  # screenshots
     cliphist         # clipboard history
     wl-clipboard     # wl-copy / wl-paste
-    udiskie          # USB automount tray
+    udiskie          # USB auto-mount daemon (run with --no-tray)
     upower           # detailed battery readout (the Waybar battery click target)
     libnotify        # notify-send (used by some keybinds/scripts)
   ];
@@ -152,7 +152,7 @@ in
         "mako"
         "swaybg -m fill -i ${wallpaper}"
         "wl-paste --watch cliphist store"
-        "udiskie --tray"
+        "udiskie --no-tray"   # USB auto-mount, but no tray icon (Chris's preference)
         "nm-applet --indicator"   # NetworkManager tray applet — manage/reconnect wifi from Hyprland
         "${pkgs.polkit_gnome}/libexec/polkit-gnome/polkit-gnome-authentication-agent-1"
       ];
@@ -320,7 +320,10 @@ in
       spacing = 6;
       modules-left = [ "hyprland/workspaces" "hyprland/window" ];
       modules-center = [ "clock" ];
-      modules-right = [ "tray" "pulseaudio" "backlight" "network" "custom/battery" ];
+      # network (just the SSID, no icon) sits right after the tray so it reads as
+      # "[wifi tray icon] SSID" — nm-applet provides the wifi icon, the network
+      # module provides the name (click → nmtui), no duplicated icon.
+      modules-right = [ "pulseaudio" "backlight" "tray" "network" "custom/battery" ];
 
       "hyprland/workspaces" = {
         on-click = "activate";
@@ -351,7 +354,7 @@ in
         on-scroll-down = "brightnessctl s 5%-";
       };
       network = {
-        format-wifi = "  {essid}";
+        format-wifi = "{essid}";
         format-ethernet = "wired ";
         format-disconnected = "offline ";
         tooltip-format = "{ifname}: {ipaddr}";
