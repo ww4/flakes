@@ -167,7 +167,7 @@ in
         follow_mouse = 1;
         sensitivity = 0;
         touchpad = {
-          natural_scroll = true;
+          natural_scroll = false;   # traditional/"old-fashioned": swipe down → page down
           tap-to-click = true;
           disable_while_typing = true;
         };
@@ -235,7 +235,8 @@ in
         "$mod, F, fullscreen"
         "$mod, P, pseudo"
         "$mod, J, layoutmsg, togglesplit"   # togglesplit became a layoutmsg in Hyprland 0.54
-        "$mod SHIFT, Q, exit"            # log out of Hyprland
+        "$mod SHIFT, Q, exit"            # log out of Hyprland (quick; or use the menu)
+        "$mod, Escape, exec, wlogout -p layer-shell"   # visible power menu: lock/logout/suspend/reboot/shutdown
         "$mod, L, exec, loginctl lock-session"
         "$mod, B, exec, google-chrome-stable"
 
@@ -464,4 +465,18 @@ in
 
   # --- Launcher styling (wofi) ---
   programs.wofi.enable = true;
+
+  # --- Power / session menu (Super+Escape) — a visible way to log out, lock,
+  # or power off. "Logout" exits Hyprland back to the SDDM greeter, where you
+  # can switch to the Plasma session if something's wrong. ---
+  programs.wlogout = {
+    enable = true;
+    layout = [
+      { label = "lock";     text = "Lock";     action = "loginctl lock-session"; keybind = "l"; }
+      { label = "logout";   text = "Logout";   action = "hyprctl dispatch exit";  keybind = "e"; }
+      { label = "suspend";  text = "Suspend";  action = "systemctl suspend";      keybind = "s"; }
+      { label = "reboot";   text = "Reboot";   action = "systemctl reboot";       keybind = "r"; }
+      { label = "shutdown"; text = "Shutdown"; action = "systemctl poweroff";     keybind = "p"; }
+    ];
+  };
 }
