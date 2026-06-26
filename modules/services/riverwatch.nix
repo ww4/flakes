@@ -407,15 +407,19 @@ in {
             };
           }
 
-          # Operational: exporter can't reach NWPS for 30+ minutes.
+          # Operational: exporter can't reach NWPS for 4+ hours. Low-key by
+          # design — info severity, and a long 4h `for` so a transient internet
+          # blip (during which the notification wouldn't reach Chris anyway) is
+          # ignored; only a sustained NWPS/connectivity problem fires. Routed in
+          # monitoring.nix to a no-resolved receiver (no "RESOLVED" ping).
           {
             alert = "RiverwatchFetchFailing";
             expr = "riverwatch_fetch_success == 0";
-            for = "30m";
-            labels.severity = "warning";
+            for = "4h";
+            labels.severity = "info";
             annotations = {
               summary = "Riverwatch exporter can't reach NWPS for {{ $labels.gauge }}";
-              description = "The riverwatch_exporter has been failing to fetch {{ $labels.gauge }} for more than 30 minutes. Check journalctl -u riverwatch-exporter.";
+              description = "The riverwatch_exporter has been failing to fetch {{ $labels.gauge }} for 4+ hours. Check journalctl -u riverwatch-exporter (often just an NWPS/NOAA upstream or internet outage).";
             };
           }
         ];

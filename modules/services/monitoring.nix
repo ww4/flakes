@@ -89,18 +89,30 @@ in {
           group_interval = "5m";
           repeat_interval = "12h";
           receiver = "ntfy";
-        };
-        receivers = [{
-          name = "ntfy";
-          # Placeholder webhook — replaced when the shim service lands.
-          # For now Alertmanager will fire but the POST won't go anywhere
-          # meaningful until the shim is wired up. That's OK; we have no
-          # alert rules defined yet.
-          webhook_configs = [{
-            url = "http://127.0.0.1:9095/alert";
-            send_resolved = true;
+          # RiverwatchFetchFailing is informational and self-resolving — route it
+          # to a receiver that does NOT send "RESOLVED" pings (Chris doesn't want
+          # the all-clear). Everything else stays on the default receiver.
+          routes = [{
+            matchers = [ ''alertname="RiverwatchFetchFailing"'' ];
+            receiver = "ntfy-noresolve";
           }];
-        }];
+        };
+        receivers = [
+          {
+            name = "ntfy";
+            webhook_configs = [{
+              url = "http://127.0.0.1:9095/alert";
+              send_resolved = true;
+            }];
+          }
+          {
+            name = "ntfy-noresolve";
+            webhook_configs = [{
+              url = "http://127.0.0.1:9095/alert";
+              send_resolved = false;
+            }];
+          }
+        ];
       };
     };
   };
