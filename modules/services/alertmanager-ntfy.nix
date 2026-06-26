@@ -29,11 +29,17 @@ let
     NTFY = os.environ.get("NTFY_SERVER", "http://127.0.0.1:8090")
     TOPIC = os.environ.get("NTFY_TOPIC", "gromit-alerts")
     PORT = int(os.environ.get("SHIM_PORT", "9094"))
+    # Tapping the notification opens this DNS page (ntfy "Click" action). An
+    # alert can override it with a `url` annotation; otherwise this default.
+    DEFAULT_CLICK = os.environ.get("DEFAULT_CLICK_URL", "https://grafana.rosemaryacres.com")
 
     app = FastAPI()
 
     SEVERITY_PRIORITY = {"critical": 5, "warning": 3, "info": 2}
     SEVERITY_TAG = {"critical": "rotating_light", "warning": "warning", "info": "information_source"}
+    # Internal scrape-target labels — never useful in a notification (this is the
+    # "127.0.0.1:9201" noise). Hidden from the body.
+    HIDDEN_LABELS = ("alertname", "severity", "instance", "job")
 
 
     @app.post("/alert")
@@ -63,16 +69,19 @@ let
                 body = summary
                 if description and description != summary:
                     body = f"{summary}\n\n{description}"
-                # Annotate which labels triggered (helpful for multi-gauge alerts)
-                extra = {k: v for k, v in labels.items() if k not in ("alertname", "severity")}
+                # Show only meaningful labels (e.g. gauge/category) — never the
+                # internal instance/job scrape-target labels.
+                extra = {k: v for k, v in labels.items() if k not in HIDDEN_LABELS}
                 if extra:
                     body += "\n\n" + ", ".join(f"{k}={v}" for k, v in extra.items())
+
+                click = annotations.get("url") or DEFAULT_CLICK
 
                 try:
                     r = await client.post(
                         f"{NTFY}/{TOPIC}",
                         content=body,
-                        headers={"Title": title, "Priority": str(priority), "Tags": tag},
+                        headers={"Title": title, "Priority": str(priority), "Tags": tag, "Click": click},
                     )
                     r.raise_for_status()
                     sent += 1
