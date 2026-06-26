@@ -108,6 +108,139 @@ let
     if __name__ == "__main__":
         main()
   '';
+
+  # Stateful rapid-rise notifier. Replaces the old Prometheus RiverRapidRise
+  # alert (which fired per-gauge and couldn't compare against the *last
+  # notification*). Runs on a timer; for each gauge it asks Prometheus for the
+  # stage change over RISE_WINDOW, and decides whether to notify based on state
+  # persisted in StateDirectory:
+  #   - notify when a gauge first crosses RISE_BASE_FT (a new rapid rise), OR
+  #   - when an already-rising gauge's rise climbs > RISE_ESCALATE_FRACTION
+  #     (default 25%) ABOVE its rise at the last notification — a relative
+  #     "significant change" with no band edges to flap across, OR
+  #   - at most once per RISE_MIN_INTERVAL_SECONDS (12 h) as a "still rising"
+  #     reminder while any gauge stays active.
+  # All currently-rising gauges are reported in ONE combined message. When a
+  # gauge drops back below RISE_BASE_FT its baseline is cleared (event over).
+  notifier = pkgs.writers.writePython3Bin "riverwatch-notifier" {
+    libraries = [ pkgs.python3Packages.httpx ];
+    flakeIgnore = [ "E501" ];
+  } ''
+    import json
+    import os
+    import sys
+    import time
+
+    import httpx
+
+    PROM = os.environ.get("PROM_URL", "http://127.0.0.1:9090")
+    NTFY = os.environ.get("NTFY_SERVER", "http://127.0.0.1:8090")
+    TOPIC = os.environ.get("NTFY_TOPIC", "gromit-alerts")
+    STATE_FILE = os.environ.get("STATE_FILE", "/var/lib/riverwatch-notifier/state.json")
+    WINDOW = os.environ.get("RISE_WINDOW", "6h")
+    BASE_FT = float(os.environ.get("RISE_BASE_FT", "1.5"))
+    ESCALATE = float(os.environ.get("RISE_ESCALATE_FRACTION", "0.25"))
+    MIN_INTERVAL = int(os.environ.get("RISE_MIN_INTERVAL_SECONDS", "43200"))
+
+
+    def query_rises():
+        expr = f"(riverwatch_stage_ft - riverwatch_stage_ft offset {WINDOW})"
+        r = httpx.get(f"{PROM}/api/v1/query", params={"query": expr}, timeout=15.0)
+        r.raise_for_status()
+        rises = {}
+        for series in r.json().get("data", {}).get("result", []):
+            gauge = series.get("metric", {}).get("gauge")
+            if not gauge:
+                continue
+            try:
+                rises[gauge] = float(series["value"][1])
+            except (KeyError, ValueError, TypeError):
+                continue
+        return rises
+
+
+    def load_state():
+        try:
+            with open(STATE_FILE) as f:
+                s = json.load(f)
+            return {"last_notify": float(s.get("last_notify", 0)),
+                    "gauges": {k: float(v) for k, v in (s.get("gauges") or {}).items()}}
+        except (OSError, ValueError):
+            return {"last_notify": 0.0, "gauges": {}}
+
+
+    def save_state(state):
+        os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+        tmp = STATE_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(state, f)
+        os.replace(tmp, STATE_FILE)
+
+
+    def post(title, body, priority, tags):
+        httpx.post(f"{NTFY}/{TOPIC}", content=body.encode(),
+                   headers={"Title": title, "Priority": str(priority), "Tags": tags},
+                   timeout=10.0).raise_for_status()
+
+
+    def main():
+        now = time.time()
+        try:
+            rises = query_rises()
+        except Exception as e:
+            print(f"prometheus query failed: {e!r}", file=sys.stderr)
+            return
+
+        state = load_state()
+        last_notify = state["last_notify"]
+        last = state["gauges"]  # gauge -> rise (ft) at the last notification
+
+        active = {g: v for g, v in rises.items() if v > BASE_FT}
+
+        accel = {g for g, v in active.items() if g in last and v > (1 + ESCALATE) * last[g]}
+        fresh = {g for g in active if g not in last}
+        periodic = bool(active) and (now - last_notify) >= MIN_INTERVAL
+
+        # Event over for any gauge that fell back below the base — reset baseline.
+        for g in list(last):
+            if g not in active:
+                del last[g]
+
+        if active and (accel or fresh or periodic):
+            lines = []
+            for g in sorted(active):
+                if g in accel:
+                    note = "   ↑ accelerating"
+                elif g in fresh:
+                    note = "   ⚠ rising"
+                else:
+                    note = ""
+                lines.append(f"• {g}: +{active[g]:.1f} ft / {WINDOW}{note}")
+            if accel:
+                why = "rate of rise jumped >25% since the last alert"
+            elif fresh:
+                why = "rapid rise started"
+            else:
+                why = "still rising (12h update)"
+            body = "River rising rapidly:\n" + "\n".join(lines) + f"\n\n({why})"
+            try:
+                post("River rising rapidly", body, 4, "ocean,chart_with_upwards_trend")
+            except Exception as e:
+                print(f"ntfy post failed: {e!r}", file=sys.stderr)
+                return  # don't advance state if the notification didn't go out
+            for g, v in active.items():
+                last[g] = v
+            last_notify = now
+            print(f"notified ({why}): {active}")
+        else:
+            print(f"no notify. active={active} since_last={int(now - last_notify)}s")
+
+        save_state({"last_notify": last_notify, "gauges": last})
+
+
+    if __name__ == "__main__":
+        main()
+  '';
 in {
   systemd.services.riverwatch-exporter = {
     description = "Riverwatch — Prometheus exporter for NOAA NWPS river gauges";
@@ -131,6 +264,40 @@ in {
       ProtectHome = true;
       NoNewPrivileges = true;
       PrivateTmp = true;
+    };
+  };
+
+  # Rapid-rise notifier (stateful; see the `notifier` script above). Runs on a
+  # timer, keeps its state in /var/lib/riverwatch-notifier.
+  systemd.services.riverwatch-notifier = {
+    description = "Riverwatch — rapid-rise notifier (relative threshold + 12h floor)";
+    after = [ "network-online.target" "prometheus.service" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${notifier}/bin/riverwatch-notifier";
+      DynamicUser = true;
+      StateDirectory = "riverwatch-notifier";
+      Environment = [
+        "STATE_FILE=/var/lib/riverwatch-notifier/state.json"
+        "RISE_WINDOW=6h"                      # window the "rise" is measured over
+        "RISE_BASE_FT=1.5"                    # ft over the window to count as "rising rapidly"
+        "RISE_ESCALATE_FRACTION=0.25"         # re-alert if the rise climbs >25% above last alert
+        "RISE_MIN_INTERVAL_SECONDS=43200"     # otherwise at most one alert per 12h
+      ];
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
+  systemd.timers.riverwatch-notifier = {
+    description = "Run the riverwatch rapid-rise notifier periodically";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "10m";
+      OnUnitActiveSec = "15m";
+      Persistent = true;
     };
   };
 
@@ -223,18 +390,10 @@ in {
             };
           }
 
-          # Rate of rise — stage climbed more than 1.5 ft in the last 6 hours.
-          # Needs at least 6 h of collected data before it can fire.
-          {
-            alert = "RiverRapidRise";
-            expr = ''(riverwatch_stage_ft - (riverwatch_stage_ft offset 6h)) > 1.5'';
-            for = "15m";
-            labels.severity = "warning";
-            annotations = {
-              summary = "{{ $labels.gauge }} rising rapidly";
-              description = "Stage at {{ $labels.gauge }} has risen more than 1.5 ft in the last 6 hours — current value {{ $value }} ft above 6h-ago value.";
-            };
-          }
+          # NOTE: rate-of-rise alerting is handled by the stateful
+          # riverwatch-notifier service (above), not a Prometheus rule — it needs
+          # to compare against the *last notification* (relative 25% escalation +
+          # 12h floor), which Alertmanager can't express.
 
           # Operational: NWPS observation hasn't updated in 4+ hours.
           {
