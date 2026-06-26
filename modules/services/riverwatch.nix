@@ -141,6 +141,7 @@ let
     BASE_FT = float(os.environ.get("RISE_BASE_FT", "1.5"))
     ESCALATE = float(os.environ.get("RISE_ESCALATE_FRACTION", "0.25"))
     MIN_INTERVAL = int(os.environ.get("RISE_MIN_INTERVAL_SECONDS", "43200"))
+    DASHBOARD = os.environ.get("RIVER_DASHBOARD_URL", "https://grafana.rosemaryacres.com/d/riverwatch")
 
 
     def query_rises():
@@ -179,7 +180,8 @@ let
 
     def post(title, body, priority, tags):
         httpx.post(f"{NTFY}/{TOPIC}", content=body.encode(),
-                   headers={"Title": title, "Priority": str(priority), "Tags": tags},
+                   headers={"Title": title, "Priority": str(priority), "Tags": tags,
+                            "Click": DASHBOARD},
                    timeout=10.0).raise_for_status()
 
 
