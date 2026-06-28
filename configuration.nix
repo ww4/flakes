@@ -31,6 +31,7 @@
     ./modules/agent/comin.nix               # GitOps applier — rebuilds on merge to main
     ./modules/agent/claude-harness.nix      # root-owned managed settings + guard for the agent
     ./modules/agent/digest.nix              # weekly headless digest (claude -p /catch-up -> ntfy)
+    ./modules/agent/claude-config-sync.nix  # hourly pull of the synced global ~/.claude/CLAUDE.md
 
     # Services.
     ./modules/services/nginx-access.nix     # source-gate all vhosts to Tailscale + LAN (security review 2026-06-04)
