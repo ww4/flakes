@@ -101,9 +101,14 @@ serialize_pool() {
 }
 
 # Count pool remounts that happened at/after epoch $1 (across all drives).
+# Healthy pool = no .remounts files; the old `cat glob | awk` then failed (glob
+# doesn't expand → cat exits 1 → pipefail trips the ERR trap → spurious urgent
+# "Unexpected failure"). Build the glob into an array and short-circuit to 0
+# when nothing matches; otherwise awk the files directly (no cat, no pipe).
 remounts_since() {
-  cat "$AUTOREMOUNT_STATE"/*.remounts 2>/dev/null \
-    | awk -v t="$1" '($1+0) >= t { c++ } END { print c+0 }'
+  local files=( "$AUTOREMOUNT_STATE"/*.remounts )
+  [ -e "${files[0]}" ] || { echo 0; return 0; }
+  awk -v t="$1" '($1+0) >= t { c++ } END { print c+0 }' "${files[@]}"
 }
 
 # start_flap_watchdog — background monitor that kills our rsync (and thus aborts
