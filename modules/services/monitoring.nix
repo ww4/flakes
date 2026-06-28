@@ -89,13 +89,22 @@ in {
           group_interval = "5m";
           repeat_interval = "12h";
           receiver = "ntfy";
-          # RiverwatchFetchFailing is informational and self-resolving — route it
-          # to a receiver that does NOT send "RESOLVED" pings (Chris doesn't want
-          # the all-clear). Everything else stays on the default receiver.
-          routes = [{
-            matchers = [ ''alertname="RiverwatchFetchFailing"'' ];
-            receiver = "ntfy-noresolve";
-          }];
+          # Riverwatch operational/health alerts (data feed stale, can't reach
+          # NWPS) are info-level AND muted overnight (22:00–07:00) so they never
+          # wake anyone — they hold until morning. NOT actual river conditions;
+          # the flood/forecast/rapid-rise alerts are deliberately NOT muted.
+          routes = [
+            {
+              matchers = [ ''alertname="RiverwatchFetchFailing"'' ];
+              receiver = "ntfy-noresolve";          # also no "RESOLVED" ping
+              mute_time_intervals = [ "nights" ];
+            }
+            {
+              matchers = [ ''alertname="RiverObservationStale"'' ];
+              receiver = "ntfy";
+              mute_time_intervals = [ "nights" ];
+            }
+          ];
         };
         receivers = [
           {
@@ -113,6 +122,20 @@ in {
             }];
           }
         ];
+
+        # Quiet hours 22:00–07:00 (America/New_York) — mirrors Grafana's "nights"
+        # mute timing (see grafana/mute-timings.json). Referenced by the riverwatch
+        # health-alert routes above so they hold overnight.
+        time_intervals = [{
+          name = "nights";
+          time_intervals = [{
+            times = [
+              { start_time = "22:00"; end_time = "24:00"; }
+              { start_time = "00:00"; end_time = "07:00"; }
+            ];
+            location = "America/New_York";
+          }];
+        }];
       };
     };
   };
