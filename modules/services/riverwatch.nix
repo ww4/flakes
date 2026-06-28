@@ -340,12 +340,19 @@ in {
       groups = [{
         name = "riverwatch";
         interval = "1m";
-        rules = map (r: r // {
-          annotations = r.annotations // {
-            topic = "riverwatch";
-            url = "https://grafana.rosemaryacres.com/d/riverwatch";
-          };
-        }) [
+        rules = map (r:
+          # Actionable river-CONDITION alerts → the `riverwatch` topic (Mary +
+          # Chris). The operational/health alerts (data feed stale, fetch
+          # failing) are NOT river conditions — leave them on the default
+          # gromit-alerts topic so only Chris gets them. All get the dashboard
+          # click-through.
+          let actionable = !(builtins.elem r.alert [ "RiverObservationStale" "RiverwatchFetchFailing" ]);
+          in r // {
+            annotations = r.annotations
+              // { url = "https://grafana.rosemaryacres.com/d/riverwatch"; }
+              // lib.optionalAttrs actionable { topic = "riverwatch"; };
+          }
+        ) [
           # Active flood — gauge currently sitting in action/minor/moderate/major.
           # Severity scales with category.
           {
