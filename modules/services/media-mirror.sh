@@ -62,7 +62,16 @@ AUTOREMOUNT_STATE=/var/lib/pool-autoremount
 # them as ~339k "deletions" (the backup pool is their only home — approving would
 # have destroyed them). Same treatment as /restic and /rick-offsite, also
 # backup-only. Excluded 2026-06-07.
-EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclude=/arr --exclude=/pinchflat --exclude=/rick-offsite --exclude=/bitcoind --exclude=/archive --exclude=/legacy)
+#
+# /immich/thumbs and /immich/encoded-video are Immich-generated DERIVED data
+# (thumbnails + transcodes) — fully regenerable from the originals in
+# /immich/library, so mirroring them is waste and they churn the review queue
+# every time Immich rebuilds them (e.g. a version bump). Excluded 2026-06-28.
+# KEPT on purpose: /immich/library (the originals), /immich/upload (in-flight
+# uploads → become library), /immich/profile (user images), and /immich/backups
+# (Immich's DB dumps — NOT regenerable from photos; the metadata/album/face
+# restore safety. They rotate, so they cause a little benign queue churn.)
+EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclude=/arr --exclude=/pinchflat --exclude=/rick-offsite --exclude=/bitcoind --exclude=/archive --exclude=/legacy --exclude=/immich/thumbs --exclude=/immich/encoded-video)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Notification failures must never abort a backup.
@@ -249,12 +258,18 @@ Run 'media-mirror status' and check the drives." \
 No genuine deletions." \
       low floppy_disk
   else
+    # The review queue isn't urgent — nothing is deleted until you approve — so
+    # don't blast at high priority, and go silent (low) during quiet hours
+    # (22:00–07:00) so a weekly run or a Persistent catch-up never wakes anyone.
+    rprio=default
+    rhour=$((10#$(date +%H)))
+    if [ "$rhour" -ge 22 ] || [ "$rhour" -lt 7 ]; then rprio=low; fi
     notify "Media mirror — $ndeleted deletion(s) need review" \
 "$copied copied. $ndeleted genuine deletion(s) need review.
 $nmoved moved/renamed (content preserved on fusion — safe).
 Review:  $DELETED
 Approve: sudo media-mirror approve" \
-      high "warning,floppy_disk"
+      "$rprio" "warning,floppy_disk"
   fi
   echo "sync done: $copied copied, $nmoved moved, $ndeleted genuine deletions"
 }
