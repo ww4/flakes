@@ -249,12 +249,18 @@ Run 'media-mirror status' and check the drives." \
 No genuine deletions." \
       low floppy_disk
   else
+    # The review queue isn't urgent — nothing is deleted until you approve — so
+    # don't blast at high priority, and go silent (low) during quiet hours
+    # (22:00–07:00) so a weekly run or a Persistent catch-up never wakes anyone.
+    rprio=default
+    rhour=$((10#$(date +%H)))
+    if [ "$rhour" -ge 22 ] || [ "$rhour" -lt 7 ]; then rprio=low; fi
     notify "Media mirror — $ndeleted deletion(s) need review" \
 "$copied copied. $ndeleted genuine deletion(s) need review.
 $nmoved moved/renamed (content preserved on fusion — safe).
 Review:  $DELETED
 Approve: sudo media-mirror approve" \
-      high "warning,floppy_disk"
+      "$rprio" "warning,floppy_disk"
   fi
   echo "sync done: $copied copied, $nmoved moved, $ndeleted genuine deletions"
 }

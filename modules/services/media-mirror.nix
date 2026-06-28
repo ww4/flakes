@@ -14,9 +14,11 @@ let
       rsync
       coreutils
       findutils
-      util-linux # mountpoint
+      util-linux # mountpoint, flock
       gnugrep
       gnused
+      gawk       # remounts_since (flap watchdog) — was missing → broke the
+                 # watchdog and tripped the ERR trap into a weekly false "ERROR"
       gromit-notify
     ];
     # SC2001: the sed calls operate on streams, not single variables, so the
@@ -47,7 +49,7 @@ in
     description = "Weekly media-mirror sync";
     wantedBy = [ "timers.target" ];
     timerConfig = {
-      OnCalendar = "Sun 04:00";
+      OnCalendar = "Sun 08:00";   # after quiet hours (07:00) so the review ping lands at a civil time
       Persistent = true;
     };
   };
