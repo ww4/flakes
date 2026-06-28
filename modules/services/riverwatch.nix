@@ -281,6 +281,7 @@ in {
       DynamicUser = true;
       StateDirectory = "riverwatch-notifier";
       Environment = [
+        "NTFY_TOPIC=riverwatch"               # river alerts go to their own topic (Mary subscribes to just this)
         "STATE_FILE=/var/lib/riverwatch-notifier/state.json"
         "RISE_WINDOW=6h"                      # window the "rise" is measured over
         "RISE_BASE_FT=1.5"                    # ft over the window to count as "rising rapidly"
@@ -329,13 +330,29 @@ in {
   }];
 
   # Alert rules. Routed via Alertmanager → ntfy shim (see
-  # alertmanager-ntfy.nix) onto the gromit-alerts topic.
+  # alertmanager-ntfy.nix). Every rule below is tagged (via the map) with a
+  # `topic` annotation so the shim routes ALL riverwatch alerts to the dedicated
+  # `riverwatch` ntfy topic (not the shared gromit-alerts), and a `url` so they
+  # click through to the river dashboard. (The rapid-rise notifier posts to the
+  # same topic directly.)
   services.prometheus.rules = [
     (builtins.toJSON {
       groups = [{
         name = "riverwatch";
         interval = "1m";
-        rules = [
+        rules = map (r:
+          # Actionable river-CONDITION alerts → the `riverwatch` topic (Mary +
+          # Chris). The operational/health alerts (data feed stale, fetch
+          # failing) are NOT river conditions — leave them on the default
+          # gromit-alerts topic so only Chris gets them. All get the dashboard
+          # click-through.
+          let actionable = !(builtins.elem r.alert [ "RiverObservationStale" "RiverwatchFetchFailing" ]);
+          in r // {
+            annotations = r.annotations
+              // { url = "https://grafana.rosemaryacres.com/d/riverwatch"; }
+              // lib.optionalAttrs actionable { topic = "riverwatch"; };
+          }
+        ) [
           # Active flood — gauge currently sitting in action/minor/moderate/major.
           # Severity scales with category.
           {

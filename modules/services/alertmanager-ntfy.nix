@@ -76,10 +76,14 @@ let
                     body += "\n\n" + ", ".join(f"{k}={v}" for k, v in extra.items())
 
                 click = annotations.get("url") or DEFAULT_CLICK
+                # An alert can route itself to a different ntfy topic via a
+                # `topic` annotation (e.g. riverwatch → its own topic); default
+                # is the shared topic.
+                topic = annotations.get("topic") or TOPIC
 
                 try:
                     r = await client.post(
-                        f"{NTFY}/{TOPIC}",
+                        f"{NTFY}/{topic}",
                         content=body,
                         headers={"Title": title, "Priority": str(priority), "Tags": tag, "Click": click},
                     )
