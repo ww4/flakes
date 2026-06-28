@@ -62,7 +62,16 @@ AUTOREMOUNT_STATE=/var/lib/pool-autoremount
 # them as ~339k "deletions" (the backup pool is their only home — approving would
 # have destroyed them). Same treatment as /restic and /rick-offsite, also
 # backup-only. Excluded 2026-06-07.
-EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclude=/arr --exclude=/pinchflat --exclude=/rick-offsite --exclude=/bitcoind --exclude=/archive --exclude=/legacy)
+#
+# /immich/thumbs and /immich/encoded-video are Immich-generated DERIVED data
+# (thumbnails + transcodes) — fully regenerable from the originals in
+# /immich/library, so mirroring them is waste and they churn the review queue
+# every time Immich rebuilds them (e.g. a version bump). Excluded 2026-06-28.
+# KEPT on purpose: /immich/library (the originals), /immich/upload (in-flight
+# uploads → become library), /immich/profile (user images), and /immich/backups
+# (Immich's DB dumps — NOT regenerable from photos; the metadata/album/face
+# restore safety. They rotate, so they cause a little benign queue churn.)
+EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclude=/arr --exclude=/pinchflat --exclude=/rick-offsite --exclude=/bitcoind --exclude=/archive --exclude=/legacy --exclude=/immich/thumbs --exclude=/immich/encoded-video)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Notification failures must never abort a backup.
