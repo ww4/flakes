@@ -339,7 +339,7 @@ in
         "$mod, P, pseudo"
         "$mod, J, layoutmsg, togglesplit"   # togglesplit became a layoutmsg in Hyprland 0.54
         "$mod SHIFT, Q, exit"            # log out of Hyprland (back to SDDM)
-        "$mod SHIFT, E, exec, wlogout -p layer-shell"   # power/logout menu
+        "$mod SHIFT, E, exec, wlogout -b 5 -p layer-shell"   # power/logout menu (single row)
         "$mod, slash, exec, hypr-cheatsheet"            # keybind cheatsheet overlay
         "$mod, L, exec, loginctl lock-session"
         "$mod, B, exec, google-chrome-stable"
@@ -428,7 +428,7 @@ in
       # network (just the SSID, no icon) sits right after the tray so it reads as
       # "[wifi tray icon] SSID" — nm-applet provides the wifi icon, the network
       # module provides the name (click → nmtui), no duplicated icon.
-      modules-right = [ "pulseaudio" "backlight" "tray" "custom/netaddr" "custom/battery" ];
+      modules-right = [ "pulseaudio" "backlight" "tray" "custom/netaddr" "custom/battery" "custom/power" ];
 
       "hyprland/workspaces" = {
         on-click = "activate";
@@ -483,6 +483,12 @@ in
         on-click = "kitty --title battery -e watch -n 2 upower -d";
       };
       tray = { spacing = 10; };
+      # Power button — opens the same wlogout menu as Super+Shift+E.
+      "custom/power" = {
+        format = "⏻";
+        tooltip-format = "Power menu";
+        on-click = "wlogout -b 5 -p layer-shell";
+      };
     };
     style = ''
       * {
@@ -503,11 +509,13 @@ in
         color: #eceff4;
         border-radius: 6px;
       }
-      #clock, #pulseaudio, #backlight, #network, #custom-battery, #tray {
+      #clock, #pulseaudio, #backlight, #custom-netaddr, #custom-battery, #custom-power, #tray {
         padding: 0 10px;
       }
       #custom-battery.warning  { color: #ebcb8b; }
       #custom-battery.critical { color: #bf616a; }
+      #custom-power { color: #d8dee9; padding: 0 12px; }
+      #custom-power:hover { color: #bf616a; }
     '';
   };
 
@@ -600,18 +608,34 @@ in
       { label = "shutdown"; text = "Shutdown"; keybind = "p"; action = "systemctl poweroff"; }
     ];
     style = ''
-      * { font-family: "JetBrainsMono Nerd Font"; font-size: 20px; }
-      window { background-color: rgba(46, 52, 64, 0.92); }
+      * {
+        font-family: "JetBrainsMono Nerd Font", sans-serif;
+        font-size: 18px;
+        color: #d8dee9;
+      }
+      window { background-color: rgba(46, 52, 64, 0.85); }
       button {
         color: #d8dee9;
         background-color: #3b4252;
-        border: 2px solid #4c566a;
-        border-radius: 14px;
-        margin: 14px;
+        border: 2px solid #434c5e;
+        border-radius: 18px;
+        margin: 18px;
         background-repeat: no-repeat;
-        background-position: center;
+        background-position: center 28%;
+        background-size: 40px;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       }
-      button:focus, button:hover { background-color: #5e81ac; border-color: #88c0d0; color: #eceff4; }
+      button:focus, button:hover {
+        background-color: #434c5e;
+        border-color: #88c0d0;
+        border-width: 3px;
+        color: #eceff4;
+      }
+      #lock     { background-image: image(url("${pkgs.wlogout}/share/wlogout/icons/lock.png")); }
+      #logout   { background-image: image(url("${pkgs.wlogout}/share/wlogout/icons/logout.png")); }
+      #suspend  { background-image: image(url("${pkgs.wlogout}/share/wlogout/icons/suspend.png")); }
+      #reboot   { background-image: image(url("${pkgs.wlogout}/share/wlogout/icons/reboot.png")); }
+      #shutdown { background-image: image(url("${pkgs.wlogout}/share/wlogout/icons/shutdown.png")); }
     '';
   };
 }
