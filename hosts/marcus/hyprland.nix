@@ -68,9 +68,107 @@ let
         '{text:$t,tooltip:$tip,class:$c,percentage:$p}'
     fi
   '';
+
+  # Keybind cheatsheet overlay (Super+/): read the LIVE Hyprland binds and show
+  # them in a searchable wofi list. Because it reads `hyprctl binds`, it never
+  # drifts from the actual config — new binds appear automatically.
+  cheatsheet = pkgs.writeShellScriptBin "hypr-cheatsheet" ''
+    ${pkgs.hyprland}/bin/hyprctl binds -j \
+      | ${pkgs.jq}/bin/jq -r '
+          def has(m;v): ((m/v)|floor)%2==1;
+          .[]
+          | ([ (if has(.modmask;64) then "Super" else empty end),
+               (if has(.modmask;4)  then "Ctrl"  else empty end),
+               (if has(.modmask;8)  then "Alt"   else empty end),
+               (if has(.modmask;1)  then "Shift" else empty end) ] | join("+")) as $m
+          | (if $m == "" then .key else $m + "+" + .key end) as $combo
+          | (if (.description // "") != "" then .description
+             else .dispatcher + (if (.arg // "") != "" then " " + .arg else "" end) end) as $act
+          | $combo + "   →   " + $act
+        ' \
+      | ${pkgs.wofi}/bin/wofi --dmenu --insensitive --width 780 --height 660 \
+          --prompt "Hyprland keybinds" > /dev/null || true
+  '';
+
+  # --- Wired-port static-IP quick switcher (ethswitch) ---
+  # Seed profiles (vendor mgmt subnets); merged at runtime with the user's
+  # editable ~/.config/ethswitch/profiles (Name|CIDR|GW per line).
+  ethSeedFile = pkgs.writeText "ethswitch-seed" ''
+    Ubiquiti|192.168.1.22/24|192.168.1.20
+    Cambium|169.254.1.3/24|169.254.1.1
+    cnPilot|192.168.11.3/24|192.168.11.1
+    Telrad|192.168.254.3/24|192.168.254.251
+    Tarana|192.168.10.10/24|192.168.10.2
+  '';
+  ethswitch = pkgs.writeShellApplication {
+    name = "ethswitch";
+    runtimeInputs = with pkgs; [ networkmanager fzf gawk gnugrep gnused coreutils iproute2 procps ];
+    text = ''
+      export ETHSWITCH_SEED=${ethSeedFile}
+    '' + builtins.readFile ./ethswitch.sh;
+  };
+  # Single-instance popup launcher for the Waybar IP click (replaces nmtui-toggle;
+  # nmtui is now an option *inside* ethswitch).
+  ethswitchToggle = pkgs.writeShellScriptBin "ethswitch-toggle" ''
+    if ${pkgs.procps}/bin/pgrep -x ethswitch >/dev/null; then
+      ${pkgs.procps}/bin/pkill -x ethswitch
+    else
+      ${pkgs.kitty}/bin/kitty --class ethswitch-popup -e ${ethswitch}/bin/ethswitch
+    fi
+  '';
+
+  # Waybar address module. Text = "<CIDR>  <suffix>" where suffix is the active
+  # ethswitch profile name (when the wired port is on a profile) or "DHCP". When a
+  # profile is active the module shows the WIRED interface (that's the point of the
+  # tool); otherwise it shows the default-route interface (wifi). Tooltip carries
+  # signal/speed + name, DHCP/Static, per-device gateway, a default-route note,
+  # and a cumulative traffic snapshot.
+  netAddr = pkgs.writeShellScriptBin "waybar-netaddr" ''
+    ipc=${pkgs.iproute2}/bin/ip
+    nmcli=${pkgs.networkmanager}/bin/nmcli
+    awk=${pkgs.gawk}/bin/awk
+    jq=${pkgs.jq}/bin/jq
+    cat=${pkgs.coreutils}/bin/cat
+    numfmt=${pkgs.coreutils}/bin/numfmt
+    cut=${pkgs.coreutils}/bin/cut
+    sed=${pkgs.gnused}/bin/sed
+    state="''${XDG_CACHE_HOME:-$HOME/.cache}/ethswitch/state"
+    defdev=$($ipc route show default 2>/dev/null | $awk '/^default/{print $5; exit}')
+    ethdev=$($nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | $awk -F: '$1=="ethswitch"{print $2; exit}')
+    prof=""; [ -f "$state" ] && prof=$($sed -n 's/^profile=//p' "$state")
+    if [ -n "$ethdev" ] && [ -n "$prof" ]; then
+      dev="$ethdev"; suffix="$prof"; name="$prof"
+    elif [ -n "$defdev" ]; then
+      dev="$defdev"; suffix="DHCP"
+      name=$($nmcli -t -f GENERAL.CONNECTION device show "$dev" 2>/dev/null | $cut -d: -f2-)
+    else
+      $jq -cn '{text:"offline",tooltip:"No network connection"}'; exit 0
+    fi
+    cidr=$($ipc -o -4 addr show dev "$dev" 2>/dev/null | $awk '{print $4; exit}')
+    gw=$($nmcli -t -f IP4.GATEWAY device show "$dev" 2>/dev/null | $cut -d: -f2)
+    if $ipc -o -4 addr show dev "$dev" 2>/dev/null | $awk '/dynamic/{f=1} END{exit !f}'; then m="DHCP"; else m="Static"; fi
+    if [ -d /sys/class/net/"$dev"/wireless ]; then
+      sig=$($nmcli -t -f IN-USE,SIGNAL device wifi 2>/dev/null | $awk -F: '$1=="*"{print $2; exit}')
+      left="''${sig:-?}%"
+    else
+      spd=$($cat /sys/class/net/"$dev"/speed 2>/dev/null)
+      case "$spd" in 10000) left="10G";; 1000) left="1G";; 100) left="100M";; 10) left="10M";; *) left="''${spd:-?}M";; esac
+    fi
+    if [ "$dev" = "$defdev" ]; then droute="default route"; else droute="not default route"; fi
+    rx=$($cat /sys/class/net/"$dev"/statistics/rx_bytes 2>/dev/null)
+    tx=$($cat /sys/class/net/"$dev"/statistics/tx_bytes 2>/dev/null)
+    rxh=$($numfmt --to=iec --suffix=B "''${rx:-0}" 2>/dev/null)
+    txh=$($numfmt --to=iec --suffix=B "''${tx:-0}" 2>/dev/null)
+    tip=$(printf '%s  %s\n%s  •  gw %s  •  %s\n↓ %s   ↑ %s' "$left" "''${name:-network}" "$m" "''${gw:-—}" "$droute" "''${rxh:-?}" "''${txh:-?}")
+    $jq -cn --arg t "''${cidr:-—}  $suffix" --arg tip "$tip" '{text:$t,tooltip:$tip}'
+  '';
 in
 {
   home.packages = with pkgs; [
+    cheatsheet       # Super+/ keybind overlay (hypr-cheatsheet)
+    ethswitch        # wired-port static-IP profile switcher (TUI)
+    ethswitchToggle  # single-instance ethswitch popup for the Waybar IP click
+    netAddr          # waybar-netaddr: IP/CIDR custom module
     kitty            # terminal
     swaybg           # wallpaper
     nerd-fonts.jetbrains-mono   # glyphs for the Waybar icons (else they render as boxes)
@@ -153,8 +251,13 @@ in
         "swaybg -m fill -i ${wallpaper}"
         "wl-paste --watch cliphist store"
         "udiskie --no-tray"   # USB auto-mount, but no tray icon (Chris's preference)
-        "nm-applet --indicator"   # NetworkManager tray applet — manage/reconnect wifi from Hyprland
+        "nm-applet --indicator"   # NetworkManager tray applet — wifi icon + manage
         "${pkgs.polkit_gnome}/libexec/polkit-gnome/polkit-gnome-authentication-agent-1"
+        # Re-arm the validity fingerprint sensor: the greeter's fprint login
+        # wedges the python-validity driver, so hyprlock's in-session verify won't
+        # engage the reader until it's restarted. (Resume-from-sleep is handled by
+        # powerManagement.resumeCommands.) Passwordless sudo on this laptop.
+        "sudo systemctl restart python3-validity open-fprintd"
       ];
 
       env = [
@@ -167,7 +270,7 @@ in
         follow_mouse = 1;
         sensitivity = 0;
         touchpad = {
-          natural_scroll = true;
+          natural_scroll = false;   # traditional (Windows-style) scroll direction
           tap-to-click = true;
           disable_while_typing = true;
         };
@@ -235,7 +338,9 @@ in
         "$mod, F, fullscreen"
         "$mod, P, pseudo"
         "$mod, J, layoutmsg, togglesplit"   # togglesplit became a layoutmsg in Hyprland 0.54
-        "$mod SHIFT, Q, exit"            # log out of Hyprland
+        "$mod SHIFT, Q, exit"            # log out of Hyprland (back to SDDM)
+        "$mod SHIFT, E, exec, wlogout -p layer-shell"   # power/logout menu
+        "$mod, slash, exec, hypr-cheatsheet"            # keybind cheatsheet overlay
         "$mod, L, exec, loginctl lock-session"
         "$mod, B, exec, google-chrome-stable"
 
@@ -323,7 +428,7 @@ in
       # network (just the SSID, no icon) sits right after the tray so it reads as
       # "[wifi tray icon] SSID" — nm-applet provides the wifi icon, the network
       # module provides the name (click → nmtui), no duplicated icon.
-      modules-right = [ "pulseaudio" "backlight" "tray" "network" "custom/battery" ];
+      modules-right = [ "pulseaudio" "backlight" "tray" "custom/netaddr" "custom/battery" ];
 
       "hyprland/workspaces" = {
         on-click = "activate";
@@ -344,21 +449,25 @@ in
         format = "{icon}";
         format-muted = "";
         format-icons.default = [ "" "" ];
+        tooltip-format = "Volume {volume}%";
         on-click = "pavucontrol";
         scroll-step = 5;
       };
       backlight = {
         format = "{icon}";
         format-icons = [ "" ];
+        tooltip-format = "Brightness {percent}%";
         on-scroll-up = "brightnessctl s 5%+";
         on-scroll-down = "brightnessctl s 5%-";
       };
-      network = {
-        format-wifi = "{essid}";
-        format-ethernet = "wired ";
-        format-disconnected = "offline ";
-        tooltip-format = "{ifname}: {ipaddr}";
-        on-click = "kitty -e nmtui";
+      # IP/CIDR + active profile (or DHCP); click opens the ethswitch popup.
+      "custom/netaddr" = {
+        exec = "waybar-netaddr";
+        return-type = "json";
+        interval = 5;
+        signal = 8;   # ethswitch sends SIGRTMIN+8 to refresh instantly on change
+        format = "{}";
+        on-click = "ethswitch-toggle";
       };
       # Battery: a CUSTOM module (waybar-batteries, defined in the let block)
       # that reads /sys/class/power_supply/BAT* live and renders ONE entry per
@@ -423,6 +532,16 @@ in
         hide_cursor = true;
         grace = 2;          # 2s grace so a stray keypress doesn't force re-auth
       };
+      # Fingerprint unlock. hyprlock talks to fprintd directly (DBus), separate
+      # from the password PAM path — so it must be enabled HERE, not just in PAM.
+      # Runs a verify loop in the background: touch the sensor any time to unlock.
+      auth = {
+        fingerprint = {
+          enabled = true;
+          ready_message = "Scan fingerprint or type password";
+          present_message = "Scanning…";
+        };
+      };
       background = [{
         color = "rgba(46, 52, 64, 1.0)";
       }];
@@ -432,8 +551,11 @@ in
         halign = "center";
         valign = "center";
         outline_thickness = 2;
-        fade_on_empty = true;
-        placeholder_text = "<i>Password…</i>";
+        # Keep the field visible even when empty so the password box is always
+        # on screen — no "press a key to reveal" step (which used to swallow the
+        # first keystroke as a stray space). Tap the fingerprint or just type.
+        fade_on_empty = false;
+        placeholder_text = "<i>Fingerprint or password…</i>";
       }];
       label = [{
         text = "$TIME";
@@ -464,4 +586,32 @@ in
 
   # --- Launcher styling (wofi) ---
   programs.wofi.enable = true;
+
+  # --- Power / logout menu (Super+Shift+E) ---
+  # Text-button overlay (no icon-path dependency, so it can't render blank).
+  # "Logout" uses Hyprland's own exit dispatcher; "Lock" reuses hyprlock.
+  programs.wlogout = {
+    enable = true;
+    layout = [
+      { label = "lock";     text = "Lock";     keybind = "l"; action = "loginctl lock-session"; }
+      { label = "logout";   text = "Logout";   keybind = "e"; action = "hyprctl dispatch exit"; }
+      { label = "suspend";  text = "Suspend";  keybind = "s"; action = "systemctl suspend"; }
+      { label = "reboot";   text = "Reboot";   keybind = "r"; action = "systemctl reboot"; }
+      { label = "shutdown"; text = "Shutdown"; keybind = "p"; action = "systemctl poweroff"; }
+    ];
+    style = ''
+      * { font-family: "JetBrainsMono Nerd Font"; font-size: 20px; }
+      window { background-color: rgba(46, 52, 64, 0.92); }
+      button {
+        color: #d8dee9;
+        background-color: #3b4252;
+        border: 2px solid #4c566a;
+        border-radius: 14px;
+        margin: 14px;
+        background-repeat: no-repeat;
+        background-position: center;
+      }
+      button:focus, button:hover { background-color: #5e81ac; border-color: #88c0d0; color: #eceff4; }
+    '';
+  };
 }

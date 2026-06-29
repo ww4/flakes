@@ -146,6 +146,20 @@
   security.pam.services.polkit-1.fprintAuth = true;
   security.pam.services.login.fprintAuth = true;
   security.pam.services.sddm.fprintAuth = true;
+  # hyprlock authenticates the PASSWORD through this PAM service. Fingerprint on
+  # the lock screen is handled by hyprlock's OWN fprintd backend (auth.fingerprint
+  # in hyprland.nix), NOT PAM — so we deliberately do NOT set fprintAuth here, or
+  # pam_fprintd and hyprlock's verify loop would fight over the sensor.
+  security.pam.services.hyprlock = { };
+
+  # The reverse-engineered python-validity driver for the 06cb:009a sensor gets
+  # wedged after a claim+release (the greeter's fprint login, or a suspend), so
+  # hyprlock's in-session verify opens a session but the reader never powers on
+  # (no LED). Re-arm the driver on resume so wake-from-sleep → fingerprint works.
+  # (Session start is re-armed via exec-once in hyprland.nix for the post-boot case.)
+  powerManagement.resumeCommands = ''
+    ${pkgs.systemd}/bin/systemctl restart python3-validity open-fprintd
+  '';
 
   # --- SSH (Tailscale-reachable; laptop keeps password auth for console parity) ---
   services.openssh.enable = true;
