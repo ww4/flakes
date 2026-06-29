@@ -13,7 +13,10 @@
             "custom": {
               "drawStyle": "line",
               "fillOpacity": 8,
-              "lineWidth": 2
+              "lineWidth": 2,
+              "thresholdsStyle": {
+                "mode": "dashed"
+              }
             },
             "min": 15,
             "thresholds": {
@@ -22,20 +25,51 @@
                 {
                   "color": "green",
                   "value": null
-                },
-                {
-                  "color": "orange",
-                  "value": 45
-                },
-                {
-                  "color": "red",
-                  "value": 55
                 }
               ]
             },
             "unit": "celsius"
           },
-          "overrides": []
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "CPU (warn 75 / crit 85)"
+              },
+              "properties": [
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "color": "green", "value": null },
+                      { "color": "orange", "value": 75 },
+                      { "color": "red", "value": 85 }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "NVMe (warn 65 / crit 75)"
+              },
+              "properties": [
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "color": "green", "value": null },
+                      { "color": "orange", "value": 65 },
+                      { "color": "red", "value": 75 }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
         },
         "gridPos": {
           "h": 12,
@@ -64,7 +98,7 @@
               "uid": "PBFA97CFB590B2093"
             },
             "expr": "max(node_hwmon_temp_celsius{chip=\"platform_coretemp_0\"})",
-            "legendFormat": "CPU (hottest)",
+            "legendFormat": "CPU (warn 75 / crit 85)",
             "refId": "A"
           },
           {
@@ -73,20 +107,73 @@
               "uid": "PBFA97CFB590B2093"
             },
             "expr": "max(node_hwmon_temp_celsius{chip=\"nvme_nvme0\"})",
-            "legendFormat": "NVMe SSD",
+            "legendFormat": "NVMe (warn 65 / crit 75)",
             "refId": "B"
+          }
+        ],
+        "title": "Gromit temperatures °C",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "PBFA97CFB590B2093"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "drawStyle": "line",
+              "fillOpacity": 6,
+              "lineWidth": 2,
+              "thresholdsStyle": {
+                "mode": "dashed"
+              }
+            },
+            "min": 20,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "orange", "value": 50 },
+                { "color": "red", "value": 58 }
+              ]
+            },
+            "unit": "celsius"
           },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 12,
+          "w": 24,
+          "x": 0,
+          "y": 12
+        },
+        "id": 2,
+        "options": {
+          "legend": {
+            "calcs": [
+              "last",
+              "max"
+            ],
+            "displayMode": "table",
+            "placement": "right"
+          },
+          "tooltip": {
+            "mode": "multi"
+          }
+        },
+        "targets": [
           {
             "datasource": {
               "type": "prometheus",
               "uid": "PBFA97CFB590B2093"
             },
-            "expr": "max(node_thermal_zone_temp{type=\"acpitz\"})",
-            "legendFormat": "Ambient (acpitz)",
-            "refId": "C"
+            "expr": "gromit_drive_temp_celsius",
+            "legendFormat": "{{device}} {{bus}} {{model}}",
+            "refId": "A"
           }
         ],
-        "title": "Gromit temperatures (C)  — warn 45/65/75, crit 55/75/85",
+        "title": "Drive temperatures °C  — HDD warn 50 / crit 58 (spun-down drives omitted)",
         "type": "timeseries"
       }
     ],
