@@ -56,6 +56,7 @@
     ./modules/services/remote-desktop.nix
     ./modules/services/homepage.nix
     ./modules/services/monitoring.nix
+    ./modules/services/drive-temps.nix
     ./modules/services/riverwatch.nix
     ./modules/services/alertmanager-ntfy.nix
     ./modules/services/snapraid.nix         # inert until parity drive arrives (enable = false)
