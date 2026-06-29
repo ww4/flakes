@@ -270,12 +270,50 @@ def sidecars(path):
     return out
 
 
+def canonical_dir(parent, name):
+    """If a directory matching `name` case-insensitively already exists under
+    `parent`, return its actual on-disk name; otherwise return `name`. Stops us
+    creating "DARK MATTER (2015)" next to an existing "Dark Matter (2015)" just
+    because the source file happened to be named in all-caps."""
+    try:
+        for entry in os.listdir(parent):
+            if (entry.lower() == name.lower()
+                    and os.path.isdir(os.path.join(parent, entry))):
+                return entry
+    except OSError:
+        pass
+    return name
+
+
+def _inherit_owner(dst):
+    """chown `dst` and the parent dirs up to its library root to match that
+    root's owner/group, with group-write. media-curate runs as root, so without
+    this every promoted file lands root:root and Jellyfin (in the `media` group)
+    can't write its .nfo sidecars (UnauthorizedAccess on every scan)."""
+    for root in (MOVIES_DIR, TV_DIR, KEEP_DIR):
+        if dst == root or dst.startswith(root + os.sep):
+            try:
+                st = os.stat(root)
+            except OSError:
+                return
+            p = dst
+            while len(p) > len(root):
+                try:
+                    os.chown(p, st.st_uid, st.st_gid)
+                    os.chmod(p, 0o775 if os.path.isdir(p) else 0o664)
+                except OSError:
+                    pass
+                p = os.path.dirname(p)
+            return
+
+
 def move(src, dst, apply):
     print(f"  mv {src}\n   -> {dst}")
     if not apply:
         return
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.move(src, dst)
+    _inherit_owner(dst)
 
 
 def cmd_promote(apply):
@@ -289,7 +327,7 @@ def cmd_promote(apply):
         base = os.path.splitext(path)[0]
         m, t = MOVIE_RE.match(name), TV_RE.match(name)
         if m:
-            folder = os.path.join(MOVIES_DIR, name)
+            folder = os.path.join(MOVIES_DIR, canonical_dir(MOVIES_DIR, name))
             print(f"[movie] {name}")
             move(path, os.path.join(folder, os.path.basename(path)), apply)
             for s in sidecars(path):
@@ -314,6 +352,9 @@ def cmd_promote(apply):
                                      f"Jellyfin (got '{show}'). Add (YYYY) to the title "
                                      f"and re-promote."))
                     return False
+            # Reuse the show's existing folder casing if it's already in the
+            # library, so all-caps filenames don't spawn a duplicate-cased dir.
+            show = canonical_dir(TV_DIR, show)
             folder = os.path.join(TV_DIR, show, f"Season {season:02d}")
             newbase = f"{show} S{season:02d}E{ep:02d}"
             print(f"[tv] {show} S{season:02d}E{ep:02d}")
