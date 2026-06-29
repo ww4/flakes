@@ -43,6 +43,33 @@ session menu (bottom-left) and pick **Hyprland** or **Plasma** anytime.
 | `Super` + `Print` | Screenshot whole screen → edit |
 | `Super` + `C` | Clipboard history picker |
 
+## Top bar (Waybar) — clickable bits
+The items along the top respond to clicks:
+| Click | Does |
+|-------|------|
+| **⏻** (far right) | Power menu (same as `Super` + `Shift` + `E`) |
+| Volume icon | Open the mixer (pavucontrol); **scroll** the icon to adjust |
+| Brightness icon | **scroll** to adjust |
+| Wifi tray icon | NetworkManager applet (connect / manage wifi) |
+| **IP address** (e.g. `10.240.0.29/22`) | Open **ethswitch** (below) |
+
+## ethswitch — quick wired-port IP
+Click the **IP address** on the bar to pop up `ethswitch` — a menu that sets the
+**wired ethernet** port to a vendor's management subnet in one step (for
+configuring gear in the field). Arrow/type to a row, Enter applies:
+- **A vendor profile** (Ubiquiti, Cambium, cnPilot, Telrad, Tarana, …) → sets the
+  wired NIC to that IP + gateway instantly. The bar then shows that IP + the name.
+- **+ New** → add your own (name / IP-CIDR / gateway); saved to
+  `~/.config/ethswitch/profiles` so it persists and appears next time.
+- **↻ DHCP** → revert the wired port to automatic.
+- **⇄ Default route via wired [ON/OFF]** → toggle whether the wired port becomes
+  your internet route. OFF = management-only (wifi stays your internet); ON = wired takes over.
+- **⚙ nmtui** → the full NetworkManager text UI.
+
+The IP tooltip shows signal/speed, DHCP/Static, gateway, whether it's the default
+route, and a traffic counter. Seed profiles live in `hyprland.nix` (`ethSeedFile`);
+your own go in the user file above.
+
 ## Auto behaviour
 - **Lock screen** (sleep/idle) accepts your **fingerprint** or password; the
   password box stays visible so you can just start typing (no "press a key to
