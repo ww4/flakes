@@ -270,10 +270,10 @@ No genuine deletions." \
     rhour=$((10#$(date +%H)))
     if [ "$rhour" -ge 22 ] || [ "$rhour" -lt 7 ]; then rprio=low; fi
     notify "Media mirror — $ndeleted deletion(s) need review" \
-"$copied copied. $ndeleted genuine deletion(s) need review.
-$nmoved moved/renamed (content preserved on fusion — safe).
-Review:  $DELETED
-Approve: sudo media-mirror approve" \
+"$copied copied.
+approve clears $n stale backup path(s): $ndeleted genuine deletion(s) + $nmoved moved-path cleanup(s).
+Review the genuine list: $DELETED
+Run: sudo media-mirror approve$([ "$n" -gt "$MAX_DELETE" ] && printf ' %s' "$n")  (cap $MAX_DELETE)" \
       "$rprio" "warning,floppy_disk"
   fi
   echo "sync done: $copied copied, $nmoved moved, $ndeleted genuine deletions"
@@ -409,6 +409,7 @@ cmd_status() {
     echo "queued backup-path removals:"
     [ -f "$MOVED" ]   && echo "  moved/renamed (safe): $(wc -l < "$MOVED" | tr -d ' ')"
     [ -f "$DELETED" ] && echo "  genuine deletions:    $(wc -l < "$DELETED" | tr -d ' ')  (review: $DELETED)"
+    echo "  → approve clears all $(wc -l < "$PENDING" | tr -d ' ') (genuine + moved); cap $MAX_DELETE, override: sudo media-mirror approve <n>"
   else
     echo "queued backup-path removals: none"
   fi
