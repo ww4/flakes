@@ -156,21 +156,40 @@ in
     '';
   };
 
-  # Ordering: containers must wait for their prerequisite oneshots (the docker
-  # network, the env file, the staged cookie) so docker doesn't fail to start
-  # or bind-mount a missing path.
-  systemd.services.docker-mempool-db = {
-    after = [ "init-mempool-net.service" "mempool-db-secrets.service" ];
-    requires = [ "init-mempool-net.service" "mempool-db-secrets.service" ];
+  # Self-heal MariaDB's transaction-coordinator log. An unclean shutdown (e.g. a
+  # USB pool drive dropping mid-write + reboot) can corrupt tc.log →
+  # "Can't init tc log / Crash recovery failed" → mempool-db crash-loops to the
+  # start-limit and api/web cascade-fail. tc.log is XA-coordinator scratch, not
+  # data (single non-XA instance; InnoDB's own redo log handles real crash
+  # recovery), so clearing a stale one before launch is safe and lets the DB
+  # start clean. Runs before every db start (requires/before below).
+  systemd.services.mempool-db-tclog-clean = {
+    description = "Clear stale MariaDB tc.log before mempool-db starts (unclean-shutdown self-heal)";
+    before = [ "docker-mempool-db.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${pkgs.coreutils}/bin/rm -f /var/lib/mempool/mysql/tc.log";
+    };
   };
+
+  # Ordering: containers must wait for their prerequisite oneshots (the docker
+  # network, the env file, the staged cookie, the tc.log self-heal) so docker
+  # doesn't fail to start or bind-mount a missing path.
+  systemd.services.docker-mempool-db = {
+    after = [ "init-mempool-net.service" "mempool-db-secrets.service" "mempool-db-tclog-clean.service" ];
+    requires = [ "init-mempool-net.service" "mempool-db-secrets.service" "mempool-db-tclog-clean.service" ];
+  };
+  # (api/web also order after the tc.log self-heal — harmless, and the changed
+  # unit definition makes a deploy restart them too, so merging this recovers the
+  # whole stack from the current failed/inactive state, not just the db.)
   systemd.services.docker-mempool-api = {
-    after = [ "init-mempool-net.service" "mempool-db-secrets.service" "mempool-cookie-sync.service" ];
+    after = [ "init-mempool-net.service" "mempool-db-secrets.service" "mempool-cookie-sync.service" "mempool-db-tclog-clean.service" ];
     requires = [ "init-mempool-net.service" "mempool-db-secrets.service" "mempool-cookie-sync.service" ];
     # Restart with bitcoind so it re-reads the freshly-staged cookie.
     partOf = [ "bitcoind-bitcoin.service" ];
   };
   systemd.services.docker-mempool-web = {
-    after = [ "init-mempool-net.service" ];
+    after = [ "init-mempool-net.service" "mempool-db-tclog-clean.service" ];
     requires = [ "init-mempool-net.service" ];
   };
 
