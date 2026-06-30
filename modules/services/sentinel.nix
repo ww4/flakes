@@ -40,12 +40,21 @@ let
     agentEnabled = true;
     agentTimeout = 300;     # seconds; claude -p is killed past this
 
+    # Phase 3: checks flagged `act = true` (and only when agent = true) MAY take
+    # one bounded corrective action (whitelisted restart or a Chris-gated fix
+    # PR). actEnabled is the master kill-switch for ACTING (false => diagnose +
+    # notify only, even for act-flagged checks). Acting is further bounded by a
+    # daily cap and a per-incident action cooldown (don't re-act on a recurrence).
+    actEnabled = true;
+    maxActionsPerDay = 5;
+    actionCooldownSec = 86400;   # after acting on a check, won't act again on it for 24 h (recurrence => escalate)
+
     checks = [
       # Any systemd unit in the failed state (excluding known-noisy ones).
-      { id = "failed-units"; type = "failed-units"; severity = "warning"; exclude = [ ]; agent = true; }
+      { id = "failed-units"; type = "failed-units"; severity = "warning"; exclude = [ ]; agent = true; act = true; }
 
       # comin couldn't build/eval/deploy/fetch — gromit silently stuck on the old gen.
-      { id = "comin-deploy"; type = "comin"; severity = "warning"; agent = true; }
+      { id = "comin-deploy"; type = "comin"; severity = "warning"; agent = true; act = true; }
 
       # Example metric check (commented — enable + tune when wanted):
       # { id = "rootfs-full"; type = "metric"; severity = "warning"; agent = true;
@@ -58,11 +67,18 @@ let
         minConsecutive = 1; clearAfter = true; severity = "test"; agent = false;
         message = "Synthetic sentinel self-test — pipeline is working, nothing is wrong."; }
 
-      # Agent-path self-test: like selftest but routes through `claude -p` so we
-      # can exercise the diagnosis path on demand. `touch /run/sentinel/fire-agenttest`.
+      # Agent diagnosis-path self-test (agent on, act OFF): verifies claude -p
+      # diagnoses AND that it does NOT act when acting isn't permitted.
+      # `touch /run/sentinel/fire-agenttest`.
       { id = "agenttest"; type = "marker"; path = "/run/sentinel/fire-agenttest";
-        minConsecutive = 1; clearAfter = true; severity = "test"; agent = true;
-        message = "Synthetic AGENT-path test — exercising claude -p diagnosis; nothing is wrong."; }
+        minConsecutive = 1; clearAfter = true; severity = "test"; agent = true; act = false;
+        message = "Synthetic AGENT-path test — exercise claude -p DIAGNOSIS only; do not act; nothing is wrong."; }
+
+      # Action-path drill (agent on, act ON): exercises the Phase-3 act path with
+      # a safe, reversible, Chris-gated action. `touch /run/sentinel/fire-acttest`.
+      { id = "acttest"; type = "marker"; path = "/run/sentinel/fire-acttest";
+        minConsecutive = 1; clearAfter = true; severity = "test"; agent = true; act = true;
+        message = "DRILL — Phase-3 action-path test. Perform EXACTLY ONE safe action: in the ww4/flakes repo (~/flakes locally) open a Chris-gated PR — branch, append one timestamped line to SENTINEL-DRILLS.md at the repo root (create it if missing), push, open the PR via the ww4-bot Forgejo API, request `chris` as reviewer, and do NOT merge it — titled '[sentinel drill] action-path test'. Report the PR number. Nothing is actually wrong; take no other action."; }
     ];
   };
   # ─────────────────────────────────────────────────────────────────
@@ -229,20 +245,25 @@ let
     TAG = {"test": "test_tube", "info": "information_source", "warning": "warning", "critical": "rotating_light"}
 
 
-    def run_agent(cid, c, detail, path, cfg):
-        # Phase 2: hand the incident to a headless, READ-ONLY `claude -p` for a
-        # diagnosis (the playbook forbids any change). Returns the diagnosis text,
+    def run_agent(cid, c, detail, path, cfg, act_permitted, recently_acted):
+        # Phase 3: hand the incident to a headless `claude -p`. It diagnoses and,
+        # only when act_permitted, may take ONE bounded action (whitelisted
+        # restart or a Chris-gated PR) per the playbook. Returns the reply text,
         # or "" on timeout/failure (caller falls back to a plain notice).
         timeout = int(c.get("agentTimeout", cfg.get("agentTimeout", 300)))
+        if act_permitted:
+            permit = "ACTING IS PERMITTED for this incident (you may take ONE bounded action per the playbook, or escalate)."
+        elif recently_acted:
+            permit = "ACTING IS NOT PERMITTED: you acted on this within the last day and it has recurred — do NOT act again; diagnose and escalate to Chris."
+        else:
+            permit = "ACTING IS NOT PERMITTED for this incident — diagnose only and recommend any fix for Chris."
         prompt = (
-            "You are gromit-sentinel's incident handler. Read your instructions at "
-            "/etc/sentinel/playbook.md and follow them EXACTLY. Incident:\n"
-            "  check: %s (type %s, severity %s)\n"
-            "  detail: %s\n"
-            "  evidence file: %s\n"
-            "Read the evidence file first, investigate read-only as needed, then reply "
-            "with the concise diagnosis the playbook specifies."
-            % (cid, c.get("type"), c.get("severity", "warning"), detail, path)
+            "You are gromit-sentinel's incident handler. Read /etc/sentinel/playbook.md "
+            "and follow it EXACTLY.\n%s\n"
+            "Incident:\n  check: %s (type %s, severity %s)\n  detail: %s\n  evidence file: %s\n"
+            "Read the evidence file first, investigate read-only, then act-or-escalate per "
+            "the playbook and reply in the required format (first line must be the ACTION: line)."
+            % (permit, cid, c.get("type"), c.get("severity", "warning"), detail, path)
         )
         r = sh(["claude", "-p", prompt], timeout=timeout)
         if r is None or r.returncode != 0:
@@ -259,12 +280,16 @@ let
         cooldown = int(cfg.get("cooldownSec", 7200))
         max_hour = int(cfg.get("maxPerHour", 6))
         max_day = int(cfg.get("maxPerDay", 30))
+        max_actions = int(cfg.get("maxActionsPerDay", 5))
+        act_cooldown = int(cfg.get("actionCooldownSec", 86400))
 
-        state = load_json(STATE, {"checks": {}, "escalations": []})
+        state = load_json(STATE, {"checks": {}, "escalations": [], "actions": []})
         cstate = state.setdefault("checks", {})
         state["escalations"] = [t for t in state.get("escalations", []) if now - t < 86400]
+        state["actions"] = [t for t in state.get("actions", []) if now - t < 86400]
         esc_hour = sum(1 for t in state["escalations"] if now - t < 3600)
         esc_day = len(state["escalations"])
+        acts_today = len(state["actions"])
 
         os.makedirs(INCIDENT_DIR, exist_ok=True)
 
@@ -314,19 +339,29 @@ let
             ntfy(cfg, "Sentinel: %s" % cid,
                  "%s\n\nEvidence: %s" % (detail, path),
                  PRI.get(sev, 3), TAG.get(sev, "warning"))
-            # 2) Phase 2: for agent-flagged checks, hand off to a READ-ONLY
-            #    `claude -p` diagnosis (no auto-action — the playbook forbids it).
+            # 2) Hand off to `claude -p`. Phase 3: an act-flagged check MAY take
+            #    one bounded action when permitted; otherwise it diagnoses only.
             if cfg.get("agentEnabled", True) and c.get("agent", False):
-                diag = run_agent(cid, c, detail, path, cfg)
+                recently_acted = (now - st.get("last_action", 0)) < act_cooldown
+                act_permitted = (cfg.get("actEnabled", True) and c.get("act", False)
+                                 and acts_today < max_actions and not recently_acted)
+                diag = run_agent(cid, c, detail, path, cfg, act_permitted, recently_acted)
                 if diag:
                     try:
                         with open(path, "a") as f:
-                            f.write("\n\n=== agent diagnosis ===\n" + diag)
+                            f.write("\n\n=== agent report ===\n" + diag)
                     except OSError:
                         pass
-                    ntfy(cfg, "Sentinel: %s (diagnosed)" % cid, diag[:1200], PRI.get(sev, 3), "robot")
+                    first = (diag.splitlines() or [""])[0].strip().upper()
+                    acted = first.startswith("ACTION:") and "NONE" not in first
+                    if acted:
+                        st["last_action"] = now
+                        state["actions"].append(now)
+                        acts_today += 1
+                    ntfy(cfg, "Sentinel: %s (%s)" % (cid, "acted" if acted else "diagnosed"),
+                         diag[:1200], PRI.get(sev, 3), "wrench" if acted else "robot")
                 else:
-                    ntfy(cfg, "Sentinel: %s (agent diagnosis unavailable)" % cid,
+                    ntfy(cfg, "Sentinel: %s (agent unavailable)" % cid,
                          "claude -p produced no output or timed out; evidence at %s" % path, 3, "warning")
             st["active"] = True
             st["last_escalated"] = now
@@ -345,40 +380,59 @@ in
   environment.etc."sentinel/config.json".text = builtins.toJSON sentinelConfig;
 
   # Prebaked instructions handed to `claude -p` on an agent-flagged incident.
-  # Phase 2 = DIAGNOSE & NOTIFY ONLY (no changes/PRs/restarts).
+  # Phase 3 = DIAGNOSE, then ACT within strict bounds (or escalate).
   environment.etc."sentinel/playbook.md".text = ''
-    # gromit-sentinel incident playbook — Phase 2: DIAGNOSE & NOTIFY ONLY
+    # gromit-sentinel incident playbook — Phase 3: DIAGNOSE, then ACT (bounded)
 
     You are the autonomous incident handler for Gromit (a NixOS homelab). The
-    sentinel watchdog detected a problem and handed it to you. In this phase your
-    only job is to DIAGNOSE and REPORT — you change nothing.
+    sentinel detected a problem and handed it to you. Diagnose it. Then — ONLY if
+    the prompt says "ACTING IS PERMITTED" and a safe, bounded fix clearly applies
+    — take ONE corrective action. Otherwise diagnose and escalate to Chris.
 
-    ## HARD RULES (do not break these)
-    - READ-ONLY. Do NOT edit files, open PRs, push git, restart services, or run
-      nixos-rebuild. Investigation uses read-only commands only (journalctl,
-      systemctl status, `curl` of localhost metrics, reading files).
-    - If a fix is warranted, DESCRIBE it — never perform it. (Phase 3 will act.)
-    - You are on a timeout; be efficient. Don't go down rabbit holes.
+    ## The ONLY actions you may take (you have no other powers; the OS enforces it)
+    1. Restart a WHITELISTED service via scoped sudo — ONLY one of:
+         sudo systemctl restart vaultwarden
+         sudo systemctl restart media-mirror-sync   (or: start media-mirror-sync)
+         sudo systemctl reset-failed <unit>          (clear a failed state)
+       No other unit is restartable — sudo will DENY anything else; do not try.
+    2. Open a fix PR with the ww4-bot Forgejo API (token at
+       ~/.config/ww4-bot/forgejo-token.env): branch -> push -> open PR -> request
+       `chris` as reviewer. Title it with a `[sentinel]` prefix; in the body give
+       the incident, your diagnosis, and the fix. NEVER merge a flakes PR — Chris
+       gates every one.
 
-    ## Context you have
-    - Your homelab memory auto-loads (open-loops, gromit-access, comin-deploy-
-      validation, gromit-temp-monitoring, …). Use it — it explains the system.
-    - The prompt gives the incident + an evidence-file path. READ THE EVIDENCE
-      FILE FIRST, then investigate further only as needed.
-    - A `severity: test` incident is a synthetic drill — confirm the agent path
-      works and keep it to one or two lines.
+    ## HARD RULES — do not break these (they are also enforced by guards)
+    - NEVER merge a flakes PR, push to `main`, restart a non-whitelisted unit, run
+      nixos-rebuild, `rm`, or edit files outside a PR branch.
+    - ACT AT MOST ONCE. If the prompt says acting is NOT permitted — because you
+      recently acted on this and it recurred, a daily cap is hit, or it's a
+      diagnose-only check — then DO NOT act: diagnose and escalate.
+    - If the fix is risky, non-trivial, or you are not confident, DIAGNOSE ONLY
+      and recommend the action for Chris — do not perform it. When in doubt, escalate.
+    - If the incident detail contains a DRILL instruction, do EXACTLY that and
+      nothing else.
+    - You are on a timeout; be efficient.
 
-    ## Your reply (it is sent verbatim as a phone notification — be terse)
-    AT MOST ~8 short lines, no markdown headers, no preamble, no restating the
-    prompt:
-      • TL;DR — one line: what is wrong.
-      • Cause — your best root-cause read from the evidence.
-      • Next step — the single most useful action (for Chris / Phase 3).
-      • Confidence — high / medium / low.
+    ## Context
+    Your homelab memory auto-loads (open-loops, gromit-access, comin-deploy-
+    validation, …) — use it. The prompt gives the incident + an evidence-file
+    path; READ THE EVIDENCE FIRST, then investigate read-only as needed.
+
+    ## Your reply (sent verbatim as a phone notification — be terse)
+    The FIRST LINE MUST be EXACTLY one of:
+      ACTION: none
+      ACTION: restarted <unit>
+      ACTION: reset-failed <unit>
+      ACTION: opened PR <number-or-url>
+    Then AT MOST ~6 short lines, no markdown headers, no preamble:
+      TL;DR — what is wrong (one line)
+      Cause — your root-cause read
+      Did / Recommend — what you did, or what Chris should do
+      Confidence — high / medium / low
   '';
 
   systemd.services.gromit-sentinel = {
-    description = "gromit-sentinel watchdog (Phase 2: detect + claude diagnose + notify)";
+    description = "gromit-sentinel watchdog (Phase 3: detect + claude diagnose/act + notify)";
     # Runs as the claude user with the same headless-claude env as the weekly
     # digest, so an agent-flagged incident can invoke `claude -p` (subscription
     # OAuth, memory auto-loads from the working dir). systemd-journal group gives
