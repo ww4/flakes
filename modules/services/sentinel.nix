@@ -33,23 +33,36 @@ let
     ntfyServer = "http://127.0.0.1:8090";
     ntfyTopic = "gromit-alerts";
 
+    # Phase 2: checks flagged `agent = true` get a read-only `claude -p`
+    # diagnosis (per /etc/sentinel/playbook.md) after the detection notice.
+    # agentEnabled is the master kill-switch for that layer (false => Phase-1
+    # notify-only behaviour for every check).
+    agentEnabled = true;
+    agentTimeout = 300;     # seconds; claude -p is killed past this
+
     checks = [
       # Any systemd unit in the failed state (excluding known-noisy ones).
-      { id = "failed-units"; type = "failed-units"; severity = "warning"; exclude = [ ]; }
+      { id = "failed-units"; type = "failed-units"; severity = "warning"; exclude = [ ]; agent = true; }
 
       # comin couldn't build/eval/deploy/fetch — gromit silently stuck on the old gen.
-      { id = "comin-deploy"; type = "comin"; severity = "warning"; }
+      { id = "comin-deploy"; type = "comin"; severity = "warning"; agent = true; }
 
       # Example metric check (commented — enable + tune when wanted):
-      # { id = "rootfs-full"; type = "metric"; severity = "warning";
+      # { id = "rootfs-full"; type = "metric"; severity = "warning"; agent = true;
       #   expr = "100 - (node_filesystem_avail_bytes{mountpoint=\"/\"} * 100 / node_filesystem_size_bytes{mountpoint=\"/\"})";
       #   op = ">"; threshold = 90; }
 
-      # Built-in self-test: fires immediately when the marker file exists, then
-      # clears it. This is the "trigger on demand" hook for testing the pipeline.
+      # Built-in self-test (notify path only — no agent): fires when the marker
+      # exists, then clears it. The "trigger on demand" hook for the pipeline.
       { id = "selftest"; type = "marker"; path = "/run/sentinel/fire-test";
-        minConsecutive = 1; clearAfter = true; severity = "test";
+        minConsecutive = 1; clearAfter = true; severity = "test"; agent = false;
         message = "Synthetic sentinel self-test — pipeline is working, nothing is wrong."; }
+
+      # Agent-path self-test: like selftest but routes through `claude -p` so we
+      # can exercise the diagnosis path on demand. `touch /run/sentinel/fire-agenttest`.
+      { id = "agenttest"; type = "marker"; path = "/run/sentinel/fire-agenttest";
+        minConsecutive = 1; clearAfter = true; severity = "test"; agent = true;
+        message = "Synthetic AGENT-path test — exercising claude -p diagnosis; nothing is wrong."; }
     ];
   };
   # ─────────────────────────────────────────────────────────────────
@@ -216,6 +229,27 @@ let
     TAG = {"test": "test_tube", "info": "information_source", "warning": "warning", "critical": "rotating_light"}
 
 
+    def run_agent(cid, c, detail, path, cfg):
+        # Phase 2: hand the incident to a headless, READ-ONLY `claude -p` for a
+        # diagnosis (the playbook forbids any change). Returns the diagnosis text,
+        # or "" on timeout/failure (caller falls back to a plain notice).
+        timeout = int(c.get("agentTimeout", cfg.get("agentTimeout", 300)))
+        prompt = (
+            "You are gromit-sentinel's incident handler. Read your instructions at "
+            "/etc/sentinel/playbook.md and follow them EXACTLY. Incident:\n"
+            "  check: %s (type %s, severity %s)\n"
+            "  detail: %s\n"
+            "  evidence file: %s\n"
+            "Read the evidence file first, investigate read-only as needed, then reply "
+            "with the concise diagnosis the playbook specifies."
+            % (cid, c.get("type"), c.get("severity", "warning"), detail, path)
+        )
+        r = sh(["claude", "-p", prompt], timeout=timeout)
+        if r is None or r.returncode != 0:
+            return ""
+        return (r.stdout or "").strip()
+
+
     def main():
         cfg = load_json(CONFIG, {})
         if not cfg.get("enabled", True):
@@ -266,9 +300,7 @@ let
                 print("rate-limited, skipping %s" % cid, file=sys.stderr)
                 continue
 
-            # ── Phase 2/3 HAND-OFF POINT ──
-            # Today: gather evidence + notify. Later: pass the evidence bundle +
-            # the prebaked playbook to `claude -p` here for diagnosis/action.
+            # ── ESCALATE ──
             evidence = gather_evidence(c, detail)
             ts = int(now)
             path = os.path.join(INCIDENT_DIR, "%s-%d.txt" % (cid, ts))
@@ -278,8 +310,24 @@ let
             except OSError:
                 path = "(could not write evidence file)"
             sev = c.get("severity", "warning")
-            body = "%s\n\nEvidence: %s\n\nPhase 1: detection only — no auto-action taken." % (detail, path)
-            ntfy(cfg, "Sentinel: %s" % cid, body, PRI.get(sev, 3), TAG.get(sev, "warning"))
+            # 1) Immediate detection notice — don't make Chris wait on the agent.
+            ntfy(cfg, "Sentinel: %s" % cid,
+                 "%s\n\nEvidence: %s" % (detail, path),
+                 PRI.get(sev, 3), TAG.get(sev, "warning"))
+            # 2) Phase 2: for agent-flagged checks, hand off to a READ-ONLY
+            #    `claude -p` diagnosis (no auto-action — the playbook forbids it).
+            if cfg.get("agentEnabled", True) and c.get("agent", False):
+                diag = run_agent(cid, c, detail, path, cfg)
+                if diag:
+                    try:
+                        with open(path, "a") as f:
+                            f.write("\n\n=== agent diagnosis ===\n" + diag)
+                    except OSError:
+                        pass
+                    ntfy(cfg, "Sentinel: %s (diagnosed)" % cid, diag[:1200], PRI.get(sev, 3), "robot")
+                else:
+                    ntfy(cfg, "Sentinel: %s (agent diagnosis unavailable)" % cid,
+                         "claude -p produced no output or timed out; evidence at %s" % path, 3, "warning")
             st["active"] = True
             st["last_escalated"] = now
             state["escalations"].append(now)
@@ -296,10 +344,45 @@ in
 {
   environment.etc."sentinel/config.json".text = builtins.toJSON sentinelConfig;
 
+  # Prebaked instructions handed to `claude -p` on an agent-flagged incident.
+  # Phase 2 = DIAGNOSE & NOTIFY ONLY (no changes/PRs/restarts).
+  environment.etc."sentinel/playbook.md".text = ''
+    # gromit-sentinel incident playbook — Phase 2: DIAGNOSE & NOTIFY ONLY
+
+    You are the autonomous incident handler for Gromit (a NixOS homelab). The
+    sentinel watchdog detected a problem and handed it to you. In this phase your
+    only job is to DIAGNOSE and REPORT — you change nothing.
+
+    ## HARD RULES (do not break these)
+    - READ-ONLY. Do NOT edit files, open PRs, push git, restart services, or run
+      nixos-rebuild. Investigation uses read-only commands only (journalctl,
+      systemctl status, `curl` of localhost metrics, reading files).
+    - If a fix is warranted, DESCRIBE it — never perform it. (Phase 3 will act.)
+    - You are on a timeout; be efficient. Don't go down rabbit holes.
+
+    ## Context you have
+    - Your homelab memory auto-loads (open-loops, gromit-access, comin-deploy-
+      validation, gromit-temp-monitoring, …). Use it — it explains the system.
+    - The prompt gives the incident + an evidence-file path. READ THE EVIDENCE
+      FILE FIRST, then investigate further only as needed.
+    - A `severity: test` incident is a synthetic drill — confirm the agent path
+      works and keep it to one or two lines.
+
+    ## Your reply (it is sent verbatim as a phone notification — be terse)
+    AT MOST ~8 short lines, no markdown headers, no preamble, no restating the
+    prompt:
+      • TL;DR — one line: what is wrong.
+      • Cause — your best root-cause read from the evidence.
+      • Next step — the single most useful action (for Chris / Phase 3).
+      • Confidence — high / medium / low.
+  '';
+
   systemd.services.gromit-sentinel = {
-    description = "gromit-sentinel watchdog (Phase 1: detect + notify)";
-    # Read access to the journal for evidence gathering; runs as the claude user
-    # so Phase 2/3 can invoke `claude -p` with its creds/scope without a re-home.
+    description = "gromit-sentinel watchdog (Phase 2: detect + claude diagnose + notify)";
+    # Runs as the claude user with the same headless-claude env as the weekly
+    # digest, so an agent-flagged incident can invoke `claude -p` (subscription
+    # OAuth, memory auto-loads from the working dir). systemd-journal group gives
+    # read access for evidence gathering.
     serviceConfig = {
       Type = "oneshot";
       User = "claude";
@@ -308,9 +391,17 @@ in
       RuntimeDirectory = "sentinel";
       RuntimeDirectoryMode = "0775";   # so `sudo touch /run/sentinel/fire-test` works for testing
       RuntimeDirectoryPreserve = true; # keep /run/sentinel across the oneshot runs
+      WorkingDirectory = "/home/claude/nixos-homelab-improvements";
+      # Raw Environment= (not the NixOS `environment` option, which would collide
+      # with the `path`-derived default PATH). Everything the watcher shells out
+      # to (systemctl, journalctl, claude) must be on this PATH. Mirrors digest.nix.
+      Environment = [
+        "HOME=/home/claude"
+        "PATH=/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin:/usr/bin:/bin"
+        "CLAUDE_AUTONOMOUS=1"   # the reflection Stop-hook no-ops in headless runs
+      ];
       ExecStart = "${watcher}/bin/gromit-sentinel";
     };
-    path = [ pkgs.systemd ];
   };
 
   systemd.timers.gromit-sentinel = {
