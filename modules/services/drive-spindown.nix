@@ -57,6 +57,11 @@ in
     # (the default ATA spin-down is often swallowed by the bridge). `-d` keeps
     # hd-idle in the foreground and logs spin-up/down events to the journal.
     script = ''
+      # NOTE: drive-temps.nix activity-gates these same drives (it only SMART-
+      # reads them while they're doing block I/O), so its 5-min poll can no
+      # longer wake a parked drive out from under hd-idle. (hd-idle tracks only
+      # block I/O, so a SMART-induced wake would otherwise leave it wrongly
+      # believing the drive is still parked and it would never re-issue STOP.)
       args=( -i 0 )
       for id in ${lib.concatStringsSep " " backupDriveIds}; do
         link="/dev/disk/by-id/$id"
