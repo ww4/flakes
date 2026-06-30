@@ -38,24 +38,41 @@ let
     SEVERITY_PRIORITY = {"critical": 5, "warning": 3, "info": 2}
     SEVERITY_TAG = {"critical": "rotating_light", "warning": "warning", "info": "information_source"}
     # Internal scrape-target labels — never useful in a notification (this is the
-    # "127.0.0.1:9201" noise). Hidden from the body.
-    HIDDEN_LABELS = ("alertname", "severity", "instance", "job")
+    # "127.0.0.1:9201" noise). Hidden from the body. The drive-temp metric's
+    # identifying labels (device/model/bus/rotational) are surfaced in the per
+    # alert summary instead, so they're hidden here to avoid duplication.
+    HIDDEN_LABELS = ("alertname", "severity", "instance", "job",
+                     "device", "model", "bus", "rotational")
+
+
+    def _single_line(a):
+        """One alert -> its summary (the per-instance detail, e.g. 'sdj WDC… — 59 °C')."""
+        ann = a.get("annotations") or {}
+        labels = a.get("labels") or {}
+        return (ann.get("summary") or ann.get("description")
+                or ", ".join(f"{k}={v}" for k, v in labels.items() if k not in HIDDEN_LABELS)
+                or labels.get("alertname", "Alert"))
 
 
     @app.post("/alert")
     async def alert(req: Request):
         payload = await req.json()
         alerts = payload.get("alerts", []) or []
+        # Group by (status, alertname) so multiple instances of one rule — e.g.
+        # several drives over the temp limit at once — collapse into ONE
+        # notification listing them all, instead of one ding per drive.
+        groups = {}
+        for a in alerts:
+            labels = a.get("labels") or {}
+            key = (a.get("status", "firing"), labels.get("alertname", "Alert"))
+            groups.setdefault(key, []).append(a)
+
         sent = 0
         async with httpx.AsyncClient(timeout=10.0) as client:
-            for a in alerts:
-                labels = a.get("labels") or {}
-                annotations = a.get("annotations") or {}
-                status = a.get("status", "firing")
-                severity = labels.get("severity", "warning")
-                alertname = labels.get("alertname", "Alert")
-                summary = annotations.get("summary") or annotations.get("description") or alertname
-                description = annotations.get("description", "")
+            for (status, alertname), group in groups.items():
+                labels0 = group[0].get("labels") or {}
+                ann0 = group[0].get("annotations") or {}
+                severity = labels0.get("severity", "warning")
 
                 if status == "resolved":
                     title = f"RESOLVED: {alertname}"
@@ -66,20 +83,27 @@ let
                     priority = SEVERITY_PRIORITY.get(severity, 3)
                     tag = SEVERITY_TAG.get(severity, "warning")
 
-                body = summary
-                if description and description != summary:
-                    body = f"{summary}\n\n{description}"
-                # Show only meaningful labels (e.g. gauge/category) — never the
-                # internal instance/job scrape-target labels.
-                extra = {k: v for k, v in labels.items() if k not in HIDDEN_LABELS}
-                if extra:
-                    body += "\n\n" + ", ".join(f"{k}={v}" for k, v in extra.items())
+                if len(group) == 1:
+                    a = group[0]
+                    annotations = a.get("annotations") or {}
+                    summary = _single_line(a)
+                    description = annotations.get("description", "")
+                    body = summary
+                    if description and description != summary:
+                        body = f"{summary}\n\n{description}"
+                    extra = {k: v for k, v in (a.get("labels") or {}).items() if k not in HIDDEN_LABELS}
+                    if extra:
+                        body += "\n\n" + ", ".join(f"{k}={v}" for k, v in extra.items())
+                else:
+                    # Multiple instances: header + one bullet per instance.
+                    title = f"{title} ({len(group)})"
+                    body = f"{len(group)} firing:\n" + "\n".join(f"• {_single_line(a)}" for a in group)
 
-                click = annotations.get("url") or DEFAULT_CLICK
+                click = ann0.get("url") or DEFAULT_CLICK
                 # An alert can route itself to a different ntfy topic via a
                 # `topic` annotation (e.g. riverwatch → its own topic); default
                 # is the shared topic.
-                topic = annotations.get("topic") or TOPIC
+                topic = ann0.get("topic") or TOPIC
 
                 try:
                     r = await client.post(
