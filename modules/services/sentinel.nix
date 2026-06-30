@@ -199,9 +199,13 @@ let
     def ntfy(cfg, title, body, priority, tags):
         server = cfg.get("ntfyServer", "http://127.0.0.1:8090")
         topic = cfg.get("ntfyTopic", "gromit-alerts")
+        # HTTP headers are latin-1, so the Title must be ASCII — emoji belong in
+        # the Tags field (ntfy renders tag names as icons). Strip any stray
+        # non-ASCII defensively so a notification can never fail to send.
+        safe_title = title.encode("ascii", "ignore").decode().strip() or "Sentinel"
         req = urllib.request.Request(
             "%s/%s" % (server, topic), data=body.encode(),
-            headers={"Title": title, "Priority": str(priority), "Tags": tags})
+            headers={"Title": safe_title, "Priority": str(priority), "Tags": tags})
         try:
             urllib.request.urlopen(req, timeout=10)
         except Exception as e:
@@ -247,7 +251,7 @@ let
             if not fired:
                 if st.get("active"):
                     st["active"] = False
-                    ntfy(cfg, "✅ Sentinel resolved: %s" % cid, "%s cleared." % cid, 2, "white_check_mark")
+                    ntfy(cfg, "Sentinel resolved: %s" % cid, "%s cleared." % cid, 2, "white_check_mark")
                 st["consecutive"] = 0
                 continue
 
@@ -275,7 +279,7 @@ let
                 path = "(could not write evidence file)"
             sev = c.get("severity", "warning")
             body = "%s\n\nEvidence: %s\n\nPhase 1: detection only — no auto-action taken." % (detail, path)
-            ntfy(cfg, "🔍 Sentinel: %s" % cid, body, PRI.get(sev, 3), TAG.get(sev, "warning"))
+            ntfy(cfg, "Sentinel: %s" % cid, body, PRI.get(sev, 3), TAG.get(sev, "warning"))
             st["active"] = True
             st["last_escalated"] = now
             state["escalations"].append(now)
