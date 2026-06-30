@@ -18,6 +18,26 @@
 { config, lib, pkgs, ... }:
 
 let
+  # Helper for the backup-health check: fires (exit 0 + a message) if any key
+  # backup unit's last run did not succeed.
+  backupCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-backups";
+    runtimeInputs = [ pkgs.systemd ];
+    text = ''
+      units=(restic-backups-critical-local restic-backups-critical-b2 bub-mirror-sync media-mirror-sync gyb-backup postgresqlBackup-immich postgresqlBackup-nextcloud)
+      bad=""
+      for u in "''${units[@]}"; do
+        r="$(systemctl show -p Result --value "$u" 2>/dev/null || echo unknown)"
+        [ "$r" = "success" ] || bad="$bad $u($r)"
+      done
+      if [ -n "$bad" ]; then
+        echo "backup unit(s) not OK:$bad"
+        exit 0    # fire
+      fi
+      exit 1        # all good -> no incident
+    '';
+  };
+
   # ─────────────────────────── EDIT ME ───────────────────────────
   # The watcher config. `checks` is a list; each has an id, a type, and
   # type-specific fields. Common optional fields: enabled (default true),
@@ -51,15 +71,30 @@ let
 
     checks = [
       # Any systemd unit in the failed state (excluding known-noisy ones).
-      { id = "failed-units"; type = "failed-units"; severity = "warning"; exclude = [ ]; agent = true; act = true; }
+      # notifyDetection = false: Grafana's SystemdUnitFailed alert already pings
+      # detection, so we skip the duplicate notice and only send the diagnosis/action.
+      { id = "failed-units"; type = "failed-units"; severity = "warning"; exclude = [ ]; agent = true; act = true; notifyDetection = false; }
 
       # comin couldn't build/eval/deploy/fetch — gromit silently stuck on the old gen.
-      { id = "comin-deploy"; type = "comin"; severity = "warning"; agent = true; act = true; }
+      # (Grafana's CominDeployFailed already pings detection — skip the duplicate.)
+      { id = "comin-deploy"; type = "comin"; severity = "warning"; agent = true; act = true; notifyDetection = false; }
 
-      # Example metric check (commented — enable + tune when wanted):
-      # { id = "rootfs-full"; type = "metric"; severity = "warning"; agent = true;
-      #   expr = "100 - (node_filesystem_avail_bytes{mountpoint=\"/\"} * 100 / node_filesystem_size_bytes{mountpoint=\"/\"})";
-      #   op = ">"; threshold = 90; }
+      # Disk/pool space — the root fs + both mergerfs pools (node_exporter sees
+      # them). Fires when any is >90% used. Diagnose (act off — escalate; the
+      # agent shouldn't auto-delete to free space).
+      { id = "disk-space"; type = "metric"; severity = "warning"; agent = true; act = false;
+        expr = "100 - (node_filesystem_avail_bytes{mountpoint=~\"/|/mnt/fusion|/mnt/backup/all\"} * 100 / node_filesystem_size_bytes{mountpoint=~\"/|/mnt/fusion|/mnt/backup/all\"})";
+        op = ">"; threshold = 90; }
+
+      # Backup health — fires if any key backup unit's last run did not succeed.
+      # (NOTE: catches FAILED runs; staleness/never-ran is a future refinement.)
+      { id = "backup-health"; type = "command"; severity = "warning"; agent = true; act = false;
+        cmd = "${backupCheck}/bin/sentinel-check-backups"; }
+
+      # Kernel OOM-kills in the last 10 min (cert renewal failures are already
+      # covered by failed-units, so no separate cert check).
+      { id = "oom"; type = "command"; severity = "warning"; agent = true; act = false;
+        cmd = "journalctl -k --since -10min --no-pager | grep -iE 'out of memory|oom-kill|killed process'"; }
 
       # Built-in self-test (notify path only — no agent): fires when the marker
       # exists, then clears it. The "trigger on demand" hook for the pipeline.
@@ -170,7 +205,7 @@ let
             ok = {">": v > thr, "<": v < thr, ">=": v >= thr, "<=": v <= thr, "==": v == thr}.get(op, False)
             if ok:
                 m = s.get("metric", {})
-                tag = m.get("device") or m.get("instance") or m.get("__name__") or ""
+                tag = m.get("mountpoint") or m.get("device") or m.get("instance") or m.get("__name__") or ""
                 hits.append(("%s=%g" % (tag, v)).strip("="))
         return (len(hits) > 0, "%s: %s" % (c["id"], ", ".join(hits)))
 
@@ -404,9 +439,12 @@ let
                 path = "(could not write evidence file)"
             sev = c.get("severity", "warning")
             # 1) Immediate detection notice — don't make Chris wait on the agent.
-            ntfy(cfg, "Sentinel: %s" % cid,
-                 "%s\n\nEvidence: %s" % (detail, path),
-                 PRI.get(sev, 3), TAG.get(sev, "warning"))
+            #    Skipped when notifyDetection=false (e.g. checks Grafana already
+            #    alerts on) so we don't double-ping; the diagnosis/action still sends.
+            if c.get("notifyDetection", True):
+                ntfy(cfg, "Sentinel: %s" % cid,
+                     "%s\n\nEvidence: %s" % (detail, path),
+                     PRI.get(sev, 3), TAG.get(sev, "warning"))
             # 2) Hand off to `claude -p`. Phase 3: an act-flagged check MAY take
             #    one bounded action when permitted; otherwise it diagnoses only.
             if cfg.get("agentEnabled", True) and c.get("agent", False):
@@ -542,6 +580,35 @@ in
     timerConfig = {
       OnBootSec = "3min";
       OnUnitActiveSec = "${toString sentinelConfig.pollSec}s";
+      Persistent = true;
+    };
+  };
+
+  # Watchdog for the watchdog: an INDEPENDENT timer (runs as root, not coupled to
+  # the sentinel) that alerts if the sentinel stops running — its state.json is
+  # rewritten every run, so a stale mtime means the watcher is dead. Posts to ntfy
+  # directly (no dependency on the sentinel being alive).
+  systemd.services.sentinel-watchdog = {
+    description = "Alert if gromit-sentinel has stopped running";
+    path = [ pkgs.curl pkgs.coreutils ];
+    serviceConfig.Type = "oneshot";
+    script = ''
+      f=/var/lib/sentinel/state.json
+      [ -e "$f" ] || exit 0           # sentinel hasn't run yet — nothing to check
+      age=$(( $(date +%s) - $(stat -c %Y "$f" 2>/dev/null || echo 0) ))
+      if [ "$age" -gt 900 ]; then
+        curl -s --max-time 10 \
+          -H "Title: Sentinel STALLED" -H "Priority: 4" -H "Tags: warning" \
+          -d "gromit-sentinel has not run for $((age / 60)) min (state.json stale). Check: systemctl status gromit-sentinel.timer gromit-sentinel.service" \
+          http://127.0.0.1:8090/gromit-alerts >/dev/null || true
+      fi
+    '';
+  };
+  systemd.timers.sentinel-watchdog = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "15min";
+      OnUnitActiveSec = "10min";
       Persistent = true;
     };
   };
