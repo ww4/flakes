@@ -57,6 +57,7 @@
     ./modules/services/homepage.nix
     ./modules/services/monitoring.nix
     ./modules/services/drive-temps.nix
+    ./modules/services/drive-spindown.nix   # park the idle backup-pool USB drives (cooling) — pairs with drive-temps
     ./modules/services/riverwatch.nix
     ./modules/services/alertmanager-ntfy.nix
     ./modules/services/snapraid.nix         # inert until parity drive arrives (enable = false)
