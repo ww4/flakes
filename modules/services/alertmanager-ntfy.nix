@@ -17,7 +17,10 @@ let
 
   shim = pkgs.writers.writePython3Bin "alertmanager-ntfy-shim" {
     libraries = with pkgs.python3Packages; [ fastapi uvicorn httpx ];
-    flakeIgnore = [ "E501" ];
+    # E501 = line length. W503/W504 = line break before/after a binary
+    # operator — a PEP8-obsolete warning pair flake8 still emits by default;
+    # the multi-line `or` chains in the shim are deliberate.
+    flakeIgnore = [ "E501" "W503" "W504" ];
   } ''
     import os
     import sys
