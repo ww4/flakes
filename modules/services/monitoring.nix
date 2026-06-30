@@ -45,6 +45,12 @@ in {
       { job_name = "node";
         static_configs = [{ targets = [ "127.0.0.1:${toString nodeExporterPort}" ]; }];
       }
+      # comin's own metrics — exposes last_build/eval/deployment/fetch_failed
+      # gauges so a broken merge (which leaves comin running but NOT deploying)
+      # pages us instead of silently sitting on the old generation.
+      { job_name = "comin";
+        static_configs = [{ targets = [ "127.0.0.1:4243" ]; }];
+      }
     ];
     alertmanagers = [{
       static_configs = [{ targets = [ "127.0.0.1:${toString alertmanagerPort}" ]; }];
