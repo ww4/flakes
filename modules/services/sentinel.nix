@@ -86,6 +86,7 @@ let
   watcher = pkgs.writers.writePython3Bin "gromit-sentinel" {
     flakeIgnore = [ "E501" "W503" "W504" ];
   } ''
+    import html
     import json
     import os
     import subprocess
@@ -271,6 +272,73 @@ let
         return (r.stdout or "").strip()
 
 
+    PAGE_STYLE = ("body{max-width:60rem;margin:2rem auto;padding:0 1rem;font:15px/1.55 system-ui,-apple-system,sans-serif;color:#e6e6e6;background:#181818}"
+                  "h1{font-size:1.5rem}.t{color:#888;font-size:.85em}"
+                  ".inc{border:1px solid #444;border-radius:8px;padding:.6em .9em;margin:.9em 0;background:#1f1f1f}"
+                  ".b{display:inline-block;font-size:.72em;font-weight:600;padding:.1em .5em;border-radius:4px;margin-left:.5em;vertical-align:middle}"
+                  ".acted{background:#3a2f00;color:#ffcf5a}.diag{background:#0d2a3a;color:#6cb6ff}.det{background:#333;color:#ccc}"
+                  "pre{white-space:pre-wrap;background:#2c2c2c;padding:.6em;border-radius:6px;font-size:.85em;margin:.5em 0 0}a{color:#6cb6ff}")
+
+
+    def render_page():
+        # Rebuild the browsable incident log served at digest.rosemaryacres.com/sentinel.
+        web = "/var/lib/sentinel/web"
+        try:
+            os.makedirs(web, exist_ok=True)
+            names = [n for n in os.listdir(INCIDENT_DIR) if n.endswith(".txt")]
+        except OSError:
+            return
+
+        def ts_of(n):
+            try:
+                return int(n.rsplit("-", 1)[1][:-4])
+            except (IndexError, ValueError):
+                return 0
+        names.sort(key=ts_of, reverse=True)
+
+        cards = []
+        for n in names[:50]:
+            cid = n.rsplit("-", 1)[0]
+            ts = ts_of(n)
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else "?"
+            try:
+                with open(os.path.join(INCIDENT_DIR, n)) as f:
+                    content = f.read()
+            except OSError:
+                continue
+            detail = (content.splitlines() or [""])[0]
+            report = content.split("=== agent report ===", 1)[1].strip() if "=== agent report ===" in content else ""
+            first = (report.splitlines() or [""])[0].strip().upper() if report else ""
+            if first.startswith("ACTION:") and "NONE" not in first:
+                badge = '<span class="b acted">ACTED</span>'
+            elif report:
+                badge = '<span class="b diag">diagnosed</span>'
+            else:
+                badge = '<span class="b det">detected</span>'
+            cards.append(
+                '<div class="inc"><div class="t">%s</div><strong>%s</strong>%s<div>%s</div><pre>%s</pre></div>'
+                % (when, html.escape(cid), badge, html.escape(detail), html.escape(report or "(detection only — no agent run)"))
+            )
+
+        page = (
+            '<!doctype html><html><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>gromit-sentinel log</title><style>%s</style></head><body>'
+            '<h1>gromit-sentinel &mdash; incident log</h1>'
+            '<p class="t">What the watchdog detected, diagnosed, and did. Newest first; last 50.</p>'
+            '%s<hr><p class="t">Generated %s.</p></body></html>'
+            % (PAGE_STYLE, "".join(cards) or "<p>No incidents recorded yet.</p>", time.strftime("%Y-%m-%d %H:%M %Z"))
+        )
+        tmp = os.path.join(web, "index.html.tmp")
+        try:
+            with open(tmp, "w") as f:
+                f.write(page)
+            os.replace(tmp, os.path.join(web, "index.html"))
+            os.chmod(os.path.join(web, "index.html"), 0o644)
+        except OSError:
+            pass
+
+
     def main():
         cfg = load_json(CONFIG, {})
         if not cfg.get("enabled", True):
@@ -370,6 +438,7 @@ let
             esc_day += 1
 
         save_json(STATE, state)
+        render_page()
 
 
     if __name__ == "__main__":
@@ -378,6 +447,16 @@ let
 in
 {
   environment.etc."sentinel/config.json".text = builtins.toJSON sentinelConfig;
+
+  # Serve the incident log at digest.rosemaryacres.com/sentinel — merges into the
+  # digest vhost (defined in modules/agent/digest.nix); inherits its TLS + source-gate.
+  services.nginx.virtualHosts."digest.rosemaryacres.com".locations = {
+    "= /sentinel".extraConfig = "return 301 /sentinel/;";
+    "/sentinel/" = {
+      alias = "/var/lib/sentinel/web/";
+      extraConfig = "index index.html;";
+    };
+  };
 
   # Prebaked instructions handed to `claude -p` on an agent-flagged incident.
   # Phase 3 = DIAGNOSE, then ACT within strict bounds (or escalate).

@@ -52,6 +52,34 @@ TLDR: Weekly digest run FAILED — check the journal."
 
 TLDR: Weekly digest came back empty."
 
+      # Append a "Sentinel activity (last 7 days)" section built from the
+      # sentinel incident files (see modules/services/sentinel.nix).
+      sentinel_md="$(
+        inc=/var/lib/sentinel/incidents
+        if [ -d "$inc" ]; then
+          cutoff=$(( $(date +%s) - 7*86400 )); total=0; acted=0; lines=""
+          for f in "$inc"/*.txt; do
+            [ -e "$f" ] || continue
+            base="$(basename "$f")"; t="''${base##*-}"; t="''${t%.txt}"
+            case "$t" in *[!0-9]*|"") continue;; esac
+            [ "$t" -ge "$cutoff" ] || continue
+            total=$((total+1)); id="''${base%-*}"
+            action="$(grep -m1 '^ACTION:' "$f" 2>/dev/null | sed 's/^ACTION:[[:space:]]*//')"
+            case "$action" in ""|[Nn]one) verb="diagnosed";; *) verb="**ACTED**: $action"; acted=$((acted+1));; esac
+            lines="$lines- $(date -d "@$t" '+%m-%d %H:%M' 2>/dev/null) \`$id\` — $verb
+"
+          done
+          if [ "$total" -gt 0 ]; then
+            printf '## Sentinel activity (last 7 days)\n\n%d incident(s); %d with an action taken. Full log: https://digest.rosemaryacres.com/sentinel/\n\n%s\n' "$total" "$acted" "$lines"
+          fi
+        fi
+      )"
+      [ -n "$sentinel_md" ] && md="$md
+
+---
+
+$sentinel_md"
+
       ts="$(date +%Y-%m-%d)"
       # render markdown -> a styled standalone HTML page
       {
