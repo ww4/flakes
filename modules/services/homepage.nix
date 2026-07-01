@@ -262,6 +262,10 @@ let
             description: YouTube archiver
             href: http://100.82.117.116:8945
             icon: pinchflat.png
+        - MeshCentral:
+            description: Remote device management (server)
+            href: https://mesh.rosemaryacres.com
+            icon: meshcentral.png
 
     - Monitoring:
         - Grafana:
