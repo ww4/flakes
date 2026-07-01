@@ -13,6 +13,8 @@
   services.displayManager.sddm.wayland.enable = false;   # X11 greeter (MeshCentral-capturable)
   services.desktopManager.plasma6.enable = true;
   services.displayManager.defaultSession = "plasmax11";  # X11 session (MeshCentral needs X11, not Wayland)
+  # NB: auto-login (needed for MeshCentral's remote desktop on this headless box)
+  # is set in modules/users.nix, next to the security-review note it reverses.
 
   # Keymap.
   services.xserver.xkb = {
