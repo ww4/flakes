@@ -33,6 +33,12 @@
   # path). Single-user, Tailscale-only/key-only access; see security review.
   security.sudo.wheelNeedsPassword = false;
 
-  # Automatic login is OFF (2026-06-04) — GDM prompts for chris's password.
-  services.displayManager.autoLogin.enable = false;
+  # Automatic login: was OFF (2026-06-04 security review) so the greeter prompts
+  # for chris's password. RE-ENABLED 2026-07-01 into the Plasma X11 session, because
+  # MeshCentral's remote desktop attaches only to a LOGGED-IN X session (it can't
+  # capture the pre-login greeter), and gromit is headless — so a session must
+  # always be up for remote GUI access to work at all. Trade-off accepted: no
+  # console password, mitigated by headless + Tailscale-gate + MeshCentral admin-lock.
+  services.displayManager.autoLogin.enable = true;
+  services.displayManager.autoLogin.user = "chris";
 }
