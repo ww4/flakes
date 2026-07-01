@@ -28,9 +28,20 @@ in
       RedirPort = 0;                     # no own HTTP-redirect listener (nginx forceSSL handles it)
       TlsOffload = "127.0.0.1";          # TLS is terminated by nginx on loopback
       SelfUpdate = false;                # never self-update (immutable store)
+      NewAccounts = false;               # admin created; lock self-registration
+      # The nixpkgs module defaults the backup path INSIDE the datapath
+      # (/var/lib/meshcentral/backups), which MeshCentral refuses ("Backup path
+      # can't be set within meshcentral-data folder"). Point it at a sibling
+      # StateDirectory (declared below). Deliberately NOT prefixed by
+      # "meshcentral" in case the upstream check is a naive string prefix.
+      autoBackup.backupPath = lib.mkForce "/var/lib/mc-backups";
     };
     settings.domains."".certUrl = "https://mesh.rosemaryacres.com/";
   };
+
+  # Give the (DynamicUser) service a writable backups dir outside its datapath.
+  systemd.services.meshcentral.serviceConfig.StateDirectory =
+    lib.mkForce "meshcentral mc-backups";
 
   # Reverse proxy — inherits the global source-gate + ACME DNS-01, like the other
   # vhosts. MeshCentral is websocket-heavy (agent + web UI) with long-lived
