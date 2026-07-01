@@ -28,7 +28,6 @@ in
       RedirPort = 0;                     # no own HTTP-redirect listener (nginx forceSSL handles it)
       TlsOffload = "127.0.0.1";          # TLS is terminated by nginx on loopback
       SelfUpdate = false;                # never self-update (immutable store)
-      NewAccounts = false;               # admin created; lock self-registration
       # The nixpkgs module defaults the backup path INSIDE the datapath
       # (/var/lib/meshcentral/backups), which MeshCentral refuses ("Backup path
       # can't be set within meshcentral-data folder"). Point it at a sibling
@@ -36,7 +35,10 @@ in
       # "meshcentral" in case the upstream check is a naive string prefix.
       autoBackup.backupPath = lib.mkForce "/var/lib/mc-backups";
     };
+    # `newAccounts` is a DOMAIN-level property (lowercase n), not a settings-level
+    # one — set it here to actually lock self-registration now that the admin exists.
     settings.domains."".certUrl = "https://mesh.rosemaryacres.com/";
+    settings.domains."".newAccounts = false;
   };
 
   # Give the (DynamicUser) service a writable backups dir outside its datapath.
