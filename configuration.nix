@@ -54,6 +54,7 @@
     ./modules/services/media-curate.nix      # backed-up tag sweep + YouTube promote (needs Jellyfin key to activate)
     ./modules/services/bub-mirror.nix
     ./modules/services/remote-desktop.nix
+    ./modules/services/meshcentral.nix       # MeshCentral server (remote mgmt); agent-side module is future
     ./modules/services/homepage.nix
     ./modules/services/monitoring.nix
     ./modules/services/drive-temps.nix
