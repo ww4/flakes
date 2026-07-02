@@ -13,6 +13,17 @@
   services.displayManager.sddm.wayland.enable = false;   # X11 greeter (MeshCentral-capturable)
   services.desktopManager.plasma6.enable = true;
   services.displayManager.defaultSession = "plasmax11";  # X11 session (MeshCentral needs X11, not Wayland)
+
+  # Force an explicit ":0" as the FIRST X server argument. SDDM launches X via
+  # -displayfd (no display token on the command line), but MeshCentral's agent
+  # discovers the display by parsing the X process command line for a ":N" token
+  # (monitor-info.js getXInfo: `if($4~/^:/) display=$4`). With no token it gets
+  # display="" and the remote desktop can't attach. mkBefore puts ":0" at field
+  # $4 (right after the X binary). Safe alongside -displayfd on xorg-server ≥21.1
+  # (explicit display bypasses displayfd's auto-selection; the number is still
+  # written to the fd). The agent then also reads the live -auth cookie from the
+  # same command line, so no Xauthority path needs hardcoding.
+  services.xserver.displayManager.xserverArgs = lib.mkBefore [ ":0" ];
   # NB: auto-login (needed for MeshCentral's remote desktop on this headless box)
   # is set in modules/users.nix, next to the security-review note it reverses.
 

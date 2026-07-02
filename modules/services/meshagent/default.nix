@@ -47,6 +47,17 @@ in
       Environment = [
         "PATH=/run/current-system/sw/bin:/usr/bin:/bin"
         "SHELL=/run/current-system/sw/bin/bash"
+        # X11 remote-desktop (KVM) library discovery. To decide it supports
+        # remote desktop, the agent locates libX11/libXtst/libXext (+ Xfixes for
+        # the cursor, xkbfile for the keyboard) via `ldconfig -p` then `ls /lib`
+        # — BOTH empty on NixOS, so it reports "X11 support: false" and the
+        # Desktop tab never appears. monitor-info.js's _check() honors these env
+        # overrides; point them at the store .so files. LIB+TST+EXT gate the tab.
+        "Location_X11LIB=${pkgs.xorg.libX11}/lib/libX11.so.6"
+        "Location_X11TST=${pkgs.xorg.libXtst}/lib/libXtst.so.6"
+        "Location_X11EXT=${pkgs.xorg.libXext}/lib/libXext.so.6"
+        "Location_X11FIXES=${pkgs.xorg.libXfixes}/lib/libXfixes.so.3"
+        "Location_X11KB=${pkgs.xorg.libxkbfile}/lib/libxkbfile.so.1"
       ];
     };
   };
