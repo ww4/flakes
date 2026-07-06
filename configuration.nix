@@ -35,6 +35,7 @@
 
     # Services.
     ./modules/services/nginx-access.nix     # source-gate all vhosts to Tailscale + LAN (security review 2026-06-04)
+    ./modules/services/blocky.nix           # local split-horizon DNS: rosemaryacres.com -> LAN IP so hostnames resolve with the WAN down
     ./modules/services/jellyfin.nix
     ./modules/services/audiobookshelf.nix
     ./modules/services/tandoor.nix
