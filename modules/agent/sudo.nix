@@ -34,6 +34,11 @@ in
         { command = "${sw}/systemctl restart media-mirror-sync";    options = nopw; }
         { command = "${sw}/systemctl start media-mirror-sync";      options = nopw; }
 
+        # DNS validation: non-disruptive DHCP DISCOVER (takes no lease) to see
+        # what the router hands clients as DNS. A fixed-purpose wrapper, NOT raw
+        # nmap. Provided by services/blocky.nix.
+        { command = "${sw}/dhcp-probe";                             options = nopw; }
+
         # NOTE: for reading specific root/service-owned files (e.g. the
         # vaultwarden sqlite DB), prefer a tiny purpose wrapper in /etc that the
         # agent may run, rather than `sudo cat *` (which leaks every secret).

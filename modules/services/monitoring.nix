@@ -51,6 +51,11 @@ in {
       { job_name = "comin";
         static_configs = [{ targets = [ "127.0.0.1:4243" ]; }];
       }
+      # Blocky (local split-horizon DNS) — query counts, cache hit ratio, and
+      # upstream failures. See services/blocky.nix (metrics on loopback :4000).
+      { job_name = "blocky";
+        static_configs = [{ targets = [ "127.0.0.1:4000" ]; }];
+      }
     ];
     alertmanagers = [{
       static_configs = [{ targets = [ "127.0.0.1:${toString alertmanagerPort}" ]; }];
