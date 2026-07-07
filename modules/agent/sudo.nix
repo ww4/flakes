@@ -1,7 +1,8 @@
-# Scoped sudoers for the `claude` agent (STAGED / INERT — not imported).
+# Scoped sudoers for the `claude` agent (LIVE — imported by configuration.nix
+# since the agent-activation PRs; this header used to say "STAGED/INERT").
 #
-# Replaces "NOPASSWD: ALL" with a SHORT, EXPLICIT allowlist of safe, routine,
-# reversible operations the agent may do unattended. Everything else (rebuilds,
+# A SHORT, EXPLICIT allowlist of safe, routine, reversible operations the
+# agent may do unattended. Everything else (rebuilds,
 # rm, disk ops, user/secret changes) is NOT here → needs Chris (rebuilds flow
 # through comin + a PR merge instead). See ./README.md.
 #
@@ -38,6 +39,27 @@ in
         # what the router hands clients as DNS. A fixed-purpose wrapper, NOT raw
         # nmap. Provided by services/blocky.nix.
         { command = "${sw}/dhcp-probe";                             options = nopw; }
+
+        # --- Read-only container + firewall diagnostics (added 2026-07-06) ---
+        # Evidence-driven (Chris asked the agent to request capabilities rather
+        # than work around their absence): the jellyseerr ETIMEDOUT diagnosis
+        # (#73) and the mempool bring-up both needed container state + firewall
+        # rules; the agent got there via config-reading — slower, weaker
+        # evidence. `docker inspect`/`exec` are deliberately NOT here: inspect
+        # prints container env vars, which include secrets (gluetun WG key,
+        # mempool DB creds); exec is arbitrary execution.
+        # (sudoers gotcha: "cmd *" does NOT match a bare "cmd" — list both.)
+        { command = "${sw}/docker ps";                      options = nopw; }
+        { command = "${sw}/docker ps *";                    options = nopw; }
+        { command = "${sw}/docker logs *";                  options = nopw; }
+        { command = "${sw}/iptables-save";                  options = nopw; }
+
+        # Backup verification via a read-only purpose wrapper (the pattern the
+        # NOTE below recommends) — never raw `sudo restic` (could forget/prune).
+        # Lets the agent confirm "did last night's snapshot include X?" itself
+        # (first use: verifying the PR #74 paths). See ./agent-restic-ro.sh.
+        { command = "/etc/claude-code/agent-restic-ro.sh";   options = nopw; }
+        { command = "/etc/claude-code/agent-restic-ro.sh *"; options = nopw; }
 
         # NOTE: for reading specific root/service-owned files (e.g. the
         # vaultwarden sqlite DB), prefer a tiny purpose wrapper in /etc that the
