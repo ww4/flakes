@@ -49,4 +49,11 @@
     source = ./reflection-hook.sh;
     mode = "0555";
   };
+
+  # Read-only restic wrapper for backup verification (allowlisted in
+  # ./sudo.nix; never raw `sudo restic`). See the script header.
+  environment.etc."claude-code/agent-restic-ro.sh" = {
+    source = ./agent-restic-ro.sh;
+    mode = "0555";
+  };
 }
