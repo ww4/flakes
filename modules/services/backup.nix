@@ -49,6 +49,19 @@ let
     "/home/chris/.ssh"                 # SSH keys
     "/home/chris/.gnupg"               # GPG keys
     "/home/chris/.config/Element"      # Matrix end-to-end encryption keys
+
+    # Agent home — the claude agent's accumulated state (~70M): memory + task
+    # board, friction log, playbooks, guard + settings, session transcripts.
+    # Was in ZERO backup jobs until the 2026-07 harness review (docs repo,
+    # docs/harness-review-2026-07.md) flagged it. Everything else under
+    # /home/claude is regenerable (model weights, caches) or already on
+    # Forgejo, which /var/lib/forgejo above covers.
+    "/home/claude/.claude"
+    # Rick's WALLACE backup (~36G) — irreplaceable family data (profile,
+    # Scrivener manuscripts, videos) pulled 2026-06-14, until now parked on
+    # claude's non-redundant home. Covering it closes the standing "relocate
+    # to redundant storage" open item (B2 cost ≈ $0.25/mo).
+    "/home/claude/rick-wallace-backup"
   ];
 
   # Regenerable junk — transcode scratch, caches, logs — and large downloaded
