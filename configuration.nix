@@ -80,6 +80,9 @@
     ./modules/services/uptime-kuma.nix
     ./modules/services/vaultwarden.nix
     ./modules/services/litestream.nix       # continuous SQLite replication of the vault to B2
+    ./modules/services/silverbullet.nix     # markdown notes/tasks space — scheduling-assistant SoT
+    ./modules/services/pim.nix              # plain-text calendar vdir + vdirsyncer (Nextcloud two-way, Google RO)
+    ./modules/agent/daybook.nix             # 09:00/20:00 claude -p bookends: plan the day / review + tomorrow
   ];
 
   # The NixOS release the system was first installed from. Leave it pinned —

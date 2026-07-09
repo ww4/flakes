@@ -47,12 +47,18 @@ esac
 case "$cmd" in
   *" rm "*|"rm "*|*"find "*" -delete"*)
     case "$cmd" in *"sudo "*) deny "Deleting as root is Chris-only — route via a flake PR." ;; esac
-    case "$cmd" in
+    # The SilverBullet space is shared agent-writable ground (Chris 2026-07-09:
+    # full agency in the space, deletes included — the space git autosave is the
+    # undo log). Scrub its path before the fence checks so space deletes pass
+    # while everything ELSE under /var (and the rest) stays blocked.
+    SPACE="/var/lib/silverbullet"
+    scrub="${cmd//"$SPACE"/__SPACE__}"
+    case "$scrub" in
       *"/home/chris"*|*"/mnt"*|*"/etc"*|*"/var"*|*"/nix"*|*"/boot"*|*"/usr"*|*"/root"*|*"/srv"*|*"/opt"*|*"/sys"*|*"/proc"*|*"/dev"*|*"..")
         deny "That delete reaches outside your $WORKSPACE workspace — make the change via a flake PR, or ask Chris." ;;
     esac
     case "$cwd" in
-      "$WORKSPACE"|"$WORKSPACE"/*|/tmp|/tmp/*) : ;;   # confined to the sandbox -> OK (defer to allow)
+      "$WORKSPACE"|"$WORKSPACE"/*|/tmp|/tmp/*|"$SPACE"|"$SPACE"/*) : ;;   # sandbox or the shared space -> OK (defer to allow)
       *) deny "Delete from a non-workspace directory (cwd=$cwd) — cd into $WORKSPACE, or ask Chris." ;;
     esac
     ;;

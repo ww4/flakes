@@ -227,14 +227,24 @@ EOF
 
       access_control = {
         default_policy = "deny";
-        rules = [{
-          domain = [
-            "prometheus.${domain}"
-            "glances.${domain}"
-            "metube.${domain}"
-          ];
-          policy = "two_factor";
-        }];
+        rules = [
+          # SilverBullet PWA assets must skip auth (per silverbullet.md/Authelia):
+          # the service worker + client bundle are fetched outside the session.
+          {
+            domain = [ "notes.${domain}" ];
+            resources = [ "^/\\.client/.*$" "^/service_worker\\.js$" ];
+            policy = "bypass";
+          }
+          {
+            domain = [
+              "prometheus.${domain}"
+              "glances.${domain}"
+              "metube.${domain}"
+              "notes.${domain}"
+            ];
+            policy = "two_factor";
+          }
+        ];
       };
     };
   };
@@ -259,4 +269,5 @@ EOF
   services.nginx.virtualHosts."prometheus.${domain}" = protect;
   services.nginx.virtualHosts."glances.${domain}"    = protect;
   services.nginx.virtualHosts."metube.${domain}"     = protect;
+  services.nginx.virtualHosts."notes.${domain}"      = protect;
 }
