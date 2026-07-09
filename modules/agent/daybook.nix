@@ -70,10 +70,18 @@ let
          git); if a human MOVED an item between stores or edited a
          preference, update Store Preferences to match — a human move always
          wins and un-marks "(guessed)".
-       - Order the Walmart section by walking order per
-         ${spaceDir}/System/Walmart Frankfort Map.md (NEVER reorder that map
-         yourself — humans correct it, you follow it). Group Kroger loosely
-         by type. "Other stores" items keep a store prefix ("Lowes: …").
+       - Order the Walmart section by the table in
+         ${spaceDir}/System/Walmart Aisle Contents.md, TOP TO BOTTOM — that
+         table IS the walking route, including the sidewall diverts. NEVER
+         reorder that table yourself (humans correct it, you follow it), and
+         never regroup its rows: fresh meat belongs at the MEAT WALL divert
+         (partway through the aisles) and lunch meat/cheese at the A30
+         sidewall (one past peanut butter), NOT lumped with each other or
+         with the dairy back wall. Chris shops it that way on purpose.
+         Items whose category isn't in the table go in a short "unsorted"
+         group at the end of the Walmart section — never guess an aisle.
+         Group Kroger loosely by type. "Other stores" items keep a store
+         prefix ("Lowes: …").
        - Dedupe. NEVER drop an unchecked item.
     3. Sweep open tasks across the space (`- [ ]`, due dates, overdue items)
        and yesterday's Journal/Day page for carryover.
