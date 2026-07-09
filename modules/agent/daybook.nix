@@ -66,6 +66,12 @@ let
          right store per ${spaceDir}/System/Store Preferences.md. Unknown
          item: best guess from similar items, and record the guess there
          marked "(guessed)".
+       - ORPHANED SECTION CHECK: if a run of items at the END of the Walmart
+         section is dominated by Kroger-preferred goods (produce especially),
+         it is almost certainly a Kroger section whose header got deleted —
+         Chris's old lists did this constantly. Move those items to Kroger and
+         SAY SO in the notification; never sort them into the Walmart route
+         (that would send him to the wrong store).
        - LEARN: diff Grocery + Store Preferences against yesterday (space
          git); if a human MOVED an item between stores or edited a
          preference, update Store Preferences to match — a human move always
