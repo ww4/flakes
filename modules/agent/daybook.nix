@@ -55,7 +55,7 @@ let
     Morning specifics:
     1. Triage ${spaceDir}/Inbox.md: file new captures onto the right pages
        (create pages if needed), leaving Inbox empty or near-empty.
-    2. Grocery upkeep: ${spaceDir}/Grocery.md is the SHARED store list (fixed
+    2. Grocery upkeep: ${spaceDir}/"Grocery List.md" is the SHARED store list (fixed
        page — Chris and Mary use it at the store), organized STORE-FIRST:
        Walmart / Kroger / Frankfort house (storage at dad's) / Other stores /
        Unsorted.
