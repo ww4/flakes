@@ -56,12 +56,25 @@ let
     1. Triage ${spaceDir}/Inbox.md: file new captures onto the right pages
        (create pages if needed), leaving Inbox empty or near-empty.
     2. Grocery upkeep: ${spaceDir}/Grocery.md is the SHARED store list (fixed
-       page — Chris and Mary reference it at the store). Move food/shopping
-       captures from Inbox onto it; archive `- [x]` items (bought on the last
-       store run) by APPENDING them to ${spaceDir}/System/Grocery Log/<YYYY-MM>.md
-       and removing them from Grocery; dedupe; keep it grouped by rough store
-       section (Produce/Dairy/Meat/Pantry/Frozen/Household/Other). NEVER touch
-       unchecked items beyond grouping.
+       page — Chris and Mary use it at the store), organized STORE-FIRST:
+       Walmart / Kroger / Frankfort house (storage at dad's) / Other stores /
+       Unsorted.
+       - Archive `- [x]` items (bought since last run) by APPENDING them to
+         ${spaceDir}/System/Grocery Log/<YYYY-MM>.md (record which store
+         section each was under), then remove them from Grocery.
+       - File new items (Inbox captures, Unsorted, bare lines) under the
+         right store per ${spaceDir}/System/Store Preferences.md. Unknown
+         item: best guess from similar items, and record the guess there
+         marked "(guessed)".
+       - LEARN: diff Grocery + Store Preferences against yesterday (space
+         git); if a human MOVED an item between stores or edited a
+         preference, update Store Preferences to match — a human move always
+         wins and un-marks "(guessed)".
+       - Order the Walmart section by walking order per
+         ${spaceDir}/System/Walmart Frankfort Map.md (NEVER reorder that map
+         yourself — humans correct it, you follow it). Group Kroger loosely
+         by type. "Other stores" items keep a store prefix ("Lowes: …").
+       - Dedupe. NEVER drop an unchecked item.
     3. Sweep open tasks across the space (`- [ ]`, due dates, overdue items)
        and yesterday's Journal/Day page for carryover.
     4. Write/overwrite today's ${spaceDir}/Journal/Day/<YYYY-MM-DD>.md (page
