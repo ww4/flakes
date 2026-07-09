@@ -126,7 +126,7 @@ let
     serviceConfig = {
       Type = "oneshot";
       User = "claude";
-      Group = "claude";
+      Group = "users";   # claude has no own group — primary group is users
       ExecStart = "${pimVdirsyncer}/bin/pim-vdirsyncer sync ${pair}";
       TimeoutStartSec = "10min";
     };
@@ -146,11 +146,11 @@ in
   environment.systemPackages = [ pkgs.vdirsyncer pkgs.khal pimVdirsyncer agenda ];
 
   systemd.tmpfiles.rules = [
-    "d ${pimDir}                     0750 claude claude - -"
-    "d ${pimDir}/calendars           0750 claude claude - -"
-    "d ${pimDir}/calendars/nextcloud 0750 claude claude - -"
-    "d ${pimDir}/calendars/google    0750 claude claude - -"
-    "d ${pimDir}/status              0750 claude claude - -"
+    "d ${pimDir}                     0750 claude users  - -"
+    "d ${pimDir}/calendars           0750 claude users  - -"
+    "d ${pimDir}/calendars/nextcloud 0750 claude users  - -"
+    "d ${pimDir}/calendars/google    0750 claude users  - -"
+    "d ${pimDir}/status              0750 claude users  - -"
   ];
 
   systemd.services.pim-sync-nextcloud = mkSyncUnit "nextcloud" [ ncSecret ];
