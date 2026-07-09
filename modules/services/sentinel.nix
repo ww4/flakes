@@ -315,6 +315,37 @@ let
                   "pre{white-space:pre-wrap;background:#2c2c2c;padding:.6em;border-radius:6px;font-size:.85em;margin:.5em 0 0}a{color:#6cb6ff}")
 
 
+    SPACE_LOG_DIR = "/var/lib/silverbullet/System/Sentinel"
+
+
+    def append_space_log(cid, ts, sev, detail, report):
+        # Mirror the incident onto a monthly markdown page in the SilverBullet
+        # space (System/Sentinel/YYYY-MM) — searchable/linkable durable record;
+        # the HTML log below stays the no-login quick view. Newest last.
+        # Decided with Chris 2026-07-09 (space = source of truth for reports).
+        try:
+            os.makedirs(SPACE_LOG_DIR, exist_ok=True)
+            month = time.strftime("%Y-%m", time.localtime(ts))
+            page = os.path.join(SPACE_LOG_DIR, "%s.md" % month)
+            new = not os.path.exists(page)
+            first = (report.splitlines() or [""])[0].strip().upper() if report else ""
+            if first.startswith("ACTION:") and "NONE" not in first:
+                verb = "ACTED"
+            elif report:
+                verb = "diagnosed"
+            else:
+                verb = "detected"
+            with open(page, "a") as f:
+                if new:
+                    f.write("# Sentinel incidents — %s\n\nAppended by the watcher, newest last. No-login view: https://digest.rosemaryacres.com/sentinel/\n" % month)
+                f.write("\n## %s `%s` — %s (%s)\n%s\n" % (
+                    time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)), cid, verb, sev, detail))
+                if report:
+                    f.write("```\n%s\n```\n" % report)
+        except OSError:
+            pass
+
+
     def render_page():
         # Rebuild the browsable incident log served at digest.rosemaryacres.com/sentinel.
         web = "/var/lib/sentinel/web"
@@ -447,11 +478,13 @@ let
                      PRI.get(sev, 3), TAG.get(sev, "warning"))
             # 2) Hand off to `claude -p`. Phase 3: an act-flagged check MAY take
             #    one bounded action when permitted; otherwise it diagnoses only.
+            report = ""
             if cfg.get("agentEnabled", True) and c.get("agent", False):
                 recently_acted = (now - st.get("last_action", 0)) < act_cooldown
                 act_permitted = (cfg.get("actEnabled", True) and c.get("act", False)
                                  and acts_today < max_actions and not recently_acted)
                 diag = run_agent(cid, c, detail, path, cfg, act_permitted, recently_acted)
+                report = diag
                 if diag:
                     try:
                         with open(path, "a") as f:
@@ -469,6 +502,7 @@ let
                 else:
                     ntfy(cfg, "Sentinel: %s (agent unavailable)" % cid,
                          "claude -p produced no output or timed out; evidence at %s" % path, 3, "warning")
+            append_space_log(cid, ts, c.get("severity", "warning"), detail, report)
             st["active"] = True
             st["last_escalated"] = now
             state["escalations"].append(now)
@@ -477,6 +511,18 @@ let
 
         save_json(STATE, state)
         render_page()
+
+        # Evidence-txt retention: the durable record now lives on the space
+        # pages, so prune raw incident files after 30 days (the weekly digest
+        # only reads the last 7).
+        try:
+            for n in os.listdir(INCIDENT_DIR):
+                if n.endswith(".txt"):
+                    p = os.path.join(INCIDENT_DIR, n)
+                    if now - os.path.getmtime(p) > 30 * 86400:
+                        os.remove(p)
+        except OSError:
+            pass
 
 
     if __name__ == "__main__":
@@ -557,6 +603,9 @@ in
     serviceConfig = {
       Type = "oneshot";
       User = "claude";
+      # Writes incident pages into the SilverBullet space — files must be born
+      # group-writable or the ACL mask locks the web UI out (silverbullet.nix).
+      UMask = "0002";
       SupplementaryGroups = [ "systemd-journal" ];
       StateDirectory = "sentinel";
       RuntimeDirectory = "sentinel";

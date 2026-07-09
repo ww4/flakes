@@ -38,8 +38,9 @@ let
       not set up yet, say so in one line and move on — never treat it as a
       failure.
     - Homelab: skim the open-loops memory board and the last-24h sentinel
-      incidents (/var/lib/sentinel/incidents/); surface only what genuinely
-      needs Chris — no noise.
+      incidents (the current month's ${spaceDir}/System/Sentinel/ page, or
+      /var/lib/sentinel/incidents/); surface only what genuinely needs
+      Chris — no noise. Weekly digests live in ${spaceDir}/System/Digest/.
     - Do NOT do repo/PR work from this run; it is a planning run. Writing in
       the space and reading anywhere is in scope.
     - Your final message: a one-paragraph summary for a phone notification,
@@ -54,16 +55,24 @@ let
     Morning specifics:
     1. Triage ${spaceDir}/Inbox.md: file new captures onto the right pages
        (create pages if needed), leaving Inbox empty or near-empty.
-    2. Sweep open tasks across the space (`- [ ]`, due dates, overdue items)
+    2. Grocery upkeep: ${spaceDir}/Grocery.md is the SHARED store list (fixed
+       page — Chris and Mary reference it at the store). Move food/shopping
+       captures from Inbox onto it; archive `- [x]` items (bought on the last
+       store run) by APPENDING them to ${spaceDir}/System/Grocery Log/<YYYY-MM>.md
+       and removing them from Grocery; dedupe; keep it grouped by rough store
+       section (Produce/Dairy/Meat/Pantry/Frozen/Household/Other). NEVER touch
+       unchecked items beyond grouping.
+    3. Sweep open tasks across the space (`- [ ]`, due dates, overdue items)
        and yesterday's Journal/Day page for carryover.
-    3. Write/overwrite today's ${spaceDir}/Journal/Day/<YYYY-MM-DD>.md (get the
-       date with `date +%F`) with:
+    4. Write/overwrite today's ${spaceDir}/Journal/Day/<YYYY-MM-DD>.md (page
+       name from `date +%F`; header weekday from `date '+%F (%A)'` — NEVER
+       guess the weekday) with:
        - "## Plan" — 3–7 concrete focus items, each [[linked]] to its page
        - today's calendar events (times), from `agenda`
        - carryover/overdue: reschedule or explicitly drop them AT THE SOURCE
          (you have authority; note what you moved)
        - anything homelab-urgent for today
-    4. TLDR = the shape of today in one sentence.
+    5. TLDR = the shape of today in one sentence.
   '';
 
   pmPrompt = pkgs.writeText "daybook-pm.md" ''

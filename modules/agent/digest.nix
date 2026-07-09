@@ -27,6 +27,9 @@
     serviceConfig = {
       Type = "oneshot";
       User = "claude";
+      # Writes the digest page into the SilverBullet space — files must be born
+      # group-writable or the ACL mask locks the web UI out (silverbullet.nix).
+      UMask = "0002";
       StateDirectory = "digest";          # /var/lib/digest (0755, claude-owned; nginx can read)
       WorkingDirectory = "/home/claude/nixos-homelab-improvements";
       TimeoutStartSec = "20min";
@@ -79,6 +82,15 @@ TLDR: Weekly digest came back empty."
 ---
 
 $sentinel_md"
+
+      # The space is the source of truth for reports (decided 2026-07-09):
+      # the digest markdown lands on a weekly page in the SilverBullet space
+      # (searchable/linkable, git-versioned by the autosave), and the HTML
+      # page below stays as the no-login rendered view of the same markdown.
+      week="$(date +%G-W%V)"
+      spacedir=/var/lib/silverbullet/System/Digest
+      mkdir -p "$spacedir"
+      printf '%s\n' "$md" > "$spacedir/$week.md"
 
       ts="$(date +%Y-%m-%d)"
       # render markdown -> a styled standalone HTML page
