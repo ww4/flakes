@@ -15,6 +15,11 @@
     # Network
     tailscale          # the daemon is enabled in modules/networking.nix; CLI lives here
 
+    # Secrets (edit secrets/*.yaml from a checkout with `sops` — needs the
+    # admin age key for existing files; creating new ones needs only .sops.yaml)
+    sops
+    age
+
     # Storage
     mergerfs
     mergerfs-tools

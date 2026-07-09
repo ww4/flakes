@@ -33,8 +33,8 @@
 
 let
   pimDir = "/var/lib/pim";
-  ncUser = "chris"; # Nextcloud login that owns the working calendar — confirm
-  ncSecret = "/run/secrets/nextcloud-caldav"; # sops (owner=claude) once Chris adds it
+  ncUser = "chris"; # Nextcloud login that owns the working calendar (confirmed 2026-07-09)
+  ncSecret = "/run/secrets/nextcloud-caldav"; # declared below (sops, owner=claude)
   gClientId = "/run/secrets/google-oauth-client-id";
   gClientSecret = "/run/secrets/google-oauth-client-secret";
 
@@ -133,6 +133,16 @@ let
   };
 in
 {
+  # The Nextcloud app password (value added by Chris 2026-07-09). The agent
+  # runs vdirsyncer, so it owns the decrypted path — same split as the
+  # Cloudflare token.
+  sops.secrets."nextcloud-caldav" = {
+    sopsFile = ../../secrets/nextcloud-caldav.yaml;
+    key = "nextcloud-caldav";
+    owner = "claude";
+    mode = "0400";
+  };
+
   environment.systemPackages = [ pkgs.vdirsyncer pkgs.khal pimVdirsyncer agenda ];
 
   systemd.tmpfiles.rules = [
