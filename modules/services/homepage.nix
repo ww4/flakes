@@ -220,6 +220,10 @@ let
               url: https://cloud.rosemaryacres.com
               username: "{{HOMEPAGE_VAR_NEXTCLOUD_USER}}"
               password: "{{HOMEPAGE_VAR_NEXTCLOUD_PASS}}"
+        - SilverBullet:
+            description: Notes, tasks & the daybook (scheduling assistant)
+            href: https://notes.rosemaryacres.com
+            icon: silverbullet.png
         - Tandoor:
             description: Recipes
             href: https://recipes.rosemaryacres.com
