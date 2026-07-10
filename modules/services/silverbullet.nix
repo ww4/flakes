@@ -22,6 +22,30 @@
 let
   domain = "rosemaryacres.com";
   spaceDir = "/var/lib/silverbullet";
+
+  # Adds one `preventDefault` on the action buttons' pointerdown so tapping an
+  # arrow doesn't blur the editor (which closes the phone keyboard). Refuses to
+  # patch — and copies the original through untouched — if upstream's handler
+  # doesn't match exactly once.
+  patchClientJs = pkgs.writeText "patch-client-js.py" ''
+    import sys
+
+    NEEDLE = "onClick:i=>{i.preventDefault(),i.stopPropagation(),a.callback()}"
+    PATCH = "onPointerDown:i=>i.preventDefault()," + NEEDLE
+
+    src_path, out_path = sys.argv[1], sys.argv[2]
+    src = open(src_path).read()
+    n = src.count(NEEDLE)
+    if n == 1:
+        open(out_path, "w").write(src.replace(NEEDLE, PATCH))
+        print("client.js patched: arrow taps no longer steal editor focus")
+    else:
+        open(out_path, "w").write(src)
+        sys.stderr.write(
+            "WARNING: SilverBullet's action-button handler matched %d times, "
+            "expected 1. Serving the ORIGINAL client.js. The arrows still work; "
+            "the phone keyboard will flicker on each tap.\n" % n)
+  '';
 in
 {
   services.silverbullet = {
@@ -146,14 +170,68 @@ in
     };
   };
 
+  # ---- keep the phone keyboard open when tapping the move-item arrows ----
+  #
+  # SilverBullet's action buttons (client/components/top_bar.tsx) handle onClick
+  # but never preventDefault the pointerdown, so tapping one moves focus off the
+  # editor and the mobile keyboard slams shut. Working around it in Space Lua
+  # (refocus via editor.moveCursor) works but makes the keyboard flicker closed
+  # and open on every tap — Chris flagged it.
+  #
+  # One `preventDefault` on pointerdown fixes it outright (verified by patching
+  # the bundle in a headless browser: zero focus events, item still moves). So
+  # serve a patched copy of client.js from nginx, regenerated whenever the
+  # silverbullet package changes.
+  #
+  # FAILS SAFE: if the needle isn't found exactly once (i.e. upstream changed
+  # the code), it writes the ORIGINAL bundle unmodified and logs a warning —
+  # never a half-patched, broken client.
+  systemd.services.silverbullet-client-patch = {
+    description = "Serve a client.js patched to not steal editor focus";
+    after = [ "silverbullet.service" ];
+    requires = [ "silverbullet.service" ];
+    wantedBy = [ "multi-user.target" ];
+    restartTriggers = [ config.services.silverbullet.package ];
+    path = [ pkgs.curl pkgs.python3 ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      StateDirectory = "silverbullet-client";
+      StateDirectoryMode = "0755";
+    };
+    script = ''
+      set -eu
+      src=$(mktemp)
+      out=/var/lib/silverbullet-client/client.js
+
+      # wait for silverbullet to answer (it has only just started)
+      for _ in $(seq 1 30); do
+        curl -fsS -o "$src" http://127.0.0.1:3336/.client/client.js && break
+        sleep 1
+      done
+
+      python3 ${patchClientJs} "$src" "$out"
+      chmod 0644 "$out"
+      rm -f "$src"
+    '';
+  };
+
   # DNS: notes.rosemaryacres.com -> 100.82.117.116 (proxy off), created by the
   # agent via the Cloudflare token, same as the other vhosts. Inherits the
-  # global Tailscale/LAN source-gate (nginx-access.nix); Authelia forward-auth
-  # is merged onto this vhost in authelia.nix.
+  # global Tailscale/LAN source-gate (nginx-access.nix). No Authelia on this
+  # vhost — Chris wants notetaking frictionless (2026-07-09).
   services.nginx.virtualHosts."notes.${domain}" = {
     forceSSL = true;
     enableACME = true;
     acmeRoot = null;
+    # exact match wins over the "/" proxy: serve our patched bundle instead
+    locations."= /.client/client.js" = {
+      alias = "/var/lib/silverbullet-client/client.js";
+      extraConfig = ''
+        default_type application/javascript;
+        add_header Cache-Control "no-cache";
+      '';
+    };
     locations."/" = {
       proxyPass = "http://127.0.0.1:3336";
       recommendedProxySettings = true;
