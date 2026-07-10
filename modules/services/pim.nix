@@ -2,41 +2,34 @@
 # docs repo: docs/scheduling-assistant-research.md).
 #
 # Architecture: a vdir (one .ics file per event — git-diffable plain text,
-# usable with zero daemons) at /var/lib/pim/calendars/, synced by vdirsyncer:
-#   - Nextcloud (cloud.rosemaryacres.com) — TWO-WAY. The working calendar:
-#     Chris arranges things in the Nextcloud UI / phone; the agent reads and
-#     writes events through the vdir (khal or icalendar).
-#   - Google Calendar — READ-ONLY mirror (things periodically land there;
-#     Chris decided read-only is fine). partial_sync=revert undoes any
-#     accidental local edit to the Google mirror. NOTE: Google's CalDAV
-#     rejects VTODO by protocol — todos never sync to Google. Todos live in
-#     the SilverBullet space (markdown), not in any CalDAV store.
+# usable with zero daemons) at /var/lib/pim/calendars/, synced two-way by
+# vdirsyncer with Nextcloud (cloud.rosemaryacres.com) — the working calendar.
+# Chris arranges things in the Nextcloud UI / on his phone (DAVx⁵); the agent
+# reads and writes events through the vdir (khal or icalendar).
 #
-# INERT UNTIL SECRETS + DISCOVERY EXIST — by design, so this module deploys
-# safely before the manual one-time steps are done, without unit failures
-# (sentinel watches failed units):
-#   pim-sync-nextcloud: needs /run/secrets/nextcloud-caldav (a Nextcloud app
-#     password; Chris: Settings -> Security -> Devices & sessions -> new app
-#     password, then `sops secrets/nextcloud-caldav.yaml`; the agent then
-#     appends the sops.secrets declaration) AND a one-time
-#     `pim-vdirsyncer discover nextcloud` (agent runs it; answers the
-#     create-collection prompts).
-#   pim-sync-google: additionally needs a Google Cloud OAuth "Desktop app"
-#     client (enable the **CalDAV API**, not the Calendar API; publish the
-#     consent screen to **Production** or refresh tokens die every 7 days —
-#     the gyb lesson) and a one-time browser auth via SSH port-forward which
-#     writes /var/lib/pim/google-token.json.
+# NO GOOGLE LEG (removed 2026-07-09, Chris: "we actually don't need the Google
+# thing, I have DAVx⁵ on my phone doing the syncing already"). Dropping it also
+# fixed a real papercut: the Google pair's `password.fetch` cat'd a secret file
+# that never existed, so a bare `pim-vdirsyncer sync` aborted the WHOLE run and
+# you had to say `sync nextcloud` explicitly. Bare `sync` now just works.
+#
+# Todos deliberately do NOT live here — they're markdown in the SilverBullet
+# space. This module is calendar-only.
+#
+# INERT UNTIL SECRET + DISCOVERY EXIST — by design, so the module deploys
+# safely before the one-time manual steps, without unit failures (sentinel
+# watches failed units): pim-sync-nextcloud needs /run/secrets/nextcloud-caldav
+# (a Nextcloud app password, sops) AND a one-time `pim-vdirsyncer discover
+# nextcloud`. Both are done as of 2026-07-09; the leg is live.
 #
 # Everything runs as the claude user — the agent is the primary consumer, and
-# vdirsyncer's OAuth token file + status dir are mutable agent-side state.
+# vdirsyncer's status dir is mutable agent-side state.
 { config, lib, pkgs, ... }:
 
 let
   pimDir = "/var/lib/pim";
   ncUser = "chris"; # Nextcloud login that owns the working calendar (confirmed 2026-07-09)
   ncSecret = "/run/secrets/nextcloud-caldav"; # declared below (sops, owner=claude)
-  gClientId = "/run/secrets/google-oauth-client-id";
-  gClientSecret = "/run/secrets/google-oauth-client-secret";
 
   vdirsyncerConf = pkgs.writeText "vdirsyncer.conf" ''
     [general]
@@ -60,25 +53,6 @@ let
     url = "https://cloud.rosemaryacres.com/remote.php/dav/"
     username = "${ncUser}"
     password.fetch = ["command", "cat", "${ncSecret}"]
-
-    # ---- Google: read-only mirror (events only; VTODO impossible) ----
-    [pair google]
-    a = "local_google"
-    b = "remote_google"
-    collections = ["from b"]
-    partial_sync = "revert"
-
-    [storage local_google]
-    type = "filesystem"
-    path = "${pimDir}/calendars/google/"
-    fileext = ".ics"
-
-    [storage remote_google]
-    type = "google_calendar"
-    token_file = "${pimDir}/google-token.json"
-    client_id.fetch = ["command", "cat", "${gClientId}"]
-    client_secret.fetch = ["command", "cat", "${gClientSecret}"]
-    read_only = true
   '';
 
   khalConf = pkgs.writeText "khal.conf" ''
@@ -87,11 +61,6 @@ let
     [[nextcloud]]
     path = ${pimDir}/calendars/nextcloud/*
     type = discover
-
-    [[google]]
-    path = ${pimDir}/calendars/google/*
-    type = discover
-    readonly = True
 
     [locale]
     timeformat = %H:%M
@@ -149,16 +118,13 @@ in
     "d ${pimDir}                     0750 claude users  - -"
     "d ${pimDir}/calendars           0750 claude users  - -"
     "d ${pimDir}/calendars/nextcloud 0750 claude users  - -"
-    "d ${pimDir}/calendars/google    0750 claude users  - -"
     "d ${pimDir}/status              0750 claude users  - -"
+    # retire the Google leg's leftovers (2026-07-09)
+    "R ${pimDir}/calendars/google    - - - - -"
+    "r ${pimDir}/google-token.json   - - - - -"
   ];
 
   systemd.services.pim-sync-nextcloud = mkSyncUnit "nextcloud" [ ncSecret ];
-  systemd.services.pim-sync-google = mkSyncUnit "google" [
-    gClientId
-    gClientSecret
-    "${pimDir}/google-token.json"
-  ];
 
   systemd.timers.pim-sync-nextcloud = {
     description = "vdirsyncer sync (nextcloud), every 10 min";
@@ -167,15 +133,6 @@ in
       OnCalendar = "*:0/10";
       RandomizedDelaySec = "60";
       Persistent = false; # missed syncs are caught by the next tick
-    };
-  };
-  systemd.timers.pim-sync-google = {
-    description = "vdirsyncer sync (google, read-only), every 30 min";
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnCalendar = "*:7/30";
-      RandomizedDelaySec = "60";
-      Persistent = false;
     };
   };
 }
