@@ -33,6 +33,9 @@ let
     - Read ${spaceDir}/CONVENTIONS.md first if it exists and follow it (task
       syntax, page layout, where things live). Prefer editing a task where it
       lives over duplicating it; keep [[wiki-links]] coherent.
+    - If a page opens with a YAML frontmatter block, PRESERVE it verbatim and
+      rewrite only the body below it (the imported Keep/ pages carry their
+      date, category and source there).
     - Calendar: run `pim-vdirsyncer sync 2>/dev/null || true` first, then
       `agenda` (next 7 days) / `agenda list <when>` (khal). If sync legs are
       not set up yet, say so in one line and move on — never treat it as a
@@ -89,6 +92,10 @@ let
          Group Kroger loosely by type. "Other stores" items keep a store
          prefix ("Lowes: …").
        - Dedupe. NEVER drop an unchecked item.
+       - Keep the page PLAIN: no frontmatter, no headings beyond the store
+         sections, no commentary. It gets read one-handed in a store. (The
+         TOC and Linked-Mentions widgets are suppressed for this page in the
+         space's CONFIG.md, keyed on the page name.)
     3. Sweep open tasks across the space (`- [ ]`, due dates, overdue items)
        and yesterday's Journal/Day page for carryover.
     4. Write/overwrite today's ${spaceDir}/Journal/Day/<YYYY-MM-DD>.md (page
