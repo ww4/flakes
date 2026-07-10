@@ -89,6 +89,9 @@ let
          Group Kroger loosely by type. "Other stores" items keep a store
          prefix ("Lowes: …").
        - Dedupe. NEVER drop an unchecked item.
+       - PRESERVE the page's YAML frontmatter block verbatim (it carries
+         `pageDecoration.disableTOC/disableMentions`, which keep the list
+         visually plain for shopping). Rewrite only the body below it.
     3. Sweep open tasks across the space (`- [ ]`, due dates, overdue items)
        and yesterday's Journal/Day page for carryover.
     4. Write/overwrite today's ${spaceDir}/Journal/Day/<YYYY-MM-DD>.md (page
