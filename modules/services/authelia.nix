@@ -227,24 +227,14 @@ EOF
 
       access_control = {
         default_policy = "deny";
-        rules = [
-          # SilverBullet PWA assets must skip auth (per silverbullet.md/Authelia):
-          # the service worker + client bundle are fetched outside the session.
-          {
-            domain = [ "notes.${domain}" ];
-            resources = [ "^/\\.client/.*$" "^/service_worker\\.js$" ];
-            policy = "bypass";
-          }
-          {
-            domain = [
-              "prometheus.${domain}"
-              "glances.${domain}"
-              "metube.${domain}"
-              "notes.${domain}"
-            ];
-            policy = "two_factor";
-          }
-        ];
+        rules = [{
+          domain = [
+            "prometheus.${domain}"
+            "glances.${domain}"
+            "metube.${domain}"
+          ];
+          policy = "two_factor";
+        }];
       };
     };
   };
@@ -269,5 +259,7 @@ EOF
   services.nginx.virtualHosts."prometheus.${domain}" = protect;
   services.nginx.virtualHosts."glances.${domain}"    = protect;
   services.nginx.virtualHosts."metube.${domain}"     = protect;
-  services.nginx.virtualHosts."notes.${domain}"      = protect;
+  # notes.* (SilverBullet) deliberately NOT protected: Chris wants notetaking
+  # frictionless (2026-07-09) — the shared grocery list especially (Mary, at
+  # the store, via Tailscale). Tailscale/LAN source-gate is the perimeter.
 }

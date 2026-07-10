@@ -38,8 +38,9 @@ let
       not set up yet, say so in one line and move on — never treat it as a
       failure.
     - Homelab: skim the open-loops memory board and the last-24h sentinel
-      incidents (/var/lib/sentinel/incidents/); surface only what genuinely
-      needs Chris — no noise.
+      incidents (the current month's ${spaceDir}/System/Sentinel/ page, or
+      /var/lib/sentinel/incidents/); surface only what genuinely needs
+      Chris — no noise. Weekly digests live in ${spaceDir}/System/Digest/.
     - Do NOT do repo/PR work from this run; it is a planning run. Writing in
       the space and reading anywhere is in scope.
     - Your final message: a one-paragraph summary for a phone notification,
@@ -54,16 +55,51 @@ let
     Morning specifics:
     1. Triage ${spaceDir}/Inbox.md: file new captures onto the right pages
        (create pages if needed), leaving Inbox empty or near-empty.
-    2. Sweep open tasks across the space (`- [ ]`, due dates, overdue items)
+    2. Grocery upkeep: ${spaceDir}/"Grocery List.md" is the SHARED store list (fixed
+       page — Chris and Mary use it at the store), organized STORE-FIRST:
+       Walmart / Kroger / Frankfort house (storage at dad's) / Other stores /
+       Unsorted.
+       - Archive `- [x]` items (bought since last run) by APPENDING them to
+         ${spaceDir}/System/Grocery Log/<YYYY-MM>.md (record which store
+         section each was under), then remove them from Grocery.
+       - File new items (Inbox captures, Unsorted, bare lines) under the
+         right store per ${spaceDir}/System/Store Preferences.md. Unknown
+         item: best guess from similar items, and record the guess there
+         marked "(guessed)".
+       - ORPHANED SECTION CHECK: if a run of items at the END of the Walmart
+         section is dominated by Kroger-preferred goods (produce especially),
+         it is almost certainly a Kroger section whose header got deleted —
+         Chris's old lists did this constantly. Move those items to Kroger and
+         SAY SO in the notification; never sort them into the Walmart route
+         (that would send him to the wrong store).
+       - LEARN: diff Grocery + Store Preferences against yesterday (space
+         git); if a human MOVED an item between stores or edited a
+         preference, update Store Preferences to match — a human move always
+         wins and un-marks "(guessed)".
+       - Order the Walmart section by the table in
+         ${spaceDir}/System/Walmart Aisle Contents.md, TOP TO BOTTOM — that
+         table IS the walking route, including the sidewall diverts. NEVER
+         reorder that table yourself (humans correct it, you follow it), and
+         never regroup its rows: fresh meat belongs at the MEAT WALL divert
+         (partway through the aisles) and lunch meat/cheese at the A30
+         sidewall (one past peanut butter), NOT lumped with each other or
+         with the dairy back wall. Chris shops it that way on purpose.
+         Items whose category isn't in the table go in a short "unsorted"
+         group at the end of the Walmart section — never guess an aisle.
+         Group Kroger loosely by type. "Other stores" items keep a store
+         prefix ("Lowes: …").
+       - Dedupe. NEVER drop an unchecked item.
+    3. Sweep open tasks across the space (`- [ ]`, due dates, overdue items)
        and yesterday's Journal/Day page for carryover.
-    3. Write/overwrite today's ${spaceDir}/Journal/Day/<YYYY-MM-DD>.md (get the
-       date with `date +%F`) with:
+    4. Write/overwrite today's ${spaceDir}/Journal/Day/<YYYY-MM-DD>.md (page
+       name from `date +%F`; header weekday from `date '+%F (%A)'` — NEVER
+       guess the weekday) with:
        - "## Plan" — 3–7 concrete focus items, each [[linked]] to its page
        - today's calendar events (times), from `agenda`
        - carryover/overdue: reschedule or explicitly drop them AT THE SOURCE
          (you have authority; note what you moved)
        - anything homelab-urgent for today
-    4. TLDR = the shape of today in one sentence.
+    5. TLDR = the shape of today in one sentence.
   '';
 
   pmPrompt = pkgs.writeText "daybook-pm.md" ''
