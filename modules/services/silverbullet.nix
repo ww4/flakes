@@ -62,6 +62,44 @@ in
     "A+ ${spaceDir} - - - - u:claude:rwX,g:silverbullet:rwX,m::rwX,d:u:claude:rwX,d:g:silverbullet:rwX,d:m::rwX"
   ];
 
+  # ---- the two-writer permission repair (must run as ROOT) ----
+  #
+  # SilverBullet writes every page it creates with mode 0640, ignoring the
+  # service UMask. With POSIX ACLs the file's mask is taken from the create
+  # mode's GROUP bits, so a page created in the web UI gets `mask::r--` and is
+  # read-only to the agent — the exact files Chris creates on his phone.
+  #
+  # The autosave job's `setfacl` heal CANNOT fix this: only a file's owner (or
+  # root) may change its ACL, and those files are owned by `silverbullet`.
+  # Verified 2026-07-09: `setfacl` as claude → "Operation not permitted".
+  #
+  # So repair from root, on a short timer. chmod restores the group bits (which
+  # restores the mask); setfacl re-asserts it for anything odd.
+  systemd.services.silverbullet-perms = {
+    description = "Repair SilverBullet space permissions for the agent";
+    path = [ pkgs.acl pkgs.coreutils ];
+    serviceConfig = {
+      Type = "oneshot";
+      User = "root";
+    };
+    script = ''
+      set -eu
+      [ -d ${spaceDir} ] || exit 0
+      # group-writable so the ACL mask lands on rwX for both writers
+      chmod -R g+rwX ${spaceDir}
+      setfacl -R -m m::rwX,u:claude:rwX,g:silverbullet:rwX ${spaceDir} || true
+    '';
+  };
+  systemd.timers.silverbullet-perms = {
+    description = "Repair SilverBullet space permissions every 2 min";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "2min";
+      OnUnitActiveSec = "2min";
+      AccuracySec = "30s";
+    };
+  };
+
   # The space git repo is operated by claude but the top dir is owned by the
   # silverbullet user (StateDirectory enforces that) — git's safe.directory
   # check calls that "dubious ownership" and refuses. System-wide exception so
@@ -85,8 +123,9 @@ in
     };
     script = ''
       set -eu
-      # Heal ACL masks: files created by interactive agent sessions (umask 022)
-      # are born mask r--, locking the web UI out of them until this pass.
+      # Heal ACL masks on files this user OWNS (agent-created, umask 022).
+      # Files owned by the silverbullet user are repaired by the root-run
+      # silverbullet-perms timer instead — setfacl here would fail on them.
       ${pkgs.acl}/bin/setfacl -R -m m::rwX . 2>/dev/null || true
       if [ ! -d .git ]; then
         git init -q
