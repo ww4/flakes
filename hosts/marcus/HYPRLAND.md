@@ -43,6 +43,19 @@ session menu (bottom-left) and pick **Hyprland** or **Plasma** anytime.
 | `Super` + `Print` | Screenshot whole screen → edit |
 | `Super` + `C` | Clipboard history picker |
 
+## Monitors & docking
+Press **`Super` + `Shift` + `M`** (or launch **Displays** from wofi) to open
+**nwg-displays** — a GUI where you drag monitors to arrange them and set each
+one's resolution, refresh rate, scale, and rotation. Hit **Apply** and it takes
+effect immediately.
+
+- Settings persist across replug/reboot: the GUI saves to
+  `~/.config/hypr/monitors.conf`, which Hyprland loads on every start.
+- Saved settings **override** the defaults in `hyprland.nix` (laptop panel at
+  1.25× scale; a never-configured external comes up at native resolution, 1×).
+- The GUI can also pin workspaces to specific monitors (saved to
+  `~/.config/hypr/workspaces.conf`).
+
 ## Top bar (Waybar) — clickable bits
 The items along the top respond to clicks:
 | Click | Does |
@@ -83,6 +96,6 @@ your own go in the user file above.
 ## Tweaking
 Everything is declarative. Edit `hosts/marcus/hyprland.nix`, open a flake PR,
 and after merge comin applies it. Common first tweaks:
-- **HiDPI scaling:** change the trailing `1` in `monitor = ",preferred,auto,1"` to `1.25`/`1.5`.
+- **Monitor layout/resolution/scale:** no editing needed — use `Super` + `Shift` + `M` (nwg-displays).
 - **Idle timeouts:** the `listener` blocks in `services.hypridle.settings`.
 - **Bar contents:** `programs.waybar.settings.mainBar.modules-*`.
