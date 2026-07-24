@@ -17,6 +17,17 @@
 # log; each run also commits its own changes.
 #
 # Quiet hours (22:00-07:00) are respected by construction: 09:00 and 20:00.
+#
+# Inbox triage is ALSO event-driven (Chris, 2026-07-24): a systemd .path unit
+# watches Inbox.md via inotify and fires a light, SILENT triage run whenever
+# Chris saves a capture — so items get filed within a couple minutes instead of
+# waiting for the 09:00 daybook. The triage does ONLY inbox filing (no Journal
+# rewrite, no grocery route work, no ntfy). Two guards keep it well-behaved:
+#   - debounce: wait until Inbox.md's mtime is stable (~90s) so we never triage
+#     a half-typed capture (SilverBullet autosaves as you type);
+#   - self-trigger guard: emptying the inbox is itself a write, so a fast
+#     "is there real content?" check (placeholder line counts as empty) makes
+#     that echo a cheap no-op with no `claude` call.
 { config, lib, pkgs, ... }:
 
 let
@@ -126,6 +137,40 @@ let
     3. TLDR = what got done + tomorrow's shape, one sentence.
   '';
 
+  triagePrompt = pkgs.writeText "inbox-triage.md" ''
+    Inbox triage — file Chris's new captures. This is a LIGHT, SILENT run
+    triggered whenever ${spaceDir}/Inbox.md changes. Do ONLY inbox filing —
+    this is NOT the daybook: do not rewrite the Journal, do not sweep tasks,
+    do not reorder the Grocery route, do not send any notification.
+
+    - The SilverBullet space at ${spaceDir} is the shared markdown source of
+      truth (Chris edits via the web UI, you via files). Read
+      ${spaceDir}/CONVENTIONS.md first and follow it (task syntax, page
+      layout, where things live).
+    - If a destination page opens with a YAML frontmatter block, PRESERVE it
+      verbatim and edit only the body below it.
+
+    Do exactly this:
+    1. Read ${spaceDir}/Inbox.md. For each capture, move it onto the RIGHT
+       page (create the page if needed), editing the task where it will live
+       and keeping [[wiki-links]] coherent. Prefer editing a task where it
+       lives over duplicating it.
+       - A capture that is clearly a grocery item: APPEND it to
+         ${spaceDir}/"Grocery List.md" under the best-guess store section
+         (or "Unsorted" if unsure). Keep that page PLAIN (no frontmatter,
+         no headings beyond the store sections, no commentary) and do NOT
+         reorder the Walmart route or archive bought items — the 09:00
+         daybook owns full grocery upkeep. NEVER drop an unchecked item.
+    2. When done, leave Inbox.md empty except this single placeholder line:
+       *(empty — brain-dump anything here; it's filed automatically when you save)*
+    3. If, on reading, the Inbox has no real captures (only the placeholder
+       or blank lines), make NO changes at all.
+
+    Keep every page understandable to a human reading the raw file. Your
+    final message: one short line naming what you filed and where (this is
+    for the journal only — no notification is sent).
+  '';
+
   mkDaybookRun = { name, prompt, onCalendar, title, ntfyTag }: {
     services."claude-daybook-${name}" = {
       description = "Daybook ${name} run (claude -p -> space journal + ntfy)";
@@ -190,8 +235,82 @@ let
     title = "Daybook — evening review";
     ntfyTag = "city_sunset";
   };
+
+  inboxFile = "${spaceDir}/Inbox.md";
+
+  triageService = {
+    "claude-inbox-triage" = {
+      description = "Inbox triage (Inbox.md change -> file captures into the space)";
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        User = "claude";
+        # Match the daybook: space files must be born group-writable or their
+        # ACL mask locks the SilverBullet web UI out of them (silverbullet.nix).
+        UMask = "0002";
+        WorkingDirectory = "/home/claude/nixos-homelab-improvements";
+        # Debounce (up to ~5x90s) + a 10min claude run, with headroom.
+        TimeoutStartSec = "25min";
+        Environment = [
+          "HOME=/home/claude"
+          "PATH=/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin:/usr/bin:/bin"
+          "CLAUDE_AUTONOMOUS=1"
+        ];
+      };
+      script = ''
+        set -uo pipefail
+        inbox=${lib.escapeShellArg inboxFile}
+
+        # Real content = any non-blank line that isn't the italic placeholder
+        # (`*(... )*`). If there's nothing real, do nothing — this is also how
+        # the self-triggered echo (our own emptying write) exits for free,
+        # before any debounce or `claude` call.
+        has_content() {
+          [ -f "$inbox" ] || return 1
+          grep -qvE '^[[:space:]]*$|^[[:space:]]*\*\(.*\)\*[[:space:]]*$' "$inbox"
+        }
+
+        has_content || exit 0
+
+        # Debounce: SilverBullet autosaves as Chris types, so wait until the
+        # file has been stable for ~90s before triaging a possibly half-written
+        # capture. Cap the wait so a steady stream of edits can't stall forever.
+        for _ in 1 2 3 4 5; do
+          m1=$(stat -c %Y "$inbox")
+          sleep 90
+          m2=$(stat -c %Y "$inbox")
+          [ "$m1" = "$m2" ] && break
+        done
+
+        has_content || exit 0
+
+        timeout 10m claude -p "$(cat ${triagePrompt})" 2>/dev/null || true
+
+        # Commit this run's space changes (same undo-log pattern as the daybook).
+        cd ${spaceDir}
+        if [ -d .git ]; then
+          ${pkgs.git}/bin/git add -A
+          ${pkgs.git}/bin/git diff --cached --quiet \
+            || ${pkgs.git}/bin/git commit -q -m "inbox triage $(date '+%Y-%m-%d %H:%M')"
+        fi
+      '';
+    };
+  };
+
+  triagePath = {
+    "claude-inbox-triage" = {
+      description = "Watch the SilverBullet Inbox for new captures";
+      wantedBy = [ "multi-user.target" ];
+      pathConfig = {
+        PathModified = inboxFile;
+        Unit = "claude-inbox-triage.service";
+      };
+    };
+  };
 in
 {
-  systemd.services = am.services // pm.services;
+  systemd.services = am.services // pm.services // triageService;
   systemd.timers = am.timers // pm.timers;
+  systemd.paths = triagePath;
 }
