@@ -77,6 +77,62 @@ EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclu
 # Notification failures must never abort a backup.
 notify() { gromit-notify "$1" "$2" "${3:-default}" "${4:-}" || true; }
 
+# Centralized, phone-readable sync report published into the SilverBullet space,
+# so the last run's result is one tap away at notes.rosemaryacres.com/System/Media
+# Sync — no opening a log off the drive. HISTORY is the machine-readable record;
+# the page is re-rendered from it each run (newest first, last 15).
+SPACE_DIR=/var/lib/silverbullet
+SPACE_PAGE="$SPACE_DIR/System/Media Sync.md"
+HISTORY="$STATE/history.tsv"
+
+# Turn 2026-07-27_080301 into "2026-07-27 08:03".
+_fmt_ts() { printf '%s' "$1" | sed -E 's/_([0-9]{2})([0-9]{2})[0-9]{2}$/ \1:\2/'; }
+
+# Best-effort: called with `|| true`, skips silently if the space isn't present,
+# and never aborts the sync. The space dirs carry a default ACL granting the
+# silverbullet/claude groups, so a root-created file inherits web-UI access; we
+# just make it group-writable (0660) to match every other space page.
+publish_report() {
+  local status="$1" copied="$2" nmoved="$3" ndeleted="$4" n="$5" ts="$6"
+  [ -d "$SPACE_DIR/System" ] || return 0
+
+  printf '%s\t%s\t%s\t%s\t%s\n' "$ts" "$status" "$copied" "$nmoved" "$ndeleted" >> "$HISTORY" || return 0
+
+  local action="" approvearg=""
+  # A bare $(... && ...) in an assignment trips `set -e` when the test is false
+  # (unlike the same idiom as a command argument, where the status is masked),
+  # so compute the optional over-cap count with a plain if.
+  if [ "$n" -gt "$MAX_DELETE" ]; then approvearg=" $n"; fi
+  if [ "$ndeleted" -gt 0 ]; then
+    action="- **Action needed:** review \`$DELETED\`, then run \`sudo media-mirror approve$approvearg\` (cap $MAX_DELETE)."
+  fi
+
+  {
+    echo "# Media Sync"
+    echo
+    echo "*Auto-generated after each weekly mirror of /mnt/fusion to the backup pool. Newest first. Don't edit — overwritten every run. Full logs are on gromit at \`$LOGDIR\`.*"
+    echo
+    echo "## Latest — $(_fmt_ts "$ts")"
+    echo
+    echo "**$status**"
+    echo
+    echo "- Copied: $copied file(s)"
+    echo "- Moved/renamed within fusion: $nmoved (content preserved; stale backup paths queued for cleanup)"
+    echo "- Genuine deletions queued: $ndeleted"
+    if [ -n "$action" ]; then echo "$action"; fi
+    echo
+    echo "## Recent runs"
+    echo
+    echo "| Date | Result | Copied | Moved | Deletions |"
+    echo "|---|---|---|---|---|"
+    tail -n 15 "$HISTORY" | tac | while IFS=$'\t' read -r h st cp mv de; do
+      printf '| %s | %s | %s | %s | %s |\n' "$(_fmt_ts "$h")" "$st" "$cp" "$mv" "$de"
+    done
+  } > "$SPACE_PAGE" || return 0
+
+  chmod 0660 "$SPACE_PAGE" 2>/dev/null || true
+}
+
 # Generic alert for unexpected (non-die) failures.
 trap 'notify "Media mirror ERROR" "Unexpected failure — check: journalctl -u media-mirror-sync" urgent rotating_light' ERR
 
@@ -205,6 +261,7 @@ cmd_sync() {
 "A mergerfs pool member is missing. No files were changed.
 Run 'media-mirror status' and check the drives." \
       urgent rotating_light
+    publish_report "ABORTED — drive offline" 0 0 0 0 "$(date +%Y-%m-%d_%H%M%S)" || true
     die "preflight failed — a pool member drive is offline"
   fi
 
@@ -252,11 +309,14 @@ Run 'media-mirror status' and check the drives." \
            | grep -oE '[0-9,]+' | tail -1 | tr -d ',' || true)
   copied=${copied:-0}
 
+  local status
   if [ "$n" -eq 0 ]; then
+    status="OK — nothing queued"
     notify "Media mirror OK" \
       "Weekly sync complete. $copied files copied. Nothing queued." \
       low floppy_disk
   elif [ "$ndeleted" -eq 0 ]; then
+    status="OK — $nmoved moved-path cleanup"
     notify "Media mirror OK — $nmoved moved" \
 "$copied files copied. $nmoved file(s) moved/renamed within fusion
 (content preserved); their stale backup paths are queued for cleanup.
@@ -269,6 +329,7 @@ No genuine deletions." \
     rprio=default
     rhour=$((10#$(date +%H)))
     if [ "$rhour" -ge 22 ] || [ "$rhour" -lt 7 ]; then rprio=low; fi
+    status="$ndeleted deletion(s) need review"
     notify "Media mirror — $ndeleted deletion(s) need review" \
 "$copied copied.
 approve clears $n stale backup path(s): $ndeleted genuine deletion(s) + $nmoved moved-path cleanup(s).
@@ -276,6 +337,7 @@ Review the genuine list: $DELETED
 Run: sudo media-mirror approve$([ "$n" -gt "$MAX_DELETE" ] && printf ' %s' "$n")  (cap $MAX_DELETE)" \
       "$rprio" "warning,floppy_disk"
   fi
+  publish_report "$status" "$copied" "$nmoved" "$ndeleted" "$n" "$ts" || true
   echo "sync done: $copied copied, $nmoved moved, $ndeleted genuine deletions"
 }
 
