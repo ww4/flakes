@@ -162,12 +162,48 @@ let
             return None
 
 
+    def _cert_days_left(domain):
+        # Read the cert nginx actually serves for `domain` over TLS. Uses only a
+        # localhost handshake — no access to the root-only /var/lib/acme files.
+        # Returns days-remaining as a float, or None if it can't be determined.
+        r = sh("echo | ${pkgs.openssl}/bin/openssl s_client -connect 127.0.0.1:443 "
+               "-servername %s 2>/dev/null | ${pkgs.openssl}/bin/openssl x509 "
+               "-enddate -noout" % domain, timeout=10)
+        if not r or not r.stdout or "notAfter=" not in r.stdout:
+            return None
+        s = r.stdout.split("notAfter=", 1)[1].strip()
+        try:                                            # e.g. "Aug 22 13:23:51 2026 GMT"
+            exp = time.mktime(time.strptime(s, "%b %d %H:%M:%S %Y %Z"))
+        except ValueError:
+            return None
+        return (exp - time.time()) / 86400.0
+
+
+    def _acme_false_alarm(unit):
+        # A NixOS `acme-order-renew-<domain>.service` exits 11 to mean "cert is
+        # still valid, nothing renewed" — but systemd records that as failed, so
+        # it shows up in `systemctl --failed` (bit us 07-24 on grafana +
+        # qbittorrent). Suppress it ONLY when it's genuinely benign: exit == 11
+        # AND the served cert still has comfortable runway. Any other exit code
+        # (a real renewal failure), or a cert actually nearing expiry, is NOT
+        # suppressed — so a true problem still alerts, with days of headroom.
+        prefix, suffix = "acme-order-renew-", ".service"
+        if not (unit.startswith(prefix) and unit.endswith(suffix)):
+            return False
+        r = sh(["systemctl", "show", unit, "-p", "ExecMainStatus", "--value"])
+        if not (r and r.stdout.strip() == "11"):
+            return False
+        domain = unit[len(prefix):-len(suffix)]
+        days = _cert_days_left(domain)
+        return days is not None and days > 20
+
+
     def check_failed_units(c):
         exclude = set(c.get("exclude", []))
         r = sh(["systemctl", "--failed", "--no-legend", "--plain", "--no-pager"])
         lines = r.stdout.splitlines() if (r and r.stdout) else []
         units = [ln.split()[0] for ln in lines if ln.split()]
-        units = [u for u in units if u not in exclude]
+        units = [u for u in units if u not in exclude and not _acme_false_alarm(u)]
         return (len(units) > 0, "failed: " + ", ".join(units))
 
 
@@ -617,7 +653,13 @@ in
       # to (systemctl, journalctl, claude) must be on this PATH. Mirrors digest.nix.
       Environment = [
         "HOME=/home/claude"
-        "PATH=/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin:/usr/bin:/bin"
+        # /run/wrappers/bin MUST come first: it holds the setuid `sudo`. Without
+        # it, `sudo` resolves to the plain (non-setuid) copy in
+        # /run/current-system/sw/bin and every scoped `sudo systemctl
+        # reset-failed …` action dies with "sudo must be owned by uid 0 and have
+        # the setuid bit set" — which silently blocked sentinel's auto-resets
+        # (seen 07-22 and 07-24 2026).
+        "PATH=/run/wrappers/bin:/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin:/usr/bin:/bin"
         "CLAUDE_AUTONOMOUS=1"   # the reflection Stop-hook no-ops in headless runs
       ];
       ExecStart = "${watcher}/bin/gromit-sentinel";
