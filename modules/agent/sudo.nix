@@ -34,6 +34,15 @@ in
         { command = "${sw}/systemctl restart vaultwarden";          options = nopw; }
         { command = "${sw}/systemctl restart media-mirror-sync";    options = nopw; }
         { command = "${sw}/systemctl start media-mirror-sync";      options = nopw; }
+        # ...plus the CONTAINERIZED services as a class (added 2026-07-27 after
+        # THREE same-day diagnoses each stalled on a container restart the
+        # agent couldn't perform: qbittorrent s6 init-hang ×2, jellyseerr
+        # wedged-DNS discriminating test). Scoped to the docker-* unit prefix
+        # — restart-only (no stop/start: a restart can't leave something
+        # down), containers only (every one is supervised + reversible), no
+        # new read powers. The bare-name rule can't be abused for non-docker
+        # units since the prefix is fixed.
+        { command = "${sw}/systemctl restart docker-*";             options = nopw; }
 
         # DNS validation: non-disruptive DHCP DISCOVER (takes no lease) to see
         # what the router hands clients as DNS. A fixed-purpose wrapper, NOT raw
