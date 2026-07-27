@@ -98,13 +98,13 @@ publish_report() {
 
   printf '%s\t%s\t%s\t%s\t%s\n' "$ts" "$status" "$copied" "$nmoved" "$ndeleted" >> "$HISTORY" || return 0
 
-  local action="" approvearg=""
+  local action="" approvearg="" shown=0 p
   # A bare $(... && ...) in an assignment trips `set -e` when the test is false
   # (unlike the same idiom as a command argument, where the status is masked),
   # so compute the optional over-cap count with a plain if.
   if [ "$n" -gt "$MAX_DELETE" ]; then approvearg=" $n"; fi
   if [ "$ndeleted" -gt 0 ]; then
-    action="- **Action needed:** review \`$DELETED\`, then run \`sudo media-mirror approve$approvearg\` (cap $MAX_DELETE)."
+    action="- **Action needed:** review the list below, then run \`sudo media-mirror approve$approvearg\` (cap $MAX_DELETE) — approved files go to a dated graveyard, not destroyed."
   fi
 
   {
@@ -120,6 +120,25 @@ publish_report() {
     echo "- Moved/renamed within fusion: $nmoved (content preserved; stale backup paths queued for cleanup)"
     echo "- Genuine deletions queued: $ndeleted"
     if [ -n "$action" ]; then echo "$action"; fi
+    # List the actual paths so the queue can be reviewed from the phone — the
+    # whole point of this page. Capped so a large reconciliation can't produce a
+    # runaway page; the full list always remains on gromit at $DELETED.
+    if [ "$ndeleted" -gt 0 ] && [ -s "$DELETED" ]; then
+      echo
+      echo "### Files queued for genuine deletion — review before approving"
+      echo
+      shown=0
+      while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        shown=$((shown + 1))
+        if [ "$shown" -gt 200 ]; then
+          echo "- …and $((ndeleted - 200)) more — full list on gromit at \`$DELETED\`"
+          break
+        fi
+        # shellcheck disable=SC2016  # the backticks are literal markdown, not a subshell
+        printf -- '- `%s`\n' "$p"
+      done < "$DELETED"
+    fi
     echo
     echo "## Recent runs"
     echo
