@@ -178,6 +178,7 @@ in
     playerctl        # media keys
     grim slurp swappy  # screenshots
     cliphist         # clipboard history
+    nwg-displays     # monitor arrangement/resolution GUI (Super+Shift+M, or "Displays" in wofi)
     wl-clipboard     # wl-copy / wl-paste
     udiskie          # USB auto-mount daemon (run with --no-tray)
     upower           # detailed battery readout (the Waybar battery click target)
@@ -232,9 +233,14 @@ in
     configType = "hyprlang";
 
     settings = {
-      # Laptop display: let Hyprland auto-pick the preferred mode. Bump the last
-      # number to 1.25/1.5 if you want HiDPI scaling on the T480 panel.
-      monitor = ",preferred,auto,1.25";   # 1.25x scaling — the T480 1080p/14" panel is tiny at 1x
+      # Displays. These are only the DEFAULTS for a monitor that has never been
+      # configured — arrangement/resolution/scale are set interactively with
+      # nwg-displays (Super+Shift+M), whose saved rules live in
+      # ~/.config/hypr/monitors.conf and OVERRIDE these (sourced last, below).
+      monitor = [
+        "eDP-1,preferred,auto,1.25"   # T480 panel: 1080p/14" is tiny at 1x
+        ",preferred,auto,1"           # any never-configured external: native res, no scaling
+      ];
 
       "$mod" = "SUPER";
       "$terminal" = "kitty";
@@ -388,6 +394,9 @@ in
 
         # Clipboard history picker
         "$mod, C, exec, cliphist list | wofi --dmenu | cliphist decode | wl-copy"
+
+        # Display settings GUI (arrange/resolution/scale for docked monitors)
+        "$mod SHIFT, M, exec, nwg-displays"
       ];
 
       # Repeatable binds (held keys): volume + brightness
@@ -413,7 +422,25 @@ in
         "$mod, mouse:273, resizewindow"
       ];
     };
+
+    # nwg-displays saves the GUI-configured monitor layout / workspace pinning
+    # into these files. extraConfig lands at the END of hyprland.conf, so rules
+    # saved there override the declarative `monitor` defaults above. Hyprland
+    # watches sourced files too — hitting Apply in the GUI takes effect live.
+    extraConfig = ''
+      source = ~/.config/hypr/monitors.conf
+      source = ~/.config/hypr/workspaces.conf
+    '';
   };
+
+  # nwg-displays rewrites those two files at runtime, so HM can't manage them as
+  # store symlinks (read-only). Just guarantee they exist so the `source` lines
+  # above never trip Hyprland's missing-file config error.
+  home.activation.ensureNwgDisplaysFiles = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    run mkdir -p "$HOME/.config/hypr"
+    [ -f "$HOME/.config/hypr/monitors.conf" ]   || run touch "$HOME/.config/hypr/monitors.conf"
+    [ -f "$HOME/.config/hypr/workspaces.conf" ] || run touch "$HOME/.config/hypr/workspaces.conf"
+  '';
 
   # --- Waybar top bar ---
   programs.waybar = {
