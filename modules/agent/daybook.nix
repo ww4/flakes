@@ -28,6 +28,18 @@
 #   - self-trigger guard: emptying the inbox is itself a write, so a fast
 #     "is there real content?" check (placeholder line counts as empty) makes
 #     that echo a cheap no-op with no `claude` call.
+#
+# ESCAPE HATCH (Chris, 2026-07-24): typing "run the daybook" ALONE on a line in
+# the Inbox escalates that same trigger to the FULL morning run (inbox triage +
+# grocery route ordering + open-task sweep + refresh today's Plan) instead of
+# the light filing, and ntfys the TLDR. It exists because the light triage
+# deliberately won't retro-fit today's Plan or route-sort the grocery list, so
+# there had to be a way to say "do the whole thing now". Loop safety: the phrase
+# is stripped BEFORE the run (so a failed run can't leave a phrase that re-fires
+# it), the match is anchored at both ends (prose about the daybook, and the
+# placeholder that quotes the phrase mid-line, never fire it), and the strip
+# truncates the existing inode rather than replacing the file, which would drop
+# the ACL the SilverBullet web UI needs.
 { config, lib, pkgs, ... }:
 
 let
@@ -61,9 +73,9 @@ let
       ending with a line "TLDR: <one sentence>".
   '';
 
-  amPrompt = pkgs.writeText "daybook-am.md" ''
-    Daybook — MORNING run (~09:00). Plan Chris's day.
-
+  # The morning run's actual work — shared verbatim with the on-demand run so
+  # "run the daybook" gives exactly the scheduled 09:00 treatment.
+  amBody = ''
     ${commonRules}
 
     Morning specifics:
@@ -120,6 +132,30 @@ let
     5. TLDR = the shape of today in one sentence.
   '';
 
+  amPrompt = pkgs.writeText "daybook-am.md" ''
+    Daybook — MORNING run (~09:00). Plan Chris's day.
+
+    ${amBody}'';
+
+  # Same work as the morning run, but fired by hand at an arbitrary hour.
+  onDemandPrompt = pkgs.writeText "daybook-ondemand.md" ''
+    Daybook — ON-DEMAND run, triggered by Chris typing "run the daybook" on its
+    own line in the Inbox. Same work as the morning run, with three differences:
+      - It can fire at ANY hour. Do NOT frame anything as "this morning"; get
+        the real time from `date '+%F (%A) %H:%M'` and write for where the day
+        actually is.
+      - Today's Journal/Day page usually EXISTS already. REFRESH it rather than
+        assuming it is unwritten: keep the "## Plan" items that still hold (and
+        anything already checked off), fold in what is new, drop what the day
+        has overtaken. If an evening "## Review" section is already there,
+        leave it alone.
+      - The trigger line has already been stripped from the Inbox for you, so
+        treat whatever remains there as the captures to file. An empty Inbox is
+        normal here — Chris may be asking for a re-plan, not a filing run.
+
+    ${amBody}
+  '';
+
   pmPrompt = pkgs.writeText "daybook-pm.md" ''
     Daybook — EVENING run (~20:00). Review the day, stage tomorrow.
 
@@ -161,8 +197,10 @@ let
          no headings beyond the store sections, no commentary) and do NOT
          reorder the Walmart route or archive bought items — the 09:00
          daybook owns full grocery upkeep. NEVER drop an unchecked item.
-    2. When done, leave Inbox.md empty except this single placeholder line:
-       *(empty — brain-dump anything here; it's filed automatically when you save)*
+    2. When done, leave Inbox.md empty except this single placeholder line
+       (keep it on ONE line, and keep the quotes — the trigger only fires when
+       the phrase is alone on a line, so the placeholder can never self-trigger):
+       *(empty — brain-dump anything here; it's filed automatically when you save. Type "run the daybook" alone on a line to force a full daybook run.)*
     3. If, on reading, the Inbox has no real captures (only the placeholder
        or blank lines), make NO changes at all.
 
@@ -240,7 +278,7 @@ let
 
   triageService = {
     "claude-inbox-triage" = {
-      description = "Inbox triage (Inbox.md change -> file captures into the space)";
+      description = "Inbox triage / on-demand daybook (Inbox.md change -> file captures, or full run on 'run the daybook')";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       serviceConfig = {
@@ -262,6 +300,16 @@ let
         set -uo pipefail
         inbox=${lib.escapeShellArg inboxFile}
 
+        # "run the daybook" ALONE on a line (optionally as a list item or task,
+        # any case) forces the full daybook now. Anchored at BOTH ends so prose
+        # about the daybook can't fire it — including the Inbox placeholder,
+        # which quotes the phrase mid-line.
+        trigger_re='^[[:space:]]*(-[[:space:]]*(\[[ xX]\][[:space:]]*)?)?run the daybook[[:space:]]*$'
+
+        has_trigger() {
+          [ -f "$inbox" ] && grep -qiE "$trigger_re" "$inbox"
+        }
+
         # Real content = any non-blank line that isn't the italic placeholder
         # (`*(... )*`). If there's nothing real, do nothing — this is also how
         # the self-triggered echo (our own emptying write) exits for free,
@@ -273,26 +321,47 @@ let
 
         has_content || exit 0
 
-        # Debounce: SilverBullet autosaves as Chris types, so wait until the
-        # file has been stable for ~90s before triaging a possibly half-written
-        # capture. Cap the wait so a steady stream of edits can't stall forever.
-        for _ in 1 2 3 4 5; do
+        # Debounce: SilverBullet autosaves as Chris types, so wait for the file
+        # to go quiet before acting on a possibly half-written capture. The
+        # trigger phrase is itself an explicit "go", so it settles briefly.
+        if has_trigger; then settle=15; rounds=2; else settle=90; rounds=5; fi
+        i=0
+        while [ "$i" -lt "$rounds" ]; do
+          i=$((i + 1))
           m1=$(stat -c %Y "$inbox")
-          sleep 90
+          sleep "$settle"
           m2=$(stat -c %Y "$inbox")
           [ "$m1" = "$m2" ] && break
         done
 
         has_content || exit 0
 
-        timeout 10m claude -p "$(cat ${triagePrompt})" 2>/dev/null || true
+        if has_trigger; then
+          # Strip the trigger FIRST: if the run then fails or is killed, the
+          # phrase is already gone and cannot re-fire the daybook in a loop.
+          # Truncate the EXISTING inode (not sed -i, which replaces the file and
+          # would drop the ACL that keeps the web UI able to write it).
+          remaining="$(grep -viE "$trigger_re" "$inbox" || true)"
+          printf '%s\n' "$remaining" > "$inbox"
+
+          out="$(timeout 20m claude -p "$(cat ${onDemandPrompt})" 2>/dev/null)" \
+            || out="TLDR: On-demand daybook FAILED — check journalctl -u claude-inbox-triage"
+          tldr="$(printf '%s' "$out" | grep -m1 -iE '^TLDR:' | sed -E 's/^[Tt][Ll][Dd][Rr]:[[:space:]]*//')"
+          [ -n "$tldr" ] || tldr="On-demand daybook finished (no TLDR line — check the journal page)."
+          gromit-notify "Daybook — on-demand run" \
+            "$tldr"$'\n'"${notesUrl}/Journal/Day/$(date +%F)" default "zap"
+          commit_msg="daybook on-demand $(date '+%Y-%m-%d %H:%M')"
+        else
+          timeout 10m claude -p "$(cat ${triagePrompt})" 2>/dev/null || true
+          commit_msg="inbox triage $(date '+%Y-%m-%d %H:%M')"
+        fi
 
         # Commit this run's space changes (same undo-log pattern as the daybook).
         cd ${spaceDir}
         if [ -d .git ]; then
           ${pkgs.git}/bin/git add -A
           ${pkgs.git}/bin/git diff --cached --quiet \
-            || ${pkgs.git}/bin/git commit -q -m "inbox triage $(date '+%Y-%m-%d %H:%M')"
+            || ${pkgs.git}/bin/git commit -q -m "$commit_msg"
         fi
       '';
     };
