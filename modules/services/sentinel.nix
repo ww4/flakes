@@ -38,6 +38,56 @@ let
     '';
   };
 
+  # Container-level silent failures. Units/metrics can't see these — proven by
+  # TWO multi-week incidents: jellyseerr logged [error] ~24x/hour for 4 weeks
+  # behind an active unit (docker-bridge firewall gap, #73), and qbittorrent
+  # crash-looped for 17 days behind an "Up" container with EMPTY docker logs
+  # (stale QLockFile, #93). Two detection modes:
+  #   A. error-spam  — >= ERR_MAX error-ish lines in a container's journald
+  #      stream (log-driver=journald) within the last hour. Generic, all
+  #      running containers.
+  #   B. dead-backend — a KNOWN loopback-published HTTP web UI stops answering
+  #      HTTP while its container is Up. curl treats ANY HTTP status as alive;
+  #      refused/timeout/empty/reset = dead. This catches the qbit mode, where
+  #      docker-proxy ACCEPTS the TCP connect and the inside resets it — a raw
+  #      TCP probe would false-negative. Static list on purpose (a mempool/
+  #      fulcrum port speaks non-HTTP and would false-positive); extend the
+  #      list when a new loopback web UI is added.
+  # Runs as the sentinel user (claude): docker ps via the #76 scoped sudo,
+  # journald via the systemd-journal group.
+  containerCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-containers";
+    runtimeInputs = [ pkgs.curl pkgs.gnugrep pkgs.coreutils ];
+    text = ''
+      ERR_MAX=20
+      found=0
+
+      # A: error-spam across every running container's journal stream.
+      while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        n=$(journalctl CONTAINER_NAME="$name" --since -1h --no-pager 2>/dev/null \
+              | grep -cE '\[(error|ERROR|fatal|FATAL)\]|ERROR|FATAL|panic:' || true)
+        if [ "''${n:-0}" -ge "$ERR_MAX" ]; then
+          echo "$name: $n error-lines in the last hour"
+          found=1
+        fi
+      done < <(/run/wrappers/bin/sudo -n docker ps --format '{{.Names}}' 2>/dev/null || true)
+
+      # B: known loopback HTTP backends, probed only while their container is Up.
+      running="$(/run/wrappers/bin/sudo -n docker ps --format '{{.Names}}' 2>/dev/null || true)"
+      for entry in qbittorrent:8085 prowlarr:9696 sonarr:8989 radarr:7878 jellyseerr:5055 flaresolverr:8191; do
+        cname="''${entry%%:*}"; port="''${entry##*:}"
+        grep -qx "$cname" <<<"$running" || continue
+        if ! curl -s -o /dev/null --max-time 4 "http://127.0.0.1:$port/"; then
+          echo "$cname: web backend :$port not answering HTTP while container is Up"
+          found=1
+        fi
+      done
+
+      [ "$found" -eq 1 ]   # exit 0 => findings => sentinel fires
+    '';
+  };
+
   # ─────────────────────────── EDIT ME ───────────────────────────
   # The watcher config. `checks` is a list; each has an id, a type, and
   # type-specific fields. Common optional fields: enabled (default true),
@@ -95,6 +145,12 @@ let
       # covered by failed-units, so no separate cert check).
       { id = "oom"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "journalctl -k --since -10min --no-pager | grep -iE 'out of memory|oom-kill|killed process'"; }
+
+      # Container-level silent failures (error-spam + dead HTTP backends) —
+      # see containerCheck above for the two proven incident modes. Diagnose
+      # only (act = false); 60s timeout covers the per-container journal scans.
+      { id = "container-errors"; type = "command"; severity = "warning"; agent = true; act = false;
+        cmd = "${containerCheck}/bin/sentinel-check-containers"; timeout = 60; }
 
       # Built-in self-test (notify path only — no agent): fires when the marker
       # exists, then clears it. The "trigger on demand" hook for the pipeline.
