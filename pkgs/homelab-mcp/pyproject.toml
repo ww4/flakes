@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "homelab-mcp"
+version = "0.1.0"
+description = "Remote MCP server bridging Claude chats to the SilverBullet knowledgebase on gromit"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.20",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+]
+
+[project.scripts]
+homelab-mcp = "homelab_mcp.server:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/homelab_mcp"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
