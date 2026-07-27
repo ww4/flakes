@@ -53,6 +53,17 @@ case "$cmd" in
     # while everything ELSE under /var (and the rest) stays blocked.
     SPACE="/var/lib/silverbullet"
     scrub="${cmd//"$SPACE"/__SPACE__}"
+    # Redirections to /dev/null are I/O plumbing, not delete operands — scrub
+    # them so `rm foo 2>/dev/null` doesn't trip the /dev fence below
+    # (2026-06-16 false positive). Only redirect forms are scrubbed; a literal
+    # operand like `rm /dev/null` keeps its bare "/dev" and is still denied.
+    scrub="${scrub//2>\/dev\/null/}"
+    scrub="${scrub//2> \/dev\/null/}"
+    scrub="${scrub//&>\/dev\/null/}"
+    scrub="${scrub//&> \/dev\/null/}"
+    scrub="${scrub//>>\/dev\/null/}"
+    scrub="${scrub//>\/dev\/null/}"
+    scrub="${scrub//> \/dev\/null/}"
     case "$scrub" in
       *"/home/chris"*|*"/mnt"*|*"/etc"*|*"/var"*|*"/nix"*|*"/boot"*|*"/usr"*|*"/root"*|*"/srv"*|*"/opt"*|*"/sys"*|*"/proc"*|*"/dev"*|*"..")
         deny "That delete reaches outside your $WORKSPACE workspace — make the change via a flake PR, or ask Chris." ;;
