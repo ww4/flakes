@@ -1,12 +1,14 @@
-# *arr stack — Prowlarr + Sonarr + Radarr + Jellyseerr + qBittorrent (via Gluetun-Mullvad).
+# *arr stack — Prowlarr + Sonarr + Radarr + Jellyseerr + qBittorrent (via Gluetun-AirVPN).
 #
 # All containers via virtualisation.oci-containers (same pattern as
 # homepage.nix). Each web UI binds to 127.0.0.1 and is fronted by nginx
 # with a Tailscale-only Cloudflare DNS-01 cert.
 #
 # Network topology — qBittorrent shares Gluetun's network namespace so all
-# its traffic exits through Mullvad WireGuard. Gluetun is the only thing
-# that publishes ports for qBittorrent's web UI (8080).
+# its traffic exits through AirVPN WireGuard (switched from Mullvad 2026-07-27
+# after the Mullvad account expired; AirVPN adds static port forwarding for
+# seeding). Gluetun is the only thing that publishes ports for qBittorrent's
+# web UI (8080).
 #
 # Storage layout (gated on the fusion remount picking up D3-D6):
 #   /mnt/fusion/arr/
@@ -19,12 +21,16 @@
 # mergerfs. incomplete/ lives on /mnt/scratch (separate FS, the WD Green
 # tier-3 disk) — qBittorrent does a one-time copy when a torrent completes.
 #
-# Secrets — in sops (`secrets/gluetun-wg.yaml`, edit with `sops`). Keys:
-#         WIREGUARD_PRIVATE_KEY=<from Mullvad account WireGuard config>
-#         WIREGUARD_ADDRESSES=10.x.x.x/32
-#         SERVER_CITIES=Atlanta            (or whichever Mullvad city)
-#         (Gluetun derives VPN_SERVICE_PROVIDER=mullvad / VPN_TYPE=wireguard
-#         from its image env defaults; can override here if needed)
+# Secrets — in sops (`secrets/gluetun-wg.yaml`, edit with `sops`). Keys
+# (from the AirVPN Client Area: Config Generator WireGuard .conf + the
+# Forwarded ports page):
+#         WIREGUARD_PRIVATE_KEY=<[Interface] PrivateKey>
+#         WIREGUARD_PRESHARED_KEY=<[Peer] PresharedKey — AirVPN uses one>
+#         WIREGUARD_ADDRESSES=10.x.x.x/32  ([Interface] Address, IPv4)
+#         SERVER_COUNTRIES=United States
+#         FIREWALL_VPN_INPUT_PORTS=<the AirVPN forwarded port — gluetun opens
+#         its tunnel-side firewall for inbound peers; qBittorrent's listen
+#         port must be set to the SAME number (WebUI → Connection)>.
 #
 # Each *arr generates its own API key on first run; wire them up in the
 # UIs (Prowlarr → Settings → Apps adds Sonarr/Radarr; Jellyseerr → Settings
@@ -208,7 +214,7 @@ in
       extraOptions = [ "--network=${arrNet}" ];
     };
 
-    #--- Gluetun (Mullvad WireGuard) ---
+    #--- Gluetun (AirVPN WireGuard) ---
     # Owns the network namespace that qBittorrent shares. Publishes
     # qBittorrent's port 8080 here because qBittorrent itself has no
     # ports field (its netns is borrowed).
@@ -218,14 +224,16 @@ in
         # qBittorrent's web UI. Both sides 8085 (matches WEBUI_PORT below)
         # because the default 8080 collides with Tandoor on this host.
         "127.0.0.1:${toString ports.qbittorrent}:${toString ports.qbittorrent}"
-        # 6881 TCP/UDP is qBittorrent's torrent listen port; bound on the
-        # Mullvad-tunnel side, not the host. No host publishing needed.
+        # qBittorrent's torrent listen port is the AirVPN FORWARDED port
+        # (FIREWALL_VPN_INPUT_PORTS in the sops env), bound on the
+        # VPN-tunnel side, not the host. No host publishing needed.
       ];
       environment = {
-        VPN_SERVICE_PROVIDER = "mullvad";
+        VPN_SERVICE_PROVIDER = "airvpn";
         VPN_TYPE             = "wireguard";
-        # Specific city pinned via the sops gluetun-wg secret (SERVER_CITIES=...)
-        # along with WIREGUARD_PRIVATE_KEY and WIREGUARD_ADDRESSES.
+        # Everything account-specific lives in the sops gluetun-wg secret:
+        # WIREGUARD_PRIVATE_KEY / _PRESHARED_KEY / _ADDRESSES,
+        # SERVER_COUNTRIES, FIREWALL_VPN_INPUT_PORTS (see header comment).
       };
       environmentFiles = [ config.sops.secrets."gluetun-wg".path ];
       extraOptions = [
@@ -256,7 +264,7 @@ in
         dataVolume
         "${scratchRoot}:/scratch/incomplete:rw"
       ];
-      # Share Gluetun's network namespace — all traffic exits via Mullvad.
+      # Share Gluetun's network namespace — all traffic exits via AirVPN.
       # NOTE: no `ports` field here; port 8080 is published by gluetun.
       extraOptions = [
         "--network=container:gluetun"
