@@ -241,6 +241,15 @@ in
         "--device=/dev/net/tun"
         "--sysctl=net.ipv4.conf.all.rp_filter=2"
         "--network=${arrNet}"
+        # Stable hostname for the shared netns. qBittorrent inherits it
+        # (--network=container:gluetun forbids setting its own), and Qt's
+        # QLockFile refuses to clear a stale profile lock written under a
+        # DIFFERENT hostname — with the default hostname (= container ID,
+        # new on every recreation) any hard-kill leaves an unclearable lock
+        # and qbittorrent-nox crash-loops silently on every start. Bit us
+        # 2026-07-10→27 (6,134 rotated crash logs) after the Jul 4 Mullvad
+        # die-off hard-killed the stack.
+        "--hostname=gluetun"
       ];
     };
 
