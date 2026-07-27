@@ -24,6 +24,13 @@ let
     "/var/lib/bitwarden_rs"            # Vaultwarden SQLite vault (NixOS module name is legacy)
     "/var/lib/paperless"               # OCR'd docs + sqlite index
     "/var/lib/uptime-kuma"             # monitor history + sqlite
+    # SilverBullet space (~6 MB) — the declared source of truth for tasks,
+    # notes and planning (CONVENTIONS.md, 2026-07-09): 607 pages including the
+    # imported Google Keep archive. Its git repo is LOCAL-ONLY (an undo log, no
+    # remote), so until now the only copy of any of it lived on this one disk.
+    # The .git dir is ~3.7 MB of that and is kept deliberately — it IS the
+    # history. No attachments in the space, so nothing to exclude.
+    "/var/lib/silverbullet"
     "/var/backup/postgresql"
 
     # Nextcloud external storage (the /Bitcoin and /Fusion mounts). Live data
