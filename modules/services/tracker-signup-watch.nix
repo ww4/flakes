@@ -35,8 +35,12 @@ let
     { name = "Anthelion";     regex = "anthelion|\\(ATH\\)"; }        # UNIT3D, movies
     { name = "FileList";      regex = "filelist|\\(FL\\)"; }          # general, application
     { name = "ReelFliX";      regex = "reelflix|\\(RF\\)"; }          # UNIT3D, movies
-    { name = "SpeedApp";      regex = "speedapp"; }                   # movies/TV/general, open application
-    { name = "SuperBits";     regex = "superbits|\\(SBS\\)"; }        # general/scene, open application
+    # NOTE: SpeedApp + SuperBits removed 2026-07-28 — both confirmed to gate on
+    # PROOF of an existing tracker account (SpeedApp: profile URL + screenshots,
+    # form openly hostile to newbies; SuperBits: 2TB upload + >1.0 ratio on
+    # TL/IPT/TD/etc.). Noise until Chris has a first account + ratio; re-add then.
+    # The alert wording ("Open for Registration" = grab-and-go for a newbie, vs
+    # "Application Signup" = may need prior-tracker proof) is the hint for the rest.
   ];
 
   watchJson = pkgs.writeText "tracker-watch.json" (builtins.toJSON watchlist);
