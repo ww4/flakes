@@ -108,11 +108,22 @@ let
       fi
 
       # ── Source B: r/OpenSignups (old.reddit RSS — old.reddit works UA'd; www
-      #    .json is 403). Human-curated + lower-volume, so alert on ANY post that
-      #    announces an OPEN REGISTRATION (not the watchlist) to catch the long
-      #    tail Chris wants — invite threads / announcements are skipped (they
-      #    lack the open+signup keywords). To narrow to the watchlist instead,
-      #    add the same jq-regex loop as Source A.
+      #    .json + all /about/*.json are 403 for us, so NO flair/rules access —
+      #    the feed carries POST TITLES only, never comments). Human-curated +
+      #    lower-volume, so match ANY post ANNOUNCING an open registration (not
+      #    just the watchlist) to catch the long tail. This is TITLE PATTERN
+      #    matching, not semantics, so precision comes from two filters:
+      #      NEG_RE — drop questions / discussion / "missed it" laments / invite
+      #               requests (the posts Chris explicitly doesn't want);
+      #      POS_RE — require "open" and "signup/registration" IN PROXIMITY
+      #               (≤12 chars), matching real announcements ("Open for Signup",
+      #               "open registration", "Open SignUps") while rejecting posts
+      #               where the words are just scattered in a sentence.
+      #    Both verified against real feed titles + synthetic false positives.
+      #    Residual false positives are possible (not semantic) — each pings once
+      #    (dedup); add patterns to NEG_RE if a junk shape slips through.
+      NEG_RE='\?|(^|[^a-z])(anyone|discussion|request|help|missed|closed|looking for|need (an? )?invite|want (an? )?invite|how (do|to|can)|when (will|does|is)|why (did|is|are))'
+      POS_RE='(open[a-z]*.{0,12}(sign.?ups?|registration))|((sign.?ups?|registration).{0,12}open)'
       b="$(curl -sS --max-time 25 -A "$UA" 'https://old.reddit.com/r/OpenSignups/new/.rss' 2>/dev/null || true)"
       if [ -z "$b" ]; then
         note_fail reddit "r/OpenSignups (Reddit)"
@@ -121,11 +132,9 @@ let
         PRIME=0; [ -f "$STATE/primed_rd" ] || PRIME=1   # first successful run: seed silently
         while IFS= read -r title; do
           [ -n "$title" ] || continue
-          # skip the Atom feed's own header title
-          printf '%s' "$title" | grep -qiE 'newest submissions' && continue
-          # open-registration signal: needs both an "open" and a signup/reg word
-          printf '%s' "$title" | grep -qiE 'open' || continue
-          printf '%s' "$title" | grep -qiE 'sign.?ups?|registration' || continue
+          printf '%s' "$title" | grep -qiE 'newest submissions' && continue   # feed header
+          printf '%s' "$title" | grep -qiE "$NEG_RE" && continue              # question/discussion/lament/request
+          printf '%s' "$title" | grep -qiE "$POS_RE" || continue              # a real open-signup announcement
           key="rd:$(printf '%s' "$title" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]')"
           alert "$key" "r/OpenSignups: $title" \
             "$title — via r/OpenSignups: https://old.reddit.com/r/OpenSignups/new/  (check if it's open registration vs needs prior-tracker proof)."
