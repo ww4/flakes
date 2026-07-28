@@ -64,6 +64,7 @@
     ./modules/services/riverwatch.nix
     ./modules/services/alertmanager-ntfy.nix
     ./modules/services/sentinel.nix          # Phase 1 watchdog: detect trouble + notify (no auto-action yet)
+    ./modules/services/tracker-signup-watch.nix # low-freq: ntfy when a watched private tracker opens signup
     ./modules/services/snapraid.nix         # inert until parity drive arrives (enable = false)
     ./modules/services/pool-autoremount.nix # self-heals fusion members that drop off the USB bus
     ./modules/services/arr.nix              # Prowlarr + Sonarr + Radarr + Jellyseerr + Gluetun + qBittorrent
