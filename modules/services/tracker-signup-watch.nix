@@ -7,12 +7,16 @@
 # AirVPN forwarded port (private trackers = the payoff for port forwarding).
 #
 # TRAFFIC ETHOS (Chris, 2026-07-28: "AI-driven traffic is weighing down the
-# internet — don't contribute to that"): deliberately gentle. It polls ONE
-# lightweight source — the opentrackers.org RSS feed, which exists precisely to
-# announce open signups — TWICE a day (not the tracker sites directly, no
-# headless browser). It notifies only on a NEW open announcement (dedup by feed
-# item), so a week-long open window pings once, not every run. Identifies itself
-# in the User-Agent. If you want it even lighter, drop the timer to daily.
+# internet — don't contribute to that"): deliberately light. Two lightweight RSS
+# sources — opentrackers.org (watchlist-filtered) and r/OpenSignups via
+# old.reddit (broad open-registration) — polled every 3h (cadence matched to how
+# fast signup windows move; ~16 tiny GETs/day total). Not the tracker sites, no
+# headless browser; identifies itself in the User-Agent. Notifies only on a NEW
+# post (dedup), and PRIMES silently on first run so Chris never gets a backfill
+# dump of already-posted openings — only genuinely new ones alert.
+#
+# old.reddit.com is Reddit's legacy UI, NOT stale data — the /new/.rss feed is
+# live (www.reddit.com/.json is 403 for us; old.reddit RSS returns 200 UA'd).
 { config, lib, pkgs, ... }:
 
 let
@@ -49,53 +53,85 @@ let
     name = "tracker-signup-watch";
     runtimeInputs = [ pkgs.curl pkgs.gnugrep pkgs.gnused pkgs.coreutils pkgs.jq ];
     text = ''
-      FEED="https://opentrackers.org/feed/"
       STATE="''${STATE_DIR:-/var/lib/tracker-signup-watch}"
       SEEN="$STATE/seen"            # feed items already alerted on (dedup)
-      FAILS="$STATE/consecutive_fails"
       NTFY="http://127.0.0.1:8090/gromit-alerts"
+      UA='rosemaryacres homelab tracker-signup-watch/1.0 (contact: chris)'
       mkdir -p "$STATE"; touch "$SEEN"
 
-      # One lightweight GET, identified.
-      body="$(curl -sS --max-time 25 -A 'rosemaryacres homelab tracker-signup-watch (contact: chris)' "$FEED" 2>/dev/null || true)"
+      # dedup + notify: key is source-prefixed so the same tracker can ping from
+      # both sources but never twice from one. Sends only the FIRST time a post
+      # is seen. On a source's FIRST-EVER run (PRIME=1) it seeds the seen-list
+      # SILENTLY — so Chris never gets a backfill dump of posts already sitting
+      # in the feed; only genuinely NEW openings alert thereafter.
+      alert() {  # $1=dedup-key  $2=ntfy-title  $3=ntfy-body
+        grep -qxF "$1" "$SEEN" && return 0
+        echo "$1" >> "$SEEN"
+        [ "''${PRIME:-0}" = "1" ] && return 0
+        curl -s --max-time 10 -H "Title: $2" -H "Tags: tada,inbox_tray" \
+          -H "Priority: default" -d "$3" "$NTFY" >/dev/null || true
+      }
 
-      if [ -z "$body" ]; then
-        n="$(( $(cat "$FAILS" 2>/dev/null || echo 0) + 1 ))"
-        echo "$n" > "$FAILS"
-        # No silent rot: after 4 straight failures (~2 days) say so ONCE.
+      # per-source failure counter → one health notice after 4 straight misses
+      # (no silent rot), independent so one source dying doesn't blind the other.
+      note_fail() {  # $1=source-id  $2=human label
+        f="$STATE/fail_$1"
+        n="$(( $(cat "$f" 2>/dev/null || echo 0) + 1 ))"
+        echo "$n" > "$f"
         if [ "$n" -eq 4 ]; then
-          curl -s --max-time 10 -H "Title: tracker-signup-watch can't read the feed" \
-            -H "Tags: warning" -d "opentrackers.org feed unreachable 4x running — the signup watcher is blind until it recovers." "$NTFY" >/dev/null || true
+          curl -s --max-time 10 -H "Title: signup-watch: $2 unreachable" -H "Tags: warning" \
+            -d "$2 unreachable 4x running — that source is blind until it recovers (the other source still runs)." "$NTFY" >/dev/null || true
         fi
-        exit 0
+      }
+
+      titles_of() { printf '%s' "$1" | grep -oiE '<title>[^<]+</title>' | sed -E 's|</?title>||g; s/&amp;/\&/g'; }
+
+      # ── Source A: opentrackers.org RSS — high-volume firehose (every tracker's
+      #    every signup event) → filter to the curated watchlist to avoid noise.
+      a="$(curl -sS --max-time 25 -A "$UA" 'https://opentrackers.org/feed/' 2>/dev/null || true)"
+      if [ -z "$a" ]; then
+        note_fail opentrackers "opentrackers.org feed"
+      else
+        echo 0 > "$STATE/fail_opentrackers"
+        PRIME=0; [ -f "$STATE/primed_ot" ] || PRIME=1   # first successful run: seed silently
+        while IFS= read -r title; do
+          [ -n "$title" ] || continue
+          printf '%s' "$title" | grep -qiE 'open for .*signup|signup.*open|open signup' || continue
+          while IFS= read -r rx; do
+            printf '%s' "$title" | grep -qiE "$rx" || continue
+            key="ot:$(printf '%s' "$title" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]')"
+            alert "$key" "Tracker signup OPEN: $title" \
+              "$title — https://opentrackers.org/  (seed 24/7, AirVPN forwarded port ready)."
+          done < <(jq -r '.[].regex' ${watchJson})
+        done <<< "$(titles_of "$a")"
+        touch "$STATE/primed_ot"
       fi
-      echo 0 > "$FAILS"
 
-      # Feed item titles carry the status, e.g. "TorrentLeech (TL) is Open for
-      # Donation/Application Signup!". Extract titles, keep only ones that BOTH
-      # match a watched tracker AND announce an open signup.
-      titles="$(printf '%s' "$body" | grep -oiE '<title>[^<]+</title>' | sed -E 's|</?title>||g')"
-
-      while IFS= read -r title; do
-        [ -n "$title" ] || continue
-        # Must look like an open-signup announcement.
-        printf '%s' "$title" | grep -qiE 'open for .*signup|signup.*open|open signup' || continue
-        # ...for a tracker on the watchlist.
-        while IFS= read -r rx; do
-          if printf '%s' "$title" | grep -qiE "$rx"; then
-            key="$(printf '%s' "$title" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]')"
-            if ! grep -qxF "$key" "$SEEN"; then
-              echo "$key" >> "$SEEN"
-              curl -s --max-time 10 \
-                -H "Title: Tracker signup OPEN: $title" \
-                -H "Tags: tada,inbox_tray" \
-                -H "Priority: default" \
-                -d "$title — register now while the window is open: https://opentrackers.org/  (seed 24/7, the AirVPN forwarded port is ready)." \
-                "$NTFY" >/dev/null || true
-            fi
-          fi
-        done < <(jq -r '.[].regex' ${watchJson})
-      done <<< "$titles"
+      # ── Source B: r/OpenSignups (old.reddit RSS — old.reddit works UA'd; www
+      #    .json is 403). Human-curated + lower-volume, so alert on ANY post that
+      #    announces an OPEN REGISTRATION (not the watchlist) to catch the long
+      #    tail Chris wants — invite threads / announcements are skipped (they
+      #    lack the open+signup keywords). To narrow to the watchlist instead,
+      #    add the same jq-regex loop as Source A.
+      b="$(curl -sS --max-time 25 -A "$UA" 'https://old.reddit.com/r/OpenSignups/new/.rss' 2>/dev/null || true)"
+      if [ -z "$b" ]; then
+        note_fail reddit "r/OpenSignups (Reddit)"
+      else
+        echo 0 > "$STATE/fail_reddit"
+        PRIME=0; [ -f "$STATE/primed_rd" ] || PRIME=1   # first successful run: seed silently
+        while IFS= read -r title; do
+          [ -n "$title" ] || continue
+          # skip the Atom feed's own header title
+          printf '%s' "$title" | grep -qiE 'newest submissions' && continue
+          # open-registration signal: needs both an "open" and a signup/reg word
+          printf '%s' "$title" | grep -qiE 'open' || continue
+          printf '%s' "$title" | grep -qiE 'sign.?ups?|registration' || continue
+          key="rd:$(printf '%s' "$title" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]')"
+          alert "$key" "r/OpenSignups: $title" \
+            "$title — via r/OpenSignups: https://old.reddit.com/r/OpenSignups/new/  (check if it's open registration vs needs prior-tracker proof)."
+        done <<< "$(titles_of "$b")"
+        touch "$STATE/primed_rd"
+      fi
     '';
   };
 
@@ -113,11 +149,15 @@ in
   };
 
   systemd.timers.tracker-signup-watch = {
-    description = "Twice-daily tracker signup-window check (deliberately low-frequency)";
+    description = "Tracker signup-window check (every 3h — responsive but light)";
     wantedBy = [ "timers.target" ];
     timerConfig = {
-      OnCalendar = "08,20:00";       # 08:00 and 20:00 — 2 GETs/day
-      RandomizedDelaySec = "45m";    # be a polite, non-synchronized caller
+      # Every 3h bounds the worst-case miss of a short window to ~3h while
+      # staying trivially light (two ~50-90KB RSS GETs per run = ~16 tiny
+      # fetches/day total). Cadence matched to how fast signup windows move,
+      # per the polite-polling ethos — not "as rare as possible".
+      OnCalendar = "*-*-* 00/3:00:00";
+      RandomizedDelaySec = "20m";    # non-synchronized caller
       Persistent = true;             # catch up one missed run after downtime
     };
   };
