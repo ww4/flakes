@@ -17,11 +17,26 @@
 
 let
   # Trackers to watch: name shown in the alert + a case-insensitive regex that
-  # must match the feed item title. Add entries here (e.g. an audiobook tracker)
-  # — no other change needed. Defaults to just TorrentLeech per the 2026-07-28
-  # ask (movies/TV, open-signup).
+  # must match the feed item title (word-boundary-ish on abbreviations to avoid
+  # false hits). Add/remove entries here — no other change needed. Curated for
+  # Chris's ask (movies/TV, low-friction entry: open registration OR open
+  # application, no invite/IRC-interview). Expanded 2026-07-28 beyond just TL to
+  # the reputable entry-level set + the UNIT3D-ecosystem trackers that cycle
+  # through open-application windows. It's the same single feed fetch either way
+  # (zero extra traffic), so widening coverage is free. Trim any you don't want.
   watchlist = [
-    { name = "TorrentLeech"; regex = "torrentleech|\\(TL\\)"; }
+    { name = "TorrentLeech";  regex = "torrentleech|\\(TL\\)"; }      # periodic open registration
+    { name = "IPTorrents";    regex = "iptorrents|\\(IPT\\)"; }       # classic low-friction general
+    { name = "TorrentDay";    regex = "torrentday|\\(TD\\)"; }        # general, opens periodically
+    { name = "AlphaRatio";    regex = "alpharatio|\\(AR\\)"; }        # general
+    { name = "DigitalCore";   regex = "digitalcore|\\(DC\\)"; }       # general
+    { name = "Blutopia";      regex = "blutopia|\\(BLU\\)"; }         # UNIT3D, HD movies/TV
+    { name = "Aither";        regex = "aither"; }                     # UNIT3D, movies/TV
+    { name = "Anthelion";     regex = "anthelion|\\(ATH\\)"; }        # UNIT3D, movies
+    { name = "FileList";      regex = "filelist|\\(FL\\)"; }          # general, application
+    { name = "ReelFliX";      regex = "reelflix|\\(RF\\)"; }          # UNIT3D, movies
+    { name = "SpeedApp";      regex = "speedapp"; }                   # movies/TV/general, open application
+    { name = "SuperBits";     regex = "superbits|\\(SBS\\)"; }        # general/scene, open application
   ];
 
   watchJson = pkgs.writeText "tracker-watch.json" (builtins.toJSON watchlist);
