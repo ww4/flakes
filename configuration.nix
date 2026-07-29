@@ -68,6 +68,7 @@
     ./modules/services/snapraid.nix         # inert until parity drive arrives (enable = false)
     ./modules/services/pool-autoremount.nix # self-heals fusion members that drop off the USB bus
     ./modules/services/arr.nix              # Prowlarr + Sonarr + Radarr + Jellyseerr + Gluetun + qBittorrent
+    ./modules/services/mam-seedbox.nix      # INERT (enable=false): registers the AirVPN exit IP with MAM's dynamic-seedbox API on change
     ./modules/services/recyclarr.nix        # Daily TRaSH-Guides profile sync into Sonarr/Radarr
     ./modules/services/decluttarr.nix       # auto-reaps stalled+failed downloads, re-searches
     ./modules/services/lidarr.nix           # music manager (Lidarr)
