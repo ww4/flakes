@@ -101,6 +101,28 @@ let
   # restart.
   arrNet = "arr-net";
 
+  # Force IPv4-only inside the *arr containers.
+  #
+  # `arr-net` is a plain Docker bridge: IPv4 subnet, no IPv6 subnet, no NAT66.
+  # So a container has no route to a v6 address. Many indexers (and TMDB) are
+  # Cloudflare-fronted and DUAL-STACK, and glibc's getaddrinfo prefers the AAAA
+  # answer — so the container picks an address it cannot reach and the
+  # connection dies as "Resource temporarily unavailable" / ERR_NAME_NOT_RESOLVED,
+  # while A-only hosts work fine.
+  #
+  # Diagnosed 2026-07-29 after 5 of 9 Prowlarr indexers auto-disabled and Sonarr
+  # logged "No available indexers" 95× in 24h. The correlation was exact:
+  #
+  #   api.knaben.org  A=2 AAAA=2  -> failed      api.ipify.org  A=3 AAAA=0  -> worked
+  #   1337x.to        A=2 AAAA=2  -> failed      github.com     A=1 AAAA=0  -> worked
+  #
+  # Prowlarr's own error message says "ensure IPv6 is working or disabled".
+  # Disabling it in the container makes getaddrinfo return the A record.
+  #
+  # The alternative — giving arr-net a real IPv6 subnet + NAT66 — is more moving
+  # parts for no benefit: nothing here needs v6 reachability.
+  ipv4Only = "--sysctl=net.ipv6.conf.all.disable_ipv6=1";
+
 in
 {
   # Gluetun WireGuard creds (WIREGUARD_PRIVATE_KEY / _ADDRESSES) via sops
@@ -156,7 +178,7 @@ in
       volumes = [
         "/var/lib/prowlarr:/config:rw"
       ];
-      extraOptions = [ "--network=${arrNet}" ];
+      extraOptions = [ "--network=${arrNet}" ipv4Only ];
     };
 
     #--- FlareSolverr (Cloudflare challenge solver for protected indexers) ---
@@ -174,7 +196,7 @@ in
         inherit TZ;
         LOG_LEVEL = "info";
       };
-      extraOptions = [ "--network=${arrNet}" ];
+      extraOptions = [ "--network=${arrNet}" ipv4Only ];
     };
 
     #--- Sonarr (TV) ---
@@ -187,7 +209,7 @@ in
         dataVolume
         keepersTvVolume   # tier-2 promotion target
       ];
-      extraOptions = [ "--network=${arrNet}" ];
+      extraOptions = [ "--network=${arrNet}" ipv4Only ];
     };
 
     #--- Radarr (movies) ---
@@ -200,7 +222,7 @@ in
         dataVolume
         keepersMoviesVolume   # tier-2 promotion target
       ];
-      extraOptions = [ "--network=${arrNet}" ];
+      extraOptions = [ "--network=${arrNet}" ipv4Only ];
     };
 
     #--- Jellyseerr (request UI) ---
