@@ -44,6 +44,15 @@ in
         # units since the prefix is fixed.
         { command = "${sw}/systemctl restart docker-*";             options = nopw; }
 
+        # Hardlink completed downloads into the Jellyfin library. Needs root only
+        # because fs.protected_hardlinks=1 forbids linking a file the agent
+        # neither owns nor can write (the download tree is chris:users 0644). A
+        # fixed-purpose wrapper, NOT raw ln: it only ever CREATES hardlinks under
+        # /mnt/fusion/{Movies,TV Shows}, never deletes or overwrites, and
+        # validates the entire plan before acting. See services/media-link.nix.
+        { command = "${sw}/media-link";                             options = nopw; }
+        { command = "${sw}/media-link *";                           options = nopw; }
+
         # DNS validation: non-disruptive DHCP DISCOVER (takes no lease) to see
         # what the router hands clients as DNS. A fixed-purpose wrapper, NOT raw
         # nmap. Provided by services/blocky.nix.

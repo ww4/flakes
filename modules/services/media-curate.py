@@ -22,6 +22,7 @@ Dry-run by default. Pass --apply to make changes. Config is via environment
 (see media-curate.nix).
 """
 import argparse
+import glob
 import html
 import json
 import os
@@ -60,6 +61,23 @@ MOVIE_RE = re.compile(r"^(?P<title>.+) \((?P<year>(?:19|20)\d{2})\)$")
 TV_RE = re.compile(r"^(?P<show>.+?)[ ._-]+[Ss](?P<s>\d{1,2})[Ee](?P<e>\d{1,3})(?:\W.*)?$")
 
 VIDEO_TYPES = "Movie,Episode,Video,MusicVideo,Audio"
+
+# Outcomes of handling one collection leaf. ALREADY means the file is already at
+# its canonical path — it still gets detached (it's done), but it must NOT count
+# as a move, or promote posts /Library/Refresh on every run forever.
+MOVED, ALREADY, UNNAMED = "moved", "already", "unnamed"
+
+# Prefixes under FUSION where the file must NOT be moved out from under whatever
+# owns it, because something else still references the original path:
+#   arr/       — qBittorrent is seeding these. A move kills the seed, which on a
+#                private tracker costs ratio and eventually the account.
+#   pinchflat/ — PinchFlat re-downloads media it thinks went missing.
+# For these we HARDLINK instead: one copy of the bytes, two names. media-mirror
+# runs `rsync -aH` with /arr excluded, so the library copy is backed up exactly
+# once and the seed keeps working. Everything else (youtube/metube inbox) is
+# still MOVED, so the inbox actually drains.
+LINK_DONT_MOVE = ["arr", "pinchflat"]
+BRANCHES = sorted(glob.glob(os.environ.get("FUSION_BRANCHES", "/mnt/primary/D*")))
 
 
 class ApiError(Exception):
@@ -154,6 +172,35 @@ def collection_videos(cid):
         "EnableTotalRecordCount": "false",
     })
     return [i for i in (res or {}).get("Items", []) if i.get("Path")]
+
+
+def collection_direct_children(cid):
+    """The items DIRECTLY linked to the BoxSet — no recursion. These are the
+    only ids DELETE /Collections/{cid}/Items actually acts on."""
+    res = api("GET", "/Items", {
+        "ParentId": cid,
+        "Recursive": "false",
+        "userId": user_id(),
+        "Fields": "Path",
+        "EnableTotalRecordCount": "false",
+    })
+    return [i for i in (res or {}).get("Items", []) if i.get("Path")]
+
+
+def owning_child(leaf, direct):
+    """Which direct child of the collection does this flattened leaf belong to?
+    Matches on path containment (a series folder contains its episodes), longest
+    prefix first. Returns None if the leaf is itself a direct child."""
+    lp = leaf.get("Path") or ""
+    best = None
+    for d in direct:
+        if d["Id"] == leaf["Id"]:
+            return d
+        dp = d.get("Path") or ""
+        if dp and lp.startswith(dp.rstrip("/") + "/"):
+            if best is None or len(dp) > len(best.get("Path") or ""):
+                best = d
+    return best
 
 
 def remove_from_collection(cid, item_id, apply):
@@ -307,13 +354,87 @@ def _inherit_owner(dst):
             return
 
 
+def link_dont_move(path):
+    """Is `path` somewhere a move would break another owner (see LINK_DONT_MOVE)?"""
+    rel = os.path.relpath(path, FUSION)
+    if rel.startswith(".."):
+        return False
+    return rel.split("/", 1)[0] in LINK_DONT_MOVE
+
+
+def branch_of(path):
+    """(branch_root, path_on_branch) for a file inside the mergerfs pool.
+
+    mergerfs hardlinks only work WITHIN one branch, and /mnt/fusion is mounted
+    category.create=mfs, so a new season dir would land on whichever branch has
+    the most free space — not necessarily the source's. We resolve the source's
+    real branch and link there. Matched on size+mtime, because st_dev is the
+    single FUSE device for every path and st_ino is synthesised by
+    inodecalc=hybrid-hash (pool inode never equals branch inode).
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    rel = os.path.relpath(path, FUSION)
+    if rel.startswith(".."):
+        return None
+    for b in BRANCHES:
+        cand = os.path.join(b, rel)
+        try:
+            cst = os.stat(cand)
+        except OSError:
+            continue
+        if cst.st_size == st.st_size and cst.st_mtime_ns == st.st_mtime_ns:
+            return b, cand
+    return None
+
+
 def move(src, dst, apply):
+    """Put src at dst. Returns True if something happened, False if src is
+    already at dst.
+
+    HARDLINKS instead of moving when src is under a LINK_DONT_MOVE prefix — a
+    move would take the file out from under qBittorrent and kill the seed. It
+    never silently falls back to moving a protected file: on failure it raises,
+    the item is reported, and it stays queued for a human.
+
+    shutil.move(x, x) is a silent POSIX rename() no-op, so the src==dst guard
+    matters: without it an already-canonical file reports as "moved" on every
+    run, which kept promote posting /Library/Refresh every 30 min forever.
+    """
+    if src == dst:
+        return False
+    try:
+        if os.path.exists(dst) and os.path.samefile(src, dst):
+            return False
+    except OSError:
+        pass
+
+    if link_dont_move(src):
+        print(f"  ln {src}\n   -> {dst}  (seeding — linked, not moved)")
+        if not apply:
+            return True
+        bo = branch_of(src)
+        if bo is None:
+            raise OSError(f"cannot resolve mergerfs branch for {src}")
+        branch, src_on_branch = bo
+        dst_on_branch = os.path.join(branch, os.path.relpath(dst, FUSION))
+        os.makedirs(os.path.dirname(dst_on_branch), exist_ok=True)
+        os.link(src_on_branch, dst_on_branch)
+        if not (os.path.exists(src) and os.path.exists(dst)
+                and os.path.samefile(src, dst)):
+            raise OSError(f"hardlink verification failed for {dst}")
+        _inherit_owner(dst)
+        return True
+
     print(f"  mv {src}\n   -> {dst}")
     if not apply:
-        return
+        return True
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.move(src, dst)
     _inherit_owner(dst)
+    return True
 
 
 def cmd_promote(apply):
@@ -321,7 +442,7 @@ def cmd_promote(apply):
 
     def handle_library_leaf(it):
         """File a single video into Movies/TV by its canonical title.
-        Returns True if moved, False if it still needs naming."""
+        Returns MOVED, ALREADY (already at its canonical path), or UNNAMED."""
         name, path = it["Name"], it["Path"]
         ext = os.path.splitext(path)[1]
         base = os.path.splitext(path)[0]
@@ -329,10 +450,10 @@ def cmd_promote(apply):
         if m:
             folder = os.path.join(MOVIES_DIR, canonical_dir(MOVIES_DIR, name))
             print(f"[movie] {name}")
-            move(path, os.path.join(folder, os.path.basename(path)), apply)
+            moved = move(path, os.path.join(folder, os.path.basename(path)), apply)
             for s in sidecars(path):
-                move(s, os.path.join(folder, os.path.basename(s)), apply)
-            return True
+                moved |= move(s, os.path.join(folder, os.path.basename(s)), apply)
+            return MOVED if moved else ALREADY
         if t:
             show, season, ep = t.group("show").strip(), int(t.group("s")), int(t.group("e"))
             # Keep the series YEAR so Jellyfin matches the right show — e.g. Dark
@@ -351,19 +472,19 @@ def cmd_promote(apply):
                     failures.append((name, f"TV show has no year — would mis-match in "
                                      f"Jellyfin (got '{show}'). Add (YYYY) to the title "
                                      f"and re-promote."))
-                    return False
+                    return UNNAMED
             # Reuse the show's existing folder casing if it's already in the
             # library, so all-caps filenames don't spawn a duplicate-cased dir.
             show = canonical_dir(TV_DIR, show)
             folder = os.path.join(TV_DIR, show, f"Season {season:02d}")
             newbase = f"{show} S{season:02d}E{ep:02d}"
             print(f"[tv] {show} S{season:02d}E{ep:02d}")
-            move(path, os.path.join(folder, newbase + ext), apply)
+            moved = move(path, os.path.join(folder, newbase + ext), apply)
             for s in sidecars(path):
-                move(s, os.path.join(folder, newbase + s[len(base):]), apply)
-            return True
+                moved |= move(s, os.path.join(folder, newbase + s[len(base):]), apply)
+            return MOVED if moved else ALREADY
         failures.append((name, f"title not canonical (got '{name}')"))
-        return False
+        return UNNAMED
 
     def handle_keep_leaf(it):
         """Organize a single video as a home video under its channel + NFO."""
@@ -394,14 +515,14 @@ def cmd_promote(apply):
         folder = os.path.join(KEEP_DIR, channel)
         dst = os.path.join(folder, os.path.basename(path))
         print(f"[keep] {it['Name']}  (channel: {channel})")
-        move(path, dst, apply)
+        moved = move(path, dst, apply)
         for s in sidecars(path):
-            move(s, os.path.join(folder, os.path.basename(s)), apply)
+            moved |= move(s, os.path.join(folder, os.path.basename(s)), apply)
         # Only synthesize an NFO if none travelled with the file.
         nfo = os.path.splitext(dst)[0] + ".nfo"
         if apply and info is not None and not os.path.exists(nfo):
             write_nfo(nfo, info)
-        return True
+        return MOVED if moved else ALREADY
 
     did_move = False
     for coll_name, handler in ((COLL_LIBRARY, handle_library_leaf),
@@ -411,20 +532,45 @@ def cmd_promote(apply):
             print(f"(collection '{coll_name}' not found — skipping)")
             continue
         vids = collection_videos(cid)  # recursive+userId flattens added folders
+        # …but detaching must target what is DIRECTLY linked to the BoxSet. If a
+        # whole series/season folder was added, DELETE /Collections/{cid}/Items
+        # on a nested episode returns success and removes nothing, so every
+        # episode reappears next run. Map each leaf to the direct child it came
+        # from and detach at that level once all its leaves are resolved.
+        direct = collection_direct_children(cid)
+        pending = {}  # direct-child id -> unresolved leaf count
         print(f"== {coll_name}: {len(vids)} video(s) ==")
         for it in vids:
+            owner = owning_child(it, direct)
+            oid = owner["Id"] if owner else it["Id"]
             if not os.path.exists(it["Path"]):
                 # File was moved on a prior run but the item is still linked in
-                # the collection — detach it now (self-heals stragglers within
-                # the window before Jellyfin rescans the old item away).
-                remove_from_collection(cid, it["Id"], apply)
+                # the collection — self-heals stragglers within the window
+                # before Jellyfin rescans the old item away.
+                pending.setdefault(oid, 0)
                 continue
-            if handler(it):
+            try:
+                outcome = handler(it)
+            except OSError as e:
+                # A failed hardlink must never cascade into aborting the run or
+                # (worse) falling back to a move that would kill the seed.
+                # Report it and leave the item attached so it's retried.
+                failures.append((it["Name"], f"could not file it: {e}"))
+                print(f"  ERROR: {it['Name']}: {e}", file=sys.stderr)
+                outcome = UNNAMED
+            if outcome == MOVED:
                 did_move = True
-                # Detach while the item still resolves (its file just moved, but
-                # Jellyfin hasn't rescanned yet) so the collection never keeps a
-                # dangling link. A rescan alone does NOT prune collection links.
-                remove_from_collection(cid, it["Id"], apply)
+            pending.setdefault(oid, 0)
+            if outcome == UNNAMED:
+                # Leave the whole owning link attached so the un-named leaf
+                # stays visible in the collection and gets retried.
+                pending[oid] += 1
+        # Detach while the items still resolve (their files just moved, but
+        # Jellyfin hasn't rescanned yet) so the collection never keeps a
+        # dangling link. A rescan alone does NOT prune collection links.
+        for oid, unresolved in pending.items():
+            if unresolved == 0:
+                remove_from_collection(cid, oid, apply)
     # Index the new locations and drop the now-fileless source items. (The
     # detach above is what clears the collection — the refresh does not.)
     if apply and did_move:
