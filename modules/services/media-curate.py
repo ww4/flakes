@@ -22,6 +22,7 @@ Dry-run by default. Pass --apply to make changes. Config is via environment
 (see media-curate.nix).
 """
 import argparse
+import glob
 import html
 import json
 import os
@@ -65,6 +66,18 @@ VIDEO_TYPES = "Movie,Episode,Video,MusicVideo,Audio"
 # its canonical path — it still gets detached (it's done), but it must NOT count
 # as a move, or promote posts /Library/Refresh on every run forever.
 MOVED, ALREADY, UNNAMED = "moved", "already", "unnamed"
+
+# Prefixes under FUSION where the file must NOT be moved out from under whatever
+# owns it, because something else still references the original path:
+#   arr/       — qBittorrent is seeding these. A move kills the seed, which on a
+#                private tracker costs ratio and eventually the account.
+#   pinchflat/ — PinchFlat re-downloads media it thinks went missing.
+# For these we HARDLINK instead: one copy of the bytes, two names. media-mirror
+# runs `rsync -aH` with /arr excluded, so the library copy is backed up exactly
+# once and the seed keeps working. Everything else (youtube/metube inbox) is
+# still MOVED, so the inbox actually drains.
+LINK_DONT_MOVE = ["arr", "pinchflat"]
+BRANCHES = sorted(glob.glob(os.environ.get("FUSION_BRANCHES", "/mnt/primary/D*")))
 
 
 class ApiError(Exception):
@@ -341,11 +354,55 @@ def _inherit_owner(dst):
             return
 
 
+def link_dont_move(path):
+    """Is `path` somewhere a move would break another owner (see LINK_DONT_MOVE)?"""
+    rel = os.path.relpath(path, FUSION)
+    if rel.startswith(".."):
+        return False
+    return rel.split("/", 1)[0] in LINK_DONT_MOVE
+
+
+def branch_of(path):
+    """(branch_root, path_on_branch) for a file inside the mergerfs pool.
+
+    mergerfs hardlinks only work WITHIN one branch, and /mnt/fusion is mounted
+    category.create=mfs, so a new season dir would land on whichever branch has
+    the most free space — not necessarily the source's. We resolve the source's
+    real branch and link there. Matched on size+mtime, because st_dev is the
+    single FUSE device for every path and st_ino is synthesised by
+    inodecalc=hybrid-hash (pool inode never equals branch inode).
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    rel = os.path.relpath(path, FUSION)
+    if rel.startswith(".."):
+        return None
+    for b in BRANCHES:
+        cand = os.path.join(b, rel)
+        try:
+            cst = os.stat(cand)
+        except OSError:
+            continue
+        if cst.st_size == st.st_size and cst.st_mtime_ns == st.st_mtime_ns:
+            return b, cand
+    return None
+
+
 def move(src, dst, apply):
-    """Move src → dst. Returns True if a real move happened, False if src is
-    already at dst. shutil.move(x, x) is a silent POSIX rename() no-op, so
-    without this guard an already-canonical file reports as "moved" on every
-    run — which kept promote posting /Library/Refresh every 30 min forever."""
+    """Put src at dst. Returns True if something happened, False if src is
+    already at dst.
+
+    HARDLINKS instead of moving when src is under a LINK_DONT_MOVE prefix — a
+    move would take the file out from under qBittorrent and kill the seed. It
+    never silently falls back to moving a protected file: on failure it raises,
+    the item is reported, and it stays queued for a human.
+
+    shutil.move(x, x) is a silent POSIX rename() no-op, so the src==dst guard
+    matters: without it an already-canonical file reports as "moved" on every
+    run, which kept promote posting /Library/Refresh every 30 min forever.
+    """
     if src == dst:
         return False
     try:
@@ -353,6 +410,24 @@ def move(src, dst, apply):
             return False
     except OSError:
         pass
+
+    if link_dont_move(src):
+        print(f"  ln {src}\n   -> {dst}  (seeding — linked, not moved)")
+        if not apply:
+            return True
+        bo = branch_of(src)
+        if bo is None:
+            raise OSError(f"cannot resolve mergerfs branch for {src}")
+        branch, src_on_branch = bo
+        dst_on_branch = os.path.join(branch, os.path.relpath(dst, FUSION))
+        os.makedirs(os.path.dirname(dst_on_branch), exist_ok=True)
+        os.link(src_on_branch, dst_on_branch)
+        if not (os.path.exists(src) and os.path.exists(dst)
+                and os.path.samefile(src, dst)):
+            raise OSError(f"hardlink verification failed for {dst}")
+        _inherit_owner(dst)
+        return True
+
     print(f"  mv {src}\n   -> {dst}")
     if not apply:
         return True
@@ -474,7 +549,15 @@ def cmd_promote(apply):
                 # before Jellyfin rescans the old item away.
                 pending.setdefault(oid, 0)
                 continue
-            outcome = handler(it)
+            try:
+                outcome = handler(it)
+            except OSError as e:
+                # A failed hardlink must never cascade into aborting the run or
+                # (worse) falling back to a move that would kill the seed.
+                # Report it and leave the item attached so it's retried.
+                failures.append((it["Name"], f"could not file it: {e}"))
+                print(f"  ERROR: {it['Name']}: {e}", file=sys.stderr)
+                outcome = UNNAMED
             if outcome == MOVED:
                 did_move = True
             pending.setdefault(oid, 0)
