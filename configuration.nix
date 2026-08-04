@@ -51,6 +51,7 @@
     ./modules/services/nextcloud.nix
     ./modules/services/backup.nix
     ./modules/services/notifications.nix
+    ./modules/services/daily-reminders.nix   # tappable ntfy nudges (reminder only — claims nothing)
     ./modules/services/media-mirror.nix
     ./modules/services/media-curate.nix      # backed-up tag sweep + YouTube promote (needs Jellyfin key to activate)
     ./modules/services/bub-mirror.nix

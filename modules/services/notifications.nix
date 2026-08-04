@@ -6,7 +6,8 @@
 #   topic:  gromit-alerts
 #
 # Scripts and the shell send alerts with the `gromit-notify` helper:
-#   gromit-notify "<title>" "<message>" [priority] [tags]
+#   gromit-notify "<title>" "<message>" [priority] [tags] [click-url]
+# A click-url makes the whole notification tappable (see daily-reminders.nix).
 { config, lib, pkgs, ... }:
 
 let
