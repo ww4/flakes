@@ -204,11 +204,16 @@ def main():
         print("(dry run — pass --apply to link)")
         return
 
-    linked = 0
-    for s, d, src_on_branch, dst_on_branch, _ in todo:
+    linked, made_dirs = 0, []
+    for s, d, src_on_branch, dst_on_branch, branch in todo:
         # Create the dir and the link on the branch itself, so mergerfs's mfs
         # create-policy can't place them somewhere the link would fail (EXDEV).
-        os.makedirs(os.path.dirname(dst_on_branch), exist_ok=True)
+        parent = os.path.dirname(dst_on_branch)
+        probe = parent
+        while probe and not os.path.exists(probe):
+            made_dirs.append(probe)
+            probe = os.path.dirname(probe)
+        os.makedirs(parent, exist_ok=True)
         os.link(src_on_branch, dst_on_branch)
         # Verify through the POOL view: the link must be visible at the path
         # Jellyfin will actually read, share the source's inode, and the source
@@ -216,6 +221,25 @@ def main():
         if not (os.path.exists(s) and os.path.exists(d) and os.path.samefile(s, d)):
             sys.exit(f"ERROR: verification failed for {d}")
         linked += 1
+
+    # Directories WE created must match the library root's owner:group (chris:media
+    # 0775). Jellyfin runs as jellyfin:media — NOT in `users` — so a season folder
+    # left group-`users` silently blocks it from writing .nfo and artwork beside
+    # the episodes. Only dirs created by this run are touched; pre-existing ones
+    # are left exactly as they were.
+    try:
+        rst = os.stat(root)
+    except OSError:
+        rst = None
+    if rst:
+        for dpath in sorted(set(made_dirs)):
+            try:
+                os.chown(dpath, rst.st_uid, rst.st_gid)
+                os.chmod(dpath, 0o775)
+            except OSError as e:
+                print(f"  WARN: could not set owner/mode on {dpath}: {e}",
+                      file=sys.stderr)
+
     print(f"linked {linked} file(s); sources untouched (seeds intact)")
 
 
