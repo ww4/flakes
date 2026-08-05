@@ -161,10 +161,29 @@ let
 
     # Skip silently if keys aren't filled in yet — avoids notification noise
     # during the period between deploying this module and the user pasting keys.
-    if ! grep -qE '^sonarr_api_key: \S' ${appData}/secrets.yml \
-       || ! grep -qE '^radarr_api_key: \S' ${appData}/secrets.yml ; then
-      echo "  /var/lib/recyclarr/secrets.yml has empty API keys — skipping sync."
-      echo "  Fill in sonarr_api_key + radarr_api_key from the *arr UIs to enable."
+    # The guard is strict on purpose — the key must sit at column 0 as
+    # `key: value`, because that is the only form recyclarr's YAML parser
+    # accepts. But "empty" was a misleading thing to report: a key that IS
+    # present and merely mis-indented, or missing the space after the colon,
+    # produced the exact same "empty API keys" line and sent you hunting for a
+    # value that was already there. Distinguish the two cases.
+    missing=0
+    for key in sonarr radarr; do
+      if grep -qE "^''${key}_api_key: \S" ${appData}/secrets.yml; then
+        continue
+      fi
+      missing=1
+      if grep -qE "^[[:space:]]*''${key}_api_key:[[:space:]]*\S" ${appData}/secrets.yml; then
+        echo "  ''${key}_api_key IS set but malformed — recyclarr will not read it."
+        echo "  It must start at column 0 with exactly one space after the colon:"
+        echo "    ''${key}_api_key: <value>"
+        echo "  (check for leading whitespace, a tab, or no space after the colon)"
+      else
+        echo "  ''${key}_api_key is empty — fill it from the *arr UI (Settings > General > API Key)."
+      fi
+    done
+    if [ "$missing" -ne 0 ]; then
+      echo "  Skipping sync."
       exit 0
     fi
 
