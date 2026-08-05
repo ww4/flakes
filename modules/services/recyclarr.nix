@@ -120,6 +120,35 @@ let
             reset_unmatched_scores:
               enabled: true
 
+          # Movie-side twin of the Sonarr profile of the same name, so animated
+          # FILMS get the same "prefer RetroToon even one notch down" behaviour
+          # that retro TV already has. Identical grouping on purpose: 1080p and
+          # 720p in one tier makes them equal, which is the only thing that lets
+          # the Prowlarr indexer priority (RetroToon=1, publics=25) outrank a
+          # better public release. Radarr uses the same quality spellings as
+          # Sonarr for these eight.
+          #
+          # Assign it per-movie in Radarr; the stock HD Bluray + WEB profile is
+          # untouched and stays the default for everything else.
+          - name: Retro Animation
+            upgrade:
+              allowed: true
+              until_quality: HD
+              until_score: 10000
+            min_format_score: 0
+            quality_sort: top
+            qualities:
+              - name: HD
+                qualities:
+                  - Bluray-1080p
+                  - WEBDL-1080p
+                  - WEBRip-1080p
+                  - HDTV-1080p
+                  - Bluray-720p
+                  - WEBDL-720p
+                  - WEBRip-720p
+                  - HDTV-720p
+
         custom_format_groups:
           add:
             - trash_id: f8bf8eab4617f12dfdbd16303d8da245  # [Optional] Golden Rule HD
