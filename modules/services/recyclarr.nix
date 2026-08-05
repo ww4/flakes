@@ -40,8 +40,24 @@ let
         # templates.json still lists names, but those are starter configs for
         # `recyclarr config create`, not includes. The WEB-1080p template's
         # contents are therefore inlined below.
+
+        # `anime`, not `series` — this is a SIZE FLOOR, and TRaSH's series floors
+        # are calibrated for live-action bitrates. Efficient x265 cartoon encodes
+        # fall under them and are rejected outright, which silently defeated the
+        # entire RetroToon preference: every RetroToon release for The Jetsons was
+        # thrown out with e.g. "7.2 GB is smaller than minimum allowed 30.7 GB
+        # (for 24x 624min)", so a 37 GB x264 public release won by default.
+        # RetroToon's encodes run 11.5-11.8 MB/min; the series floors are 15 for
+        # 1080p WEB and 50.4 for Bluray-1080p, while the anime floors are 5.
+        #
+        # ⚠️ Quality definitions are GLOBAL — Sonarr has no per-profile size
+        # limit — so this lowers the floor for live-action too. Real trade-off,
+        # mitigated by the fact that a floor only decides what is ELIGIBLE, never
+        # what is preferred: ranking still favours the better release, and
+        # TRaSH's LQ / LQ (Release Title) / Upscaled custom formats (applied to
+        # WEB-1080p) filter junk far more precisely than a size proxy does.
         quality_definition:
-          type: series
+          type: anime
 
         custom_format_groups:
           add:
@@ -112,8 +128,12 @@ let
         delete_old_custom_formats: true
 
         # Inlined for the same reason as Sonarr above (includes registry is empty).
+        # Same anime-floor reasoning as Sonarr above; animated FILMS hit the
+        # identical wall (radarr movie floors: Bluray-1080p 50.8, WEB-1080p 12.5
+        # MB/min vs anime 5), so the Retro Animation movie profile would be
+        # defeated the same way.
         quality_definition:
-          type: movie
+          type: anime
 
         quality_profiles:
           - trash_id: d1d67249d3890e49bc12e275d989a7e9  # HD Bluray + WEB
