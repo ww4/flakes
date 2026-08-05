@@ -56,6 +56,7 @@
     ./modules/services/media-mirror.nix
     ./modules/services/media-curate.nix      # backed-up tag sweep + YouTube promote (needs Jellyfin key to activate)
     ./modules/services/media-link.nix        # hardlink completed downloads into the library (keeps seeds alive)
+    ./modules/services/arr-missing-sweep.nix  # weekly missing-episode/movie search (Sonarr has no recurring one)
     ./modules/services/bub-mirror.nix
     ./modules/services/remote-desktop.nix
     ./modules/services/meshcentral.nix       # MeshCentral server (remote mgmt)
