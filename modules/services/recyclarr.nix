@@ -120,6 +120,21 @@ let
                   - WEBRip-720p
                   - HDTV-720p
 
+              # SD fallback, ranked BELOW the HD group so it is only ever taken
+              # when no HD release exists — genuinely old animation often has no
+              # HD master at all (RetroToon had a DVD copy of Jetsons S02 that was
+              # refused outright with "DVD is not wanted in profile"). Upgrades
+              # stay allowed up to HD, so an SD grab is replaced automatically if
+              # an HD release turns up later.
+              - name: SD
+                qualities:
+                  - Bluray-576p
+                  - Bluray-480p
+                  - DVD
+                  - WEBDL-480p
+                  - WEBRip-480p
+                  - SDTV
+
     radarr:
       movies:
         base_url: http://localhost:7878
@@ -168,6 +183,25 @@ let
                   - WEBDL-720p
                   - WEBRip-720p
                   - HDTV-720p
+
+              # SD fallback, ranked BELOW the HD group so it is only ever taken
+              # when no HD release exists — genuinely old animation often has no
+              # HD master at all (RetroToon had a DVD copy of Jetsons S02 that was
+              # refused outright with "DVD is not wanted in profile"). Upgrades
+              # stay allowed up to HD, so an SD grab is replaced automatically if
+              # an HD release turns up later.
+              # NB: Radarr also exposes CAM / TELESYNC / TELECINE / WORKPRINT /
+              # DVDSCR / REGIONAL. Deliberately excluded — those are pre-release
+              # cam rips, not a legitimate SD source for anything.
+              - name: SD
+                qualities:
+                  - Bluray-576p
+                  - Bluray-480p
+                  - DVD
+                  - DVD-R
+                  - WEBDL-480p
+                  - WEBRip-480p
+                  - SDTV
 
         custom_format_groups:
           add:
