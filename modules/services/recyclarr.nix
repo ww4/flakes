@@ -48,10 +48,11 @@ let
             - trash_id: 158188097a58d7687dee647e04af0da3  # [Optional] Golden Rule HD
               select:
                 - 47435ece6b99a0b477caf360e79ba0bb  # x265 (HD)
+            # No `select:` here — both CFs in this group (HD Streaming Boost,
+            # UHD Streaming Boost) are marked required=true upstream, so
+            # recyclarr always includes them and listing them warned
+            # "Selecting required CF ... is redundant" on every daily run.
             - trash_id: 85fae4a2294965b75710ef2989c850eb  # [Streaming Services] HD/UHD boost
-              select:
-                - 218e93e5702f44a68ad9e3c6ba87d2f0  # HD Streaming Boost
-                - 43b3cf48cb385cd3eac608ee6bca7f09  # UHD Streaming Boost
             - trash_id: 59c3af66780d08332fdc64e68297098f  # [Unwanted] Unwanted Formats
               select:
                 - 15a05bc7c1a36e2b57fd628f8977e2fc  # AV1
@@ -118,6 +119,35 @@ let
           - trash_id: d1d67249d3890e49bc12e275d989a7e9  # HD Bluray + WEB
             reset_unmatched_scores:
               enabled: true
+
+          # Movie-side twin of the Sonarr profile of the same name, so animated
+          # FILMS get the same "prefer RetroToon even one notch down" behaviour
+          # that retro TV already has. Identical grouping on purpose: 1080p and
+          # 720p in one tier makes them equal, which is the only thing that lets
+          # the Prowlarr indexer priority (RetroToon=1, publics=25) outrank a
+          # better public release. Radarr uses the same quality spellings as
+          # Sonarr for these eight.
+          #
+          # Assign it per-movie in Radarr; the stock HD Bluray + WEB profile is
+          # untouched and stays the default for everything else.
+          - name: Retro Animation
+            upgrade:
+              allowed: true
+              until_quality: HD
+              until_score: 10000
+            min_format_score: 0
+            quality_sort: top
+            qualities:
+              - name: HD
+                qualities:
+                  - Bluray-1080p
+                  - WEBDL-1080p
+                  - WEBRip-1080p
+                  - HDTV-1080p
+                  - Bluray-720p
+                  - WEBDL-720p
+                  - WEBRip-720p
+                  - HDTV-720p
 
         custom_format_groups:
           add:
