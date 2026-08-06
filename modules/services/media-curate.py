@@ -77,6 +77,14 @@ MOVED, ALREADY, UNNAMED = "moved", "already", "unnamed"
 # once and the seed keeps working. Everything else (youtube/metube inbox) is
 # still MOVED, so the inbox actually drains.
 LINK_DONT_MOVE = ["arr", "pinchflat"]
+
+# Paths under FUSION that Sonarr/Radarr own. Collection-promoting from here is
+# refused — the apps have a correct promotion of their own (Root Folder ->
+# /keepers/{tv,movies}), and doing it from this side duplicates the item in
+# Jellyfin and desynchronises *arr. NB this is deliberately NOT all of `arr/`:
+# arr/manual and arr/downloads hold content no *arr manages (hand-added packs,
+# releases whose series *arr cannot match), and those still belong to this tool.
+ARR_MANAGED = ["arr/media"]
 BRANCHES = sorted(glob.glob(os.environ.get("FUSION_BRANCHES", "/mnt/primary/D*")))
 
 
@@ -354,6 +362,14 @@ def _inherit_owner(dst):
             return
 
 
+def arr_managed(path):
+    """Is `path` inside a tree Sonarr/Radarr manages? (see ARR_MANAGED)"""
+    rel = os.path.relpath(path, FUSION)
+    if rel.startswith(".."):
+        return False
+    return any(rel == p or rel.startswith(p + "/") for p in ARR_MANAGED)
+
+
 def link_dont_move(path):
     """Is `path` somewhere a move would break another owner (see LINK_DONT_MOVE)?"""
     rel = os.path.relpath(path, FUSION)
@@ -548,6 +564,26 @@ def cmd_promote(apply):
                 # the collection — self-heals stragglers within the window
                 # before Jellyfin rescans the old item away.
                 pending.setdefault(oid, 0)
+                continue
+            if arr_managed(it["Path"]):
+                # Sonarr/Radarr own this file. Promoting it from the collection
+                # would HARDLINK it into tier 2 while leaving the *arr copy in
+                # place — so Jellyfin shows the item twice (arr/media AND the
+                # tier-2 library), and *arr goes on tracking a path that is no
+                # longer canonical. The apps already do this properly: changing
+                # the series/movie Root Folder to /keepers/{tv,movies} MOVES the
+                # file and updates their database, leaving one copy, one Jellyfin
+                # entry, and the seed intact (the *arr library file is a hardlink
+                # to the download, so moving it never touches the torrent data).
+                # Refuse and say so, rather than silently duplicating.
+                failures.append((it["Name"],
+                                 "managed by Sonarr/Radarr — promote it there by setting "
+                                 "Root Folder to /keepers/tv or /keepers/movies (that MOVES "
+                                 "it and keeps *arr tracking; this collection would hardlink "
+                                 "and leave a duplicate)"))
+                print(f"  SKIP {it['Name']}: *arr-managed, use the Root Folder instead")
+                pending.setdefault(oid, 0)
+                pending[oid] += 1     # leave it attached so it stays visible
                 continue
             try:
                 outcome = handler(it)
