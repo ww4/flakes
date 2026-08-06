@@ -93,7 +93,13 @@ EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclu
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Notification failures must never abort a backup.
-notify() { gromit-notify "$1" "$2" "${3:-default}" "${4:-}" || true; }
+# $5 = optional click-URL: makes the whole ntfy notification tappable.
+notify() { gromit-notify "$1" "$2" "${3:-default}" "${4:-}" "${5:-}" || true; }
+
+# The review page in the SilverBullet space. Notifications are read on a phone,
+# where a path like /var/lib/media-mirror/pending-deleted.txt is useless — you
+# cannot open it without SSHing in. Tapping this opens the same list, rendered.
+SPACE_URL="https://notes.rosemaryacres.com/System/Media%20Sync"
 
 # Centralized, phone-readable sync report published into the SilverBullet space,
 # so the last run's result is one tap away at notes.rosemaryacres.com/System/Media
@@ -351,14 +357,14 @@ Run 'media-mirror status' and check the drives." \
     status="OK — nothing queued"
     notify "Media mirror OK" \
       "Weekly sync complete. $copied files copied. Nothing queued." \
-      low floppy_disk
+      low floppy_disk "$SPACE_URL"
   elif [ "$ndeleted" -eq 0 ]; then
     status="OK — $nmoved moved-path cleanup"
     notify "Media mirror OK — $nmoved moved" \
 "$copied files copied. $nmoved file(s) moved/renamed within fusion
 (content preserved); their stale backup paths are queued for cleanup.
 No genuine deletions." \
-      low floppy_disk
+      low floppy_disk "$SPACE_URL"
   else
     # The review queue isn't urgent — nothing is deleted until you approve — so
     # don't blast at high priority, and go silent (low) during quiet hours
@@ -370,9 +376,8 @@ No genuine deletions." \
     notify "Media mirror — $ndeleted deletion(s) need review" \
 "$copied copied.
 approve clears $n stale backup path(s): $ndeleted genuine deletion(s) + $nmoved moved-path cleanup(s).
-Review the genuine list: $DELETED
-Run: sudo media-mirror approve$([ "$n" -gt "$MAX_DELETE" ] && printf ' %s' "$n")  (cap $MAX_DELETE)" \
-      "$rprio" "warning,floppy_disk"
+Tap to review the list, then: sudo media-mirror approve$([ "$n" -gt "$MAX_DELETE" ] && printf ' %s' "$n")  (cap $MAX_DELETE)" \
+      "$rprio" "warning,floppy_disk" "$SPACE_URL"
   fi
   publish_report "$status" "$copied" "$nmoved" "$ndeleted" "$n" "$ts" || true
   echo "sync done: $copied copied, $nmoved moved, $ndeleted genuine deletions"
@@ -445,7 +450,7 @@ If this large batch is expected, re-run: sudo media-mirror approve <limit>" \
 Skipped (reappeared in source — NOT deleted): $skipped_present
 Recover:   sudo media-mirror recover $ts
 Auto-pruned after $GRAVEYARD_RETENTION_DAYS days." \
-    default wastebasket
+    default wastebasket "$SPACE_URL"
   echo "approve done: $moved graveyarded, $skipped_present skipped (present in source), $already_gone already gone -> $dest"
 }
 
