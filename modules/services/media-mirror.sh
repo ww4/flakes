@@ -68,10 +68,28 @@ AUTOREMOUNT_STATE=/var/lib/pool-autoremount
 # /immich/library, so mirroring them is waste and they churn the review queue
 # every time Immich rebuilds them (e.g. a version bump). Excluded 2026-06-28.
 # KEPT on purpose: /immich/library (the originals), /immich/upload (in-flight
-# uploads → become library), /immich/profile (user images), and /immich/backups
-# (Immich's DB dumps — NOT regenerable from photos; the metadata/album/face
-# restore safety. They rotate, so they cause a little benign queue churn.)
-EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclude=/arr --exclude=/pinchflat --exclude=/rick-offsite --exclude=/bitcoind --exclude=/archive --exclude=/legacy --exclude=/immich/thumbs --exclude=/immich/encoded-video)
+# uploads → become library), /immich/profile (user images).
+#
+# /immich/backups — REVERSED 2026-08-06. It was previously kept on the grounds
+# that the DB dumps are NOT regenerable from photos (they carry albums, faces
+# and other metadata) and that the rotation churn was "a little benign". Both
+# halves turned out to be wrong in practice:
+#   - Not the only copy. /mnt/fusion/immich is in restic's criticalPaths and
+#     criticalExclude does NOT skip backups, so the dumps already go OFFSITE to
+#     B2 with 7-daily/4-weekly/6-monthly retention. The local mirror copy was a
+#     convenience, not the safety net.
+#   - The churn was not benign. Immich writes a dump nightly at 01:15 and
+#     rotates old ones out, so every aged-out dump lands in the deletion review
+#     queue. On 2026-08-02 that was 34 of 35 queued "deletions" — 97% noise. A
+#     review queue that is almost entirely predictable churn stops being read,
+#     which is exactly how a genuine deletion slips through (cf. the 2026-06-14
+#     incident, where a queue produced during a drive flap nearly cost live
+#     backups).
+# NOTE: an --exclude also PROTECTS the destination, so dumps already mirrored
+# stay in the backup pool rather than being queued for cleanup. Clear them once
+# by hand (or approve the current queue BEFORE this deploys) — after that the
+# path is simply never touched again.
+EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclude=/arr --exclude=/pinchflat --exclude=/rick-offsite --exclude=/bitcoind --exclude=/archive --exclude=/legacy --exclude=/immich/backups --exclude=/immich/thumbs --exclude=/immich/encoded-video)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Notification failures must never abort a backup.
