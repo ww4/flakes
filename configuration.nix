@@ -28,6 +28,7 @@
     ./modules/agent/claude-user.nix
     ./modules/agent/openwebui-secret.nix    # gromit-only: agent's Open WebUI API key (sops)
     ./modules/agent/arr-api-secret.nix      # gromit-only: agent's Sonarr/Radarr/Prowlarr API keys (sops)
+    ./modules/agent/jellyfin-api-secret.nix # gromit-only: agent's Jellyfin API key (sops)
     ./modules/agent/sudo.nix
     ./modules/agent/comin.nix               # GitOps applier — rebuilds on merge to main
     ./modules/agent/claude-harness.nix      # root-owned managed settings + guard for the agent
