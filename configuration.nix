@@ -74,6 +74,7 @@
     ./modules/services/arr.nix              # Prowlarr + Sonarr + Radarr + Jellyseerr + Gluetun + qBittorrent
     ./modules/services/mam-seedbox.nix      # INERT (enable=false): registers the AirVPN exit IP with MAM's dynamic-seedbox API on change
     ./modules/services/recyclarr.nix        # Daily TRaSH-Guides profile sync into Sonarr/Radarr
+    ./modules/services/arr-settings.nix     # declarative Sonarr/Radarr/Prowlarr app settings (recyclarr owns profiles/CFs)
     ./modules/services/decluttarr.nix       # auto-reaps stalled+failed downloads, re-searches
     ./modules/services/lidarr.nix           # music manager (Lidarr)
     ./modules/services/lazylibrarian.nix    # ebook/audiobook manager (Readarr successor)
