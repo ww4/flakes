@@ -29,7 +29,6 @@ let
   # through open-application windows. It's the same single feed fetch either way
   # (zero extra traffic), so widening coverage is free. Trim any you don't want.
   watchlist = [
-    { name = "TorrentLeech";  regex = "torrentleech|\\(TL\\)"; }      # periodic open registration
     { name = "IPTorrents";    regex = "iptorrents|\\(IPT\\)"; }       # classic low-friction general
     { name = "TorrentDay";    regex = "torrentday|\\(TD\\)"; }        # general, opens periodically
     { name = "AlphaRatio";    regex = "alpharatio|\\(AR\\)"; }        # general
@@ -39,6 +38,10 @@ let
     { name = "Anthelion";     regex = "anthelion|\\(ATH\\)"; }        # UNIT3D, movies
     { name = "FileList";      regex = "filelist|\\(FL\\)"; }          # general, application
     { name = "ReelFliX";      regex = "reelflix|\\(RF\\)"; }          # UNIT3D, movies
+    # NOTE: TorrentLeech removed 2026-08-08 — signups opened and Chris got an
+    # account, so alerts for it are now noise. It is a configured Prowlarr
+    # indexer (private, priority 5, routed via the flaresolverr tag because TL
+    # sits behind a Cloudflare challenge). Re-add here only if the account lapses.
     # NOTE: SpeedApp + SuperBits removed 2026-07-28 — both confirmed to gate on
     # PROOF of an existing tracker account (SpeedApp: profile URL + screenshots,
     # form openly hostile to newbies; SuperBits: 2TB upload + >1.0 ratio on
