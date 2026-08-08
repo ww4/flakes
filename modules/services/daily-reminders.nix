@@ -15,6 +15,8 @@
 #   url      tapping the notification opens this (ntfy "Click:" header)
 #   time     systemd OnCalendar time-of-day, local (gromit runs America/New_York)
 #   tags     ntfy tags/emoji, comma-separated
+#   calendar OPTIONAL full OnCalendar expression, for anything not daily. When
+#            set it replaces the daily default entirely and `time` is ignored.
 { config, lib, pkgs, ... }:
 
 let
@@ -33,10 +35,22 @@ let
       time = "09:00";
       tags = "film_projector,gift";
     }
+    {
+      name = "dc-login";
+      title = "DigitalCore — sign in to keep the account";
+      message = "DC disables accounts after 90 days without a sign-in. Tap, log in, done.";
+      url = "https://digitalcore.club/";
+      # Monthly, not daily: the only requirement is *a* sign-in inside a 90-day
+      # window, so once a month clears it with 3x margin while staying quiet.
+      # The 1st is deliberate — an easy-to-recognise date, and Persistent=true
+      # means a reboot-straddled 1st still fires late rather than being skipped.
+      calendar = "*-*-01 09:00:00";
+      tags = "floppy_disk,key";
+    }
   ];
 
   mkService = r: lib.nameValuePair "reminder-${r.name}" {
-    description = "Daily reminder: ${r.title}";
+    description = "Reminder: ${r.title}";
     # Notification-only: if ntfy is down there is nothing to retry and no state
     # to corrupt, so a failed run is a genuine failed unit (surfaces in /health).
     serviceConfig = {
@@ -53,10 +67,10 @@ let
   };
 
   mkTimer = r: lib.nameValuePair "reminder-${r.name}" {
-    description = "Daily reminder timer: ${r.title}";
+    description = "Reminder timer: ${r.title}";
     wantedBy = [ "timers.target" ];
     timerConfig = {
-      OnCalendar = "*-*-* ${r.time}:00";
+      OnCalendar = r.calendar or "*-*-* ${r.time}:00";
       # If gromit was down at the scheduled time, still nudge once on boot —
       # a missed reminder is the one failure mode that defeats the purpose.
       Persistent = true;
