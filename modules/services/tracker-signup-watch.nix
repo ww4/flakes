@@ -32,12 +32,17 @@ let
     { name = "IPTorrents";    regex = "iptorrents|\\(IPT\\)"; }       # classic low-friction general
     { name = "TorrentDay";    regex = "torrentday|\\(TD\\)"; }        # general, opens periodically
     { name = "AlphaRatio";    regex = "alpharatio|\\(AR\\)"; }        # general
-    { name = "DigitalCore";   regex = "digitalcore|\\(DC\\)"; }       # general
     { name = "Blutopia";      regex = "blutopia|\\(BLU\\)"; }         # UNIT3D, HD movies/TV
     { name = "Aither";        regex = "aither"; }                     # UNIT3D, movies/TV
     { name = "Anthelion";     regex = "anthelion|\\(ATH\\)"; }        # UNIT3D, movies
     { name = "FileList";      regex = "filelist|\\(FL\\)"; }          # general, application
     { name = "ReelFliX";      regex = "reelflix|\\(RF\\)"; }          # UNIT3D, movies
+    # NOTE: DigitalCore removed 2026-08-08 — same day, same reason as TL below:
+    # Chris got in, so it is now a configured Prowlarr indexer rather than
+    # something to wait for. DC authenticates with an API key (Settings ->
+    # Security), not a login, and is NOT behind Cloudflare, so it needs no
+    # flaresolverr tag. See also the dc-login reminder in daily-reminders.nix:
+    # DC disables accounts after 90 days without a sign-in.
     # NOTE: TorrentLeech removed 2026-08-08 — signups opened and Chris got an
     # account, so alerts for it are now noise. It is a configured Prowlarr
     # indexer (private, priority 5, routed via the flaresolverr tag because TL
