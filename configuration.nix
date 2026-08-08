@@ -77,6 +77,7 @@
     ./modules/services/recyclarr.nix        # Daily TRaSH-Guides profile sync into Sonarr/Radarr
     ./modules/services/arr-settings.nix     # declarative Sonarr/Radarr/Prowlarr app settings (recyclarr owns profiles/CFs)
     ./modules/services/decluttarr.nix       # auto-reaps stalled+failed downloads, re-searches
+    ./modules/services/unpackerr.nix        # extracts RAR-packed Scene releases so *arr can import them
     ./modules/services/lidarr.nix           # music manager (Lidarr)
     ./modules/services/lazylibrarian.nix    # ebook/audiobook manager (Readarr successor)
     ./modules/services/aurral.nix           # Jellyseerr-for-music (Aurral -> Lidarr)
