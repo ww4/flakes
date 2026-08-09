@@ -85,7 +85,12 @@ let
     excludeShellChecks = [ "SC1091" ];
     text = ''
       set -euo pipefail
+      # Export so the python child inherits the *_API_KEY vars (sibling
+      # arr-missing-sweep gets away without this because it consumes the vars
+      # in-shell via curl; we hand them to a subprocess).
+      set -a
       . ${config.sops.secrets."arr-api".path}
+      set +a
       out=$(${pkgs.python3}/bin/python3 ${./arr-settings.py} ${specFile} 2>&1) || rc=$?
       echo "$out"
       # Only ping when something actually moved — a converged run is silent.
