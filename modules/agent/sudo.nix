@@ -43,6 +43,18 @@ in
         # new read powers. The bare-name rule can't be abused for non-docker
         # units since the prefix is fixed.
         { command = "${sw}/systemctl restart docker-*";             options = nopw; }
+        # Restart the two bitcoind CREDENTIAL-STAGING units (added 2026-08-09
+        # after the mempool cookie-race diagnosis: the agent found the root
+        # cause — both units staged a stale bitcoind cookie and had been
+        # 401ing for 17 days — but could not apply the one-line fix, and Chris
+        # was away from a terminal. Restart-only, two exact unit names, no
+        # wildcard. Both are stateless credential re-stagers: they re-read
+        # bitcoind's .cookie and re-probe until it authenticates, so a restart
+        # can only ever refresh a credential, never destroy data or leave
+        # something down. Deliberately NOT bitcoind itself — restarting the
+        # node risks a multi-hour reindex (see the 2026-06-11 incident).
+        { command = "${sw}/systemctl restart fulcrum";              options = nopw; }
+        { command = "${sw}/systemctl restart mempool-cookie-sync";  options = nopw; }
 
         # Hardlink completed downloads into the Jellyfin library. Needs root only
         # because fs.protected_hardlinks=1 forbids linking a file the agent

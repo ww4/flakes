@@ -52,14 +52,49 @@ in
       # bitcoind writes its .cookie 0600 chris:users, which the fulcrum user
       # can't read — stage a fulcrum-owned copy as root before each start, so a
       # bitcoind restart's fresh cookie is always picked up.
+      #
+      # ⚠️ This USED to be `until [ -f <cookie> ]; do sleep 2; done` + install.
+      # That waits for the cookie to EXIST, not to be CURRENT — and on a
+      # simultaneous boot the file already exists (bitcoind's PREVIOUS one), so
+      # the guard returned instantly and we staged a DEAD password. Cost:
+      # 2026-07-23 → 08-09, 17 days of silent breakage — bitcoind logging
+      # "incorrect password attempt", Fulcrum never opening :50001, mempool's
+      # API 500ing — with every unit reporting healthy the entire time.
+      #
+      # Now: re-read and re-stage the cookie until bitcoind actually ACCEPTS it.
+      # The HTTP status is the discriminator, and 401 is the ONLY code meaning
+      # "wrong cookie":
+      #   401 → stale cookie (bitcoind rotated it) → re-copy and retry
+      #   000 → RPC not listening yet → retry
+      #   *   → AUTH SUCCEEDED. 503 ("Loading block index") and 500 both prove
+      #         the credential is good; bitcoind is merely warming up, which is
+      #         Fulcrum's job to wait through, not ours. Treating those as
+      #         failure would deadlock startup on a slow chain load.
       ExecStartPre = [
         ''+${pkgs.writeShellScript "fulcrum-cookie" ''
-          set -e
-          until [ -f /mnt/fusion/bitcoind/.cookie ]; do sleep 2; done
-          ${pkgs.coreutils}/bin/install -o fulcrum -g fulcrum -m 0400 \
-            /mnt/fusion/bitcoind/.cookie ${dataDir}/.cookie
+          set -eu
+          for _ in $(${pkgs.coreutils}/bin/seq 1 150); do
+            if [ -f /mnt/fusion/bitcoind/.cookie ]; then
+              ${pkgs.coreutils}/bin/install -o fulcrum -g fulcrum -m 0400 \
+                /mnt/fusion/bitcoind/.cookie ${dataDir}/.cookie
+              code=$(${pkgs.curl}/bin/curl -sS -o /dev/null -w '%{http_code}' \
+                --max-time 5 --user "$(${pkgs.coreutils}/bin/cat ${dataDir}/.cookie)" \
+                --data-binary '{"jsonrpc":"1.0","id":"probe","method":"uptime","params":[]}' \
+                -H 'content-type: text/plain;' http://127.0.0.1:8332/ 2>/dev/null || echo 000)
+              case "$code" in
+                401|000) ;;
+                *) exit 0 ;;
+              esac
+            fi
+            ${pkgs.coreutils}/bin/sleep 2
+          done
+          echo "fulcrum-cookie: bitcoind never accepted the cookie after 5 min" >&2
+          exit 1
         ''}''
       ];
+      # The probe loop can run up to 5 min; the default 90s start timeout would
+      # kill it mid-wait and mask the very failure it exists to prevent.
+      TimeoutStartSec = "600s";
       ExecStart = "${pkgs.fulcrum}/bin/Fulcrum ${fulcrumConf}";
       Restart = "on-failure";
       RestartSec = 30;
