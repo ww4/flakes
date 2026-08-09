@@ -64,12 +64,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"Current time on gromit: %s. This is authoritative — prefer it over any date stated earlier in the session, and over your own assumption about how much time has passed.\"}}' \"$(date \"+%A %Y-%m-%d %H:%M:%S %Z (UTC%:z), epoch %s\")\"",
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[clock] %s\"}}' \"$(date \"+%Y-%m-%d %H:%M:%S %Z %A (UTC%:z, epoch %s)\")\"",
             "timeout": 5
           }
         ]
       }
     ]
   },
-  "_comment_clock": "UserPromptSubmit clock: the agent is stateless and its system-prompt date is DATE-ONLY and fixed at session start, so in a long session it can reason from a stale day (it scheduled an ntfy reminder off a day-old date on 2026-08-09). This injects the real local time on every prompt. Cheap (~4ms, no jq) and additive — it grants no capability and cannot block a prompt."
+  "_comment_clock": "UserPromptSubmit clock: the agent is stateless and its system-prompt date is DATE-ONLY and fixed at session start, so in a long session it reasons from a stale day (it scheduled an ntfy reminder off a day-old date on 2026-08-09). Emits ONLY a stamped observation. Deliberately NO \"this is authoritative\" sentence: it would be duplicated on every prompt (~2.4k wasted tokens per session at the 61-prompt rate of that session) and every past line would assert primacy just as loudly while disagreeing about the time. RESOLUTION RULE (Chris, 2026-08-09): HIGHEST TIMESTAMP WINS - no stamp can be from the future, so the largest epoch is always now. That is derivable from the values themselves, so it survives compaction reordering in a way that last-one-by-position does not. Stated once in the agent time-reasoning memory. ~4ms, no jq, cannot block a prompt."
 }
