@@ -96,14 +96,42 @@ in
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
+      # The cookie probe can loop up to 5 min; the default 90s start timeout
+      # would kill it mid-wait and mask the failure it exists to prevent.
+      TimeoutStartSec = "600s";
     };
     script = ''
-      set -e
-      until [ -f /mnt/fusion/bitcoind/.cookie ] ; do sleep 2 ; done
-      # Cookie format: __cookie__:<password>. Strip the prefix; emit as env.
-      pw=$(cut -d: -f2 /mnt/fusion/bitcoind/.cookie)
-      umask 077
-      printf 'CORE_RPC_PASSWORD=%s\n' "$pw" > /var/lib/mempool/rpc.env
+      set -eu
+      # ⚠️ This USED to be `until [ -f <cookie> ]; do sleep 2; done` then a
+      # single read. That waits for the cookie to EXIST, not to be CURRENT, so
+      # on a simultaneous boot it staged bitcoind's PREVIOUS password and the
+      # API 500'd for 17 days (2026-07-23 → 08-09) while every unit looked
+      # healthy. Same root cause, same fix, as services/fulcrum.nix.
+      #
+      # Re-read the cookie until bitcoind ACCEPTS it. 401 is the only status
+      # meaning "wrong cookie"; 503 ("Loading block index") / 500 prove auth
+      # already succeeded and the node is just warming up.
+      for _ in $(seq 1 150); do
+        if [ -f /mnt/fusion/bitcoind/.cookie ]; then
+          code=$(${pkgs.curl}/bin/curl -sS -o /dev/null -w '%{http_code}' \
+            --max-time 5 --user "$(cat /mnt/fusion/bitcoind/.cookie)" \
+            --data-binary '{"jsonrpc":"1.0","id":"probe","method":"uptime","params":[]}' \
+            -H 'content-type: text/plain;' http://127.0.0.1:8332/ 2>/dev/null || echo 000)
+          case "$code" in
+            401|000) ;;
+            *)
+              # Cookie format: __cookie__:<password>. Strip the prefix; emit as env.
+              pw=$(cut -d: -f2 /mnt/fusion/bitcoind/.cookie)
+              umask 077
+              printf 'CORE_RPC_PASSWORD=%s\n' "$pw" > /var/lib/mempool/rpc.env
+              exit 0
+              ;;
+          esac
+        fi
+        sleep 2
+      done
+      echo "mempool-cookie-sync: bitcoind never accepted the cookie after 5 min" >&2
+      exit 1
     '';
   };
 
