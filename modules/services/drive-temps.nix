@@ -47,6 +47,20 @@ let
       {
         echo "# HELP gromit_drive_temp_celsius Drive temperature C (smartctl; standby/idle drives omitted)."
         echo "# TYPE gromit_drive_temp_celsius gauge"
+        # SMART health/failure attributes — the real "is this drive failing?"
+        # signals, from the SAME smartctl read (2026-08-10). smart_ok is the
+        # overall self-assessment; the sector counts flag developing failure
+        # before it becomes a hard fault.
+        echo "# HELP gromit_drive_smart_ok SMART overall-health self-assessment (1=PASSED,0=FAILED)."
+        echo "# TYPE gromit_drive_smart_ok gauge"
+        echo "# HELP gromit_drive_reallocated_sectors SMART attr 5 raw (reallocated sectors)."
+        echo "# TYPE gromit_drive_reallocated_sectors gauge"
+        echo "# HELP gromit_drive_pending_sectors SMART attr 197 raw (current pending sectors)."
+        echo "# TYPE gromit_drive_pending_sectors gauge"
+        echo "# HELP gromit_drive_offline_uncorrectable SMART attr 198 raw (offline uncorrectable)."
+        echo "# TYPE gromit_drive_offline_uncorrectable gauge"
+        echo "# HELP gromit_drive_crc_errors SMART attr 199 raw (UDMA CRC errors — cable/link)."
+        echo "# TYPE gromit_drive_crc_errors gauge"
         for dev in /dev/sd[a-z]; do
           [ -b "$dev" ] || continue
           name=$(basename "$dev")
@@ -65,9 +79,10 @@ let
               ;;
           esac
           # USB bridges usually need -d sat,auto; direct SATA accepts it too.
-          j=$(smartctl -n standby -j -A -i -d sat,auto "$dev" 2>/dev/null) || true
+          # -H adds the overall-health self-assessment to the same JSON.
+          j=$(smartctl -n standby -j -H -A -i -d sat,auto "$dev" 2>/dev/null) || true
           if [ -z "''${j:-}" ] || [ -z "$(printf '%s' "$j" | jq -r '.temperature.current // empty' 2>/dev/null)" ]; then
-            j=$(smartctl -n standby -j -A -i "$dev" 2>/dev/null) || true
+            j=$(smartctl -n standby -j -H -A -i "$dev" 2>/dev/null) || true
           fi
           temp=$(printf '%s' "''${j:-}" | jq -r '.temperature.current // empty' 2>/dev/null || true)
           [ -n "$temp" ] || continue   # no temp = standby/unsupported -> skip (don't wake)
@@ -76,6 +91,15 @@ let
           tran=$(lsblk -dno TRAN "$dev" 2>/dev/null | tr -d ' ' || true)
           printf 'gromit_drive_temp_celsius{device="%s",model="%s",bus="%s",rotational="%s"} %s\n' \
             "$name" "''${model:-unknown}" "''${tran:-unknown}" "''${rota:-0}" "$temp"
+
+          # --- SMART health + failure attributes (same $j read) ---
+          ok=$(printf '%s' "$j" | jq -r 'if .smart_status.passed==true then 1 elif .smart_status.passed==false then 0 else empty end' 2>/dev/null || true)
+          [ -n "$ok" ] && printf 'gromit_drive_smart_ok{device="%s",model="%s"} %s\n' "$name" "''${model:-unknown}" "$ok"
+          for pair in "5:reallocated_sectors" "197:pending_sectors" "198:offline_uncorrectable" "199:crc_errors"; do
+            aid=''${pair%%:*}; mname=''${pair##*:}
+            raw=$(printf '%s' "$j" | jq -r --argjson id "$aid" 'first(.ata_smart_attributes.table[]? | select(.id==$id) | .raw.value) // empty' 2>/dev/null || true)
+            [ -n "$raw" ] && printf 'gromit_drive_%s{device="%s",model="%s"} %s\n' "$mname" "$name" "''${model:-unknown}" "$raw"
+          done
         done
       } > "$tmp" && mv "$tmp" "$out"
       mv "$newstate" "$state"
