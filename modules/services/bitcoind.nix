@@ -34,6 +34,21 @@
       rpcbind=0.0.0.0
       rpcallowip=127.0.0.1
       rpcallowip=172.16.0.0/12
+      # RPC CONCURRENCY. Defaults (rpcworkqueue=16, rpcthreads=4) are sized for a
+      # human with a wallet, not for mempool.space's indexer, which fans out a
+      # burst of getrawtransaction calls per block. When the queue fills bitcoind
+      # answers 503 and DROPS the rest — "Request rejected because http work
+      # queue depth exceeded", 135 times in 20h on 2026-08-09/10. mempool's
+      # $updateBlocks loop then wedges and its tip silently freezes hours behind
+      # while every service still reports healthy (it fired the sentinel
+      # api-content check four times: 08-09 16:23/21:41, 08-10 04:00/06:01, each
+      # ~3h stale, each self-recovering, then repeating on a ~6h sawtooth).
+      # A deeper queue costs memory only when actually queued; threads are idle
+      # when unused. Paired with the mempool cache-permission fix in
+      # services/mempool.nix — an unwritable cache is what makes mempool re-fetch
+      # hard enough to saturate the queue in the first place.
+      rpcworkqueue=64
+      rpcthreads=8
     '';
   };
 

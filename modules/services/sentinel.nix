@@ -92,35 +92,45 @@ let
   #
   # Every liveness signal we had was green the whole time: containers "Up",
   # units "active", and the FRONTEND happily serving HTTP 200. The only broken
-  # thing was /api/v1/blocks (500), because both bitcoind cookie-stagers had
-  # raced and held a dead password. Nothing watched it, so nobody knew.
+  # thing was /api/v1/blocks (500). The lesson generalises: for an app split
+  # into a web frontend and a backend API, probing the frontend proves almost
+  # nothing — it serves its bundle happily while everything behind it is dead.
   #
-  # The lesson generalises past mempool: for an app split into a web frontend
-  # and a backend API, probing the frontend proves almost nothing — it will
-  # serve its bundle happily while everything behind it is dead. So this checks
-  # the API endpoint that exercises the full chain, and validates the RESPONSE
-  # CONTENT, since HTTP 200 was itself the misleading signal.
+  # THREE probes, in order of how early they catch a real fault:
   #
-  # Two failure modes per probe:
-  #   1. non-200, or 200 with no parsable data at the jq path  -> backend broken
-  #   2. parsable but STALE  -> the chain behind it stopped advancing. This is
-  #      the mode a status-only check can never catch: bitcoind wedged mid-sync
-  #      still lets the API return a perfectly valid, perfectly frozen tip.
-  # Probes loopback, not the public URL, so a DNS/TLS/nginx problem doesn't
-  # masquerade as an application fault (those have their own checks).
+  #   1. DIVERGENCE (primary) — mempool's tip vs the REAL chain tip, read from
+  #      Fulcrum's Electrum port. This is the honest signal. It caught nothing
+  #      before 2026-08-10 because the check only measured wall-clock age, and
+  #      age is the wrong quantity: a tip 149 min old passed a 180 min limit
+  #      while mempool sat 14 BLOCKS behind, plainly broken. Blocks are ~10 min
+  #      apart and mempool normally trails by 0-1, so >=3 behind is unambiguous
+  #      and cannot flap on ordinary timing.
+  #      Fulcrum is the oracle rather than bitcoind because it needs no auth
+  #      (bitcoind's cookie is 0600 and unreadable by the sentinel user) and it
+  #      tracks bitcoind's tip exactly.
+  #
+  #   2. REACHABILITY — non-200 or unparsable => backend broken outright.
+  #
+  #   3. STALENESS (backstop) — catches the case divergence CANNOT see: the
+  #      whole stack frozen together, where mempool and Fulcrum agree because
+  #      neither is advancing. 6h, deliberately loose; divergence is the tripwire.
   apiCheck = pkgs.writeShellApplication {
     name = "sentinel-check-apis";
-    runtimeInputs = [ pkgs.curl pkgs.jq pkgs.coreutils pkgs.gnused ];
+    runtimeInputs = [ pkgs.curl pkgs.jq pkgs.coreutils pkgs.gnused pkgs.libressl ];
     text = ''
-      # name | url | jq expr yielding a unix timestamp | max age (seconds)
-      # 3h for bitcoin: blocks average 10 min but the tail is long, and an
-      # empty-mempool lull must not page anyone.
-      probes=(
-        "mempool|http://127.0.0.1:8081/api/v1/blocks|.[0].timestamp|10800"
-      )
       found=0
+
+      # --- the real chain tip, via Fulcrum's Electrum protocol (no auth) ---
+      chain=$(printf '{"jsonrpc":"2.0","id":1,"method":"blockchain.headers.subscribe","params":[]}\n' \
+        | timeout 15 nc 127.0.0.1 50001 2>/dev/null | head -1 \
+        | jq -r '.result.height // empty' 2>/dev/null || true)
+
+      # name | url | jq expr yielding a unix timestamp | max age (s) | jq expr yielding a height
+      probes=(
+        "mempool|http://127.0.0.1:8081/api/v1/blocks|.[0].timestamp|21600|.[0].height"
+      )
       for p in "''${probes[@]}"; do
-        IFS='|' read -r name url expr maxage <<< "$p"
+        IFS='|' read -r name url expr maxage hexpr <<< "$p"
         body=$(curl -sS --max-time 15 -w $'\n%{http_code}' "$url" 2>/dev/null || true)
         code=$(printf '%s' "$body" | tail -n1)
         json=$(printf '%s' "$body" | sed '$d')
@@ -128,12 +138,26 @@ let
           echo "$name: $url -> HTTP ''${code:-no-response}"
           found=1; continue
         fi
+
+        # 1. divergence vs the real chain tip
+        h=$(printf '%s' "$json" | jq -r "$hexpr" 2>/dev/null || true)
+        if [ -n "$chain" ] && [ -n "$h" ] && [ "$h" != "null" ]; then
+          lag=$(( chain - h ))
+          if [ "$lag" -ge 3 ]; then
+            echo "$name: BEHIND CHAIN by $lag blocks (mempool=$h, chain=$chain) — indexer stalled"
+            found=1; continue
+          fi
+        fi
+
+        # 2. usable data at all
         ts=$(printf '%s' "$json" | jq -r "$expr" 2>/dev/null || true)
         case "$ts" in
           ""|null|*[!0-9]*)
             echo "$name: $url returned 200 but no usable data at '$expr' (backend up, data broken)"
             found=1; continue ;;
         esac
+
+        # 3. staleness backstop (whole stack frozen together)
         age=$(( $(date +%s) - ts ))
         if [ "$age" -gt "$maxage" ]; then
           echo "$name: data STALE — newest entry $((age/60)) min old (limit $((maxage/60)) min)"
@@ -145,11 +169,6 @@ let
     '';
   };
 
-  # ─────────────────────────── EDIT ME ───────────────────────────
-  # The watcher config. `checks` is a list; each has an id, a type, and
-  # type-specific fields. Common optional fields: enabled (default true),
-  # severity (test|info|warning|critical), minConsecutive (debounce override),
-  # cooldownSec (re-alert suppression override).
   sentinelConfig = {
     enabled = true;
     pollSec = 120;          # informational; the systemd timer drives the cadence
