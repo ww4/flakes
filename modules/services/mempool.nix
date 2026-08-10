@@ -224,7 +224,16 @@ in
   systemd.tmpfiles.rules = [
     "d /var/lib/mempool         0755 root root - -"
     "d /var/lib/mempool/mysql   0755 root root - -"
-    "d /var/lib/mempool/cache   0755 root root - -"
+    # mempool/backend:latest runs `node backend/server.js` as uid 1001 / gid
+    # 65533 (verified via host `ps` — the container has no explicit User), and
+    # this dir is bind-mounted to /backend/cache. Left root-owned it could never
+    # be written: "EACCES: permission denied, open './cache/tmp-cache.json'".
+    # That is not cosmetic — with no cache the backend re-fetches block and tx
+    # data from bitcoind on every restart and after every hiccup, which is what
+    # saturates bitcoind's RPC work queue (see rpcworkqueue in bitcoind.nix).
+    # Numeric on purpose: uid 1001 belongs to `pinchflat` on the host, so naming
+    # it would wrongly imply a relationship between the two services.
+    "d /var/lib/mempool/cache   0755 1001 65533 - -"
   ];
 
   services.nginx.virtualHosts."mempool.rosemaryacres.com" = {
