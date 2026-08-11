@@ -88,6 +88,73 @@ let
     '';
   };
 
+  # SEEDING health — new 2026-08-10, because the cost of silent seeding downtime
+  # changed. Four private trackers are now live, and DarkPeers' rules (3.4-3.6)
+  # turn *disconnection* into account damage on an automated schedule staff cannot
+  # override: 24h -> pre-warning, 3 days -> Warning, 3 Warnings -> 14-day download
+  # ban, repeated -> ban. Seeding downtime used to cost nothing; it now costs
+  # standing on every private tracker at once.
+  #
+  # This host has THREE documented ways to stop seeding SILENTLY, none of which any
+  # existing check sees — every one of them leaves the container "Up" and the unit
+  # "active":
+  #   - qBit <-> gluetun VPN-restart wedge: every tracker returns EPERM, DHT 0
+  #     peers, status "firewalled", while gluetun still reports (healthy)
+  #   - qBittorrent stale QLockFile: crash-loop with EMPTY docker logs — ran 17 days
+  #   - container DNS wedge: EAI_AGAIN forever, neighbouring containers fine
+  # Under the old rules those were an annoyance. Under DarkPeers' they are 3 days
+  # from a download ban.
+  #
+  # Four probes, cheapest first. Thresholds chosen to catch a SYSTEMIC failure and
+  # ignore ordinary churn:
+  seedingCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-seeding";
+    runtimeInputs = [ pkgs.curl pkgs.jq pkgs.coreutils ];
+    text = ''
+      Q=http://127.0.0.1:8085
+
+      # 1. Is the API answering at all? Catches the crash-loop / stale-lock mode,
+      #    where the container is Up and docker logs are empty.
+      info=$(curl -sS --max-time 10 "$Q/api/v2/transfer/info" 2>/dev/null || true)
+      if [ -z "$info" ] || ! printf '%s' "$info" | jq -e . >/dev/null 2>&1; then
+        echo "qBittorrent API not answering on $Q (container may be Up but wedged)"
+        exit 0
+      fi
+
+      # 2. connection_status. "firewalled" is the exact signature of the
+      #    gluetun VPN-restart wedge; "disconnected" is a dead tunnel.
+      cs=$(printf '%s' "$info" | jq -r '.connection_status // "unknown"')
+      if [ "$cs" != "connected" ]; then
+        echo "qBittorrent connection_status=$cs (expected connected) — inbound likely dead, HnR risk on the private trackers"
+        exit 0
+      fi
+
+      t=$(curl -sS --max-time 20 "$Q/api/v2/torrents/info" 2>/dev/null || true)
+      printf '%s' "$t" | jq -e . >/dev/null 2>&1 || { echo "qBittorrent torrents API returned nothing usable"; exit 0; }
+      total=$(printf '%s' "$t" | jq 'length')
+      [ "$total" -eq 0 ] && exit 1   # nothing loaded: not a seeding fault
+
+      # 3. Loaded but nothing seeding at all -> systemic, not per-torrent.
+      seeding=$(printf '%s' "$t" | jq '[.[]|select(.state|test("UP$|uploading"))]|length')
+      if [ "$seeding" -eq 0 ]; then
+        echo "qBittorrent has $total torrents loaded but NONE seeding"
+        exit 0
+      fi
+
+      # 4. Torrents with no WORKING tracker. qBit blanks .tracker when every
+      #    announce fails, which is what EPERM does to all of them at once.
+      #    50% because individual public trackers die routinely; a systemic
+      #    failure takes them all. Healthy baseline measured 0/143.
+      notrk=$(printf '%s' "$t" | jq '[.[]|select((.tracker//"")=="")]|length')
+      if [ "$total" -ge 10 ] && [ "$(( notrk * 100 / total ))" -ge 50 ]; then
+        echo "$notrk of $total torrents have NO working tracker — announces failing (EPERM/DNS wedge signature)"
+        exit 0
+      fi
+
+      exit 1
+    '';
+  };
+
   # API-CONTENT checks — the gap that let mempool.space break for 17 days.
   #
   # Every liveness signal we had was green the whole time: containers "Up",
@@ -232,6 +299,16 @@ let
       # frontend serves 200 while the backend API is dead or frozen — the
       # 17-day mempool cookie outage. Diagnose only (act = false): the fix is
       # usually a credential re-stage, which the agent can now do via its
+      # Seeding health (see seedingCheck above). New 2026-08-10: with four private
+      # trackers live, silent seeding downtime now costs account standing —
+      # DarkPeers issues a Warning after 3 days disconnected, 3 Warnings = 14-day
+      # download ban, fully automated. act = false deliberately for now: the known
+      # fix is `systemctl restart docker-qbittorrent` (which IS in the agent's
+      # sudo scope), but I want to see this fire correctly on a real incident
+      # before letting it restart the client unattended.
+      { id = "seeding-health"; type = "command"; severity = "warning"; agent = true; act = false;
+        cmd = "${seedingCheck}/bin/sentinel-check-seeding"; timeout = 45; }
+
       # scoped sudo, but it should say what it found before touching anything.
       { id = "api-content"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "${apiCheck}/bin/sentinel-check-apis"; timeout = 60; }
