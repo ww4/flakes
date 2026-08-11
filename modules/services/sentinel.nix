@@ -289,6 +289,20 @@ let
       { id = "oom"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "journalctl -k --since -10min --no-pager | grep -iE 'out of memory|oom-kill|killed process'"; }
 
+      # Drive FAILURE — the real thing (Chris 2026-08-10: only wants to know if a
+      # drive is actually failing, not just transiently slow). Fed by the SMART
+      # health attributes drive-temps.nix now exports. Two signals:
+      #   (a) SMART overall-health self-assessment = FAILED (definitive), and
+      #   (b) reallocated / pending / offline-uncorrectable sectors appearing
+      #       (>0) — developing failure, the early warning. CRC (attr 199) is a
+      #       cable/link signal, tracked but not alerted (it's not drive death).
+      # Labels by device so the ntfy names the failing drive.
+      { id = "drive-smart-failed"; type = "metric"; severity = "critical"; agent = true; act = false;
+        expr = "gromit_drive_smart_ok"; op = "<"; threshold = 1; }
+      { id = "drive-bad-sectors"; type = "metric"; severity = "warning"; agent = true; act = false;
+        expr = "gromit_drive_reallocated_sectors + gromit_drive_pending_sectors + gromit_drive_offline_uncorrectable";
+        op = ">"; threshold = 0; }
+
       # Container-level silent failures (error-spam + dead HTTP backends) —
       # see containerCheck above for the two proven incident modes. Diagnose
       # only (act = false); 60s timeout covers the per-container journal scans.

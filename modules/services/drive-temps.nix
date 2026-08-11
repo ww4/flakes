@@ -47,6 +47,20 @@ let
       {
         echo "# HELP gromit_drive_temp_celsius Drive temperature C (smartctl; standby/idle drives omitted)."
         echo "# TYPE gromit_drive_temp_celsius gauge"
+        # SMART health/failure attributes — the real "is this drive failing?"
+        # signals, from the SAME smartctl read (2026-08-10). smart_ok is the
+        # overall self-assessment; the sector counts flag developing failure
+        # before it becomes a hard fault.
+        echo "# HELP gromit_drive_smart_ok SMART overall-health self-assessment (1=PASSED,0=FAILED)."
+        echo "# TYPE gromit_drive_smart_ok gauge"
+        echo "# HELP gromit_drive_reallocated_sectors SMART attr 5 raw (reallocated sectors)."
+        echo "# TYPE gromit_drive_reallocated_sectors gauge"
+        echo "# HELP gromit_drive_pending_sectors SMART attr 197 raw (current pending sectors)."
+        echo "# TYPE gromit_drive_pending_sectors gauge"
+        echo "# HELP gromit_drive_offline_uncorrectable SMART attr 198 raw (offline uncorrectable)."
+        echo "# TYPE gromit_drive_offline_uncorrectable gauge"
+        echo "# HELP gromit_drive_crc_errors SMART attr 199 raw (UDMA CRC errors — cable/link)."
+        echo "# TYPE gromit_drive_crc_errors gauge"
         for dev in /dev/sd[a-z]; do
           [ -b "$dev" ] || continue
           name=$(basename "$dev")
@@ -55,27 +69,56 @@ let
           io=$(awk -v d="$name" '$3==d {print $6+$10; f=1} END{if(!f) print 0}' /proc/diskstats)
           printf '%s %s\n' "$name" "$io" >> "$newstate"
           # Backup-pool drives: skip the SMART read unless they've done I/O since
-          # the last run — otherwise a read would wake a sleeping drive.
+          # the last run — otherwise a read would wake a sleeping drive. The
+          # standby-guard (-n standby) is applied ONLY to them: it protects a
+          # sleeping backup drive, but some USB bridges (WD My Book/Elements)
+          # misreport power state, so -n standby would ABORT the read on an
+          # always-spinning FUSION drive and we'd get no SMART (this is why D6's
+          # health was blank, 2026-08-10). Fusion/SSD drives are read without it.
+          is_backup=0
           case " $backup_devs " in
             *" $name "*)
+              is_backup=1
               prev=$(awk -v d="$name" '$1==d{print $2}' "$state" 2>/dev/null || true)
               if [ -z "''${prev:-}" ] || [ "$io" = "''${prev:-}" ]; then
                 continue
               fi
               ;;
           esac
-          # USB bridges usually need -d sat,auto; direct SATA accepts it too.
-          j=$(smartctl -n standby -j -A -i -d sat,auto "$dev" 2>/dev/null) || true
-          if [ -z "''${j:-}" ] || [ -z "$(printf '%s' "$j" | jq -r '.temperature.current // empty' 2>/dev/null)" ]; then
-            j=$(smartctl -n standby -j -A -i "$dev" 2>/dev/null) || true
-          fi
-          temp=$(printf '%s' "''${j:-}" | jq -r '.temperature.current // empty' 2>/dev/null || true)
-          [ -n "$temp" ] || continue   # no temp = standby/unsupported -> skip (don't wake)
+          nflag=""; [ "$is_backup" = 1 ] && nflag="-n standby"
+          # USB bridges vary wildly in how smartctl must address the drive behind
+          # them (WD My Book/Elements, Seagate Expansion, JMicron, Sunplus...).
+          # Try device-type candidates until one returns REAL data (a temperature,
+          # a SMART attribute table, or an overall-health verdict); the plain read
+          # is last so a bridge that answers only as a SCSI enclosure doesn't win
+          # over one that reaches the ATA drive. -H adds the health self-assessment.
+          j=""
+          for dt in "sat,auto" "sat" "usbjmicron" "usbjmicron,x" "usbsunplus" "usbprolific" "scsi" ""; do
+            darg=""; [ -n "$dt" ] && darg="-d $dt"
+            # shellcheck disable=SC2086
+            cand=$(smartctl $nflag -j -H -A -i $darg "$dev" 2>/dev/null) || true
+            if printf '%s' "''${cand:-}" | jq -e '(.temperature.current!=null) or ((.ata_smart_attributes.table // [] | length)>0) or (.smart_status.passed!=null)' >/dev/null 2>&1; then
+              j="$cand"; break
+            fi
+          done
+          [ -n "''${j:-}" ] || continue   # nothing readable (standby/unsupported) -> skip
+          temp=$(printf '%s' "$j" | jq -r '.temperature.current // empty' 2>/dev/null || true)
           model=$(printf '%s' "$j" | jq -r '(.model_name // .scsi_model_name // "unknown")' 2>/dev/null || true)
           rota=$(lsblk -dno ROTA "$dev" 2>/dev/null | tr -d ' ' || true)
           tran=$(lsblk -dno TRAN "$dev" 2>/dev/null | tr -d ' ' || true)
-          printf 'gromit_drive_temp_celsius{device="%s",model="%s",bus="%s",rotational="%s"} %s\n' \
+          # Emit temp only when the drive actually reported one (some bridges give
+          # health/attrs but no temperature.current — don't emit an empty value).
+          [ -n "$temp" ] && printf 'gromit_drive_temp_celsius{device="%s",model="%s",bus="%s",rotational="%s"} %s\n' \
             "$name" "''${model:-unknown}" "''${tran:-unknown}" "''${rota:-0}" "$temp"
+
+          # --- SMART health + failure attributes (same $j read) ---
+          ok=$(printf '%s' "$j" | jq -r 'if .smart_status.passed==true then 1 elif .smart_status.passed==false then 0 else empty end' 2>/dev/null || true)
+          [ -n "$ok" ] && printf 'gromit_drive_smart_ok{device="%s",model="%s"} %s\n' "$name" "''${model:-unknown}" "$ok"
+          for pair in "5:reallocated_sectors" "197:pending_sectors" "198:offline_uncorrectable" "199:crc_errors"; do
+            aid=''${pair%%:*}; mname=''${pair##*:}
+            raw=$(printf '%s' "$j" | jq -r --argjson id "$aid" 'first(.ata_smart_attributes.table[]? | select(.id==$id) | .raw.value) // empty' 2>/dev/null || true)
+            [ -n "$raw" ] && printf 'gromit_drive_%s{device="%s",model="%s"} %s\n' "$mname" "$name" "''${model:-unknown}" "$raw"
+          done
         done
       } > "$tmp" && mv "$tmp" "$out"
       mv "$newstate" "$state"
