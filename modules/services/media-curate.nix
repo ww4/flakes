@@ -79,10 +79,26 @@ in
   # wait + ntfy); a run that moves nothing is cheap (no rescan).
   systemd.services.media-curate-promote = {
     description = "media-curate: promote queued collection items";
-    unitConfig.RequiresMountsFor = "/mnt/fusion";
+    # Talks to the Jellyfin API. On a reboot the timer's Persistent= catch-up run
+    # fired while Jellyfin was mid-startup and got HTTP 503 ("Jellyfin Startup"
+    # page), failing the run (2026-08-09 15:00). After=/Wants= orders us behind the
+    # unit, but Jellyfin reports `active` BEFORE its API is ready — so the ordering
+    # alone can't fix it. The load-bearing fix is the retry: on failure, try again
+    # in 60s, by which point startup has finished. StartLimit bounds it to 5 tries
+    # per 10 min so a genuinely-down Jellyfin can't hot-loop; the next timer tick
+    # (30 min) picks it up after that.
+    after = [ "jellyfin.service" ];
+    wants = [ "jellyfin.service" ];
+    unitConfig = {
+      RequiresMountsFor = "/mnt/fusion";
+      StartLimitIntervalSec = 600;
+      StartLimitBurst = 5;
+    };
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${media-curate}/bin/media-curate promote --apply";
+      Restart = "on-failure";
+      RestartSec = "60s";
     };
   };
   systemd.timers.media-curate-promote = {

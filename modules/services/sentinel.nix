@@ -57,15 +57,27 @@ let
   # journald via the systemd-journal group.
   containerCheck = pkgs.writeShellApplication {
     name = "sentinel-check-containers";
-    runtimeInputs = [ pkgs.curl pkgs.gnugrep pkgs.coreutils ];
+    runtimeInputs = [ pkgs.curl pkgs.gnugrep pkgs.coreutils pkgs.systemd ];
     text = ''
       ERR_MAX=20
+      GRACE=120   # seconds; a backend within this of its unit (re)start is still
+                  # in startup, not wedged (kills the ~daily qbit mod-init page).
       found=0
+
+      # Benign, high-volume log lines to exclude from the error-spam count. Kept
+      # tight (anchored to the emitting label) so it suppresses ONLY the known
+      # noise, never a real error:
+      #   - jellyseerr's nightly Jellyfin library sync logs one [error] per library
+      #     item it can't map to a TMDb/TVDb/IMDb id — a data gap in the source
+      #     metadata, not a jellyseerr fault. ~nightly at 03:05, enough to trip
+      #     ERR_MAX on its own (Day 10 of that noise).
+      BENIGN_RE='Jellyfin Sync.*Unable to find (TMDb|TVDb|IMDb) ID'
 
       # A: error-spam across every running container's journal stream.
       while IFS= read -r name; do
         [ -n "$name" ] || continue
         n=$(journalctl CONTAINER_NAME="$name" --since -1h --no-pager 2>/dev/null \
+              | grep -vE "$BENIGN_RE" \
               | grep -cE '\[(error|ERROR|fatal|FATAL)\]|ERROR|FATAL|panic:' || true)
         if [ "''${n:-0}" -ge "$ERR_MAX" ]; then
           echo "$name: $n error-lines in the last hour"
@@ -78,6 +90,19 @@ let
       for entry in qbittorrent:8085 prowlarr:9696 sonarr:8989 radarr:7878 jellyseerr:5055 flaresolverr:8191; do
         cname="''${entry%%:*}"; port="''${entry##*:}"
         grep -qx "$cname" <<<"$running" || continue
+        # Startup grace: skip a backend still within GRACE sec of its container
+        # unit's (re)start. qbittorrent refetches the VueTorrent WebUI mod on boot
+        # and doesn't answer :8085 for ~60-90s — a healthy init that the raw HTTP
+        # probe otherwise reads as a wedge. An unknown/empty timestamp (unit name
+        # drift) falls through to the probe, i.e. today's behaviour.
+        started_ts=$(systemctl show "docker-$cname.service" -p ActiveEnterTimestamp --value 2>/dev/null || true)
+        if [ -n "$started_ts" ]; then
+          started_epoch=$(date -d "$started_ts" +%s 2>/dev/null || echo 0)
+          age=$(( "$(date +%s)" - started_epoch ))
+          if [ "$started_epoch" -gt 0 ] && [ "$age" -lt "$GRACE" ]; then
+            continue
+          fi
+        fi
         if ! curl -s -o /dev/null --max-time 4 "http://127.0.0.1:$port/"; then
           echo "$cname: web backend :$port not answering HTTP while container is Up"
           found=1
