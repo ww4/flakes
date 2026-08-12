@@ -19,11 +19,16 @@
 #     X" line in its journald stream; the line's embedded RFC3339 timestamp tells
 #     us how long that IP has held (the settle signal — no cross-poll state).
 #   - qBit's bound IP + health = /api/v2/transfer/info (localhost auth bypass).
-#   - Trigger = qBit bound to an IP != gluetun's current one AND connection_status
-#     != "connected" AND that IP has held >= SETTLE seconds. Both-bad is the wedge;
-#     the settle gate keeps us out of a storm; a cooldown bounds any failed retry.
-# Fail-safe throughout: any unknown (no IP line, qBit API down, address not yet
-# determined) => do nothing. Runs as root so it can restart the unit directly.
+#   - Trigger = connection_status != "connected", once BOTH graces have passed:
+#     gluetun's IP has held >= SETTLE seconds AND qBit's container has been up
+#     >= QGRACE seconds. gluetun being healthy + settled means a non-connected qBit
+#     is the wedge — whether it's bound to a STALE IP (IP-change wedge) or to NO IP
+#     at all (never-bound / post-reboot wedge). The two graces keep us out of a
+#     gluetun storm and out of qBit's normal warm-up; a cooldown bounds retries.
+# Fail-safe: unknowns that mean "can't tell yet" (no gluetun IP line, qBit API down)
+# => do nothing. But an empty qBit address is treated as a wedge ONCE past the
+# startup grace — NOT skipped forever (that hole hid a 2h wedge on 2026-08-12).
+# Runs as root so it can restart the unit directly.
 { pkgs, ... }:
 let
   gromit-notify = import ./notify-pkg.nix { inherit pkgs; };
@@ -33,6 +38,7 @@ let
     runtimeInputs = [ pkgs.curl pkgs.jq pkgs.gnugrep pkgs.gawk pkgs.coreutils pkgs.systemd gromit-notify ];
     text = ''
       SETTLE=120     # gluetun's IP must have held this long before we act
+      QGRACE=120     # qBit's own startup grace; empty IP / "firewalled" is normal warm-up until now
       COOLDOWN=300   # min seconds between our own restarts (bounds a failed retry)
       QBIT="http://127.0.0.1:8085"
       STATE="''${STATE_DIRECTORY:-/var/lib/qbit-vpn-watchdog}"
@@ -61,27 +67,47 @@ let
       [ -n "$info" ] || { echo "qBit API unreachable (likely mid-restart); skip"; exit 0; }
       q_ip="$(jq -r '.last_external_address_v4 // ""' <<<"$info" 2>/dev/null || echo "")"
       q_status="$(jq -r '.connection_status // ""' <<<"$info" 2>/dev/null || echo "")"
-      # qBit hasn't determined its external address yet => it's still coming up; don't act.
-      { [ -n "$q_ip" ] && [ "$q_ip" != "null" ]; } || { echo "qBit external addr not set yet; skip"; exit 0; }
 
-      # 3) The wedge = bound to the WRONG IP *and* not connected. Either alone is
-      #    benign (a transient status blip, or a harmless IP-string difference).
-      if [ "$q_ip" = "$g_ip" ] || [ "$q_status" = "connected" ]; then
-        echo "healthy: qBit ip=$q_ip gluetun=$g_ip status=$q_status — no wedge"
+      # qBit startup grace. For the first QGRACE seconds after its container
+      # (re)start, an empty external address / "firewalled" is normal warm-up — NOT
+      # a wedge — so don't act. AFTER that window those same symptoms mean qBit
+      # never bound to the tunnel. The old code skipped on empty IP *unconditionally*,
+      # which hid the post-reboot "never-bound" wedge for 2h on 2026-08-12 (qBit came
+      # up before gluetun settled, never took the forwarded port, and stayed
+      # firewalled with last_external_address_v4=""). An unknown/empty container
+      # timestamp leaves qbit_age huge => treated as past-grace, so we act rather
+      # than skip forever.
+      qbit_started="$(systemctl show docker-qbittorrent.service -p ActiveEnterTimestamp --value 2>/dev/null || true)"
+      qbit_age=999999
+      if [ -n "$qbit_started" ]; then
+        qs_epoch="$(date -d "$qbit_started" +%s 2>/dev/null || echo 0)"
+        [ "$qs_epoch" -gt 0 ] && qbit_age=$(( now - qs_epoch ))
+      fi
+      if [ "$qbit_age" -lt "$QGRACE" ]; then
+        echo "qBit only ''${qbit_age}s into startup (<''${QGRACE}s) — warm-up, not a wedge; waiting"
+        exit 0
+      fi
+
+      # 3) Past both graces (gluetun settled, qBit done starting). gluetun is
+      #    confirmed healthy above, so a non-"connected" status is the wedge —
+      #    whether qBit is bound to a STALE IP (IP-change wedge) or to NO IP
+      #    (never-bound wedge). Only "connected" is healthy.
+      if [ "$q_status" = "connected" ]; then
+        echo "healthy: qBit connected (ip=''${q_ip:-none}, gluetun=$g_ip)"
         exit 0
       fi
 
       last=0; [ -r "$LAST" ] && last="$(cat "$LAST" 2>/dev/null || echo 0)"
       if [ $(( now - last )) -lt "$COOLDOWN" ]; then
-        echo "wedge ($q_ip != $g_ip, status=$q_status) but within ''${COOLDOWN}s cooldown; skip"
+        echo "wedge (status=$q_status, qBit ip=''${q_ip:-none} vs gluetun $g_ip) but within ''${COOLDOWN}s cooldown; skip"
         exit 0
       fi
 
-      echo "WEDGE: qBit bound to $q_ip but gluetun settled on $g_ip ''${age}s ago (status=$q_status) — restarting qBittorrent"
+      echo "WEDGE: qBit status=$q_status (ip=''${q_ip:-none}) while gluetun settled on $g_ip ''${age}s ago — restarting qBittorrent"
       echo "$now" > "$LAST"
       systemctl restart docker-qbittorrent.service
-      gromit-notify "qBittorrent auto-healed (VPN IP change)" \
-        "gluetun moved to $g_ip; qBit was stuck on $q_ip ($q_status) and stopped seeding. Restarted it to rebind — recovered without a page." \
+      gromit-notify "qBittorrent auto-healed (VPN wedge)" \
+        "gluetun healthy on $g_ip but qBit was $q_status (bound: ''${q_ip:-none}) and had stopped seeding. Restarted it to rebind — recovered without a page." \
         "low" "vpn,qbit" || true
     '';
   };
