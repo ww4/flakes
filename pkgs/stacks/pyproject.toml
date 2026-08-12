@@ -1,0 +1,43 @@
+[project]
+name = "stacks"
+version = "0.1.0"
+description = "Physical book catalog — shelf inventory, edition-aware dedupe, cross-household loans"
+requires-python = ">=3.12"
+dependencies = [
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.1",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+    "typer>=0.12",
+    "rich>=13.7",
+]
+
+[project.scripts]
+stacks = "stacks.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+# The PWA is not Python and setuptools would drop it silently, leaving a
+# packaged install that serves a 404 for its own interface.
+stacks = ["web/*"]

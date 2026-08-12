@@ -81,6 +81,7 @@
     ./modules/services/unpackerr.nix        # extracts RAR-packed Scene releases so *arr can import them
     ./modules/services/lidarr.nix           # music manager (Lidarr)
     ./modules/services/lazylibrarian.nix    # ebook/audiobook manager (Readarr successor)
+    ./modules/services/stacks.nix           # physical book catalog (sale scanner, flood losses)
     ./modules/services/aurral.nix           # Jellyseerr-for-music (Aurral -> Lidarr)
     ./modules/services/forgejo.nix
     ./modules/services/albyhub.nix

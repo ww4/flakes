@@ -1,0 +1,16 @@
+title,creators,ean_isbn13,upc_isbn10,publisher,publish_date,copies,tags,group,notes,description,status,added
+Dune,"Herbert, Frank",9780441172719,0441172717,Ace,1990,1,scifi,Fiction,,"Desert planet epic",,2024-01-05
+Dune Messiah,"Herbert, Frank",9780441172696,,Ace,1987,1,scifi,Fiction,,,,2024-01-05
+A Wizard of Earthsea,"Le Guin, Ursula K.",,0553262505,Bantam,1984,1,scifi,Fiction,,,,2024-01-06
+The Hobbit,"Tolkien, J.R.R.",9780547928227,,Houghton Mifflin,2012,2,fantasy,Fiction,"two copies - one is Dad's",,,2024-01-07
+Good Omens,"Gaiman, Neil; Pratchett, Terry",9780060853983,,Morrow,2006,1,fantasy,Fiction,,,,2024-01-08
+Moby-Dick,"Melville, Herman",,,Penguin,1851,1,classics,Fiction,"old hardcover no isbn",,,2024-01-09
+The Joy of Cooking,"Rombauer, Irma S.",9780743246262,,Scribner,2006,1,cooking,Reference,,,,2024-02-01
+Slaughterhouse-Five,"Vonnegut, Kurt",9780385333849,,Dial,1999,1,classics,Fiction,,,,2024-02-02
+Les Misérables,"Hugo, Victor",9780451419439,,Signet,2013,1,classics,Fiction,,,,2024-02-03
+The Left Hand of Darkness,"Le Guin, Ursula K.",9780441478125,,Ace,1987,1,scifi,Fiction,,,,2024-02-04
+Neuromancer,"Gibson, William",9780441569595,,Ace,1984,1,scifi,Fiction,,,,2024-02-05
+Broken Record Book,"Nobody, A.",not-an-isbn,,Self,2020,1,,,"bad identifier on purpose",,,2024-02-06
+The Silmarillion,"Tolkien, J.R.R.",9780618391110,,Houghton Mifflin,2004,1,fantasy,Fiction,,,,2024-02-07
+Children of Dune,"Herbert, Frank",9780441104024,,Ace,1987,1,scifi,Fiction,,,,2024-02-08
+,"Ghost, Missing Title",9780000000000,,,,1,,,"row with no title - should be skipped",,,2024-02-09
