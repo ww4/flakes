@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<title>stacks — cleanup</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header>
+  <span class="dot ready"></span>
+  <h1>Cleanup</h1>
+  <nav class="tabs">
+    <a href="./">Scan</a>
+    <a href="browse.html">Browse</a>
+    <a href="cleanup.html" class="on">Cleanup</a>
+  </nav>
+</header>
+
+<main style="padding:1rem">
+  <p class="note">
+    This catalog came from a Libib export, a hand-written loss document parsed
+    by heuristics, and a crowd-edited database. Each list below is a kind of
+    debris those leave behind. Debris nobody can see never gets fixed.
+  </p>
+  <div id="groups"></div>
+  <p class="note" id="cleanup-loading">Checking…</p>
+</main>
+
+<div class="sheet" id="sheet">
+  <div class="sheet-inner">
+    <div class="sheet-grip"></div>
+    <section class="card show" id="card">
+      <div class="card-head">
+        <img class="card-cover" id="c-cover" alt="" hidden>
+        <div style="flex:1; min-width:0">
+          <h2 class="card-title" id="c-title"></h2>
+          <p class="card-by" id="c-by"></p>
+        </div>
+      </div>
+      <p class="rec" id="c-rec"></p>
+      <p class="ednote" id="c-ednote" hidden></p>
+      <ul class="facts" id="c-facts"></ul>
+      <p class="desc" id="c-desc"></p>
+      <div id="c-copies"></div>
+      <div id="c-editions"></div>
+      <p class="meta" id="c-meta"></p>
+      <div id="c-edit" hidden></div>
+    </section>
+    <button id="sheet-close" style="margin-top:1rem; width:100%">Close</button>
+  </div>
+</div>
+
+<script src="card.js"></script>
+<script src="edit.js"></script>
+<script src="shared-ui.js"></script>
+<script src="cleanup.js"></script>
+</body>
+</html>

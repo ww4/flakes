@@ -1,0 +1,176 @@
+# Corrections to the sale document's auto-classification.
+#
+# The parser cannot tell a person from a series by grammar alone: "Magic School
+# Bus" and "Tom Swift" are shaped exactly like names, and "Janette oke missing:
+# ..." (an author) reads identically to "Hardy boys: have 1,2,3" (a series). So
+# it flags rather than guesses, and the judgement calls live here — versioned,
+# reviewable, and re-applied on every import, leaving the source document
+# untouched.
+#
+# `match` is the parsed label, normalised (lowercase, no punctuation, leading
+# article stripped). Optional keys: `label` renames, `ignore = true` drops a
+# line that is not a rule at all.
+
+# ---------------------------------------------------------------- not a rule
+[[rule]]
+match = "adult"
+ignore = true
+why = "'Adult books:' is a section heading in the document, not a want"
+
+# ------------------------------------------------- series that look like names
+[[rule]]
+match = "magic school bus"
+kind = "series"
+why = "Joanna Cole's children's science series"
+
+[[rule]]
+match = "tom swift"
+kind = "series"
+why = "juvenile science-adventure series; the name is the character"
+
+[[rule]]
+match = "american girl"
+kind = "series"
+why = "doll-linked historical fiction line"
+
+[[rule]]
+match = "dear america diaries"
+kind = "series"
+label = "Dear America"
+why = "Scholastic historical diary series"
+
+[[rule]]
+match = "love comes softly"
+kind = "series"
+why = "Janette Oke's prairie romance series — the author has her own rule"
+
+[[rule]]
+match = "famous men of"
+kind = "series"
+why = "Memoria Press 'Famous Men of Rome / Greece / the Middle Ages'"
+
+[[rule]]
+match = "lets read and find out level 1 and 2 looking for look out for turtles honey in a hive follow the water from brook to ocean starfish milk from cow to carton chirping crickets how mountains are made penguin chick floating in space the international space station"
+kind = "series"
+label = "Let's-Read-and-Find-Out Science"
+why = "long-running levelled science picture-book series; the tail is a want list"
+
+[[rule]]
+match = "little little house"
+kind = "series"
+label = "Little House (picture book editions)"
+why = "the abridged picture-book line, distinct from the novels"
+
+# --------------------------------------------- authors misread as series/topic
+[[rule]]
+match = "janette oke"
+kind = "author"
+why = "prolific author; the missing-list names her titles, not series positions"
+
+[[rule]]
+match = "lori wick"
+kind = "author"
+why = "as above — a missing-list of titles under an author's name"
+
+[[rule]]
+match = "clements"
+kind = "author"
+label = "Andrew Clements"
+why = "author of Frindle, The Landry News, The Janitor's Boy"
+
+[[rule]]
+match = "d aulaire"
+kind = "author"
+label = "Ingri and Edgar Parin d'Aulaire"
+why = "husband-and-wife author-illustrators of the biographies and myth books"
+
+# ----------------------------------------------------- author label cleanups
+[[rule]]
+match = "joanna spyri wrote heidi"
+kind = "author"
+label = "Johanna Spyri"
+why = "spelled loosely in the source; correct spelling is Johanna Spyri"
+
+[[rule]]
+match = "holling c holling books minn of mississippi writer"
+kind = "author"
+label = "Holling C. Holling"
+why = "the trailing note names one of his books, not part of his name"
+
+[[rule]]
+match = "h e marshall history"
+kind = "author"
+label = "H. E. Marshall"
+why = "author of Our Island Story"
+
+# (Diane Stanley is handled below — label cleanup already reduces her line to
+# "Diane Stanley", so an override keyed on the full phrase would match nothing.)
+
+# ------------------------------------------------------------ topic rules
+[[rule]]
+match = "science encyclopedias"
+kind = "topic"
+why = "a category of book, not an author or a named series"
+
+# ------------------------------------------------------------ specific works
+[[rule]]
+match = "fork the witch and the worm"
+kind = "work"
+label = "The Fork, the Witch, and the Worm"
+why = "a single Christopher Paolini book, not the whole Inheritance series"
+
+# ------------------------------------------------------------ label cleanups
+[[rule]]
+match = "country"
+kind = "series"
+label = "Country Books (Enchantment of the World / Cultures of the World)"
+why = "the source names both publishers' country series together"
+
+[[rule]]
+# Note the key: normalisation turns an apostrophe into a space, so
+# "Nature's" folds to "nature s", not "natures".
+match = "nature s children or other animal"
+kind = "series"
+label = "Nature's Children"
+why = "Grolier animal series; the have-list holds 32 paired titles"
+
+# ------------------------------------------------- confirmations, not changes
+# The parser guessed these correctly but was not confident. Recording the
+# judgement here clears the review flag and documents that a human agreed,
+# which is different from the parser never having been unsure.
+
+[[rule]]
+match = "anne colver"
+kind = "author"
+why = "confirmed: children's historical biographies"
+
+[[rule]]
+match = "ann mcgovern"
+kind = "author"
+why = "confirmed: 'If You Lived In...' history books for children"
+
+[[rule]]
+match = "diane stanley"
+kind = "author"
+why = "confirmed: illustrated historical picture-book biographies"
+
+[[rule]]
+match = "genevieve foster"
+kind = "author"
+why = "confirmed: the 'World of' history books (George Washington's World)"
+
+[[rule]]
+match = "jean henri fabre"
+kind = "author"
+why = "confirmed: entomologist, The Story Book of Science"
+
+[[rule]]
+match = "tessa afshar"
+kind = "author"
+why = "confirmed: biblical historical fiction"
+
+[[rule]]
+match = "readers"
+kind = "topic"
+label = "Readers (upper level)"
+why = "confirmed: a reading level, not a title or series"

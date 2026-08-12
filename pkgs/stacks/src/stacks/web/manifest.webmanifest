@@ -1,0 +1,19 @@
+{
+  "name": "stacks — book scanner",
+  "short_name": "stacks",
+  "description": "Do we already own this? Answered offline, at the sale.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#111418",
+  "theme_color": "#111418",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

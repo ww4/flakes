@@ -184,6 +184,11 @@ let
             href: https://metube.rosemaryacres.com
             icon: metube.png
             # Link-only: Homepage has no MeTube widget.
+        - Stacks:
+            description: Book catalog — scan at a sale, browse the shelves
+            href: https://books.rosemaryacres.com
+            icon: mdi-bookshelf
+            # Link-only: Homepage has no widget for this; it is ours.
 
     - Productivity:
         - Vaultwarden:

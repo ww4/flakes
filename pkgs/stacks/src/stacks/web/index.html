@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<title>stacks</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>stacks</h1>
+  <nav class="tabs"><a href="./" class="on">Scan</a><a href="browse.html">Browse</a></nav>
+  <div id="status" style="margin-left:.6rem">loading…</div>
+</header>
+
+<main>
+  <div id="video-wrap"><video id="video" playsinline muted></video><div id="reticle"></div></div>
+
+  <section class="card" id="card" aria-live="polite">
+    <div class="card-head">
+      <img class="card-cover" id="c-cover" alt="" hidden>
+      <div style="flex:1; min-width:0">
+        <h2 class="card-title" id="c-title"></h2>
+        <p class="card-by" id="c-by"></p>
+      </div>
+    </div>
+    <p class="rec" id="c-rec"></p>
+    <p class="ednote" id="c-ednote" hidden></p>
+    <ul class="facts" id="c-facts"></ul>
+    <p class="desc" id="c-desc"></p>
+    <div id="c-copies"></div>
+    <div id="c-editions"></div>
+    <p class="meta" id="c-meta"></p>
+  </section>
+
+  <div class="controls">
+    <button class="primary" id="btn-scan">Scan</button>
+    <button id="btn-sync">Sync catalog</button>
+  </div>
+
+  <form class="manual" id="manual-form">
+    <input id="manual-input" inputmode="search" autocomplete="off"
+           placeholder="ISBN, title, author…">
+    <button type="submit">Go</button>
+  </form>
+
+  <p class="note" id="cam-note" hidden>
+    This browser has no built-in barcode scanner. Firefox and iOS Safari don't
+    support it yet — type the ISBN instead, or use Chrome on Android.
+  </p>
+
+  <section id="results"><h2 id="results-head">Matches</h2><div id="results-list"></div></section>
+
+  <section id="log">
+    <h2>This session</h2>
+    <ol id="log-list"></ol>
+  </section>
+</main>
+
+<script src="card.js"></script>
+<script src="edit.js"></script>
+<script src="shared-ui.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<title>stacks — browse</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header>
+  <span class="dot ready" id="dot"></span>
+  <h1>stacks</h1>
+  <nav class="tabs">
+    <a href="./">Scan</a>
+    <a href="browse.html" class="on">Browse</a>
+  </nav>
+</header>
+
+<main style="padding: 1rem 0;">
+  <form class="manual" id="browse-search" style="padding: 0 1rem 1rem;">
+    <input id="browse-q" inputmode="search" autocomplete="off"
+           placeholder="Search the library…">
+    <button type="submit">Go</button>
+  </form>
+
+  <div id="shelves"></div>
+  <p class="note" id="loading" style="padding: 0 1rem;">Loading shelves…</p>
+</main>
+
+<div class="sheet" id="sheet">
+  <div class="sheet-inner">
+    <div class="sheet-grip"></div>
+    <section class="card show" id="card">
+      <div class="card-head">
+        <img class="card-cover" id="c-cover" alt="" hidden>
+        <div style="flex:1; min-width:0">
+          <h2 class="card-title" id="c-title"></h2>
+          <p class="card-by" id="c-by"></p>
+        </div>
+      </div>
+      <p class="rec" id="c-rec"></p>
+      <p class="ednote" id="c-ednote" hidden></p>
+      <ul class="facts" id="c-facts"></ul>
+      <p class="desc" id="c-desc"></p>
+      <div id="c-copies"></div>
+      <div id="c-editions"></div>
+      <p class="meta" id="c-meta"></p>
+      <div id="c-edit" hidden></div>
+    </section>
+    <button id="sheet-close" style="margin-top:1rem; width:100%">Close</button>
+  </div>
+</div>
+
+<script src="card.js"></script>
+<script src="edit.js"></script>
+<script src="shared-ui.js"></script>
+<script src="browse.js"></script>
+</body>
+</html>
