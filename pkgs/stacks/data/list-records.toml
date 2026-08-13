@@ -1,0 +1,121 @@
+# Loss-document lines that name several books instead of one.
+#
+# The document was written by hand under the worst possible circumstances, and
+# some lines are lists: "Cam janson had: corn popper, camp mystery, it's a
+# raid, ...". The parser turned each of those into a single work with a
+# 200-character title, which is not a book and can never be scanned, matched or
+# replaced. Every one of them is a record of several real books that were lost.
+#
+# This file is the human judgement — which line names which books — kept
+# separate from the code that applies it, versioned and reviewable. The
+# fragments are copied VERBATIM from the document. They are deliberately not
+# expanded into full titles here: the catalog already holds 12 Cam Jansen
+# works and 11 Boxcar Children from the Libib export, so the importer resolves
+# each fragment against what is already known and attaches the loss to the real
+# book. Guessing full titles by hand would invent records; matching finds them.
+#
+# Each child copy inherits the parent's status and provenance, which the flood
+# importer already got right:
+#   "had:"  -> lost_flood      (what was destroyed)
+#   "have:" -> unverified      (replacements acquired, still unconfirmed)
+#
+# `volumes` is for lines that list volume NUMBERS rather than titles. Those are
+# recorded as numbered entries and left for a later pass: Open Library cannot
+# resolve a series number reliably (searching "Magic Tree House 17" returns
+# #27's title first), and inventing the titles would be worse than recording
+# the true fact that volume 17 was lost.
+
+# ------------------------------------------------------------------ titles
+[[record]]
+work_id = 2900
+series = "Cam Jansen"
+fragments = [
+    "Mystery of the U.F.O",
+    "Mystery of the Gold Coins",
+    "Mystery of the Stolen Corn Popper",
+]
+
+[[record]]
+work_id = 2901
+series = "Cam Jansen"
+fragments = [
+    "corn popper", "camp mystery", "it's a raid", "basketball mystery",
+    "zoo note", "baseball", "dinosaur bones", "snowy day",
+    "babe ruth baseball", "chocolate fudge", "first day of school",
+    "carnival prize", "monkey house", "stolen diamonds", "gold coins",
+    "spagetti max", "UFO", "school play", "haunted house",
+    "triceratops pops",
+]
+
+[[record]]
+work_id = 2902
+series = "Animal Ark"
+fragments = [
+    "Puppies in the pantry", "Ponies at the point", "Doggy dare",
+    "Bunny in a Basket", "Hound at the Hospital", "Foals in the field",
+    "racehorse in the rain",
+]
+
+[[record]]
+work_id = 2903
+series = "Andrew Clements"
+is_author = true
+fragments = [
+    "lunch money", "report card", "frindle", "holiday concert",
+    "landry news", "troublemaker", "school story", "janitor's boy",
+]
+
+[[record]]
+work_id = 2917
+series = "Veggie Tales"
+fragments = [
+    "time for tom", "pa grapes shapes", "Bob and Larry's ABC",
+    "Junior's Color", "Archibald's Opposites",
+]
+
+[[record]]
+work_id = 2922
+series = "Robert Munsch"
+is_author = true
+fragments = [
+    "the paper bag princess", "a promise is a promise", "get out of bed",
+    "david's father", "stephanie's ponytail", "I have to go", "pigs",
+    "purple green and yellow", "the dark", "50 below zero",
+    "jonathan cleaned up and then he heard a sound",
+]
+
+[[record]]
+work_id = 2930
+series = "Bullseye Step Into Classics"
+fragments = [
+    "The Time Machine", "Knights of the Round Table", "Treasure Island",
+    "The Three Musketeers", "Kidnapped", "Oliver Twist",
+    "The Last of the Mohicans",
+]
+
+[[record]]
+work_id = 2763
+series = "Abeka Reader"
+fragments = [
+    "Hidden Treasure", "Treasure Chest", "All Kinds of Animals",
+    "Silver Sails", "Better Bridges",
+]
+
+# ----------------------------------------------------------------- volumes
+[[record]]
+work_id = 2899
+series = "Magic Tree House"
+volumes = [1, 2, 4, 5, 6, 7, 9, 11, 12, 17, 18, 20, 22, 23, 27, 28, 29, 30, 34, 40, 48]
+fragments = ["Dragons of the Red Dawn"]
+
+[[record]]
+work_id = 2906
+series = "Boxcar Children"
+volumes = [1, 2, 3, 4, 5, 6, 9, 14, 15, 20, 23, 24, 25, 29, 30, 53]
+special_volumes = ["S2", "S4"]
+
+# ------------------------------------------------------------------- junk
+[[record]]
+work_id = 3047
+delete = true
+why = "the line reads '999999999999' — a stray number, not a book"

@@ -17,6 +17,7 @@ from stacks.db import init_schema, run_migrations, session_scope
 from stacks.enrich.openlibrary import OpenLibraryClient
 from stacks.importers.flood_load import load as flood_load
 from stacks.importers.libib import import_libib_exports
+from stacks.importers.list_split import load as list_split_load
 from stacks.importers.sale_doc import load as sale_load
 from stacks.match import Verdict, evaluate_scan
 from stacks.models import Author, Copy, CopyStatus, Edition, Household, WantRule, Work
@@ -250,6 +251,37 @@ def import_flood(
         )
         for flood_t, existing_t, score in stats.borderline[:15]:
             console.print(f"  {score:.2f}  {flood_t[:42]:<44} -> {existing_t[:42]}")
+
+
+@app.command("split-lists")
+def split_lists(
+    path: Path = typer.Option(
+        Path("data/list-records.toml"), exists=True, readable=True,
+        help="Which document lines name several books, and which",
+    ),
+) -> None:
+    """Split loss-document lines that list several books into one record each.
+
+    "Cam janson had: corn popper, camp mystery, it's a raid, ..." is twenty
+    lost books recorded as one unscannable 200-character title. Each fragment
+    is resolved against the catalog, so a loss lands on the real book wherever
+    the Libib export already knows it.
+    """
+    with session_scope() as s:
+        stats = list_split_load(s, path)
+
+    console.print(f"[green]{stats.summary()}[/green]")
+    if stats.matches:
+        console.print("\n[cyan]Matched onto books already in the catalog:[/cyan]")
+        for frag, title, score in stats.matches:
+            console.print(f"  {score:.2f}  {frag[:34]:<36} -> {title[:52]}")
+    if stats.unmatched:
+        console.print(
+            f"\n[yellow]{len(stats.unmatched)} had no match and became new "
+            f"records, named for what the document said:[/yellow]"
+        )
+        for title in stats.unmatched:
+            console.print(f"  {title[:78]}")
 
 
 @app.command("import-wants")
