@@ -20,7 +20,7 @@
     # standing access; privileged actions go through comin or the sudo allowlist).
     ../../modules/agent/claude-user.nix
     ../../modules/agent/sudo.nix              # scoped sudoers (gromit-centric rules are inert here)
-    ../../modules/agent/claude-harness.nix    # root-owned managed settings + PreToolUse guard
+    ../../modules/agent/claude-agent-profile.nix # harness profile (shared agent-modules flake)
     ../../modules/agent/comin.nix             # GitOps applier — builds nixosConfigurations.marcus
   ];
 

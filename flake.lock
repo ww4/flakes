@@ -1,5 +1,25 @@
 {
   "nodes": {
+    "agent-modules": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1786657515,
+        "narHash": "sha256-7EyHlmM8wFSy2Ncg+c+nyYWmLsT8xzcvsYyO6rEZxzQ=",
+        "owner": "ww4-bot",
+        "repo": "agent-modules",
+        "rev": "aba377b4e2c2cf2dad7cee4777c88f1789f584d4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ww4-bot",
+        "repo": "agent-modules",
+        "type": "github"
+      }
+    },
     "comin": {
       "inputs": {
         "flake-compat": "flake-compat",
@@ -180,6 +200,7 @@
     },
     "root": {
       "inputs": {
+        "agent-modules": "agent-modules",
         "comin": "comin",
         "disko": "disko",
         "home-manager": "home-manager",

@@ -31,7 +31,7 @@
     ./modules/agent/jellyfin-api-secret.nix # gromit-only: agent's Jellyfin API key (sops)
     ./modules/agent/sudo.nix
     ./modules/agent/comin.nix               # GitOps applier — rebuilds on merge to main
-    ./modules/agent/claude-harness.nix      # root-owned managed settings + guard for the agent
+    ./modules/agent/claude-agent-profile.nix # harness profile (shared agent-modules flake)
     ./modules/agent/digest.nix              # weekly headless digest (claude -p /catch-up -> ntfy)
     ./modules/agent/claude-config-sync.nix  # hourly pull of the synced global ~/.claude/CLAUDE.md
 
