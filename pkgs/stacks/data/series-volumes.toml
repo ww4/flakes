@@ -1,0 +1,194 @@
+# Series volume numbers resolved to the titles they name.
+#
+# The loss document records two series by number rather than title — "Magic
+# tree house had:1,2,4,5,..." and "Boxcar children had:1,2,3,...". Those became
+# placeholder works ("Magic Tree House #17") because a number is a true record
+# and an invented title is not.
+#
+# Open Library cannot resolve them. Searching "Magic Tree House 17" returns
+# #27's title first, and the series strings on its edition records disagree
+# across translations and boxed sets — a sample of six scored two confidently
+# WRONG, both claiming #1. At a sale that error puts the wrong book on the
+# replace list, which is worse than a number.
+#
+# So these come from Wikipedia's series tables, then every one was checked
+# against Open Library independently: all 34 confirmed. Anchors were verified
+# by hand too, which is how a first pass got caught reading the wrong table on
+# the page and returning the Benny-and-Watch early readers as the novels.
+#
+# NOT resolved, deliberately: Magic Tree House 29, 30, 34, 40 and 48. That
+# series was renumbered — Merlin Missions were originally 29-55 and were later
+# split into their own 1-27 — so a number above 28 names two different books
+# depending on which printing the list was written from. 1-28 is identical in
+# both schemes, so those are safe. The rest need Chris.
+
+
+[[volume]]
+series = "Magic Tree House"
+number = "1"
+title = "Dinosaurs Before Dark"
+
+[[volume]]
+series = "Magic Tree House"
+number = "2"
+title = "The Knight at Dawn"
+
+[[volume]]
+series = "Magic Tree House"
+number = "4"
+title = "Pirates Past Noon"
+
+[[volume]]
+series = "Magic Tree House"
+number = "5"
+title = "Night of the Ninjas"
+
+[[volume]]
+series = "Magic Tree House"
+number = "6"
+title = "Afternoon on the Amazon"
+
+[[volume]]
+series = "Magic Tree House"
+number = "7"
+title = "Sunset of the Sabertooth"
+
+[[volume]]
+series = "Magic Tree House"
+number = "9"
+title = "Dolphins at Daybreak"
+
+[[volume]]
+series = "Magic Tree House"
+number = "11"
+title = "Lions at Lunchtime"
+
+[[volume]]
+series = "Magic Tree House"
+number = "12"
+title = "Polar Bears Past Bedtime"
+
+[[volume]]
+series = "Magic Tree House"
+number = "17"
+title = "Tonight on the Titanic"
+
+[[volume]]
+series = "Magic Tree House"
+number = "18"
+title = "Buffalo Before Breakfast"
+
+[[volume]]
+series = "Magic Tree House"
+number = "20"
+title = "Dingoes at Dinnertime"
+
+[[volume]]
+series = "Magic Tree House"
+number = "22"
+title = "Revolutionary War on Wednesday"
+
+[[volume]]
+series = "Magic Tree House"
+number = "23"
+title = "Twister on Tuesday"
+
+[[volume]]
+series = "Magic Tree House"
+number = "27"
+title = "Thanksgiving on Thursday"
+
+[[volume]]
+series = "Magic Tree House"
+number = "28"
+title = "High Tide in Hawaii"
+
+[[volume]]
+series = "Boxcar Children"
+number = "1"
+title = "The Boxcar Children"
+
+[[volume]]
+series = "Boxcar Children"
+number = "2"
+title = "Surprise Island"
+
+[[volume]]
+series = "Boxcar Children"
+number = "3"
+title = "The Yellow House Mystery"
+
+[[volume]]
+series = "Boxcar Children"
+number = "4"
+title = "Mystery Ranch"
+
+[[volume]]
+series = "Boxcar Children"
+number = "5"
+title = "Mike's Mystery"
+
+[[volume]]
+series = "Boxcar Children"
+number = "6"
+title = "Blue Bay Mystery"
+
+[[volume]]
+series = "Boxcar Children"
+number = "9"
+title = "Mountain Top Mystery"
+
+[[volume]]
+series = "Boxcar Children"
+number = "14"
+title = "Tree House Mystery"
+
+[[volume]]
+series = "Boxcar Children"
+number = "15"
+title = "Bicycle Mystery"
+
+[[volume]]
+series = "Boxcar Children"
+number = "20"
+title = "The Haunted Cabin Mystery"
+
+[[volume]]
+series = "Boxcar Children"
+number = "23"
+title = "The Old Motel Mystery"
+
+[[volume]]
+series = "Boxcar Children"
+number = "24"
+title = "The Mystery of the Hidden Painting"
+
+[[volume]]
+series = "Boxcar Children"
+number = "25"
+title = "The Amusement Park Mystery"
+
+[[volume]]
+series = "Boxcar Children"
+number = "29"
+title = "The Mystery Cruise"
+
+[[volume]]
+series = "Boxcar Children"
+number = "30"
+title = "The Disappearing Friend Mystery"
+
+[[volume]]
+series = "Boxcar Children"
+number = "53"
+title = "The Guide Dog Mystery"
+
+[[volume]]
+series = "Boxcar Children"
+number = "S2"
+title = "The Mystery in Washington, DC"
+
+[[volume]]
+series = "Boxcar Children"
+number = "S4"
+title = "The Mystery at the Ballpark"

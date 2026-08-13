@@ -19,6 +19,7 @@ from stacks.importers.flood_load import load as flood_load
 from stacks.importers.libib import import_libib_exports
 from stacks.importers.list_split import load as list_split_load
 from stacks.importers.sale_doc import load as sale_load
+from stacks.importers.series_volumes import load as series_volumes_load
 from stacks.match import Verdict, evaluate_scan
 from stacks.models import Author, Copy, CopyStatus, Edition, Household, WantRule, Work
 from stacks.normalize import title_variants, to_isbn10, to_isbn13, year_from
@@ -282,6 +283,29 @@ def split_lists(
         )
         for title in stats.unmatched:
             console.print(f"  {title[:78]}")
+
+
+@app.command("name-volumes")
+def name_volumes(
+    path: Path = typer.Option(
+        Path("data/series-volumes.toml"), exists=True, readable=True,
+        help="Volume numbers resolved to the titles they name",
+    ),
+) -> None:
+    """Give the volume-numbered placeholders their real titles.
+
+    "Magic Tree House #17" is a true record and a useless one — a number does
+    not scan and does not match. Where the catalog already holds the book, the
+    loss moves onto it rather than leaving two records to split the holdings.
+    """
+    with session_scope() as s:
+        stats = series_volumes_load(s, path)
+
+    console.print(f"[green]{stats.summary()}[/green]")
+    if stats.merges:
+        console.print("\n[cyan]Merged onto books already in the catalog:[/cyan]")
+        for placeholder, existing in stats.merges:
+            console.print(f"  {placeholder[:30]:<32} -> {existing[:46]}")
 
 
 @app.command("import-wants")

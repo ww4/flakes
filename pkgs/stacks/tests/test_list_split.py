@@ -88,3 +88,62 @@ class TestSpec:
         spec = tomllib.loads(SPEC.read_text())
         ids = [r["work_id"] for r in spec["record"]]
         assert len(ids) == len(set(ids))
+
+
+class TestSeriesVolumeSpec:
+    """The volume-number mapping — a wrong row here names the wrong book.
+
+    These records are flood losses, so they drive the replace list at a sale.
+    Getting one wrong sends someone home with a book they did not lose and
+    without the one they did.
+    """
+
+    SPEC = Path(__file__).resolve().parent.parent / "data" / "series-volumes.toml"
+
+    def _volumes(self):
+        return tomllib.loads(self.SPEC.read_text())["volume"]
+
+    def test_every_volume_is_complete(self):
+        for v in self._volumes():
+            assert v.get("series") and v.get("number") and v.get("title")
+            assert not v["title"].startswith("#"), v
+
+    def test_no_number_is_claimed_twice(self):
+        seen = set()
+        for v in self._volumes():
+            key = (v["series"], str(v["number"]))
+            assert key not in seen, f"{key} appears more than once"
+            seen.add(key)
+
+    def test_the_renumbered_range_is_left_alone(self):
+        """Magic Tree House above #28 names two different books.
+
+        The Merlin Missions were originally 29-55 and were later split into
+        their own 1-27, so which book "#40" means depends on the printing the
+        list was written from. 1-28 is identical in both schemes. Resolving
+        the ambiguous ones would be a guess wearing a title.
+        """
+        for v in self._volumes():
+            if v["series"] == "Magic Tree House":
+                assert int(v["number"]) <= 28, (
+                    f"#{v['number']} is in the renumbered range and cannot be "
+                    f"resolved without knowing the printing"
+                )
+
+    def test_known_anchors_are_right(self):
+        """Spot-checks against the actual series.
+
+        A first pass at parsing read the wrong table on the page and returned
+        the Benny-and-Watch early readers as the novels — every row plausible,
+        every row wrong.
+        """
+        got = {(v["series"], str(v["number"])): v["title"] for v in self._volumes()}
+        for key, expect in {
+            ("Magic Tree House", "1"): "Dinosaurs Before Dark",
+            ("Magic Tree House", "2"): "The Knight at Dawn",
+            ("Magic Tree House", "17"): "Tonight on the Titanic",
+            ("Boxcar Children", "1"): "The Boxcar Children",
+            ("Boxcar Children", "2"): "Surprise Island",
+            ("Boxcar Children", "4"): "Mystery Ranch",
+        }.items():
+            assert got.get(key) == expect, f"{key} is {got.get(key)!r}, expected {expect!r}"
