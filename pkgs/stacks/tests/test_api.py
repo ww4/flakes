@@ -680,7 +680,19 @@ class TestCleanupChecks:
             )
 
     def test_a_title_with_no_letters_is_flagged(self, client):
-        """The loss document contains a line reading "999999999999"."""
+        """The loss document had a line reading "999999999999".
+
+        Written against a synthetic record rather than that one. The first
+        version asserted the real record was present, so splitting the list
+        records — which correctly deleted it — broke the test. A check is
+        worth testing; the continued existence of a defect is not.
+        """
+        from stacks.db import session_scope
+        from stacks.models import Work
+
+        with session_scope() as s:
+            s.add(Work(title="123456789012", sort_title="123456789012", ol_work_keys=[]))
+
         g = self._group(client, "junk-titles")
         numeric = [i for i in g["items"] if not re.search(r"[A-Za-z]", i["title"])]
         assert numeric, "a title with no letter in it should be on the list"
