@@ -12,10 +12,11 @@ what they are holding.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -23,41 +24,42 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from stacks import catalog, covers, offline
+from stacks import catalog, covers
 from stacks.badges import DERIVED as DERIVED_BADGES
 from stacks.badges import compute as compute_badges
-from stacks.cleanup import all_groups as cleanup_groups
 from stacks.browse import all_shelves as browse_shelves
 from stacks.browse import shelf_by_key
+from stacks.cleanup import all_groups as cleanup_groups
 from stacks.config import get_settings
 from stacks.coverchoice import choose as choose_cover
 from stacks.db import get_engine, session_scope
 from stacks.enrich.openlibrary import OpenLibraryClient, _author_key
 from stacks.match import (
-    _decide,
-    _holding_for_work,
-    resolve_work_by_isbn,
     BUYS,
     STATUS_LABEL,
-    status_for,
     MatchResult,
-    evaluate_scan,
     Verdict,
+    _decide,
+    _holding_for_work,
+    evaluate_scan,
+    resolve_work_by_isbn,
     search_works,
+    status_for,
     wants_for_work,
 )
 from stacks.models import (
     Author,
-    Series,
-    Tag,
-    WorkTag,
+    ClientEvent,
     Copy,
     CopyStatus,
     Edition,
     MatchTier,
     Provenance,
     ScanEvent,
+    Series,
+    Tag,
     Work,
+    WorkTag,
 )
 from stacks.normalize import normalize_author, normalize_title, to_isbn13, year_from
 
@@ -428,7 +430,12 @@ def healthz() -> dict:
 
 @app.get("/api/scan/{code}", response_model=BookCard)
 async def scan(
-    code: str, title: str | None = None, s: Session = Depends(get_session)
+    code: str,
+    request: Request,
+    title: str | None = None,
+    source: str | None = None,
+    shown: str | None = None,
+    s: Session = Depends(get_session),
 ) -> BookCard:
     """Evaluate one scanned barcode, returning everything known about the book.
 
@@ -438,7 +445,7 @@ async def scan(
     result = evaluate_scan(s, code, title_hint=title)
 
     external = None
-    if result.work is None and (isbn := to_isbn13(code)):
+    if result.work is None and (isbn := to_isbn13(code, repair=False)):
         external = await _lookup_external(isbn)
         if external:
             result = evaluate_scan(s, code, title_hint=title, external=external)
@@ -450,6 +457,9 @@ async def scan(
             match_tier=result.tier if isinstance(result.tier, MatchTier) else None,
             verdict=result.verdict.value,
             context={"headline": result.headline, "wants": result.wants},
+            source=(source or "unknown")[:16],
+            client_verdict=(shown or None),
+            user_agent=(request.headers.get("user-agent") or "")[:300] or None,
         )
     )
 
@@ -782,7 +792,7 @@ async def add_isbn(work_id: int, body: IsbnIn, s: Session = Depends(get_session)
     if work is None:
         raise HTTPException(status_code=404, detail="no such work")
 
-    isbn = to_isbn13(body.isbn13)
+    isbn = to_isbn13(body.isbn13, repair=False)
     if not isbn:
         raise HTTPException(
             status_code=400,
@@ -930,6 +940,14 @@ def delete_work(work_id: int, confirm_title: str, s: Session = Depends(get_sessi
     editions = s.scalars(select(Edition).where(Edition.work_id == work_id)).all()
     n_c, n_e = len(copies), len(editions)
     work.cover_edition_id = None
+
+    # Scan history points at works. Detach rather than delete: what was scanned
+    # and what it was decided to be is an audit trail, and it stays true even
+    # once the record it matched is gone. Without this the delete fails on a
+    # foreign key — which it did, the first time it was used in anger.
+    s.query(ScanEvent).filter(ScanEvent.matched_work_id == work_id).update(
+        {ScanEvent.matched_work_id: None}, synchronize_session=False
+    )
     s.flush()
     for c in copies:
         s.delete(c)
@@ -1058,9 +1076,115 @@ def shelf_detail(
     )
 
 
+class ClientEventIn(BaseModel):
+    kind: str
+    detail: dict | None = None
+    page: str | None = None
+
+
+@app.post("/api/client-event")
+def client_event(
+    body: ClientEventIn, request: Request, s: Session = Depends(get_session)
+) -> dict:
+    """Record something that happened on the device.
+
+    Camera permission refused, no BarcodeDetector, a decode that never
+    resolved. These are the likeliest phone problems and are otherwise
+    completely invisible — there is no console to read on a phone in a church
+    basement, and "it just doesn't work" is not a debuggable report.
+    """
+    s.add(ClientEvent(
+        kind=body.kind[:48],
+        detail=body.detail,
+        page=(body.page or "")[:64] or None,
+        user_agent=(request.headers.get("user-agent") or "")[:300] or None,
+    ))
+    return {"ok": True}
+
+
+class LogLine(BaseModel):
+    at: str
+    kind: str
+    code: str | None = None
+    title: str | None = None
+    verdict: str | None = None
+    client_verdict: str | None = None
+    source: str | None = None
+    detail: str | None = None
+    device: str | None = None
+    disagreed: bool = False
+
+
+@app.get("/api/logs", response_model=list[LogLine])
+def logs(limit: int = 120, s: Session = Depends(get_session)) -> list[LogLine]:
+    """Recent scans and device events, newest first.
+
+    Built for reading on the phone that produced them.
+    """
+    out: list[LogLine] = []
+
+    for ev, title in s.execute(
+        select(ScanEvent, Work.title)
+        .outerjoin(Work, Work.id == ScanEvent.matched_work_id)
+        .order_by(ScanEvent.id.desc())
+        .limit(limit)
+    ).all():
+        ctx = ev.context or {}
+        # A device that showed something other than what the server computed is
+        # the single most useful line in this log: it means the cached catalog
+        # answered, and it answered differently.
+        disagreed = bool(
+            ev.client_verdict and ev.verdict and ev.client_verdict != ev.verdict
+        )
+        out.append(LogLine(
+            at=ev.scanned_at.isoformat(timespec="seconds"),
+            kind="scan",
+            code=ev.scanned_code,
+            title=title,
+            verdict=ev.verdict,
+            client_verdict=ev.client_verdict,
+            source=ev.source,
+            detail=ctx.get("headline"),
+            device=_short_device(ev.user_agent),
+            disagreed=disagreed,
+        ))
+
+    for ev in s.scalars(
+        select(ClientEvent).order_by(ClientEvent.id.desc()).limit(limit)
+    ).all():
+        d = ev.detail or {}
+        out.append(LogLine(
+            at=ev.at.isoformat(timespec="seconds"),
+            kind=ev.kind,
+            detail=d.get("message") or (json.dumps(d) if d else None),
+            device=_short_device(ev.user_agent),
+        ))
+
+    out.sort(key=lambda x: x.at, reverse=True)
+    return out[:limit]
+
+
+def _short_device(ua: str | None) -> str | None:
+    """Enough of a user agent to tell the phone from the laptop."""
+    if not ua:
+        return None
+    for needle, label in (
+        ("Android", "Android"), ("iPhone", "iPhone"), ("iPad", "iPad"),
+        ("Macintosh", "Mac"), ("Windows", "Windows"), ("Linux", "Linux"),
+    ):
+        if needle in ua:
+            browser = ("Chrome" if "Chrome" in ua and "Edg" not in ua
+                       else "Firefox" if "Firefox" in ua
+                       else "Safari" if "Safari" in ua else "?")
+            return f"{label}/{browser}"
+    return ua[:24]
+
+
 class ConfirmIn(BaseModel):
-    #: "confirm" promotes an existing unverified holding to present, or creates
-    #: one if the book is new. "add" always adds another copy.
+    #: confirm — this book is in my hand. IDEMPOTENT: if a copy is already
+    #:           confirmed present, it says so rather than inventing a second.
+    #: add     — I genuinely own another copy of this.
+    #: unhave  — I looked and it is not there; demote to missing.
     action: str = "confirm"
     note: str | None = None
 
@@ -1131,6 +1255,59 @@ async def confirm(
         s.flush()
 
     now = datetime.now(UTC)
+
+    if body.action == "unhave":
+        # "I looked and it is not there." Demote rather than delete: a book that
+        # cannot be found is a fact worth keeping, and it is how a sweep records
+        # a gap between what the catalog claims and what the shelf holds.
+        target = s.scalar(
+            select(Copy)
+            .where(Copy.work_id == work.id, Copy.status == CopyStatus.present)
+            .order_by(Copy.id.desc())
+            .limit(1)
+        ) or s.scalar(
+            select(Copy)
+            .where(Copy.work_id == work.id, Copy.status == CopyStatus.unverified)
+            .order_by(Copy.id)
+            .limit(1)
+        )
+        if target is None:
+            return ConfirmOut(
+                outcome="nothing_to_unhave",
+                message="No copy recorded to mark missing",
+                card=_card_for_work(s, work, _result_for_work(s, work), scanned_isbn=isbn13),
+            )
+        target.status = CopyStatus.missing
+        target.last_verified_at = now
+        if body.note:
+            target.notes = f"{target.notes or ''} || {body.note}".strip(" |")[:2000]
+        s.flush()
+        return ConfirmOut(
+            outcome="marked_missing",
+            message="Marked as not on the shelf",
+            card=_card_for_work(s, work, _result_for_work(s, work), scanned_isbn=isbn13),
+        )
+
+    if body.action == "confirm":
+        # Idempotent. Pressing "I have this" twice previously fell through to
+        # the create branch and silently recorded a second copy — the same
+        # behaviour as "Another copy", which is exactly why the two buttons
+        # looked identical.
+        already = s.scalar(
+            select(Copy)
+            .where(Copy.work_id == work.id, Copy.status == CopyStatus.present)
+            .order_by(Copy.id)
+            .limit(1)
+        )
+        if already is not None:
+            already.last_verified_at = now
+            s.flush()
+            return ConfirmOut(
+                outcome="already_confirmed",
+                message="Already confirmed on the shelf",
+                card=_card_for_work(s, work, _result_for_work(s, work), scanned_isbn=isbn13),
+            )
+
     promoted = s.scalar(
         select(Copy)
         .where(Copy.work_id == work.id, Copy.status == CopyStatus.unverified)
@@ -1180,19 +1357,6 @@ def catalog_payload(s: Session = Depends(get_session)) -> JSONResponse:
             "Cache-Control": "no-cache",
             "X-Stacks-Works": str(len(payload["works"])),
             "X-Stacks-Isbns": str(len(payload["isbns"])),
-        },
-    )
-
-
-@app.get("/api/offline-set")
-def offline_set(s: Session = Depends(get_session)) -> JSONResponse:
-    """Deprecated: the lean scan-only payload. Use /api/catalog."""
-    payload = offline.build(s).to_dict()
-    return JSONResponse(
-        payload,
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Stacks-Entries": str(len(payload["isbns"])),
         },
     )
 

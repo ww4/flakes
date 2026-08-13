@@ -69,3 +69,44 @@ class TestScriptsLoadTogether:
             ["node", str(LOADCHECK)], capture_output=True, text=True, timeout=60
         )
         assert r.returncode == 0, f"page scripts failed to load:\n{r.stderr}{r.stdout}"
+
+
+class TestPagesDeclareWhatScriptsUse:
+    """Scripts must not wire up elements their page does not have.
+
+    "I have this" shipped invisible: the markup was dropped in a card rewrite,
+    app.js kept calling el('btn-have').addEventListener(...) at top level, and
+    every test stayed green because the harness handed back an element for any
+    id it was asked for. It now answers only for ids the page really declares.
+    """
+
+    ELEMENT_IDS = re.compile(r'id="([^"]+)"')
+    # el('x') / document.getElementById('x')
+    LOOKUPS = re.compile(
+        r"""(?:el|\$)\(\s*['"]([\w-]+)['"]\s*\)"""
+        r"""|getElementById\(\s*['"]([\w-]+)['"]\s*\)"""
+    )
+
+    @pytest.mark.parametrize("page", ["index.html", "browse.html", "shelf.html",
+                                      "cleanup.html", "logs.html"])
+    def test_every_looked_up_id_exists_on_the_page(self, page):
+        html = (WEB / page).read_text()
+        declared = set(self.ELEMENT_IDS.findall(html))
+        missing: dict[str, set[str]] = {}
+
+        for name in _page_scripts(page):
+            f = WEB / name
+            if not f.exists():
+                continue
+            for a, b in self.LOOKUPS.findall(f.read_text()):
+                wanted = a or b
+                # Ids created at runtime by the editor's own markup are fair.
+                if wanted.startswith("e-"):
+                    continue
+                if wanted not in declared:
+                    missing.setdefault(name, set()).add(wanted)
+
+        assert not missing, (
+            f"{page} scripts reference ids the page does not declare: "
+            f"{ {k: sorted(v) for k, v in missing.items()} }"
+        )

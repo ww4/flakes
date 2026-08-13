@@ -87,13 +87,6 @@ class LocationKind(enum.StrEnum):
     box = "box"
 
 
-class WishlistReason(enum.StrEnum):
-    series_gap = "series_gap"
-    author_gap = "author_gap"
-    flood_loss = "flood_loss"
-    manual = "manual"
-
-
 class RequestStatus(enum.StrEnum):
     open = "open"
     fulfilled = "fulfilled"
@@ -489,26 +482,6 @@ class WorkTag(Base):
     tag: Mapped[Tag] = relationship(back_populates="works")
 
 
-class WishlistItem(Base):
-    """A book we want. Flood losses land here automatically."""
-
-    __tablename__ = "wishlist"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    work_id: Mapped[int] = mapped_column(ForeignKey("works.id"), nullable=False, index=True)
-    reason: Mapped[WishlistReason] = mapped_column(
-        Enum(WishlistReason, name="wishlist_reason"), nullable=False
-    )
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    satisfied_by_copy_id: Mapped[int | None] = mapped_column(ForeignKey("copies.id"))
-    notes: Mapped[str | None] = mapped_column(Text)
-
-    __table_args__ = (
-        UniqueConstraint("work_id", "reason", name="uq_wishlist_work_reason"),
-    )
-
-
 # --------------------------------------------------------------------------
 # audit
 # --------------------------------------------------------------------------
@@ -532,3 +505,35 @@ class ScanEvent(Base):
     match_tier: Mapped[MatchTier | None] = mapped_column(Enum(MatchTier, name="match_tier"))
     verdict: Mapped[str | None] = mapped_column(String(32))
     context: Mapped[dict | None] = mapped_column(JSONB)
+
+    #: camera | manual | unknown — how the code was captured.
+    source: Mapped[str | None] = mapped_column(String(16))
+    #: What the DEVICE actually displayed.
+    #:
+    #: Distinct from `verdict`, which is what the server computed. They can
+    #: differ when the phone answers from a stale cached catalog, and that
+    #: divergence is precisely the bug worth catching — a log that only records
+    #: the server's opinion cannot show what someone was actually told.
+    client_verdict: Mapped[str | None] = mapped_column(String(32))
+    user_agent: Mapped[str | None] = mapped_column(String(300))
+
+
+class ClientEvent(Base):
+    """Things that happen on the device and never become a scan.
+
+    Camera permission refused, no BarcodeDetector, a decode that never
+    resolved, a failed sync. These are the likeliest phone problems and they
+    are completely invisible server-side — there is no console to read on a
+    phone in a church basement.
+    """
+
+    __tablename__ = "client_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(48), nullable=False, index=True)
+    detail: Mapped[dict | None] = mapped_column(JSONB)
+    user_agent: Mapped[str | None] = mapped_column(String(300))
+    page: Mapped[str | None] = mapped_column(String(64))

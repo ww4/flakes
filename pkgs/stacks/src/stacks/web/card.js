@@ -40,8 +40,16 @@ const $ = (id) => document.getElementById(id);
 /* Fill the card elements. The title is the heading; the status tag sits beside
    it; the recommendation is its own line below. */
 function renderBookCard(c, code) {
+  // The title is a link to the book's own page — the full record, the editor,
+  // and a URL that can be bookmarked or sent to someone. On that page itself
+  // it stays plain text rather than linking to where you already are.
+  const heading = esc(c.title || code || 'Unknown book') +
+                  (c.subtitle ? ': ' + esc(c.subtitle) : '');
+  const onBookPage = location.pathname.endsWith('book.html');
   $('c-title').innerHTML =
-    `<span>${esc(c.title || code || 'Unknown book')}${c.subtitle ? ': ' + esc(c.subtitle) : ''}</span>` +
+    (c.work_id && !onBookPage
+      ? `<a href="book.html?id=${c.work_id}" style="color:inherit">${heading}</a>`
+      : `<span>${heading}</span>`) +
     tagHtml(c.status || STATUS_OF[c.verdict] || 'NOT OWNED');
 
   $('c-by').textContent = [

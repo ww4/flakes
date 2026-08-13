@@ -29,12 +29,12 @@ meaning and are treated as unstyled.
 from __future__ import annotations
 
 import re
+import zipfile
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Iterator
 from xml.etree import ElementTree as ET
-import zipfile
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 

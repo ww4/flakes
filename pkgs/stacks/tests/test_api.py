@@ -1,10 +1,11 @@
-"""API and offline-set tests.
+"""API tests.
 
 These need a populated database, so they skip cleanly when DATABASE_URL is
 unset — the pure logic tests must stay runnable anywhere.
 """
 
 import os
+import re
 
 import pytest
 
@@ -25,9 +26,17 @@ def client():
 
 @pytest.fixture(scope="module")
 def payload(client):
-    r = client.get("/api/offline-set")
+    """The payload the phone really receives.
+
+    These tests used to exercise a second, parallel builder that the app had
+    stopped using — so they could have passed while the real one was broken.
+    """
+    r = client.get("/api/catalog")
     assert r.status_code == 200
-    return r.json()
+    data = r.json()
+    # catalog maps isbn -> work_id directly; the tests below read v["w"].
+    data["isbns"] = {k: {"w": v} for k, v in data["isbns"].items()}
+    return data
 
 
 class TestHealth:
@@ -465,6 +474,28 @@ class TestEditing:
         assert r.status_code == 400
         assert client.get(f"/api/work/{wid}").status_code == 200, "work must survive"
 
+    def test_a_scanned_work_can_still_be_deleted(self, client):
+        """Scan history references works. Deleting one must not trip that FK.
+
+        Not hypothetical: the first real use of delete — on a book my own
+        unisolated tests had left in the catalog — failed on
+        ``scan_events_matched_work_id_fkey``. A scan record is an audit trail
+        (what was scanned, and what it was taken to be), and it stays true
+        after the work it matched is gone, so the delete detaches it rather
+        than destroying it.
+        """
+        isbn = "9781234567897"
+        added = client.post(f"/api/confirm/{isbn}", json={"action": "add", "title": "Ephemeral"})
+        assert added.status_code == 200, added.text
+        card = added.json()["card"]
+        wid = card["work_id"]
+
+        assert client.get(f"/api/scan/{isbn}").json()["work_id"] == wid
+
+        r = client.delete(f"/api/work/{wid}", params={"confirm_title": card["title"]})
+        assert r.status_code == 200, r.text
+        assert client.get(f"/api/work/{wid}").status_code == 404
+
     def test_covers_endpoint_returns_options(self, client):
         wid = self._a_work(client)
         r = client.get(f"/api/work/{wid}/covers")
@@ -538,3 +569,118 @@ class TestAddIsbn:
         hits = client.get("/api/search", params={"q": "frog"}).json()
         m = client.get(f"/api/work/{hits[0]['work_id']}/edition-ids").json()
         assert isinstance(m, dict)
+
+
+class TestConfirmIsIdempotent:
+    """"I have this" pressed twice must not quietly record a second copy.
+
+    That fall-through made it behave exactly like "Another copy", which is how
+    two buttons ended up looking like they did the same thing.
+    """
+
+    ISBN = "9780062381880"  # How a Seed Grows — confirmed present earlier
+
+    def test_second_confirm_does_not_add_a_copy(self, client):
+        first = client.post(f"/api/confirm/{self.ISBN}").json()
+        before = first["card"]["present"]
+        second = client.post(f"/api/confirm/{self.ISBN}").json()
+        assert second["card"]["present"] == before, "a second copy was invented"
+        assert second["outcome"] == "already_confirmed"
+
+    def test_add_is_the_only_way_to_record_a_second_copy(self, client):
+        before = client.get(f"/api/scan/{self.ISBN}").json()["present"]
+        j = client.post(f"/api/confirm/{self.ISBN}", json={"action": "add"}).json()
+        assert j["card"]["present"] == before + 1
+        # Put it back so the fixture database does not drift.
+        ids = client.get(f"/api/work/{j['card']['work_id']}/copy-ids").json()
+        client.delete(f"/api/copy/{ids[-1]}")
+
+    def test_unhave_demotes_rather_than_deletes(self, client):
+        client.post(f"/api/confirm/{self.ISBN}")
+        j = client.post(f"/api/confirm/{self.ISBN}", json={"action": "unhave"}).json()
+        assert j["outcome"] == "marked_missing"
+        assert j["card"]["present"] == 0
+        # The record survives — a book that cannot be found is a fact worth keeping.
+        assert j["card"]["copies"], "the copy was deleted instead of demoted"
+        assert any(c["status"] == "missing" for c in j["card"]["copies"])
+        client.post(f"/api/confirm/{self.ISBN}")  # restore
+
+    def test_unhave_on_an_unheld_book_says_so(self, client):
+        hits = client.get("/api/search", params={"q": "frog and toad"}).json()
+        card = client.get(f"/api/work/{hits[0]['work_id']}").json()
+        isbn = next((e["isbn13"] for e in card["editions"] if e["isbn13"]), None)
+        if not isbn or card["present"]:
+            pytest.skip("no suitable unheld book")
+        j = client.post(f"/api/confirm/{isbn}", json={"action": "unhave"}).json()
+        assert j["outcome"] in {"marked_missing", "nothing_to_unhave"}
+
+
+class TestCleanupChecks:
+    """The to-do list is only worth having if it is mostly true.
+
+    The first junk-title check flagged 26 works and 18 were real books. It
+    matched ``%(have%``, so "A Defense of Honor (Haven Manor)" looked like a
+    have-list, and it flagged any title over 120 characters, which is an
+    ordinary length for a non-fiction subtitle. Nobody works a list like that,
+    so the debris it was built to surface stayed put.
+    """
+
+    def _group(self, client, key):
+        """The group, or an empty stand-in — a clean check drops off the list."""
+        groups = client.get("/api/cleanup").json()
+        for g in groups:
+            if g["key"] == key:
+                return g
+        return {"key": key, "items": [], "total": 0, "fix": "", "why": ""}
+
+    def test_junk_titles_are_actually_junk(self, client):
+        g = self._group(client, "junk-titles")
+        pattern = re.compile(r"\b(have|had)\s*:|need titles|suggested titles", re.I)
+        for item in g["items"]:
+            title = item["title"]
+            assert pattern.search(title) or len(title) > 120 or not re.search(
+                r"[A-Za-z]", title
+            ), f"flagged as not-a-book on no visible evidence: {title!r}"
+
+    def test_a_parenthetical_word_starting_with_have_is_not_a_have_list(self, client):
+        """'(Haven Manor)' is a series name, not a list of what we own."""
+        g = self._group(client, "junk-titles")
+        assert not [i for i in g["items"] if "(Haven" in i["title"]]
+
+    def test_a_long_title_that_resolved_is_left_alone(self, client):
+        """A title that matched an edition is a real title, however long."""
+        g = self._group(client, "junk-titles")
+        for item in g["items"]:
+            if len(item["title"]) > 120 and not re.search(
+                r"\b(have|had)\s*:", item["title"], re.I
+            ):
+                eds = client.get(f"/api/work/{item['work_id']}/edition-ids").json()
+                assert not eds, f"{item['title']!r} resolved to {len(eds)} editions"
+
+    def test_every_group_says_what_to_do(self, client):
+        for g in client.get("/api/cleanup").json():
+            assert g["fix"], f"{g['key']} reports a problem with no remedy"
+
+    def test_duplicates_need_a_matching_author_too(self, client):
+        """Two books can share a title and be different books.
+
+        Seymour Simon's *Spiders* and Gail Gibbons' *Spiders* are not one
+        record entered twice. Merging them would collapse two real books into
+        one and undercount the shelf — the same failure this check exists to
+        prevent, reached from the other side.
+        """
+        g = self._group(client, "duplicates")
+        by_title: dict[str, set[str | None]] = {}
+        for item in g["items"]:
+            by_title.setdefault(item["title"].strip().lower(), set()).add(item["author"])
+        for title, authors in by_title.items():
+            named = {a for a in authors if a}
+            assert len(named) <= 1, (
+                f"{title!r} flagged as duplicate across distinct authors: {named}"
+            )
+
+    def test_a_title_with_no_letters_is_flagged(self, client):
+        """The loss document contains a line reading "999999999999"."""
+        g = self._group(client, "junk-titles")
+        numeric = [i for i in g["items"] if not re.search(r"[A-Za-z]", i["title"])]
+        assert numeric, "a title with no letter in it should be on the list"

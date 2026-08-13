@@ -29,9 +29,19 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Alembic writes these. They are a record of what was applied to a live
+# database, not code we hand-maintain — reformatting a revision that has
+# already run buys nothing and means editing history.
+extend-exclude = ["src/stacks/migrations/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+ignore = [
+    # Depends()/Argument() in a default IS the FastAPI and Typer calling
+    # convention. "Fixing" these would break both frameworks, so the rule is
+    # simply wrong for this codebase rather than something to work around.
+    "B008",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
@@ -40,4 +50,11 @@ testpaths = ["tests"]
 [tool.setuptools.package-data]
 # The PWA is not Python and setuptools would drop it silently, leaving a
 # packaged install that serves a 404 for its own interface.
-stacks = ["web/*"]
+stacks = [
+    "web/*",
+    # The .mako template is not Python, so it needs listing here. The .py
+    # files ship because migrations/ and migrations/versions/ are real
+    # packages — see their __init__.py. Relying on package-data globs alone
+    # left them out of the installed package and crash-looped the deploy.
+    "migrations/*.mako",
+]

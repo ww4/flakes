@@ -12,12 +12,16 @@
 <header>
   <span class="dot" id="dot"></span>
   <h1>stacks</h1>
-  <nav class="tabs"><a href="./" class="on">Scan</a><a href="browse.html">Browse</a></nav>
+  <nav class="tabs"><a href="./" class="on">Scan</a><a href="browse.html">Browse</a><a href="cleanup.html">Cleanup</a><a href="logs.html">Logs</a></nav>
   <div id="status" style="margin-left:.6rem">loading…</div>
 </header>
 
 <main>
-  <div id="video-wrap"><video id="video" playsinline muted></video><div id="reticle"></div></div>
+  <div id="video-wrap">
+    <video id="video" playsinline muted></video>
+    <div id="reticle"></div>
+    <button id="btn-stop-overlay" aria-label="Stop scanning">✕ Stop</button>
+  </div>
 
   <section class="card" id="card" aria-live="polite">
     <div class="card-head">
@@ -33,12 +37,18 @@
     <p class="desc" id="c-desc"></p>
     <div id="c-copies"></div>
     <div id="c-editions"></div>
+    <div class="card-actions" id="c-actions" hidden>
+      <button class="primary" id="btn-have">✓ I have this</button>
+      <button id="btn-open" hidden>Open record →</button>
+    </div>
     <p class="meta" id="c-meta"></p>
+    <div id="c-edit" hidden></div>
   </section>
 
   <div class="controls">
     <button class="primary" id="btn-scan">Scan</button>
     <button id="btn-sync">Sync catalog</button>
+    <button id="btn-done" hidden>Done</button>
   </div>
 
   <form class="manual" id="manual-form">
@@ -62,7 +72,6 @@
 
 <script src="card.js"></script>
 <script src="edit.js"></script>
-<script src="shared-ui.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -33,38 +33,58 @@ function makeEl() {
   return el;
 }
 
-const context = vm.createContext({
+/* The ids a page actually declares.
+ *
+ * Handing back an element for every id — as this harness first did — makes it
+ * impossible to catch a script wiring up an element its page does not have.
+ * That is precisely how the "I have this" button shipped broken: the markup was
+ * dropped in a rewrite, app.js kept calling
+ * el('btn-have').addEventListener(...), and every test stayed green.
+ */
+function idsIn(page) {
+  const html = fs.readFileSync(path.join(WEB, page), 'utf8');
+  return new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
+}
+
+function makeContext(ids) {
+  return vm.createContext({
   document: {
-    getElementById: () => makeEl(),
+    getElementById: (id) => (ids.has(id) ? makeEl() : null),
     querySelector: () => makeEl(),
     querySelectorAll: () => [],
     createElement: () => makeEl(),
     addEventListener() {},
   },
-  window: {},
+  // Scripts register global error handlers here; a bare object made that a
+  // TypeError and failed the page for a harness shortcoming, not a bug.
+  window: { addEventListener() {}, removeEventListener() {} },
   navigator: { onLine: false, serviceWorker: { register: () => Promise.resolve() } },
   localStorage: { getItem: () => null, setItem() {} },
   indexedDB: { open: () => ({}) },
   fetch: () => Promise.reject(new Error('offline in test')),
+  location: { search: '', pathname: '/', href: '', reload() {} },
   URLSearchParams,
   console: { log() {}, warn() {}, error() {} },
-  setTimeout, clearTimeout, requestAnimationFrame: () => {},
-  location: { reload() {} },
+  setTimeout, clearTimeout, setInterval, clearInterval,
+  requestAnimationFrame: () => {},
   alert() {}, confirm: () => false, prompt: () => null,
-});
+  });
+}
 
 // Order matters and mirrors the <script> tags in the two pages.
 const PAGES = {
-  'index.html': ['card.js', 'edit.js', 'shared-ui.js', 'app.js'],
-  'browse.html': ['card.js', 'edit.js', 'shared-ui.js', 'browse.js'],
-  'shelf.html': ['card.js', 'edit.js', 'shared-ui.js', 'shelf.js'],
-  'cleanup.html': ['card.js', 'edit.js', 'shared-ui.js', 'cleanup.js'],
+  'index.html': ['card.js', 'edit.js', 'app.js'],
+  'browse.html': ['shared-ui.js', 'browse.js'],
+  'shelf.html': ['shared-ui.js', 'shelf.js'],
+  'cleanup.html': ['shared-ui.js', 'cleanup.js'],
+  'logs.html': ['logs.js'],
+  'book.html': ['card.js', 'edit.js', 'book.js'],
 };
 
 let failed = false;
 for (const [page, scripts] of Object.entries(PAGES)) {
-  // Fresh globals per page, exactly as a real navigation would give.
-  const ctx = vm.createContext({ ...context });
+  // Fresh globals per page, with only the ids that page really declares.
+  const ctx = makeContext(idsIn(page));
   for (const name of scripts) {
     const file = path.join(WEB, name);
     try {
@@ -76,10 +96,13 @@ for (const [page, scripts] of Object.entries(PAGES)) {
   }
   // The functions each page depends on must actually be callable.
   const NEEDED = {
-    'index.html': ['renderBookCard', 'mountEditor', 'renderCard', 'check'],
-    'browse.html': ['renderBookCard', 'mountEditor', 'bookTile', 'openSheet', 'renderSearch'],
-    'shelf.html': ['renderBookCard', 'mountEditor', 'renderBooks', 'openSheet', 'viewToggle'],
-    'cleanup.html': ['renderBookCard', 'mountEditor', 'openSheet'],
+    'index.html': ['renderBookCard', 'mountEditor', 'renderCard', 'check',
+                   'startScan', 'pauseScan', 'resumeScan', 'stopScan'],
+    'browse.html': ['bookTile', 'openSheet', 'renderSearch', 'renderBooks'],
+    'shelf.html': ['renderBooks', 'openSheet', 'viewToggle'],
+    'cleanup.html': ['openSheet', 'loadCleanup'],
+    'logs.html': ['load'],
+    'book.html': ['renderBookCard', 'mountEditor', 'paint', 'wireActions'],
   };
   const needed = NEEDED[page];
   for (const fn of needed) {

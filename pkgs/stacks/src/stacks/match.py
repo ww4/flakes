@@ -401,7 +401,8 @@ def evaluate_scan(
     ``external`` carries metadata for a book we hold no record of, so that
     author- and publisher-level want rules can still fire on it.
     """
-    isbn13 = to_isbn13(code)
+    # Scanned input: never repair a failed check digit into a different book.
+    isbn13 = to_isbn13(code, repair=False)
 
     work: Work | None = None
     tier: MatchTier | None = None

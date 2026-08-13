@@ -48,11 +48,17 @@ async function idbPut(key, value) {
 /* Mirrors stacks.normalize.to_isbn13. A book printed before 2007 carries an
    ISBN-10 and its barcode may be an EAN-13 wrapping the same number; both must
    fold to one key or the offline lookup misses. */
-function toIsbn13(raw) {
+function toIsbn13(raw, repair) {
   if (!raw) return null;
   const s = String(raw).replace(/[^0-9Xx]/g, '').toUpperCase();
   if (s.length === 13 && /^\d+$/.test(s)) {
     if (check13(s.slice(0, 12)) === s[12]) return s;
+    // Repairing a failed check digit is right for a spreadsheet, where the
+    // last digit gets mangled by a text import — and WRONG for a scan, where
+    // the check digit is the barcode's own integrity check. Repairing turns a
+    // misread into a plausible wrong book: 108 distinct valid-looking ISBNs
+    // are reachable from a single misread digit.
+    if (!repair) return null;
     return (s.startsWith('978') || s.startsWith('979'))
       ? s.slice(0, 12) + check13(s.slice(0, 12)) : null;
   }
@@ -197,11 +203,65 @@ function searchOffline(cat, query) {
   return out.slice(0, 30);
 }
 
+/* Tell the server what happened here.
+ *
+ * A phone has no console. Camera permission refused, no BarcodeDetector, a
+ * decode that never resolves — all invisible server-side, and all the likeliest
+ * failures. Best-effort and never awaited: diagnostics must not be able to
+ * break the thing they are diagnosing.
+ */
+const _reportedAt = Object.create(null);
+
+function report(kind, detail, minGapMs) {
+  // Throttled per kind. These are called from the detect loop, where an
+  // oscillating barcode or two codes in frame produced a POST on EVERY frame —
+  // enough traffic to stall the main thread on a phone and make the Stop
+  // button stop responding.
+  const gap = minGapMs == null ? 1500 : minGapMs;
+  const now = Date.now();
+  if (_reportedAt[kind] && now - _reportedAt[kind] < gap) return;
+  _reportedAt[kind] = now;
+  try {
+    fetch('api/client-event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, detail: detail || {}, page: 'scan' }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch { /* diagnostics must never throw */ }
+}
+
+/* Uncaught failures are the ones that look like "it just stopped working".
+   Send them where they can be read: the Logs tab. */
+window.addEventListener('error', (e) => {
+  report('js_error', { message: String(e.message || ''),
+                       at: `${e.filename || '?'}:${e.lineno || 0}` }, 0);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const r = e.reason;
+  report('js_rejection', { message: String((r && r.message) || r || '') }, 0);
+});
+
 // ---------------------------------------------------------------- UI
 
 const el = (id) => document.getElementById(id);
-let catalog = null, detector = null, stream = null, scanning = false;
+let catalog = null, detector = null, stream = null;
 let lastCode = null, lastAt = 0;
+
+/* A decoded barcode is not believed until it repeats.
+ *
+ * EAN-13's check digit catches every single-digit error but not every
+ * two-digit one, so a blurred frame can produce a DIFFERENT VALID ISBN and
+ * sail straight through. That is not hypothetical: scanning "How a Seed Grows"
+ * (9780062381880) yielded 9780062381750 — "The Demon Crown", an unrelated
+ * thriller — because two digits flipped in a way that still checksummed.
+ *
+ * A misread comes from one bad frame and rarely repeats identically; the true
+ * code repeats every frame. Requiring agreement across consecutive detections
+ * costs about 50ms and removes the whole class.
+ */
+const STABLE_FRAMES = 3;
+let pendingCode = null, pendingCount = 0;
 
 function setStatus(text, cls) {
   el('status').innerHTML = text;
@@ -223,8 +283,26 @@ function renderCard(c, code) {
   const acts = el('c-actions');
   if (acts) {
     acts.hidden = !lastScanned || !!c.offline;
-    el('btn-have').textContent =
-      c.verdict === 'NOT_IN_CATALOG' ? '+ Add to library' : '✓ I have this';
+    // ONE action, ONE label, always safe to press.
+    //
+    // A label that changes with state reads as either an indicator ("this is
+    // not on the shelf") or an input ("click to mark it missing"), and those
+    // two readings imply opposite outcomes. Pressing it is now idempotent —
+    // "I have this" said twice is still just "I have this" — so the label
+    // never has to change and can never be misread.
+    //
+    // Recording that something is NOT there is a different, deliberate act.
+    // It belongs on the book page's copy editor, where it is an explicit
+    // labelled field rather than a button that flipped meaning underneath you.
+    const have = el('btn-have');
+    have.textContent = '✓ I have this';
+    have.className = 'primary';
+
+    // The other slot opens the full record: everything that does not belong on
+    // a decision surface lives there.
+    const open = el('btn-open');
+    open.hidden = !c.work_id;
+    open.onclick = () => { location.href = `book.html?id=${c.work_id}`; };
   }
 
   if (navigator.vibrate) {
@@ -289,13 +367,18 @@ async function showWork(workId) {
   }
 }
 
-async function check(code) {
+async function check(code, source) {
   const off = lookupOffline(catalog, code);
   // A cached hit is authoritative and instant; show it at once, then quietly
   // upgrade to the full record when there is a network.
   if (off && off.verdict !== 'NOT_IN_CATALOG') renderCard(off, code);
   try {
-    const res = await fetch(`api/scan/${encodeURIComponent(code)}`);
+    // `shown` is what the DEVICE displayed. When it differs from the server's
+    // answer the cached catalog was stale — and that divergence is exactly the
+    // bug a log recording only the server's opinion could never show.
+    const q = new URLSearchParams({ source: source || 'unknown' });
+    if (off) q.set('shown', off.verdict);
+    const res = await fetch(`api/scan/${encodeURIComponent(code)}?${q}`);
     if (!res.ok) throw new Error(res.status);
     renderCard({ ...(await res.json()), offline: false }, code);
   } catch {
@@ -331,44 +414,174 @@ async function doSearch(query) {
 
 // ---------------------------------------------------------------- camera
 
+/* Scanning is a back-and-forth, not a firehose.
+ *
+ * Every book that resolves needs a decision — confirm it, add it, or move on —
+ * and nothing useful happens while someone is reading a card. So a hit PAUSES
+ * the camera and shows the result; the next scan starts when they say so. This
+ * also removes the layout problem entirely: the viewfinder and the card are
+ * never on screen at the same time, so neither can push the other away.
+ *
+ * The MediaStream is kept alive across a pause. Releasing it would make every
+ * book cost a camera warm-up, and on some browsers a fresh permission prompt.
+ */
+const IDLE = 'idle', SCANNING = 'scanning', PAUSED = 'paused';
+let scanState = IDLE;
+let starting = false;
+let scanned = 0;
+
+function setScanState(next) {
+  scanState = next;
+  const wrap = el('video-wrap');
+  const scan = el('btn-scan');
+  const sync = el('btn-sync');
+  const done = el('btn-done');
+
+  wrap.classList.toggle('on', next === SCANNING);
+  document.body.classList.toggle('scanning', next === SCANNING);
+  el('btn-stop-overlay').hidden = next !== SCANNING;
+
+  // Each label says what the button does in this state. No mode guessing.
+  scan.textContent =
+    next === SCANNING ? 'Stop'
+    : next === PAUSED ? `Scan another${scanned ? ` (${scanned})` : ''}`
+    : 'Scan';
+
+  // "Done" replaces Sync only while paused, where ending the session is the
+  // other thing someone plausibly wants.
+  sync.hidden = next === PAUSED;
+  done.hidden = next !== PAUSED;
+}
+
 async function startScan() {
-  if (scanning) return stopScan();
+  if (scanState === SCANNING) return stopScan();
+  if (scanState === PAUSED) return resumeScan();
+  // getUserMedia can take a second on a phone; a second tap meanwhile must not
+  // open a competing stream that the first stopScan cannot see to release.
+  if (starting) return;
+  starting = true;
+  try {
+    await beginCamera();
+  } finally {
+    starting = false;
+  }
+}
+
+async function beginCamera() {
   if (!('BarcodeDetector' in window)) {
+    report('camera_unsupported', { ua: navigator.userAgent }, 0);
     el('cam-note').hidden = false; el('manual-input').focus(); return;
   }
   try {
     detector = detector || new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e'] });
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-    const v = el('video'); v.srcObject = stream; await v.play();
-    el('video-wrap').classList.add('on');
-    el('btn-scan').textContent = 'Stop';
-    scanning = true; tick();
+    if (!stream) {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    }
+    const v = el('video');
+    v.srcObject = stream;
+    await v.play();
+    scanned = 0;
+    setScanState(SCANNING);
+    report('camera_started', {}, 0);
+    tick();
   } catch (err) {
+    report('camera_failed', { message: String((err && err.message) || err),
+                              name: String((err && err.name) || '') }, 0);
     el('cam-note').hidden = false;
     el('cam-note').textContent = 'Camera unavailable: ' + err.message;
+    stopScan();
   }
 }
+
+/* A book resolved. Stop looking and let them decide about it. */
+function pauseScan() {
+  if (tickTimer) { clearTimeout(tickTimer); tickTimer = null; }
+  pendingCode = null; pendingCount = 0;
+  el('video').pause();
+  setScanState(PAUSED);
+}
+
+/* Put the card away and go back to the viewfinder. */
+async function resumeScan() {
+  el('card').classList.remove('show');
+  el('c-actions').hidden = true;
+  hide('results');
+  lastCode = null; lastAt = 0;
+
+  if (!stream) return beginCamera();
+  try {
+    await el('video').play();
+  } catch {
+    // The stream died while paused (backgrounded tab, camera taken by another
+    // app). Acquire a fresh one rather than showing a frozen frame.
+    stream = null;
+    return beginCamera();
+  }
+  setScanState(SCANNING);
+  tick();
+}
+
 function stopScan() {
-  scanning = false;
+  if (tickTimer) { clearTimeout(tickTimer); tickTimer = null; }
   if (stream) stream.getTracks().forEach((t) => t.stop());
   stream = null;
-  el('video-wrap').classList.remove('on');
-  el('btn-scan').textContent = 'Scan';
+  pendingCode = null; pendingCount = 0;
+  el('video').srcObject = null;
+  setScanState(IDLE);
 }
+
+/* Detect on a timer, not every animation frame.
+ *
+ * BarcodeDetector.detect is expensive. Running it at ~60fps pegged the phone's
+ * main thread, and a saturated main thread does not process touch events.
+ * Eight looks a second is far more than enough to read a barcode someone is
+ * holding still, and leaves the UI responsive.
+ */
+const DETECT_INTERVAL_MS = 120;
+let tickTimer = null;
+
+function scheduleTick() {
+  if (scanState !== SCANNING) return;
+  tickTimer = setTimeout(tick, DETECT_INTERVAL_MS);
+}
+
 async function tick() {
-  if (!scanning) return;
+  tickTimer = null;
+  if (scanState !== SCANNING) return;
   try {
     const codes = await detector.detect(el('video'));
-    if (codes.length) {
-      const code = codes[0].rawValue, now = Date.now();
-      // The detector fires many times a second on one barcode; without this
-      // guard a single book scrolls the log and re-vibrates continuously.
-      if (code !== lastCode || now - lastAt > 2500) {
-        lastCode = code; lastAt = now; check(code);
+    if (!codes.length) {
+      pendingCode = null; pendingCount = 0;
+    } else {
+      const values = [...new Set(codes.map((c) => c.rawValue))];
+      if (values.length > 1) {
+        // Two barcodes in view. Guessing which one someone meant is worse than
+        // asking them to isolate the book.
+        pendingCode = null; pendingCount = 0;
+        report('multiple_codes', { values });
+        setStatus('two barcodes in view — show one', 'stale');
+        return scheduleTick();
+      }
+
+      const code = values[0];
+      if (code === pendingCode) {
+        pendingCount++;
+      } else {
+        if (pendingCode) report('unstable_decode', { was: pendingCode, now: code });
+        pendingCode = code; pendingCount = 1;
+      }
+
+      if (pendingCount >= STABLE_FRAMES) {
+        scanned += 1;
+        if (navigator.vibrate) navigator.vibrate(35);
+        report('decode', { code, frames: pendingCount }, 0);
+        pauseScan();
+        check(code, 'camera');
+        return;
       }
     }
   } catch { /* transient decode failure — keep going */ }
-  requestAnimationFrame(tick);
+  scheduleTick();
 }
 
 // ---------------------------------------------------------------- sync
@@ -400,6 +613,8 @@ function reportReady() {
 // ---------------------------------------------------------------- boot
 
 el('btn-scan').addEventListener('click', startScan);
+el('btn-stop-overlay').addEventListener('click', stopScan);
+el('btn-done').addEventListener('click', stopScan);
 el('btn-sync').addEventListener('click', sync);
 el('manual-form').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -407,7 +622,19 @@ el('manual-form').addEventListener('submit', (e) => {
   if (!raw) return;
   // A valid ISBN is a scan; anything else is a search, which is the only route
   // to the pre-ISBN books making up much of what the flood destroyed.
-  if (toIsbn13(raw)) check(raw); else doSearch(raw);
+  const asIsbn = toIsbn13(raw);
+  if (asIsbn) {
+    check(raw, 'manual');
+  } else if (/^[0-9Xx\s-]{10,17}$/.test(raw)) {
+    // Looks like an ISBN but failed its check digit. Searching for the digits
+    // as a title would be nonsense; say what is actually wrong.
+    renderCard({ verdict: 'UNKNOWN', status: 'UNREADABLE',
+                 recommendation: 'That ISBN fails its check digit',
+                 detail: ['A digit is wrong somewhere — retype or rescan it.'],
+                 offline: true }, raw);
+  } else {
+    doSearch(raw);
+  }
   el('manual-input').select();
 });
 
@@ -434,7 +661,7 @@ el('manual-form').addEventListener('submit', (e) => {
  */
 async function confirmInHand(action) {
   if (!lastScanned) return;
-  const btn = el(action === 'add' ? 'btn-another' : 'btn-have');
+  const btn = el('btn-have');
   const was = btn.textContent;
   btn.disabled = true; btn.textContent = 'saving…';
   try {
@@ -462,4 +689,3 @@ async function confirmInHand(action) {
 }
 
 el('btn-have').addEventListener('click', () => confirmInHand('confirm'));
-el('btn-another').addEventListener('click', () => confirmInHand('add'));
