@@ -34,6 +34,53 @@ let
   # cover requests BY IDENTIFIER to 100 per IP per five minutes, so re-fetching
   # on demand is not an option; ~32 MB for this library.
   stateDir = "/var/lib/stacks";
+
+  # Shared by the server and the cover-warming job, so the two cannot drift
+  # into reading different databases or writing art to different directories —
+  # which would be invisible until the browse page came up blank.
+  commonEnv = {
+    # Peer auth over the unix socket: the service runs as `stacks` and owns
+    # the database, so no password exists to leak or rotate.
+    DATABASE_URL = "postgresql+psycopg:///${dbName}";
+
+    # Open Library asks clients to identify themselves and to cache rather
+    # than hammer. Both are courtesy requirements of a free non-profit and
+    # this service honours them.
+    STACKS_OL_USER_AGENT =
+      "stacks/0.1 (personal book catalog; chris.saenz@broadlinc.com)";
+    STACKS_COVER_CACHE_DIR = "${stateDir}/covers";
+
+    PYTHONUNBUFFERED = "1";
+  };
+
+  commonHardening = {
+    User = user;
+    Group = user;
+
+    StateDirectory = "stacks";
+    StateDirectoryMode = "0750";
+    WorkingDirectory = stateDir;
+
+    NoNewPrivileges = true;
+    PrivateTmp = true;
+    PrivateDevices = true;
+    ProtectSystem = "strict";
+    ProtectHome = true;
+    ProtectKernelTunables = true;
+    ProtectKernelModules = true;
+    ProtectControlGroups = true;
+    ProtectClock = true;
+    ProtectHostname = true;
+    ProtectProc = "invisible";
+    RestrictNamespaces = true;
+    RestrictRealtime = true;
+    RestrictSUIDSGID = true;
+    LockPersonality = true;
+    MemoryDenyWriteExecute = true;
+    SystemCallArchitectures = "native";
+    SystemCallFilter = [ "@system-service" "~@privileged" "~@resources" ];
+    ReadWritePaths = [ stateDir ];
+  };
 in
 {
   # --- database ---------------------------------------------------------
@@ -60,20 +107,7 @@ in
     after = [ "network.target" "postgresql.service" ];
     requires = [ "postgresql.service" ];
 
-    environment = {
-      # Peer auth over the unix socket: the service runs as `stacks` and owns
-      # the database, so no password exists to leak or rotate.
-      DATABASE_URL = "postgresql+psycopg:///${dbName}";
-
-      # Open Library asks clients to identify themselves and to cache rather
-      # than hammer. Both are courtesy requirements of a free non-profit and
-      # this service honours them.
-      STACKS_OL_USER_AGENT =
-        "stacks/0.1 (personal book catalog; chris.saenz@broadlinc.com)";
-      STACKS_COVER_CACHE_DIR = "${stateDir}/covers";
-
-      PYTHONUNBUFFERED = "1";
-    };
+    environment = commonEnv;
 
     # Migrations run before the app, every start. Alembic rather than
     # create_all because create_all cannot alter an existing Postgres enum:
@@ -81,37 +115,62 @@ in
     # insert error.
     preStart = "${lib.getExe package} initdb";
 
-    serviceConfig = {
+    serviceConfig = commonHardening // {
       ExecStart = "${lib.getExe package} serve --host 127.0.0.1 --port ${toString port}";
-      User = user;
-      Group = user;
       Restart = "on-failure";
       RestartSec = "10s";
+    };
+  };
 
-      StateDirectory = "stacks";
-      StateDirectoryMode = "0750";
-      WorkingDirectory = stateDir;
+  # --- cover art --------------------------------------------------------
+  # Browsing a shelf of grey placeholders is a different thing from browsing a
+  # shelf of books, so the art matters more than it sounds. It is fetched
+  # rather than shipped: a cover is ~12 KB and there are a couple of thousand
+  # of them, and Open Library is the source of record anyway.
+  #
+  # A timer rather than a one-off because the catalog keeps growing — every
+  # book added by scanning an unknown barcode at a sale arrives with no art,
+  # and nobody should have to remember to go and get it.
+  systemd.services.stacks-warm-covers = {
+    description = "stacks — fetch missing cover art from Open Library";
+    after = [ "network-online.target" "postgresql.service" ];
+    wants = [ "network-online.target" ];
 
-      # --- hardening ----------------------------------------------------
-      NoNewPrivileges = true;
-      PrivateTmp = true;
-      PrivateDevices = true;
-      ProtectSystem = "strict";
-      ProtectHome = true;
-      ProtectKernelTunables = true;
-      ProtectKernelModules = true;
-      ProtectControlGroups = true;
-      ProtectClock = true;
-      ProtectHostname = true;
-      ProtectProc = "invisible";
-      RestrictNamespaces = true;
-      RestrictRealtime = true;
-      RestrictSUIDSGID = true;
-      LockPersonality = true;
-      MemoryDenyWriteExecute = true;
-      SystemCallArchitectures = "native";
-      SystemCallFilter = [ "@system-service" "~@privileged" "~@resources" ];
-      ReadWritePaths = [ stateDir ];
+    environment = commonEnv;
+
+    serviceConfig = commonHardening // {
+      Type = "oneshot";
+      ExecStart = "${lib.getExe package} warm-covers --limit 4000";
+
+      # Covers already on disk are skipped, and books Open Library genuinely
+      # has no art for are remembered in known-missing.txt — so a run after
+      # the first is nearly free. The first one is not: art without a known
+      # cover id has to go by ISBN, which their limit paces at one every
+      # three seconds. Roughly two hours from empty, once.
+      RuntimeMaxSec = "4h";
+
+      # Nice to the box: this is background housekeeping and must never
+      # compete with the server answering a scan at a book sale.
+      Nice = 10;
+      IOSchedulingClass = "idle";
+    };
+  };
+
+  systemd.timers.stacks-warm-covers = {
+    description = "stacks — keep cover art warm";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      # Daily is plenty: it exists to pick up newly added books.
+      OnCalendar = "daily";
+
+      # Also shortly after this unit is first installed, so a fresh deploy
+      # fills itself in without anyone being told to go and start it.
+      OnActiveSec = "10min";
+
+      # Catch up a run missed while the box was off, and spread the start so
+      # we are not knocking on Open Library's door at exactly midnight.
+      Persistent = true;
+      RandomizedDelaySec = "45min";
     };
   };
 

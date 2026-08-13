@@ -88,3 +88,71 @@ class TestSpec:
         spec = tomllib.loads(SPEC.read_text())
         ids = [r["work_id"] for r in spec["record"]]
         assert len(ids) == len(set(ids))
+
+
+class TestSeriesVolumeSpec:
+    """The volume-number mapping — a wrong row here names the wrong book.
+
+    These records are flood losses, so they drive the replace list at a sale.
+    Getting one wrong sends someone home with a book they did not lose and
+    without the one they did.
+    """
+
+    SPEC = Path(__file__).resolve().parent.parent / "data" / "series-volumes.toml"
+
+    def _volumes(self):
+        return tomllib.loads(self.SPEC.read_text())["volume"]
+
+    def test_every_volume_is_complete(self):
+        for v in self._volumes():
+            assert v.get("series") and v.get("number") and v.get("title")
+            assert not v["title"].startswith("#"), v
+
+    def test_no_number_is_claimed_twice(self):
+        seen = set()
+        for v in self._volumes():
+            key = (v["series"], str(v["number"]))
+            assert key not in seen, f"{key} appears more than once"
+            seen.add(key)
+
+    def test_the_renumbering_is_resolved_by_evidence_not_preference(self):
+        """Magic Tree House above #28 could name two different books.
+
+        The Merlin Missions were originally 29-55 and were later split into
+        their own 1-27. 1-28 is identical in both schemes. The document
+        settles the rest itself: it lists 40 and 48, and the modern main
+        series stops at 39, so those numbers only exist under the original
+        continuous numbering.
+
+        This pins the reasoning, not just the answer — if the mapping is ever
+        regenerated against the modern scheme, #29 becomes A Big Day for
+        Baseball and this fails.
+        """
+        got = {str(v["number"]): v["title"] for v in self._volumes()
+               if v["series"] == "Magic Tree House"}
+        assert got.get("40") and got.get("48"), (
+            "40 and 48 are the evidence that fixes the numbering scheme; "
+            "dropping them removes the justification for 29-48"
+        )
+        assert got.get("29") == "Christmas in Camelot", (
+            f"#29 is {got.get('29')!r} — 'A Big Day for Baseball' means the "
+            f"modern scheme was used, which contradicts 40 and 48 existing"
+        )
+
+    def test_known_anchors_are_right(self):
+        """Spot-checks against the actual series.
+
+        A first pass at parsing read the wrong table on the page and returned
+        the Benny-and-Watch early readers as the novels — every row plausible,
+        every row wrong.
+        """
+        got = {(v["series"], str(v["number"])): v["title"] for v in self._volumes()}
+        for key, expect in {
+            ("Magic Tree House", "1"): "Dinosaurs Before Dark",
+            ("Magic Tree House", "2"): "The Knight at Dawn",
+            ("Magic Tree House", "17"): "Tonight on the Titanic",
+            ("Boxcar Children", "1"): "The Boxcar Children",
+            ("Boxcar Children", "2"): "Surprise Island",
+            ("Boxcar Children", "4"): "Mystery Ranch",
+        }.items():
+            assert got.get(key) == expect, f"{key} is {got.get(key)!r}, expected {expect!r}"
