@@ -46,4 +46,11 @@ testpaths = ["tests"]
 [tool.setuptools.package-data]
 # The PWA is not Python and setuptools would drop it silently, leaving a
 # packaged install that serves a 404 for its own interface.
-stacks = ["web/*"]
+stacks = [
+    "web/*",
+    # The .mako template is not Python, so it needs listing here. The .py
+    # files ship because migrations/ and migrations/versions/ are real
+    # packages — see their __init__.py. Relying on package-data globs alone
+    # left them out of the installed package and crash-looped the deploy.
+    "migrations/*.mako",
+]

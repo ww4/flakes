@@ -61,6 +61,26 @@ python3Packages.buildPythonApplication {
 
   pythonImportsCheck = [ "stacks" "stacks.match" "stacks.api" ];
 
+  # Prove the package can actually start before it is allowed to ship.
+  #
+  # The first deploy crash-looped 1797 times because the migration scripts were
+  # located relative to a source checkout and are simply absent from an
+  # installed copy. A unit that cannot start is not something to learn about
+  # from a restart counter, so the build asserts the installed layout.
+  postInstall = ''
+    site=$out/${python3Packages.python.sitePackages}/stacks
+    for required in migrations/env.py web/index.html web/app.js web/sw.js; do
+      if [ ! -f "$site/$required" ]; then
+        echo "PACKAGING ERROR: $required missing from the installed package" >&2
+        exit 1
+      fi
+    done
+    if ! ls "$site"/migrations/versions/*.py >/dev/null 2>&1; then
+      echo "PACKAGING ERROR: no alembic versions installed" >&2
+      exit 1
+    fi
+  '';
+
   meta = with lib; {
     description = "Physical book catalog — sale-day scanner, shelf inventory, loans";
     license = licenses.mit;

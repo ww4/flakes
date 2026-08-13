@@ -45,19 +45,38 @@ def session_scope() -> Iterator[Session]:
         s.close()
 
 
+def migrations_dir() -> Path:
+    """Where the migration scripts live.
+
+    Beside the package, always. Deriving this from the repository root worked
+    in a checkout and failed in the Nix store — the installed service
+    crash-looped 1797 times on "Path doesn't exist: .../lib/python3.13/
+    migrations" because there is no repo root there. Anchoring to the package
+    means the scripts are wherever the code is.
+    """
+    return Path(__file__).resolve().parent / "migrations"
+
+
 def run_migrations() -> None:
     """Bring the database to the latest revision. The supported path.
 
     Alembic, not ``create_all``: ``create_all`` cannot alter an existing
     Postgres enum, so adding a value to CopyStatus or Provenance silently fails
     against a live database and only shows up as an insert error later.
+
+    The config is built in code rather than read from alembic.ini, so nothing
+    outside the installed package has to exist for a deploy to migrate.
     """
     from alembic import command
     from alembic.config import Config
 
-    root = Path(__file__).resolve().parents[2]
-    cfg = Config(str(root / "alembic.ini"))
-    cfg.set_main_option("script_location", str(root / "migrations"))
+    scripts = migrations_dir()
+    if not scripts.is_dir():
+        raise RuntimeError(f"migration scripts missing from the package: {scripts}")
+
+    cfg = Config()
+    cfg.set_main_option("script_location", str(scripts))
+    cfg.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
     command.upgrade(cfg, "head")
 
 
