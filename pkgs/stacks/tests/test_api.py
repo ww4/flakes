@@ -473,6 +473,28 @@ class TestEditing:
         assert r.status_code == 400
         assert client.get(f"/api/work/{wid}").status_code == 200, "work must survive"
 
+    def test_a_scanned_work_can_still_be_deleted(self, client):
+        """Scan history references works. Deleting one must not trip that FK.
+
+        Not hypothetical: the first real use of delete — on a book my own
+        unisolated tests had left in the catalog — failed on
+        ``scan_events_matched_work_id_fkey``. A scan record is an audit trail
+        (what was scanned, and what it was taken to be), and it stays true
+        after the work it matched is gone, so the delete detaches it rather
+        than destroying it.
+        """
+        isbn = "9781234567897"
+        added = client.post(f"/api/confirm/{isbn}", json={"action": "add", "title": "Ephemeral"})
+        assert added.status_code == 200, added.text
+        card = added.json()["card"]
+        wid = card["work_id"]
+
+        assert client.get(f"/api/scan/{isbn}").json()["work_id"] == wid
+
+        r = client.delete(f"/api/work/{wid}", params={"confirm_title": card["title"]})
+        assert r.status_code == 200, r.text
+        assert client.get(f"/api/work/{wid}").status_code == 404
+
     def test_covers_endpoint_returns_options(self, client):
         wid = self._a_work(client)
         r = client.get(f"/api/work/{wid}/covers")

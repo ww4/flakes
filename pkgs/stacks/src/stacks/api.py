@@ -940,6 +940,14 @@ def delete_work(work_id: int, confirm_title: str, s: Session = Depends(get_sessi
     editions = s.scalars(select(Edition).where(Edition.work_id == work_id)).all()
     n_c, n_e = len(copies), len(editions)
     work.cover_edition_id = None
+
+    # Scan history points at works. Detach rather than delete: what was scanned
+    # and what it was decided to be is an audit trail, and it stays true even
+    # once the record it matched is gone. Without this the delete fails on a
+    # foreign key — which it did, the first time it was used in anger.
+    s.query(ScanEvent).filter(ScanEvent.matched_work_id == work_id).update(
+        {ScanEvent.matched_work_id: None}, synchronize_session=False
+    )
     s.flush()
     for c in copies:
         s.delete(c)

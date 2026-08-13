@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 
 class TestMigrationsTravelWithTheCode:
     def test_scripts_live_inside_the_package(self):
