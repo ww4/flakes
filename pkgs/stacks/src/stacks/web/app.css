@@ -36,12 +36,29 @@
 
   main { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 1rem; }
 
+  /* Full viewfinder, because it is never on screen at the same time as a
+     result card: a hit pauses the camera and shows the card, and starting the
+     next scan puts the card away. That structure is what fixed the original
+     complaint — the card used to push the viewfinder off the top of the screen
+     and take every control with it. No sticky positioning needed. */
   #video-wrap { position: relative; background: #000; border-radius: 14px;
                 overflow: hidden; aspect-ratio: 4/3; display: none; }
   #video-wrap.on { display: block; }
+  /* A decode landed — flash the frame so it is obvious without looking away. */
+  #video-wrap.hit { outline: 3px solid var(--have); outline-offset: -3px; }
+
   video { width: 100%; height: 100%; object-fit: cover; }
   #reticle { position: absolute; inset: 22% 8%; border: 2px solid rgba(255,255,255,.75);
              border-radius: 10px; box-shadow: 0 0 0 100vmax rgba(0,0,0,.35); }
+  /* Stopping must be reachable WITHOUT scrolling. With the viewfinder open and
+     a result card rendered, the controls below sit off the bottom of a phone
+     screen, so the only visible way to stop was one the thumb could not get to. */
+  #btn-stop-overlay {
+    position: absolute; top: .6rem; right: .6rem; z-index: 3;
+    min-height: 2.4rem; padding: .35rem .8rem; font-size: .85rem;
+    background: rgba(8,10,14,.72); color: #fff; border: 1px solid rgba(255,255,255,.35);
+    border-radius: 999px; backdrop-filter: blur(4px);
+  }
 
   /* ---------- status tag: a fact, not a warning ---------- */
   .tag { font-size: .7rem; font-weight: 800; letter-spacing: .04em; padding: .16rem .45rem;

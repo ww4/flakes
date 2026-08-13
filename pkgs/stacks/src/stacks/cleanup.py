@@ -12,10 +12,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from sqlalchemy import String, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from stacks.models import Author, Copy, CopyStatus, Edition, Work
+from stacks.models import Author, Copy, Edition, Work
 
 #: Phrases that mean a line from the loss document was mistaken for a title —
 #: a series heading carrying a have-list, or a stray annotation.

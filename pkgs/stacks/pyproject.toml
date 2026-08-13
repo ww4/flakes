@@ -32,6 +32,12 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+ignore = [
+    # Depends()/Argument() in a default IS the FastAPI and Typer calling
+    # convention. "Fixing" these would break both frameworks, so the rule is
+    # simply wrong for this codebase rather than something to work around.
+    "B008",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

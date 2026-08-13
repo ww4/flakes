@@ -126,3 +126,33 @@ class TestSplitCreators:
     def test_empty(self):
         assert split_creators(None) == []
         assert split_creators("") == []
+
+
+class TestScannedInputIsNeverRepaired:
+    """A camera misread must not become a plausible different book.
+
+    Real incident: scanning "How a Seed Grows" (9780062381880) produced
+    9780062381750 — "The Demon Crown", an unrelated thriller. Two digits
+    flipped in a way that still satisfied the check digit, so nothing caught
+    it. Repairing a FAILED check digit makes this class far worse: 108 distinct
+    valid-looking ISBNs are reachable from a single misread digit.
+    """
+
+    def test_repair_is_available_for_imports(self):
+        # A spreadsheet mangles the last digit; the 978 body is still good.
+        assert to_isbn13("9780441172710", repair=True) == "9780441172719"
+
+    def test_repair_is_refused_for_scans(self):
+        assert to_isbn13("9780441172710", repair=False) is None
+
+    def test_a_valid_code_is_accepted_either_way(self):
+        for repair in (True, False):
+            assert to_isbn13("9780441172719", repair=repair) == "9780441172719"
+
+    def test_the_two_real_isbns_are_both_valid(self):
+        """Which is why only frame-to-frame agreement can separate them."""
+        assert to_isbn13("9780062381880", repair=False) == "9780062381880"
+        assert to_isbn13("9780062381750", repair=False) == "9780062381750"
+
+    def test_isbn10_conversion_is_unaffected(self):
+        assert to_isbn13("0441172717", repair=False) == "9780441172719"

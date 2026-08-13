@@ -18,7 +18,7 @@ from stacks.enrich.openlibrary import OpenLibraryClient
 from stacks.importers.flood_load import load as flood_load
 from stacks.importers.libib import import_libib_exports
 from stacks.importers.sale_doc import load as sale_load
-from stacks.match import BUYS, Verdict, evaluate_scan
+from stacks.match import Verdict, evaluate_scan
 from stacks.models import Author, Copy, CopyStatus, Edition, Household, WantRule, Work
 from stacks.normalize import title_variants, to_isbn10, to_isbn13, year_from
 from stacks.repair import run as repair_run
@@ -523,7 +523,10 @@ async def _resolve_titles(limit: int, threshold: float) -> None:
         f"[yellow]ambiguous {ambiguous}[/yellow]  [red]no result {unresolved}[/red]"
     )
     if misses:
-        console.print("\n[dim]could not identify (first 25) — these are the photo candidates:[/dim]")
+        console.print(
+            "\n[dim]could not identify (first 25) — "
+            "these are the photo candidates:[/dim]"
+        )
         for m in misses[:25]:
             console.print(f"  · {m[:100]}")
 
@@ -584,8 +587,8 @@ def export_offline(out: Path = typer.Argument(Path("offline-set.json"))) -> None
             .where(Edition.isbn13.is_not(None))
         ).all()
         holdings = {
-            wid: {"present": p, "unverified": u, "lost": l}
-            for wid, p, u, l in s.execute(
+            wid: {"present": p, "unverified": u, "lost": lost}
+            for wid, p, u, lost in s.execute(
                 select(
                     Copy.work_id,
                     func.count(Copy.id).filter(Copy.status == CopyStatus.present),

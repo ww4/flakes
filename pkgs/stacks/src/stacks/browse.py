@@ -13,10 +13,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlalchemy import Integer, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from stacks.badges import compute as compute_badges, derive_status
+from stacks.badges import compute as compute_badges
+from stacks.badges import derive_status
 from stacks.models import (
     Author,
     Copy,

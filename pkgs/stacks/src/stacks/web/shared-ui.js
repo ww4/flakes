@@ -6,6 +6,17 @@
  */
 'use strict';
 
+/* These live here rather than in card.js because the two files are never
+   loaded on the same page: card.js serves the scan card and the book page,
+   shared-ui.js serves the browsing pages. Sharing them through a third file
+   would only add a script tag to every page to save eight lines. */
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
+  (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function tagHtml(status) {
+  return `<span class="tag ${String(status || '').replace(/\s+/g, '')}">${esc(status)}</span>`;
+}
+
 /* A book tile. `badges[0]` is the strongest — LOST outranks WANTED, because
    what happened to a book outranks what you would like to happen next. */
 function bookTile(item, onOpen) {
@@ -86,40 +97,15 @@ function renderBooks(host, items, onOpen) {
   }
 }
 
-/* Open a book in the sheet. Shared so every page behaves identically, and the
-   sheet opens in a `finally` — a render failure may be ugly but never
-   invisible. */
-async function openSheet(workId) {
-  const sheet = document.getElementById('sheet');
-  try {
-    let card;
-    try {
-      const res = await fetch(`api/work/${workId}`);
-      if (!res.ok) throw new Error(res.status);
-      card = await res.json();
-    } catch {
-      card = { title: 'Could not load this book', verdict: 'UNKNOWN',
-               status: 'UNREADABLE', recommendation: 'The server did not answer.' };
-    }
-    renderBookCard(card, null);
-  } catch (err) {
-    console.error('render failed', err);
-  } finally {
-    sheet.classList.add('show');
-    const inner = sheet.querySelector('.sheet-inner');
-    if (inner) inner.scrollTop = 0;
-  }
+/* Open a book. One destination, always: its own page.
+ *
+ * This used to open a modal sheet whose card markup was duplicated into three
+ * HTML files and which had no room for the editor. A book now has exactly one
+ * home, with a URL that can be bookmarked, shared, or reloaded.
+ */
+function openSheet(workId) {
+  if (!workId) return;
+  location.href = `book.html?id=${encodeURIComponent(workId)}`;
 }
 
-function wireSheet() {
-  const sheet = document.getElementById('sheet');
-  if (!sheet) return;
-  sheet.addEventListener('click', (e) => {
-    if (e.target === sheet) sheet.classList.remove('show');
-  });
-  const close = document.getElementById('sheet-close');
-  if (close) close.onclick = () => sheet.classList.remove('show');
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') sheet.classList.remove('show');
-  });
-}
+function wireSheet() { /* nothing to wire — books get their own page now */ }

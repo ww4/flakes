@@ -1,4 +1,4 @@
-"""API and offline-set tests.
+"""API tests.
 
 These need a populated database, so they skip cleanly when DATABASE_URL is
 unset — the pure logic tests must stay runnable anywhere.
@@ -25,9 +25,17 @@ def client():
 
 @pytest.fixture(scope="module")
 def payload(client):
-    r = client.get("/api/offline-set")
+    """The payload the phone really receives.
+
+    These tests used to exercise a second, parallel builder that the app had
+    stopped using — so they could have passed while the real one was broken.
+    """
+    r = client.get("/api/catalog")
     assert r.status_code == 200
-    return r.json()
+    data = r.json()
+    # catalog maps isbn -> work_id directly; the tests below read v["w"].
+    data["isbns"] = {k: {"w": v} for k, v in data["isbns"].items()}
+    return data
 
 
 class TestHealth:
@@ -538,3 +546,47 @@ class TestAddIsbn:
         hits = client.get("/api/search", params={"q": "frog"}).json()
         m = client.get(f"/api/work/{hits[0]['work_id']}/edition-ids").json()
         assert isinstance(m, dict)
+
+
+class TestConfirmIsIdempotent:
+    """"I have this" pressed twice must not quietly record a second copy.
+
+    That fall-through made it behave exactly like "Another copy", which is how
+    two buttons ended up looking like they did the same thing.
+    """
+
+    ISBN = "9780062381880"  # How a Seed Grows — confirmed present earlier
+
+    def test_second_confirm_does_not_add_a_copy(self, client):
+        first = client.post(f"/api/confirm/{self.ISBN}").json()
+        before = first["card"]["present"]
+        second = client.post(f"/api/confirm/{self.ISBN}").json()
+        assert second["card"]["present"] == before, "a second copy was invented"
+        assert second["outcome"] == "already_confirmed"
+
+    def test_add_is_the_only_way_to_record_a_second_copy(self, client):
+        before = client.get(f"/api/scan/{self.ISBN}").json()["present"]
+        j = client.post(f"/api/confirm/{self.ISBN}", json={"action": "add"}).json()
+        assert j["card"]["present"] == before + 1
+        # Put it back so the fixture database does not drift.
+        ids = client.get(f"/api/work/{j['card']['work_id']}/copy-ids").json()
+        client.delete(f"/api/copy/{ids[-1]}")
+
+    def test_unhave_demotes_rather_than_deletes(self, client):
+        client.post(f"/api/confirm/{self.ISBN}")
+        j = client.post(f"/api/confirm/{self.ISBN}", json={"action": "unhave"}).json()
+        assert j["outcome"] == "marked_missing"
+        assert j["card"]["present"] == 0
+        # The record survives — a book that cannot be found is a fact worth keeping.
+        assert j["card"]["copies"], "the copy was deleted instead of demoted"
+        assert any(c["status"] == "missing" for c in j["card"]["copies"])
+        client.post(f"/api/confirm/{self.ISBN}")  # restore
+
+    def test_unhave_on_an_unheld_book_says_so(self, client):
+        hits = client.get("/api/search", params={"q": "frog and toad"}).json()
+        card = client.get(f"/api/work/{hits[0]['work_id']}").json()
+        isbn = next((e["isbn13"] for e in card["editions"] if e["isbn13"]), None)
+        if not isbn or card["present"]:
+            pytest.skip("no suitable unheld book")
+        j = client.post(f"/api/confirm/{isbn}", json={"action": "unhave"}).json()
+        assert j["outcome"] in {"marked_missing", "nothing_to_unhave"}

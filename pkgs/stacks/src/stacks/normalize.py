@@ -55,11 +55,18 @@ def isbn10_to_13(raw: str) -> str | None:
     return body + isbn13_check_digit(body)
 
 
-def to_isbn13(raw: str | None) -> str | None:
+def to_isbn13(raw: str | None, repair: bool = True) -> str | None:
     """Canonicalise any ISBN-ish string to a valid ISBN-13, or None.
 
     Returns None rather than raising: catalog data is dirty by nature, and a bad
     identifier should degrade to "match by title" rather than abort an import.
+
+    ``repair`` rebuilds a failed check digit. That is right for a spreadsheet
+    export, where a text import mangles the last digit — and WRONG for anything
+    scanned or typed, where the check digit is the only integrity check there
+    is. Repairing a misread turns it into a plausible different book: 108
+    distinct valid-looking ISBNs are reachable from a single misread digit.
+    Callers handling scanned input must pass ``repair=False``.
     """
     if not raw:
         return None
@@ -68,9 +75,7 @@ def to_isbn13(raw: str | None) -> str | None:
         return s
     if len(s) == 10 and is_valid_isbn10(s):
         return isbn10_to_13(s)
-    # Some exports carry a 13-digit EAN whose check digit was mangled in a
-    # spreadsheet. If the 978/979 prefix is right, trust the body and rebuild.
-    if len(s) == 13 and s.isdigit() and s.startswith(("978", "979")):
+    if repair and len(s) == 13 and s.isdigit() and s.startswith(("978", "979")):
         return s[:12] + isbn13_check_digit(s[:12])
     return None
 
