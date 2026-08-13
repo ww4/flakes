@@ -22,6 +22,13 @@
     # (i.e. when a reviewed PR is merged). See modules/agent/.
     comin.url = "github:nlewo/comin";
 
+    # agent-modules — the scoped-agent harness (guard, hooks, managed settings),
+    # extracted so gromit and the Broadlinc agent host share ONE definition
+    # instead of divergent copies of a security backstop. Its `nix flake check`
+    # runs a 56-case adversarial matrix against the fully rendered guard.
+    agent-modules.url = "github:ww4-bot/agent-modules";
+    agent-modules.inputs.nixpkgs.follows = "nixpkgs";
+
     # sops-nix — secrets encrypted in this repo, decrypted at activation with
     # gromit's SSH host key. See modules/sops.nix and ./.sops.yaml.
     sops-nix = {
@@ -52,7 +59,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-2505, vscode-server, home-manager, comin, sops-nix, disko, nixos-06cb-009a-fingerprint-sensor }:
+  outputs = { self, nixpkgs, nixpkgs-2505, vscode-server, home-manager, comin, agent-modules, sops-nix, disko, nixos-06cb-009a-fingerprint-sensor }:
     let
       system = "x86_64-linux";
       lib = nixpkgs.lib;
@@ -67,6 +74,7 @@
             vscode-server.nixosModules.default
             home-manager.nixosModules.home-manager
             comin.nixosModules.comin
+            agent-modules.nixosModules.agent
             sops-nix.nixosModules.sops
           ];
         };
@@ -79,6 +87,7 @@
           modules = [
             disko.nixosModules.disko
             comin.nixosModules.comin
+            agent-modules.nixosModules.agent
             ./hosts/wallace/disko.nix
             ./hosts/wallace/hardware-configuration.nix
             ./hosts/wallace/configuration.nix
@@ -96,6 +105,7 @@
           inherit system;
           modules = [
             comin.nixosModules.comin
+            agent-modules.nixosModules.agent
             home-manager.nixosModules.home-manager
             nixos-06cb-009a-fingerprint-sensor.nixosModules."06cb-009a-fingerprint-sensor"
             ./hosts/marcus/configuration.nix
