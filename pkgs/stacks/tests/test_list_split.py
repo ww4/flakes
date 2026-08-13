@@ -115,20 +115,29 @@ class TestSeriesVolumeSpec:
             assert key not in seen, f"{key} appears more than once"
             seen.add(key)
 
-    def test_the_renumbered_range_is_left_alone(self):
-        """Magic Tree House above #28 names two different books.
+    def test_the_renumbering_is_resolved_by_evidence_not_preference(self):
+        """Magic Tree House above #28 could name two different books.
 
         The Merlin Missions were originally 29-55 and were later split into
-        their own 1-27, so which book "#40" means depends on the printing the
-        list was written from. 1-28 is identical in both schemes. Resolving
-        the ambiguous ones would be a guess wearing a title.
+        their own 1-27. 1-28 is identical in both schemes. The document
+        settles the rest itself: it lists 40 and 48, and the modern main
+        series stops at 39, so those numbers only exist under the original
+        continuous numbering.
+
+        This pins the reasoning, not just the answer — if the mapping is ever
+        regenerated against the modern scheme, #29 becomes A Big Day for
+        Baseball and this fails.
         """
-        for v in self._volumes():
-            if v["series"] == "Magic Tree House":
-                assert int(v["number"]) <= 28, (
-                    f"#{v['number']} is in the renumbered range and cannot be "
-                    f"resolved without knowing the printing"
-                )
+        got = {str(v["number"]): v["title"] for v in self._volumes()
+               if v["series"] == "Magic Tree House"}
+        assert got.get("40") and got.get("48"), (
+            "40 and 48 are the evidence that fixes the numbering scheme; "
+            "dropping them removes the justification for 29-48"
+        )
+        assert got.get("29") == "Christmas in Camelot", (
+            f"#29 is {got.get('29')!r} — 'A Big Day for Baseball' means the "
+            f"modern scheme was used, which contradicts 40 and 48 existing"
+        )
 
     def test_known_anchors_are_right(self):
         """Spot-checks against the actual series.

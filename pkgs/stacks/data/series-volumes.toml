@@ -16,11 +16,16 @@
 # by hand too, which is how a first pass got caught reading the wrong table on
 # the page and returning the Benny-and-Watch early readers as the novels.
 #
-# NOT resolved, deliberately: Magic Tree House 29, 30, 34, 40 and 48. That
-# series was renumbered — Merlin Missions were originally 29-55 and were later
-# split into their own 1-27 — so a number above 28 names two different books
-# depending on which printing the list was written from. 1-28 is identical in
-# both schemes, so those are safe. The rest need Chris.
+# Magic Tree House was renumbered: the Merlin Missions were originally 29-55
+# and were later split into their own 1-27, so a number above 28 could name
+# two different books depending on which printing the list was written from.
+# 1-28 is identical in both schemes and was never in doubt.
+#
+# The document settles the rest itself. It lists 40 and 48, and the modern
+# main series stops at 39 — under that scheme those books do not exist. So the
+# list is written in the original continuous numbering, and 29-48 are Merlin
+# Missions. That also explains why "dragon red dawn" was written out by name:
+# it is #37, and whoever wrote the line knew the book but not its number.
 
 
 [[volume]]
@@ -192,3 +197,28 @@ title = "The Mystery in Washington, DC"
 series = "Boxcar Children"
 number = "S4"
 title = "The Mystery at the Ballpark"
+
+[[volume]]
+series = "Magic Tree House"
+number = "29"
+title = "Christmas in Camelot"
+
+[[volume]]
+series = "Magic Tree House"
+number = "30"
+title = "Haunted Castle on Hallows Eve"
+
+[[volume]]
+series = "Magic Tree House"
+number = "34"
+title = "Season of the Sandstorms"
+
+[[volume]]
+series = "Magic Tree House"
+number = "40"
+title = "Eve of the Emperor Penguin"
+
+[[volume]]
+series = "Magic Tree House"
+number = "48"
+title = "A Perfect Time for Pandas"
