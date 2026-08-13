@@ -156,3 +156,56 @@ class TestScannedInputIsNeverRepaired:
 
     def test_isbn10_conversion_is_unaffected(self):
         assert to_isbn13("0441172717", repair=False) == "9780441172719"
+
+
+class TestCoverMissCache:
+    """Books Open Library has no art for must be asked about once, not daily.
+
+    The warming job now runs on a timer. An in-memory miss set means every
+    art-less book is re-requested on every run, for ever — several hundred
+    pointless requests a day against a free non-profit whose rate limit is
+    asking us not to do exactly that.
+    """
+
+    def test_a_miss_survives_a_new_process(self, tmp_path):
+        from stacks import covers
+        from stacks.config import Settings
+
+        settings = Settings(cover_cache_dir=str(tmp_path))
+
+        covers._MISSES.clear()
+        covers._MISSES_LOADED = False
+        covers._remember_miss(settings, "M:9780000000000")
+
+        # A fresh process: memory empty, file on disk.
+        covers._MISSES.clear()
+        covers._MISSES_LOADED = False
+        covers._load_misses(settings)
+        assert "M:9780000000000" in covers._MISSES
+
+    def test_recording_the_same_miss_twice_writes_one_line(self, tmp_path):
+        from stacks import covers
+        from stacks.config import Settings
+
+        settings = Settings(cover_cache_dir=str(tmp_path))
+        covers._MISSES.clear()
+        covers._MISSES_LOADED = True
+        covers._remember_miss(settings, "M:9780000000001")
+        covers._remember_miss(settings, "M:9780000000001")
+
+        lines = covers._misses_file(settings).read_text().split()
+        assert lines == ["M:9780000000001"]
+
+    def test_an_unwritable_store_does_not_break_fetching(self, tmp_path):
+        """Recording a miss is bookkeeping; failing at it must not raise."""
+        from stacks import covers
+        from stacks.config import Settings
+
+        blocker = tmp_path / "wall"
+        blocker.write_text("not a directory")
+        settings = Settings(cover_cache_dir=str(blocker))
+
+        covers._MISSES.clear()
+        covers._MISSES_LOADED = True
+        covers._remember_miss(settings, "M:9780000000002")
+        assert "M:9780000000002" in covers._MISSES

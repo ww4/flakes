@@ -24,7 +24,43 @@ log = logging.getLogger(__name__)
 
 #: Covers we asked for and Open Library does not have. Remembered so a missing
 #: cover costs one request ever, rather than one per page view.
+#:
+#: Persisted, because the warming job now runs on a timer. In memory alone,
+#: every book Open Library has no art for would be re-requested on every run,
+#: for ever — several hundred pointless requests a day against a free
+#: non-profit API, which is precisely what their rate limit is asking us not
+#: to do.
 _MISSES: set[str] = set()
+_MISSES_LOADED = False
+
+
+def _misses_file(settings: Settings) -> Path:
+    return Path(settings.cover_cache_dir) / "known-missing.txt"
+
+
+def _load_misses(settings: Settings) -> None:
+    global _MISSES_LOADED
+    if _MISSES_LOADED:
+        return
+    _MISSES_LOADED = True
+    path = _misses_file(settings)
+    try:
+        _MISSES.update(line.strip() for line in path.read_text().splitlines() if line.strip())
+    except OSError:
+        pass
+
+
+def _remember_miss(settings: Settings, key: str) -> None:
+    if key in _MISSES:
+        return
+    _MISSES.add(key)
+    path = _misses_file(settings)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as fh:
+            fh.write(f"{key}\n")
+    except OSError as exc:  # a read-only store must not break fetching
+        log.debug("could not persist cover miss %s: %s", key, exc)
 
 _locks: dict[str, asyncio.Lock] = {}
 _global = asyncio.Semaphore(3)
@@ -76,6 +112,7 @@ async def fetch_by_id(settings: Settings, cover_id: int, size: str = "M") -> Pat
     if path.exists() and path.stat().st_size > 0:
         return path
     key = f"{size}:id{cover_id}"
+    _load_misses(settings)
     if key in _MISSES:
         return None
 
@@ -93,7 +130,7 @@ async def fetch_by_id(settings: Settings, cover_id: int, size: str = "M") -> Pat
         return None
 
     if r.status_code != 200 or len(r.content) < 512:
-        _MISSES.add(key)
+        _remember_miss(settings, key)
         return None
     path.write_bytes(r.content)
     return path
@@ -121,6 +158,7 @@ async def fetch(settings: Settings, isbn13: str, size: str = "M") -> Path | None
     path = cached_path(settings, isbn13, size)
     if path.exists() and path.stat().st_size > 0:
         return path
+    _load_misses(settings)
     if f"{size}:{isbn13}" in _MISSES:
         return None
 
@@ -146,7 +184,7 @@ async def fetch(settings: Settings, isbn13: str, size: str = "M") -> Path | None
         # Open Library answers 404 for "no cover", and sometimes returns a
         # 1x1 placeholder instead — treat both as a miss.
         if r.status_code != 200 or len(r.content) < 512:
-            _MISSES.add(f"{size}:{isbn13}")
+            _remember_miss(settings, f"{size}:{isbn13}")
             return None
 
         path.write_bytes(r.content)
