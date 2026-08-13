@@ -87,13 +87,6 @@ class LocationKind(enum.StrEnum):
     box = "box"
 
 
-class WishlistReason(enum.StrEnum):
-    series_gap = "series_gap"
-    author_gap = "author_gap"
-    flood_loss = "flood_loss"
-    manual = "manual"
-
-
 class RequestStatus(enum.StrEnum):
     open = "open"
     fulfilled = "fulfilled"
@@ -487,26 +480,6 @@ class WorkTag(Base):
     )
 
     tag: Mapped[Tag] = relationship(back_populates="works")
-
-
-class WishlistItem(Base):
-    """A book we want. Flood losses land here automatically."""
-
-    __tablename__ = "wishlist"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    work_id: Mapped[int] = mapped_column(ForeignKey("works.id"), nullable=False, index=True)
-    reason: Mapped[WishlistReason] = mapped_column(
-        Enum(WishlistReason, name="wishlist_reason"), nullable=False
-    )
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    satisfied_by_copy_id: Mapped[int | None] = mapped_column(ForeignKey("copies.id"))
-    notes: Mapped[str | None] = mapped_column(Text)
-
-    __table_args__ = (
-        UniqueConstraint("work_id", "reason", name="uq_wishlist_work_reason"),
-    )
 
 
 # --------------------------------------------------------------------------

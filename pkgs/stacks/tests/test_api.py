@@ -5,6 +5,7 @@ unset — the pure logic tests must stay runnable anywhere.
 """
 
 import os
+import re
 
 import pytest
 
@@ -612,3 +613,74 @@ class TestConfirmIsIdempotent:
             pytest.skip("no suitable unheld book")
         j = client.post(f"/api/confirm/{isbn}", json={"action": "unhave"}).json()
         assert j["outcome"] in {"marked_missing", "nothing_to_unhave"}
+
+
+class TestCleanupChecks:
+    """The to-do list is only worth having if it is mostly true.
+
+    The first junk-title check flagged 26 works and 18 were real books. It
+    matched ``%(have%``, so "A Defense of Honor (Haven Manor)" looked like a
+    have-list, and it flagged any title over 120 characters, which is an
+    ordinary length for a non-fiction subtitle. Nobody works a list like that,
+    so the debris it was built to surface stayed put.
+    """
+
+    def _group(self, client, key):
+        """The group, or an empty stand-in — a clean check drops off the list."""
+        groups = client.get("/api/cleanup").json()
+        for g in groups:
+            if g["key"] == key:
+                return g
+        return {"key": key, "items": [], "total": 0, "fix": "", "why": ""}
+
+    def test_junk_titles_are_actually_junk(self, client):
+        g = self._group(client, "junk-titles")
+        pattern = re.compile(r"\b(have|had)\s*:|need titles|suggested titles", re.I)
+        for item in g["items"]:
+            title = item["title"]
+            assert pattern.search(title) or len(title) > 120 or not re.search(
+                r"[A-Za-z]", title
+            ), f"flagged as not-a-book on no visible evidence: {title!r}"
+
+    def test_a_parenthetical_word_starting_with_have_is_not_a_have_list(self, client):
+        """'(Haven Manor)' is a series name, not a list of what we own."""
+        g = self._group(client, "junk-titles")
+        assert not [i for i in g["items"] if "(Haven" in i["title"]]
+
+    def test_a_long_title_that_resolved_is_left_alone(self, client):
+        """A title that matched an edition is a real title, however long."""
+        g = self._group(client, "junk-titles")
+        for item in g["items"]:
+            if len(item["title"]) > 120 and not re.search(
+                r"\b(have|had)\s*:", item["title"], re.I
+            ):
+                eds = client.get(f"/api/work/{item['work_id']}/edition-ids").json()
+                assert not eds, f"{item['title']!r} resolved to {len(eds)} editions"
+
+    def test_every_group_says_what_to_do(self, client):
+        for g in client.get("/api/cleanup").json():
+            assert g["fix"], f"{g['key']} reports a problem with no remedy"
+
+    def test_duplicates_need_a_matching_author_too(self, client):
+        """Two books can share a title and be different books.
+
+        Seymour Simon's *Spiders* and Gail Gibbons' *Spiders* are not one
+        record entered twice. Merging them would collapse two real books into
+        one and undercount the shelf — the same failure this check exists to
+        prevent, reached from the other side.
+        """
+        g = self._group(client, "duplicates")
+        by_title: dict[str, set[str | None]] = {}
+        for item in g["items"]:
+            by_title.setdefault(item["title"].strip().lower(), set()).add(item["author"])
+        for title, authors in by_title.items():
+            named = {a for a in authors if a}
+            assert len(named) <= 1, (
+                f"{title!r} flagged as duplicate across distinct authors: {named}"
+            )
+
+    def test_a_title_with_no_letters_is_flagged(self, client):
+        """The loss document contains a line reading "999999999999"."""
+        g = self._group(client, "junk-titles")
+        numeric = [i for i in g["items"] if not re.search(r"[A-Za-z]", i["title"])]
+        assert numeric, "a title with no letter in it should be on the list"

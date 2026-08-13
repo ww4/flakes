@@ -9,19 +9,12 @@ accident.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from stacks.models import Author, Copy, Edition, Work
-
-#: Phrases that mean a line from the loss document was mistaken for a title —
-#: a series heading carrying a have-list, or a stray annotation.
-JUNK_TITLE = re.compile(
-    r"(have\s*:|need titles|\(have|suggested titles|^\(|:\s*$|;\s*have)", re.I
-)
 
 
 @dataclass
@@ -122,20 +115,38 @@ def no_cover(session: Session, limit: int = LIMIT) -> IssueGroup:
 
 
 def junk_titles(session: Session) -> IssueGroup:
-    """Series headings the loss-document parser mistook for books."""
+    """Series headings the loss-document parser mistook for books.
+
+    The tests are deliberately narrow. The first version matched ``%(have%``
+    and *any* title over 120 characters, and 18 of the 26 things it flagged
+    were real books: "A Defense of Honor (Haven Manor)" matched on "(Haven",
+    and long subtitles are completely normal — "Success With Baby Chicks: A
+    Complete Guide to Hatchery Selection, Mail-Order Chicks..." is a genuine
+    title, not debris. A list that is mostly false positives does not get
+    worked, which defeats the point of having one.
+
+    So: ``have:``/``had:`` introduces a list of contents and is decisive on its
+    own, while mere length is only suspicious when the title *also* failed to
+    resolve to any edition. Every real long title here matched at least one.
+    """
+    has_edition = select(Edition.id).where(Edition.work_id == Work.id).exists()
     where = or_(
-        Work.title.op("~*")(r"have\s*:"),
+        Work.title.op("~*")(r"\y(have|had)\s*:"),
         Work.title.ilike("%need titles%"),
-        Work.title.ilike("%(have%"),
         Work.title.ilike("%suggested titles%"),
-        func.length(Work.title) > 120,
+        and_(func.length(Work.title) > 120, ~has_edition),
+        # A title with no letter in it is not a title. The loss document has a
+        # line reading "999999999999", which became a work.
+        ~Work.title.op("~")(r"[A-Za-z]"),
     )
     return IssueGroup(
         key="junk-titles",
         title="Probably not a book",
         why="These look like headings from the loss document — a series name "
-            "carrying a have-list — rather than titles.",
-        fix="Rename to the real title, or delete the entry.",
+            "carrying a list of the titles under it — rather than one title. "
+            "Each one names several real books that are worth recovering "
+            "separately.",
+        fix="Split out the titles it names, or delete the entry.",
         total=_count(session, where),
         items=_rows(session, where),
     )
@@ -180,34 +191,57 @@ def orphans(session: Session) -> IssueGroup:
 
 
 def suspicious_duplicates(session: Session, limit: int = LIMIT) -> IssueGroup:
-    """Distinct works with the same normalised title.
+    """Works that share both a normalised title and an author.
 
     Two records for one book split its holdings, so a scan can report "not
     owned" for something sitting on the shelf under the other record.
+
+    Title alone is not enough, and matching on it flagged five pairs of which
+    none were duplicates: Seymour Simon's *Spiders* and Gail Gibbons' *Spiders*
+    are different books, as are Rien Poortvliet's *Noah's Ark* and Barbara
+    Hazen's. Generic children's titles repeat constantly in a library this
+    size. Merging on a title match would have collapsed ten real books into
+    five and *undercounted* the shelf — the exact failure this check exists to
+    prevent, arrived at from the other direction.
+
+    Grouping by author as well as title means a NULL author still groups with
+    another NULL (Postgres treats them as equal in GROUP BY), which is right:
+    two untitled-author records of the same name really are indistinguishable.
     """
     dupes = session.execute(
-        select(Work.sort_title, func.count(Work.id).label("n"))
-        .group_by(Work.sort_title)
+        select(
+            Work.sort_title,
+            Work.primary_author_id,
+            func.count(Work.id).label("n"),
+        )
+        .group_by(Work.sort_title, Work.primary_author_id)
         .having(func.count(Work.id) > 1)
         .order_by(func.count(Work.id).desc())
         .limit(limit)
     ).all()
 
     items: list[Issue] = []
-    for sort_title, n in dupes:
+    for sort_title, author_id, n in dupes:
         for wid, title, author in session.execute(
             select(Work.id, Work.title, Author.name)
             .outerjoin(Author, Author.id == Work.primary_author_id)
-            .where(Work.sort_title == sort_title)
+            .where(
+                Work.sort_title == sort_title,
+                Work.primary_author_id.is_(None)
+                if author_id is None
+                else Work.primary_author_id == author_id,
+            )
         ).all():
             items.append(Issue(work_id=wid, title=title, author=author,
-                               detail=f"{n} records share this title"))
+                               detail=f"{n} records share this title and author"))
 
     return IssueGroup(
         key="duplicates",
         title="Possible duplicates",
-        why="Several records share a title. Holdings split across them, so a "
-            "scan can say 'not owned' for a book that is on the shelf.",
+        why="Several records share a title and an author. Holdings split "
+            "across them, so a scan can say 'not owned' for a book that is on "
+            "the shelf. A shared title alone is not listed — generic children's "
+            "titles repeat, and those are different books.",
         fix="Merge by hand: move the ISBN onto one record and delete the other.",
         total=len(dupes),
         items=items[:limit],
