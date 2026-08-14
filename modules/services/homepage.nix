@@ -214,6 +214,11 @@ let
             href: https://chat.rosemaryacres.com
             icon: open-webui.png
             # Link-only: the Open WebUI widget needs an API key; not wired here.
+        - Open Notebook:
+            description: NotebookLM-alt — chat + podcasts over your source docs
+            href: https://notebook.rosemaryacres.com
+            icon: mdi-notebook-outline
+            # Link-only: no Homepage widget for open-notebook.
 
     - Cloud:
         - Nextcloud:
