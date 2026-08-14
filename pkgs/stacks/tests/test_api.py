@@ -791,3 +791,36 @@ class TestLabelApi:
         r = client.get("/labels.html")
         assert r.status_code == 200
         assert "labels.js" in r.text
+
+    def test_a_place_opens_as_a_shelf_that_rolls_up(self, client):
+        """Labelling books into a place and then having no way to look at
+        them would be a strange place to stop.
+
+        The parent's shelf must include books held by its children — that is
+        the whole point of the tree.
+        """
+        client.post("/api/labels/place", json={"path": "Apishelf / sub"})
+        nodes = {n["path"]: n for n in client.get("/api/labels/place").json()["nodes"]}
+        sub, root = nodes["Apishelf / sub"], nodes["Apishelf"]
+
+        ids = [h["work_id"] for h in
+               client.get("/api/search", params={"q": "frog"}).json()][:3]
+        client.post("/api/bulk/place", json={"work_ids": ids, "path": "Apishelf / sub"})
+
+        leaf = client.get(f"/api/shelf/place:{sub['id']}").json()
+        assert leaf["total"] == len(ids)
+        parent = client.get(f"/api/shelf/place:{root['id']}").json()
+        assert parent["total"] == len(ids), "a parent shelf must include its children"
+        assert parent["title"] == "Apishelf"
+
+    def test_a_tag_opens_as_a_shelf(self, client):
+        ids = [h["work_id"] for h in
+               client.get("/api/search", params={"q": "frog"}).json()][:2]
+        client.post("/api/bulk/tag", json={"work_ids": ids, "path": "Apishelftag / X"})
+        nodes = {n["path"]: n for n in client.get("/api/labels/tag").json()["nodes"]}
+        sh = client.get(f"/api/shelf/tag:{nodes['Apishelftag']['id']}").json()
+        assert sh["total"] == len(ids)
+
+    def test_a_nonexistent_label_shelf_404s(self, client):
+        assert client.get("/api/shelf/place:99999999").status_code == 404
+        assert client.get("/api/shelf/place:not-a-number").status_code == 404

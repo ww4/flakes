@@ -55,9 +55,16 @@ function renderTree(data) {
        otherwise every leaf row says the same number twice. */
     var own = (n.total_count !== n.own_count && n.own_count > 0)
       ? '<span class="dim">' + n.own_count + ' here</span>' : '';
+    /* The name is a link to the books themselves. Labelling 153 books into a
+       place and then having no way to look at them would be a strange place
+       to stop. The shelf rolls up, so a parent shows its children's books. */
+    const name = n.total_count
+      ? '<a class="lname" href="shelf.html?key=' + kind + ':' + n.id + '">' +
+        esc(n.name) + '</a>'
+      : '<span class="lname">' + esc(n.name) + '</span>';
     return '' +
       '<div class="lrow" data-id="' + n.id + '" style="' + pad + '">' +
-        '<span class="lname">' + esc(n.name) + '</span>' +
+        name +
         own +
         '<span class="lcount">' + n.total_count + '</span>' +
         '<button class="link ledit" data-id="' + n.id + '" ' +
