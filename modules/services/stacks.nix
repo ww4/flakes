@@ -147,7 +147,15 @@ in
       # the first is nearly free. The first one is not: art without a known
       # cover id has to go by ISBN, which their limit paces at one every
       # three seconds. Roughly two hours from empty, once.
-      RuntimeMaxSec = "4h";
+      #
+      # TimeoutStartSec, not RuntimeMaxSec. A oneshot spends its whole life in
+      # "activating", so RuntimeMaxSec never applies to it — systemd said so
+      # in the journal the moment this deployed ("RuntimeMaxSec= has no effect
+      # in combination with Type=oneshot. Ignoring."), leaving the job with no
+      # bound at all. The default would have been 90s, which would have killed
+      # it mid-run; oneshot happens to default to infinity instead, so the
+      # visible symptom was nothing rather than a broken job.
+      TimeoutStartSec = "4h";
 
       # Nice to the box: this is background housekeeping and must never
       # compete with the server answering a scan at a book sale.
