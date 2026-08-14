@@ -261,6 +261,27 @@ def wanted_shelf(session: Session, limit: int = ROW_SIZE) -> Shelf:
                  total=len(items), items=items)
 
 
+def place_shelves(session: Session, limit_rows: int = 8) -> list[Shelf]:
+    """A row per place that has books in it.
+
+    Rolled up, so "Frankfort" shows everything in Frankfort and everything in
+    its sublocations. Only leaves and roots that actually hold something appear
+    — an empty branch on the browse page is a row nobody can use.
+    """
+    from stacks import labels as label_tree
+
+    out: list[Shelf] = []
+    for node in label_tree.flatten(label_tree.tree(session, "place")):
+        if not node.total_count:
+            continue
+        sh = shelf_by_key(session, f"place:{node.id}", limit=40)
+        if sh is not None and sh.items:
+            out.append(sh)
+        if len(out) >= limit_rows:
+            break
+    return out
+
+
 def all_shelves(session: Session) -> list[Shelf]:
     """The browse page, in the order the questions actually get asked."""
     shelves = [
@@ -269,6 +290,7 @@ def all_shelves(session: Session) -> list[Shelf]:
         wanted_shelf(session),
         *series_shelves(session),
         *author_shelves(session),
+        *place_shelves(session),
         *collection_shelves(session),
         unconfirmed_shelf(session),
     ]
@@ -332,19 +354,36 @@ def shelf_by_key(session: Session, key: str, limit: int = 500) -> Shelf | None:
         return Shelf(key=key, title=value, subtitle=f"{len(items)} books",
                      total=len(items), items=items)
 
-    if kind == "tag":
-        from stacks.models import Tag, WorkTag
+    if kind in ("place", "tag"):
+        # Both are label trees, and both roll up: opening "Frankfort" shows
+        # everything in Frankfort AND in every sublocation under it, which is
+        # the whole point of the tree. `value` is a node id, not a name —
+        # "science shelf" exists under more than one house.
+        from stacks import labels as label_tree
+        from stacks.models import Location, Tag
 
+        model = Location if kind == "place" else Tag
+        try:
+            node_id = int(value)
+        except ValueError:
+            return None
+        if session.get(model, node_id) is None:
+            return None
+
+        work_ids = label_tree.works_in(session, kind, node_id)
+        path = label_tree.path_of(session, kind, node_id)
+        if not work_ids:
+            return Shelf(key=key, title=path, subtitle="nothing here yet",
+                         total=0, items=[])
         q = (
-            _base_query()
-            .where(Work.id.in_(
-                select(WorkTag.work_id).join(Tag, Tag.id == WorkTag.tag_id)
-                .where(Tag.name == value.upper())
-            ))
+            _base_query().where(Work.id.in_(work_ids))
             .order_by(Work.title).limit(limit)
         )
         items = _rows_to_items(session.execute(q).all())
-        return Shelf(key=key, title=value.upper(), subtitle=f"{len(items)} books",
-                     total=len(items), items=items)
+        sub = f"{len(work_ids)} book{'' if len(work_ids) == 1 else 's'}"
+        if len(items) < len(work_ids):
+            sub += f" · showing {len(items)}"
+        return Shelf(key=key, title=path, subtitle=sub,
+                     total=len(work_ids), items=items)
 
     return None
