@@ -18,6 +18,7 @@ async function loadShelf() {
 
     const tog = document.getElementById('shelf-view');
     tog.innerHTML = '';
+    tog.appendChild(selectToggleButton());
     tog.appendChild(viewToggle(paint));
     paint();
     document.getElementById('shelf-loading').hidden = true;

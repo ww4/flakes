@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<title>stacks — places &amp; tags</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header>
+  <span class="dot ready"></span>
+  <h1>Places &amp; tags</h1>
+  <nav class="tabs">
+    <a href="./">Scan</a>
+    <a href="browse.html">Browse</a>
+    <a href="labels.html" class="on">Labels</a>
+    <a href="cleanup.html">Cleanup</a>
+    <a href="logs.html">Logs</a>
+  </nav>
+</header>
+
+<main style="padding:1rem">
+
+  <div class="seg" id="kind-switch">
+    <button data-kind="place" class="on">Places</button>
+    <button data-kind="tag">Tags</button>
+  </div>
+
+  <p class="note" id="kind-note"></p>
+
+  <!-- the tree, with counts that include everything underneath -->
+  <div id="tree"></div>
+  <p class="note" id="tree-loading">Loading…</p>
+
+  <!-- make a new one; typing a path creates any missing levels -->
+  <div class="panel">
+    <h2 id="new-heading">New place</h2>
+    <div class="row">
+      <input id="new-path" type="text" autocapitalize="words"
+             placeholder="Frankfort / science shelf">
+      <button id="new-go" class="primary">Add</button>
+    </div>
+    <p class="note" id="new-hint">
+      Use <code>/</code> for levels — any that do not exist yet are created.
+    </p>
+  </div>
+
+  <!-- bulk apply: the primary verb -->
+  <div class="panel">
+    <h2>Label a lot of books at once</h2>
+    <p class="note">
+      Pick a group of books, then say where they are. The old Libib collections
+      are not accurate as locations, but they are excellent handles — a whole
+      collection is one action.
+    </p>
+    <div class="row">
+      <select id="bulk-source"><option value="">Choose a group…</option></select>
+    </div>
+    <div class="row">
+      <input id="bulk-path" type="text" autocapitalize="words"
+             placeholder="Frankfort / science shelf">
+      <button id="bulk-go" class="primary">Apply</button>
+    </div>
+    <p class="note" id="bulk-result"></p>
+  </div>
+
+</main>
+
+<script src="shared-ui.js"></script>
+<script src="labels.js"></script>
+</body>
+</html>

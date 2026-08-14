@@ -55,7 +55,18 @@ async function load() {
   }
 }
 
+/* The last search, so selection can repaint without re-querying. */
+let lastHits = null;
+let lastQ = '';
+
+/* select.js repaints through this name on every page that has a list. */
+function paint() {
+  if (lastHits) renderSearch(lastHits, lastQ);
+}
+
 function renderSearch(hits, q) {
+  lastHits = hits;
+  lastQ = q;
   const host = el('shelves');
   host.innerHTML = '';
 
@@ -64,6 +75,7 @@ function renderSearch(hits, q) {
   head.innerHTML =
     `<h2 class="shelf-title">${hits.length} match${hits.length === 1 ? '' : 'es'}</h2>` +
     `<span class="shelf-sub">for \u201c${esc(q)}\u201d</span>`;
+  head.appendChild(selectToggleButton());
   head.appendChild(viewToggle(() => renderSearch(hits, q)));
   host.appendChild(head);
 

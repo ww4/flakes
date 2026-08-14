@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from stacks import catalog, covers
+from stacks import catalog, covers, labels
 from stacks.badges import DERIVED as DERIVED_BADGES
 from stacks.badges import compute as compute_badges
 from stacks.browse import all_shelves as browse_shelves
@@ -53,6 +53,7 @@ from stacks.models import (
     Copy,
     CopyStatus,
     Edition,
+    Location,
     MatchTier,
     Provenance,
     ScanEvent,
@@ -1361,5 +1362,241 @@ def catalog_payload(s: Session = Depends(get_session)) -> JSONResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# places and tags
+#
+# Two trees, one set of rules. A copy is in exactly one place; a book has any
+# number of tags. Everything else is shared, so these endpoints take a `kind`
+# rather than existing twice.
+# ---------------------------------------------------------------------------
+
+class LabelNodeOut(BaseModel):
+    id: int
+    name: str
+    path: str
+    parent_id: int | None = None
+    depth: int = 0
+    own_count: int = 0
+    #: Includes everything underneath — the number worth looking at.
+    total_count: int = 0
+
+
+class LabelTreeOut(BaseModel):
+    kind: str
+    nodes: list[LabelNodeOut]
+    #: Places only: works with no place at all. The number that only goes down.
+    unplaced: int | None = None
+
+
+def _kind_or_404(kind: str) -> str:
+    if kind not in ("place", "tag"):
+        raise HTTPException(status_code=404, detail="labels are 'place' or 'tag'")
+    return kind
+
+
+@app.get("/api/labels/{kind}", response_model=LabelTreeOut)
+def label_tree(kind: str, s: Session = Depends(get_session)) -> LabelTreeOut:
+    """The whole tree, flattened depth-first, with rollup counts."""
+    _kind_or_404(kind)
+    nodes = [
+        LabelNodeOut(**{k: getattr(n, k) for k in
+                        ("id", "name", "path", "parent_id", "depth",
+                         "own_count", "total_count")})
+        for n in labels.flatten(labels.tree(s, kind))
+    ]
+    return LabelTreeOut(
+        kind=kind,
+        nodes=nodes,
+        unplaced=labels.unplaced_count(s) if kind == "place" else None,
+    )
+
+
+class LabelIn(BaseModel):
+    #: A path — "Frankfort / science shelf". Missing levels are created.
+    path: str
+
+
+@app.post("/api/labels/{kind}", response_model=LabelNodeOut)
+def create_label(kind: str, body: LabelIn, s: Session = Depends(get_session)) -> LabelNodeOut:
+    _kind_or_404(kind)
+    parts = labels.split_path(body.path)
+    if not parts:
+        raise HTTPException(status_code=400, detail="a label needs a name")
+    if kind == "tag" and any(p.strip().upper() in DERIVED_BADGES for p in parts):
+        raise HTTPException(
+            status_code=400,
+            detail="HAVE, LOST, REPLACED and UNCONFIRMED are computed, not assigned",
+        )
+    node = labels.find_or_create(s, kind, body.path)
+    s.flush()
+    return LabelNodeOut(
+        id=node.id, name=node.name, path=labels.path_of(s, kind, node.id),
+        parent_id=node.parent_id,
+    )
+
+
+class LabelPatch(BaseModel):
+    name: str | None = None
+    sort_order: int | None = None
+
+
+@app.patch("/api/labels/{kind}/{node_id}", response_model=LabelNodeOut)
+def rename_label(
+    kind: str, node_id: int, body: LabelPatch, s: Session = Depends(get_session)
+) -> LabelNodeOut:
+    """Rename or reorder. Renaming a parent is one row — descendants follow.
+
+    sort_order exists because alphabetical is wrong for the tags this library
+    needs: "Grade / 10" sorts before "Grade / 2" as text.
+    """
+    _kind_or_404(kind)
+    model = Location if kind == "place" else Tag
+    node = s.get(model, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="no such label")
+    if body.name is not None:
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="a label needs a name")
+        if labels.SEP in name:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{labels.SEP}' separates levels — rename this level only",
+            )
+        node.name = name
+    if body.sort_order is not None:
+        node.sort_order = body.sort_order
+    s.flush()
+    return LabelNodeOut(
+        id=node.id, name=node.name, path=labels.path_of(s, kind, node.id),
+        parent_id=node.parent_id,
+    )
+
+
+@app.delete("/api/labels/{kind}/{node_id}")
+def delete_label(kind: str, node_id: int, s: Session = Depends(get_session)) -> dict:
+    """Remove a label, promoting what it held rather than dropping it.
+
+    Deleting "Frankfort / science shelf" leaves its books in "Frankfort" and
+    re-parents any sublocations there too. Losing the coarse fact as well as
+    the fine one would be a strange thing for a delete to do.
+    """
+    _kind_or_404(kind)
+    model = Location if kind == "place" else Tag
+    node = s.get(model, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="no such label")
+    parent_id = node.parent_id
+
+    s.query(model).filter(model.parent_id == node_id).update(
+        {model.parent_id: parent_id}, synchronize_session=False
+    )
+    if kind == "place":
+        s.query(Copy).filter(Copy.location_id == node_id).update(
+            {Copy.location_id: parent_id}, synchronize_session=False
+        )
+    else:
+        if parent_id is None:
+            s.query(WorkTag).filter(WorkTag.tag_id == node_id).delete(
+                synchronize_session=False
+            )
+        else:
+            held = {
+                w for w in s.scalars(
+                    select(WorkTag.work_id).where(WorkTag.tag_id == node_id)
+                ).all()
+            }
+            already = {
+                w for w in s.scalars(
+                    select(WorkTag.work_id).where(WorkTag.tag_id == parent_id)
+                ).all()
+            }
+            s.query(WorkTag).filter(WorkTag.tag_id == node_id).delete(
+                synchronize_session=False
+            )
+            fresh = held - already
+            if fresh:
+                s.execute(
+                    WorkTag.__table__.insert(),
+                    [{"work_id": w, "tag_id": parent_id} for w in fresh],
+                )
+    s.delete(node)
+    s.flush()
+    return {"deleted": True, "promoted_to": parent_id}
+
+
+class BulkIn(BaseModel):
+    """What to label, and with what.
+
+    Either an explicit list of works, or a shelf key — so "everything in the
+    Frankfort science shelf collection" is one call rather than the client
+    paging 153 ids back to the server.
+    """
+
+    work_ids: list[int] | None = None
+    shelf_key: str | None = None
+    #: A path; created if missing. Null unplaces (places only).
+    path: str | None = None
+    #: Tags only. False removes.
+    add: bool = True
+
+
+def _selection(s: Session, body: BulkIn) -> list[int]:
+    if body.work_ids:
+        return body.work_ids
+    if body.shelf_key:
+        shelf = shelf_by_key(s, body.shelf_key, limit=100000)
+        if shelf is None:
+            raise HTTPException(status_code=404, detail="no such shelf")
+        return [i.work_id for i in shelf.items]
+    raise HTTPException(status_code=400, detail="pass work_ids or a shelf_key")
+
+
+@app.post("/api/bulk/place")
+def bulk_place(body: BulkIn, s: Session = Depends(get_session)) -> dict:
+    """Put a lot of books somewhere. The primary verb of this feature.
+
+    Exclusive by construction: a copy has one location, so this replaces
+    whatever was there. That is what stops a book collecting contradictory
+    places over years of reshuffling.
+    """
+    work_ids = _selection(s, body)
+    node = None
+    if body.path is not None:
+        node = labels.find_or_create(s, "place", body.path)
+        s.flush()
+    n = labels.place_works(s, work_ids, node.id if node else None)
+    return {
+        "works": len(work_ids),
+        "copies": n,
+        "place": labels.path_of(s, "place", node.id) if node else None,
+    }
+
+
+@app.post("/api/bulk/tag")
+def bulk_tag(body: BulkIn, s: Session = Depends(get_session)) -> dict:
+    """Add or remove one tag across many books. Additive by design."""
+    if not body.path:
+        raise HTTPException(status_code=400, detail="a tag path is required")
+    work_ids = _selection(s, body)
+    if any(p.strip().upper() in DERIVED_BADGES for p in labels.split_path(body.path)):
+        raise HTTPException(
+            status_code=400,
+            detail="HAVE, LOST, REPLACED and UNCONFIRMED are computed, not assigned",
+        )
+    node = labels.find_or_create(s, "tag", body.path)
+    s.flush()
+    n = labels.tag_works(s, work_ids, node.id, add=body.add)
+    return {
+        "works": len(work_ids),
+        "changed": n,
+        "tag": labels.path_of(s, "tag", node.id),
+        "added": body.add,
+    }
+
+
+# LAST. A mount at "/" swallows every path no route above has claimed, so
+# anything registered after it is unreachable and answers 405 — which looks
+# like a method bug and is not. New endpoints go above this line.
 if WEB_DIR.is_dir():
     app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")

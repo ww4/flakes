@@ -301,3 +301,69 @@
                 gap: .8rem; padding: 0 1rem; }
 .grid-results .tile { width: auto; }
 .grid-results .tile-art { width: 100%; height: auto; aspect-ratio: 2/3; }
+
+/* Places & tags — one screen for two trees.
+ *
+ * The rollup count is the number this page exists to show, so it gets the
+ * strong right-hand column; the exact-here count is deliberately quiet beside
+ * it, and only appears when it differs. */
+.seg { display: flex; gap: .25rem; margin-bottom: .5rem; }
+.seg button { min-height: 2.1rem; padding: .3rem .9rem; font-size: .85rem; }
+.seg button.on { background: var(--panel2); color: var(--text);
+                 border-color: var(--accent); }
+
+.lrow { display: flex; align-items: center; gap: .5rem; padding: .45rem .25rem;
+        border-bottom: 1px solid var(--line); }
+.lname { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;
+         white-space: nowrap; }
+.lcount { flex: 0 0 auto; font-variant-numeric: tabular-nums; font-weight: 700; }
+.lrow .dim { flex: 0 0 auto; font-size: .72rem; opacity: .55; }
+.lrow.unplaced { opacity: .75; font-style: italic; border-bottom: none;
+                 margin-top: .4rem; }
+.ledit { flex: 0 0 auto; font-size: .75rem; }
+
+.panel { margin-top: 1.25rem; padding: .75rem; border: 1px solid var(--line);
+         border-radius: 10px; background: var(--panel); }
+.panel h2 { margin: 0 0 .4rem; font-size: .95rem; }
+.panel .row { display: flex; gap: .5rem; margin-top: .5rem; }
+.panel .row input, .panel .row select { flex: 1 1 auto; min-width: 0; }
+.panel .row button { flex: 0 0 auto; }
+
+/* Selecting books to label.
+ *
+ * A mode, not permanent checkboxes: opening a book is the common action and
+ * putting a checkbox beside three thousand covers to serve the rarer one would
+ * tax every visit. */
+.selectable { position: relative; }
+.selectable.picked { outline: 2px solid var(--accent); outline-offset: 1px;
+                     border-radius: 8px; }
+.tile.picked .tile-art::after,
+.hit.picked::after {
+  content: "✓"; position: absolute; top: .25rem; right: .35rem;
+  background: var(--accent); color: #04180d; font-weight: 800;
+  width: 1.15rem; height: 1.15rem; line-height: 1.15rem; text-align: center;
+  border-radius: 50%; font-size: .8rem;
+}
+
+/* Sits above the content, out of the thumb's way on a phone. */
+.selbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+          display: flex; align-items: center; gap: .5rem;
+          padding: .6rem .75rem calc(.6rem + env(safe-area-inset-bottom));
+          background: var(--panel2); border-top: 1px solid var(--line); }
+.selcount { flex: 1 1 auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+.selbar button { min-height: 2.2rem; }
+
+.selask { position: fixed; inset: 0; z-index: 50; display: flex;
+          align-items: center; justify-content: center; padding: 1rem;
+          background: rgba(0,0,0,.55); }
+.selask-box { width: min(26rem, 100%); background: var(--panel);
+              border: 1px solid var(--line); border-radius: 12px; padding: 1rem; }
+.selask-box h2 { margin: 0 0 .3rem; font-size: 1rem; }
+.selask-box input { width: 100%; margin-top: .5rem; }
+.selask-row { display: flex; gap: .5rem; justify-content: flex-end;
+              margin-top: .75rem; }
+
+.seltoast { position: fixed; left: 50%; transform: translateX(-50%);
+            bottom: 4.5rem; z-index: 60; background: var(--panel2);
+            border: 1px solid var(--accent); border-radius: 10px;
+            padding: .5rem .9rem; font-size: .85rem; max-width: 90vw; }
