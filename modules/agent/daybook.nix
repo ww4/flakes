@@ -67,8 +67,22 @@ let
       incidents (the current month's ${spaceDir}/System/Sentinel/ page, or
       /var/lib/sentinel/incidents/); surface only what genuinely needs
       Chris — no noise. Weekly digests live in ${spaceDir}/System/Digest/.
-    - Do NOT do repo/PR work from this run; it is a planning run. Writing in
-      the space and reading anywhere is in scope.
+    - **YOU CANNOT EXECUTE. This is a planning-only run** — nothing invokes an
+      agent between your runs to work items off your list, and this run itself
+      does not do repo/PR work. Anything that requires action is one of:
+        (a) a Chris-keyboard ask — write it clearly and don't repeatedly
+            re-plan the same one day after day; if he hasn't done it, that's
+            his call, not a signal to escalate it back onto your own plan;
+        (b) a discrete task package he can hand to an agent session — spell
+            out what to do, where, how to verify, which memory/PR/module to
+            touch; make it copy-pasteable into a fresh session.
+      In either case, do NOT put an action item on YOUR plan as though you
+      will do it — you can't. When an item you previously wrote slips, do NOT
+      roll it forward as "attempt N" / "SHIP Plan #N"; either surface it as
+      the appropriate (a) or (b), or drop it. The `SHIP Plan #N / attempt N
+      of N` pattern papered over a missing execution mechanism and produced
+      multi-week slippage on real items; it is the anti-pattern.
+    - Writing in the space and reading anywhere is in scope.
     - Your final message: a one-paragraph summary for a phone notification,
       ending with a line "TLDR: <one sentence>".
   '';
