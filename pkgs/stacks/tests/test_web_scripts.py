@@ -81,14 +81,24 @@ class TestPagesDeclareWhatScriptsUse:
     """
 
     ELEMENT_IDS = re.compile(r'id="([^"]+)"')
-    # el('x') / document.getElementById('x')
+    # el('x') / document.getElementById('x').
+    #
+    # The lookahead matters: without it `el(` also matched the tail of
+    # `askLabel('place')`, so the check invented two ids that no script ever
+    # asked for. A check that reports things nobody wrote is a check people
+    # learn to skim.
     LOOKUPS = re.compile(
-        r"""(?:el|\$)\(\s*['"]([\w-]+)['"]\s*\)"""
+        r"""(?<![\w$])(?:el|\$)\(\s*['"]([\w-]+)['"]\s*\)"""
         r"""|getElementById\(\s*['"]([\w-]+)['"]\s*\)"""
+    )
+    # Ids a script builds for itself — `x.id = 'sel'` or markup it writes.
+    SELF_MADE = re.compile(
+        r"""\.id\s*=\s*['"]([\w-]+)['"]"""
+        r'''|id="([\w-]+)"'''
     )
 
     @pytest.mark.parametrize("page", ["index.html", "browse.html", "shelf.html",
-                                      "cleanup.html", "logs.html"])
+                                      "cleanup.html", "logs.html", "labels.html"])
     def test_every_looked_up_id_exists_on_the_page(self, page):
         html = (WEB / page).read_text()
         declared = set(self.ELEMENT_IDS.findall(html))
@@ -98,10 +108,15 @@ class TestPagesDeclareWhatScriptsUse:
             f = WEB / name
             if not f.exists():
                 continue
-            for a, b in self.LOOKUPS.findall(f.read_text()):
+            src = f.read_text()
+            # A script that constructs its own elements may of course look them
+            # up again; the rule is about reaching for markup that was supposed
+            # to be on the page and is not.
+            self_made = {a or b for a, b in self.SELF_MADE.findall(src)}
+            for a, b in self.LOOKUPS.findall(src):
                 wanted = a or b
                 # Ids created at runtime by the editor's own markup are fair.
-                if wanted.startswith("e-"):
+                if wanted.startswith("e-") or wanted in self_made:
                     continue
                 if wanted not in declared:
                     missing.setdefault(name, set()).add(wanted)

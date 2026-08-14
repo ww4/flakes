@@ -258,8 +258,11 @@ class Location(Base):
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), index=True)
     household_id: Mapped[int | None] = mapped_column(ForeignKey("households.id"), index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    kind: Mapped[LocationKind] = mapped_column(
-        Enum(LocationKind, name="location_kind"), nullable=False
+    #: Advisory only. The tree carries the meaning — "Frankfort / science
+    #: shelf" says everything the taxonomy was trying to say, and demanding a
+    #: kind at creation is friction on the one action that has to stay cheap.
+    kind: Mapped[LocationKind | None] = mapped_column(
+        Enum(LocationKind, name="location_kind")
     )
     sentinel_barcode: Mapped[str | None] = mapped_column(String(64), unique=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -279,6 +282,10 @@ class Copy(Base):
     edition_id: Mapped[int | None] = mapped_column(ForeignKey("editions.id"), index=True)
 
     location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), index=True)
+    #: When this copy was last said to be there. Books move; a location is the
+    #: last thing someone said about it, not a verified fact, and the UI says
+    #: "recorded 3 months ago" rather than asserting.
+    placed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     owner_household_id: Mapped[int | None] = mapped_column(
         ForeignKey("households.id"), index=True
     )
@@ -453,7 +460,14 @@ class Tag(Base):
     __tablename__ = "tags"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    #: Leaf name only — "Core B", not "Sonlight / Core B". The path is built by
+    #: walking parents, so renaming a parent is one row rather than a rewrite
+    #: of every descendant.
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("tags.id"), index=True)
+    #: Alphabetical is wrong for the tags this library actually needs:
+    #: "Grade / 10" sorts before "Grade / 2" as text.
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     #: Optional hex colour for the badge; falls back to a neutral chip.
     color: Mapped[str | None] = mapped_column(String(7))
     notes: Mapped[str | None] = mapped_column(Text)
@@ -463,6 +477,13 @@ class Tag(Base):
 
     works: Mapped[list[WorkTag]] = relationship(
         back_populates="tag", cascade="all, delete-orphan"
+    )
+    parent: Mapped[Tag | None] = relationship(remote_side=[id])
+
+    __table_args__ = (
+        # Unique per level, not globally: "Science" can sit under both Subject
+        # and a future Reading-level group without collision.
+        UniqueConstraint("parent_id", "name", name="uq_tag_parent_name"),
     )
 
 

@@ -80,6 +80,10 @@ function viewToggle(onChange) {
 
 function renderBooks(host, items, onOpen) {
   host.innerHTML = '';
+  /* select.js, when the page includes it, turns these into checkboxes-in-
+     spirit. Pages that do not want selection simply do not load it, and
+     nothing here needs to know the difference. */
+  if (typeof rememberVisible === 'function') rememberVisible(items);
   if (!items.length) {
     host.innerHTML = '<p class="note" style="padding:0 1rem">Nothing here.</p>';
     return;
@@ -87,12 +91,20 @@ function renderBooks(host, items, onOpen) {
   if (viewMode() === 'grid') {
     const grid = document.createElement('div');
     grid.className = 'grid-results';
-    items.forEach((i) => grid.appendChild(bookTile(i, onOpen)));
+    items.forEach((i) => {
+      const node = bookTile(i, onOpen);
+      if (typeof decorateSelectable === 'function') decorateSelectable(node, i);
+      grid.appendChild(node);
+    });
     host.appendChild(grid);
   } else {
     const list = document.createElement('div');
     list.style.cssText = 'padding:0 1rem; display:flex; flex-direction:column; gap:.4rem';
-    items.forEach((i) => list.appendChild(bookRow(i, onOpen)));
+    items.forEach((i) => {
+      const node = bookRow(i, onOpen);
+      if (typeof decorateSelectable === 'function') decorateSelectable(node, i);
+      list.appendChild(node);
+    });
     host.appendChild(list);
   }
 }

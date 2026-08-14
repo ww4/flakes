@@ -74,11 +74,12 @@ function makeContext(ids) {
 // Order matters and mirrors the <script> tags in the two pages.
 const PAGES = {
   'index.html': ['card.js', 'edit.js', 'app.js'],
-  'browse.html': ['shared-ui.js', 'browse.js'],
-  'shelf.html': ['shared-ui.js', 'shelf.js'],
+  'browse.html': ['shared-ui.js', 'select.js', 'browse.js'],
+  'shelf.html': ['shared-ui.js', 'select.js', 'shelf.js'],
   'cleanup.html': ['shared-ui.js', 'cleanup.js'],
   'logs.html': ['logs.js'],
   'book.html': ['card.js', 'edit.js', 'book.js'],
+  'labels.html': ['shared-ui.js', 'labels.js'],
 };
 
 let failed = false;
@@ -98,11 +99,12 @@ for (const [page, scripts] of Object.entries(PAGES)) {
   const NEEDED = {
     'index.html': ['renderBookCard', 'mountEditor', 'renderCard', 'check',
                    'startScan', 'pauseScan', 'resumeScan', 'stopScan'],
-    'browse.html': ['bookTile', 'openSheet', 'renderSearch', 'renderBooks'],
-    'shelf.html': ['renderBooks', 'openSheet', 'viewToggle'],
+    'browse.html': ['bookTile', 'openSheet', 'renderSearch', 'renderBooks', 'enterSelect', 'decorateSelectable', 'paint'],
+    'shelf.html': ['renderBooks', 'openSheet', 'viewToggle', 'enterSelect', 'decorateSelectable', 'selectToggleButton'],
     'cleanup.html': ['openSheet', 'loadCleanup'],
     'logs.html': ['load'],
     'book.html': ['renderBookCard', 'mountEditor', 'paint', 'wireActions'],
+    'labels.html': ['renderTree', 'load', 'create', 'applyBulk', 'setKind'],
   };
   const needed = NEEDED[page];
   for (const fn of needed) {

@@ -696,3 +696,98 @@ class TestCleanupChecks:
         g = self._group(client, "junk-titles")
         numeric = [i for i in g["items"] if not re.search(r"[A-Za-z]", i["title"])]
         assert numeric, "a title with no letter in it should be on the list"
+
+
+class TestLabelApi:
+    """Places and tags through the HTTP layer.
+
+    These run inside the session rollback, so the labels they create never
+    reach the real catalog.
+    """
+
+    def _place(self, client, path):
+        r = client.post("/api/labels/place", json={"path": path})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def test_a_path_creates_every_missing_level(self, client):
+        node = self._place(client, "Apitest / a shelf")
+        assert node["path"] == "Apitest / a shelf"
+        paths = {n["path"] for n in client.get("/api/labels/place").json()["nodes"]}
+        assert "Apitest" in paths and "Apitest / a shelf" in paths
+
+    def test_the_tree_reports_rollup_counts(self, client):
+        shelf = self._place(client, "Apitest2 / a shelf")
+        ids = [h["work_id"] for h in
+               client.get("/api/search", params={"q": "frog"}).json()][:4]
+        r = client.post("/api/bulk/place", json={"work_ids": ids, "path": "Apitest2 / a shelf"})
+        assert r.status_code == 200, r.text
+
+        nodes = {n["path"]: n for n in client.get("/api/labels/place").json()["nodes"]}
+        assert nodes["Apitest2 / a shelf"]["own_count"] == len(ids)
+        # The question the page exists to answer.
+        assert nodes["Apitest2"]["total_count"] == len(ids)
+        assert nodes["Apitest2"]["own_count"] == 0
+        assert shelf["id"]
+
+    def test_a_place_is_exclusive(self, client):
+        ids = [h["work_id"] for h in
+               client.get("/api/search", params={"q": "frog"}).json()][:3]
+        client.post("/api/bulk/place", json={"work_ids": ids, "path": "ApitestA"})
+        client.post("/api/bulk/place", json={"work_ids": ids, "path": "ApitestB"})
+        nodes = {n["path"]: n for n in client.get("/api/labels/place").json()["nodes"]}
+        assert nodes["ApitestA"]["total_count"] == 0
+        assert nodes["ApitestB"]["total_count"] == len(ids)
+
+    def test_tags_accumulate_where_places_replace(self, client):
+        ids = [h["work_id"] for h in
+               client.get("/api/search", params={"q": "frog"}).json()][:3]
+        client.post("/api/bulk/tag", json={"work_ids": ids, "path": "Apitag / One"})
+        client.post("/api/bulk/tag", json={"work_ids": ids, "path": "Apitag / Two"})
+        nodes = {n["path"]: n for n in client.get("/api/labels/tag").json()["nodes"]}
+        assert nodes["Apitag / One"]["own_count"] == len(ids)
+        assert nodes["Apitag / Two"]["own_count"] == len(ids)
+        # The same three books in two cores are three books, not six.
+        assert nodes["Apitag"]["total_count"] == len(ids), "same books, not double counted"
+
+    def test_derived_badges_cannot_be_assigned(self, client):
+        """HAVE is computed from what you own; writing it down would rot."""
+        r = client.post("/api/bulk/tag", json={"work_ids": [1], "path": "HAVE"})
+        assert r.status_code == 400
+
+    def test_deleting_a_level_promotes_rather_than_drops(self, client):
+        shelf = self._place(client, "Apidel / a shelf")
+        ids = [h["work_id"] for h in
+               client.get("/api/search", params={"q": "frog"}).json()][:2]
+        client.post("/api/bulk/place", json={"work_ids": ids, "path": "Apidel / a shelf"})
+
+        r = client.delete(f"/api/labels/place/{shelf['id']}")
+        assert r.status_code == 200, r.text
+        nodes = {n["path"]: n for n in client.get("/api/labels/place").json()["nodes"]}
+        assert "Apidel / a shelf" not in nodes
+        assert nodes["Apidel"]["own_count"] == len(ids), "books kept the coarser fact"
+
+    def test_a_rename_touches_one_level_only(self, client):
+        self._place(client, "Apiren / a shelf")
+        parent = [n for n in client.get("/api/labels/place").json()["nodes"]
+                  if n["path"] == "Apiren"][0]
+        r = client.patch(f"/api/labels/place/{parent['id']}", json={"name": "Apiren2"})
+        assert r.status_code == 200, r.text
+        paths = {n["path"] for n in client.get("/api/labels/place").json()["nodes"]}
+        assert "Apiren2 / a shelf" in paths, "descendants follow a parent rename"
+
+    def test_a_slash_in_a_rename_is_refused(self, client):
+        node = self._place(client, "Apislash")
+        r = client.patch(f"/api/labels/place/{node['id']}", json={"name": "a / b"})
+        assert r.status_code == 400
+
+    def test_unknown_kind_404s(self, client):
+        assert client.get("/api/labels/nonsense").status_code == 404
+
+    def test_bulk_needs_a_selection(self, client):
+        assert client.post("/api/bulk/place", json={"path": "Apitest"}).status_code == 400
+
+    def test_the_labels_page_is_served(self, client):
+        r = client.get("/labels.html")
+        assert r.status_code == 200
+        assert "labels.js" in r.text

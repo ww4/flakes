@@ -8,11 +8,11 @@
 
 // Bump on every shell change. Without this the browser keeps serving the old
 // app.js, so a verdict-semantics fix silently does not reach the phone.
-const CACHE = 'stacks-shell-v21';
+const CACHE = 'stacks-shell-v23';
 const COVERS = 'stacks-covers-v1';
 const SHELL = ['./', 'index.html', 'app.js', 'card.js', 'edit.js', 'shared-ui.js',
                'app.css', 'browse.html', 'browse.js',
-               'shelf.html', 'shelf.js', 'cleanup.html', 'cleanup.js', 'logs.html', 'logs.js', 'book.html', 'book.js',
+               'shelf.html', 'shelf.js', 'cleanup.html', 'cleanup.js', 'logs.html', 'logs.js', 'book.html', 'book.js', 'labels.html', 'labels.js', 'select.js',
                'manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
