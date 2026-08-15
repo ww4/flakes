@@ -32,16 +32,12 @@ in
   virtualisation.oci-containers.containers = {
     open-notebook-surrealdb = {
       image = "surrealdb/surrealdb:v2";
-      # sh -c wrapper so the shared env file's $SURREAL_PASS expands into argv.
-      # SurrealDB v2's `start` takes --user/--pass on the CLI (no --pass-file,
-      # no root-cred env vars) so the wrapper is the plumbing that keeps the
-      # password out of the Nix store and shared with the app container.
-      # `exec` replaces the shell → surreal is PID 1 → stop signals reach it.
-      entrypoint = "sh";
-      cmd = [
-        "-c"
-        "exec surreal start --log info --user \"$SURREAL_USER\" --pass \"$SURREAL_PASS\" rocksdb:/mydata/mydatabase.db"
-      ];
+      # No CLI creds: the image is distroless (no `sh`, no coreutils) so a
+      # shell-wrapper to inject the password fails with `exec: "sh": executable
+      # file not found` — burned that path once. SurrealDB's clap args expose
+      # SURREAL_USER / SURREAL_PASS as env-var equivalents to --user / --pass,
+      # which is what the shared env file below supplies.
+      cmd = [ "start" "--log" "info" "rocksdb:/mydata/mydatabase.db" ];
       environment = {
         SURREAL_EXPERIMENTAL_GRAPHQL = "true";
       };
