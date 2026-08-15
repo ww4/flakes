@@ -2,7 +2,12 @@
   description = "gromit — NixOS homelab server (with GNOME desktop), Home Manager + flakes";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    # Pinned to nixos-26.05 stable (2026-08-15) — nixos-unstable rolled to 26.11
+    # which dropped x86_64-darwin support, and nixpkgs's own module-eval touches
+    # darwin option types even for a linux-only flake. Stable release still
+    # supports darwin AND ships a very recent claude-code + other packages, so
+    # for this box the tradeoff of "slightly less bleeding-edge" is worth it.
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
 
     # VS Code remote server support. Pinned via flake.lock instead of a
     # fetchTarball against a moving branch (which broke on every upstream push).
