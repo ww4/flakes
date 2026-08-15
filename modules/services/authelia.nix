@@ -232,6 +232,7 @@ EOF
             "prometheus.${domain}"
             "glances.${domain}"
             "metube.${domain}"
+            "notebook.${domain}"
           ];
           policy = "two_factor";
         }];
@@ -255,10 +256,11 @@ EOF
     };
   };
 
-  # --- merge forward-auth into the three protected vhosts (no service-module edits) ---
+  # --- merge forward-auth into the protected vhosts (no service-module edits) ---
   services.nginx.virtualHosts."prometheus.${domain}" = protect;
   services.nginx.virtualHosts."glances.${domain}"    = protect;
   services.nginx.virtualHosts."metube.${domain}"     = protect;
+  services.nginx.virtualHosts."notebook.${domain}"   = protect;
   # notes.* (SilverBullet) deliberately NOT protected: Chris wants notetaking
   # frictionless (2026-07-09) — the shared grocery list especially (Mary, at
   # the store, via Tailscale). Tailscale/LAN source-gate is the perimeter.
