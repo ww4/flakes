@@ -73,10 +73,12 @@ in
       # rotating it would orphan them, so open-notebook-secrets preserves it
       # across restarts.
       environmentFiles = [ "${stateDir}/app.env" ];
-      ports = [
-        "127.0.0.1:8502:8502"    # web UI (nginx fronts this)
-        "127.0.0.1:5055:5055"    # REST API (also behind the same vhost)
-      ];
+      # 5055 (REST API) is deliberately NOT bound on the host — jellyseerr owns
+      # that port. The web UI (8502) is what the nginx vhost proxies; the REST
+      # API is reachable inside the docker network as open-notebook:5055 if
+      # something else on the compose stack ever needs it. Re-expose on a free
+      # host port if we grow programmatic-access use.
+      ports = [ "127.0.0.1:8502:8502" ];
       volumes = [ "${stateDir}/data:/app/data" ];
       extraOptions = [ "--network=${netName}" ];
     };
