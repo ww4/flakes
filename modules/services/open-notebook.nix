@@ -47,7 +47,12 @@ in
       # No host port binding: the app reaches surrealdb over the private docker
       # network by name (`surrealdb:8000` via the network-alias below). Exposing
       # 8000 on the host would also collide with audiobookshelf.
-      extraOptions = [ "--network=${netName}" "--network-alias=surrealdb" ];
+      # --user root: bind-mount is owned root:root (StateDirectory mode 700);
+      # the image's default non-root user can't create the RocksDB files
+      # ("Failed to create RocksDB directory: PermissionDenied"). Upstream's
+      # docker-compose does the same (`user: root  # Required for bind mounts
+      # on Linux`).
+      extraOptions = [ "--network=${netName}" "--network-alias=surrealdb" "--user=root" ];
     };
 
     open-notebook = {
