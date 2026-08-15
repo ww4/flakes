@@ -73,9 +73,13 @@ let
         (a) a Chris-keyboard ask — write it clearly and don't repeatedly
             re-plan the same one day after day; if he hasn't done it, that's
             his call, not a signal to escalate it back onto your own plan;
-        (b) a discrete task package he can hand to an agent session — spell
-            out what to do, where, how to verify, which memory/PR/module to
-            touch; make it copy-pasteable into a fresh session.
+        (b) an agent-executable task — APPEND it to the shared `open-loops`
+            memory board so the next interactive session (which auto-loads
+            that board under Chris's direction) can evaluate and run it.
+            Location: /home/claude/.claude/projects/-home-claude-nixos-homelab-improvements/memory/open-loops.md
+            Spell it out: what to do, where, how to verify, which
+            memory/PR/module to touch. Do NOT write it inline in the Journal
+            as if you will run it; Chris directs the session, not you.
       In either case, do NOT put an action item on YOUR plan as though you
       will do it — you can't. When an item you previously wrote slips, do NOT
       roll it forward as "attempt N" / "SHIP Plan #N"; either surface it as
