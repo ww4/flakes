@@ -32,26 +32,25 @@ in
   virtualisation.oci-containers.containers = {
     open-notebook-surrealdb = {
       image = "surrealdb/surrealdb:v2";
-      # exec-form command so a password containing spaces stays one argument
+      # sh -c wrapper so the shared env file's $SURREAL_PASS expands into argv.
+      # SurrealDB v2's `start` takes --user/--pass on the CLI (no --pass-file,
+      # no root-cred env vars) so the wrapper is the plumbing that keeps the
+      # password out of the Nix store and shared with the app container.
+      # `exec` replaces the shell → surreal is PID 1 → stop signals reach it.
+      entrypoint = "sh";
       cmd = [
-        "start"
-        "--log" "info"
-        "--user" "root"
-        "--pass-file" "/run/creds/surreal-pass"
-        "rocksdb:/mydata/mydatabase.db"
+        "-c"
+        "exec surreal start --log info --user \"$SURREAL_USER\" --pass \"$SURREAL_PASS\" rocksdb:/mydata/mydatabase.db"
       ];
       environment = {
         SURREAL_EXPERIMENTAL_GRAPHQL = "true";
       };
-      volumes = [
-        "${stateDir}/surreal:/mydata"
-        # Pass the generated password to SurrealDB via a file (kept out of
-        # environment where `docker inspect` would leak it).
-        "${stateDir}/surreal-pass:/run/creds/surreal-pass:ro"
-      ];
+      # Same env file as the app so a password rotation stays in sync.
+      environmentFiles = [ "${stateDir}/app.env" ];
+      volumes = [ "${stateDir}/surreal:/mydata" ];
       # No host port binding: the app reaches surrealdb over the private docker
-      # network by name (`open-notebook-surrealdb:8000`). Exposing 8000 on the
-      # host would also collide with audiobookshelf.
+      # network by name (`surrealdb:8000` via the network-alias below). Exposing
+      # 8000 on the host would also collide with audiobookshelf.
       extraOptions = [ "--network=${netName}" "--network-alias=surrealdb" ];
     };
 
@@ -114,27 +113,28 @@ in
       Type = "oneshot";
       RemainAfterExit = true;
     };
-    path = [ pkgs.openssl pkgs.coreutils ];
+    path = [ pkgs.openssl pkgs.coreutils pkgs.gnugrep pkgs.gnused ];
     script = ''
       set -eu
       install -d -m 700 ${stateDir}
       envf=${stateDir}/app.env
-      passf=${stateDir}/surreal-pass
       umask 077
-      # Preserve existing values on redeploy; only generate on first boot.
-      if [ ! -s "$envf" ]; then
-        key=$(openssl rand -hex 32)
-        pass=$(openssl rand -hex 24)
-        printf 'OPEN_NOTEBOOK_ENCRYPTION_KEY=%s\nSURREAL_PASSWORD=%s\n' \
-          "$key" "$pass" > "$envf"
-        printf '%s' "$pass" > "$passf"
-      fi
-      # If someone stomped surreal-pass but the env still holds the password
-      # (or vice-versa) re-derive from the env file, which is the source of
-      # truth — mismatched creds silently fail the app's DB connect at boot.
-      pass=$(sed -n 's/^SURREAL_PASSWORD=//p' "$envf")
-      printf '%s' "$pass" > "$passf"
-      chmod 600 "$envf" "$passf"
+      # Preserve existing values on redeploy — rotating the encryption key
+      # would orphan every stored API key. Idempotently ADD any missing var
+      # (so an older env from a partial first deploy heals into the current
+      # schema without wiping the DB).
+      touch "$envf"
+      # Ensure a stable password we can reuse across any of the three names.
+      pass=$(sed -n 's/^SURREAL_PASS=//p;s/^SURREAL_PASSWORD=//p' "$envf" | head -n1)
+      if [ -z "$pass" ]; then pass=$(openssl rand -hex 24); fi
+      grep -q '^OPEN_NOTEBOOK_ENCRYPTION_KEY=' "$envf" \
+        || printf 'OPEN_NOTEBOOK_ENCRYPTION_KEY=%s\n' "$(openssl rand -hex 32)" >> "$envf"
+      # SURREAL_USER + SURREAL_PASS are read by the SurrealDB container
+      # (sh -c wrapper); SURREAL_PASSWORD is read by the app (upstream name).
+      grep -q '^SURREAL_USER='     "$envf" || printf 'SURREAL_USER=root\n'    >> "$envf"
+      grep -q '^SURREAL_PASS='     "$envf" || printf 'SURREAL_PASS=%s\n'     "$pass" >> "$envf"
+      grep -q '^SURREAL_PASSWORD=' "$envf" || printf 'SURREAL_PASSWORD=%s\n' "$pass" >> "$envf"
+      chmod 600 "$envf"
     '';
   };
 
