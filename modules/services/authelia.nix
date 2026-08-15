@@ -232,6 +232,7 @@ EOF
             "prometheus.${domain}"
             "glances.${domain}"
             "metube.${domain}"
+            "notebook.${domain}"
           ];
           policy = "two_factor";
         }];
