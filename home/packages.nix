@@ -12,7 +12,9 @@
     # GUI applications
     google-chrome
     # vscode is now managed by ./vscode.nix (programs.vscode)
-    logseq
+    # logseq removed 2026-08-15 — nixpkgs 26.05 pins it to electron-39.8.10 which is
+    # marked insecure; not in active use. Re-add if you want it back (either after
+    # nixpkgs bumps logseq's electron, or install as flatpak).
     element-desktop
     libreoffice-fresh
     gimp                 # gimp-with-plugins has been flaky; plain gimp instead (Jan 2025)
