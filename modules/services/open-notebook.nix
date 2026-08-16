@@ -90,11 +90,18 @@ in
       # or API without warning.
       image = "ghcr.io/remsky/kokoro-fastapi-cpu:v0.7.2";
       environment = {
-        # Model + voice files are baked into the image; no HF download at boot.
         PYTHONUNBUFFERED = "1";
+        # The model (~350 MB v1_0/kokoro-v1_0.pth) is NOT baked into the image.
+        # Without this, startup crash-loops with `File not found:
+        # v1_0/kokoro-v1_0.pth` (initial deploy hit restart counter 638). The
+        # script downloads on first boot into the volume below, so subsequent
+        # starts are instant. Idempotent — a re-download is skipped if present.
+        DOWNLOAD_MODEL = "true";
       };
-      # Kokoro caches voice tensors on first use; volume keeps that between
-      # restarts (also survives image pulls).
+      # Persist the downloaded model + any voice tensors cached on first use,
+      # so a container recreate doesn't re-fetch. Volume also hides the
+      # image's /app/api/src/models entirely, so DOWNLOAD_MODEL is the only
+      # path to a populated tree.
       volumes = [ "${stateDir}/kokoro:/app/api/src/models" ];
       # No host port: the app reaches Kokoro over the docker network at
       # http://kokoro:8880 (network-alias below). Not needed on the host.
