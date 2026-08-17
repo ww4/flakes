@@ -98,7 +98,7 @@ el('browse-search').addEventListener('submit', async (e) => {
   try {
     const res = await fetch(`api/search?q=${encodeURIComponent(q)}`);
     const hits = await res.json();
-    if (hits.length === 1) return openBook(hits[0].work_id);
+    if (hits.length === 1) return openSheet(hits[0].work_id);
     renderSearch(hits, q);
   } catch {
     el('loading').hidden = false;

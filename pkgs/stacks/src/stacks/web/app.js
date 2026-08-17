@@ -133,12 +133,18 @@ function decide(w) {
 function lookupOffline(cat, code) {
   const isbn = toIsbn13(code);
   if (!isbn || !cat) return null;
-  const hit = cat.isbns[isbn];
-  if (!hit) {
+  // cat.isbns maps isbn13 -> work id, a bare integer (catalog.py build()).
+  // This read once expected {w: id} and dereferenced .w — undefined — so every
+  // OWNED book answered "nothing cached" offline while unknown books answered
+  // correctly. tests/js/offline_contract.js now runs this function against a
+  // payload built by the real catalog.build(), so the two sides cannot drift
+  // silently again.
+  const wid = cat.isbns[isbn];
+  if (wid === undefined) {
     return { verdict: 'NOT_IN_CATALOG', status: 'NOT OWNED',
              recommendation: 'Not in your catalog', detail: [], wants: [], offline: true };
   }
-  const w = cat.works[String(hit.w)];
+  const w = cat.works[String(wid)];
   if (!w) return null;
   const d = decide(w);
   const wants = [];
@@ -146,7 +152,7 @@ function lookupOffline(cat, code) {
   if (wants.length && d.verdict === 'NOT_IN_CATALOG') {
     d.verdict = 'BUY_WANTED'; d.recommendation = 'On your want list';
   }
-  return { ...cardFromCatalog(cat, hit.w, isbn), ...d,
+  return { ...cardFromCatalog(cat, wid, isbn), ...d,
            status: statusOf(d.verdict, w), wants, offline: true };
 }
 
