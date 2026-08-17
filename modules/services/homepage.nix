@@ -274,7 +274,7 @@ let
               showRepoStats: false
         - PinchFlat:
             description: YouTube archiver
-            href: http://100.82.117.116:8945
+            href: https://pinchflat.rosemaryacres.com
             icon: pinchflat.png
         - MeshCentral:
             description: Remote device management (server)
@@ -292,20 +292,24 @@ let
             icon: prometheus.png
             widget:
               type: prometheus
-              url: https://prometheus.rosemaryacres.com
+              # host-gateway, not the vhost: widget fetches are server-side
+              # from this container, and the Authelia-protected vhost 302s
+              # them to a login page they cannot follow (2026-08 audit M3).
+              url: http://host.docker.internal:9090
 
     - Gromit (live):
-        # Glances exposes a REST API at https://glances.rosemaryacres.com
-        # (DNS resolves to the Tailscale IP, so this is not internet-
-        # exposed). Each block below is a separate metric card with a
-        # small sparkline. v4 = Glances API v4. Cards link to the full
-        # Glances HTML UI on click.
+        # Widget polling goes to the host-gateway ports directly (the
+        # br-+ firewall holes in glances.nix/monitoring.nix); the vhosts
+        # are Authelia-protected and a server-side fetch cannot log in.
+        # Each block below is a separate metric card with a small
+        # sparkline. v4 = Glances API v4. Cards (href) link to the full
+        # Glances HTML UI, through Authelia like any human visit.
         - CPU:
             href: https://glances.rosemaryacres.com
             icon: glances.png
             widget:
               type: glances
-              url: https://glances.rosemaryacres.com
+              url: http://host.docker.internal:61208
               metric: cpu
               version: 4
               chart: true
@@ -315,7 +319,7 @@ let
             icon: glances.png
             widget:
               type: glances
-              url: https://glances.rosemaryacres.com
+              url: http://host.docker.internal:61208
               metric: memory
               version: 4
               chart: true
@@ -325,7 +329,7 @@ let
             icon: glances.png
             widget:
               type: glances
-              url: https://glances.rosemaryacres.com
+              url: http://host.docker.internal:61208
               metric: disk:nvme0n1
               version: 4
               chart: true
@@ -335,7 +339,7 @@ let
             icon: glances.png
             widget:
               type: glances
-              url: https://glances.rosemaryacres.com
+              url: http://host.docker.internal:61208
               metric: network:enp3s0
               version: 4
               chart: true
@@ -345,7 +349,7 @@ let
             icon: glances.png
             widget:
               type: glances
-              url: https://glances.rosemaryacres.com
+              url: http://host.docker.internal:61208
               metric: info
               version: 4
         - Temperatures:
@@ -494,7 +498,12 @@ in {
       };
       # Join arr-net (created by modules/services/arr.nix) so the *arr stack
       # widgets can resolve `prowlarr`, `sonarr`, `gluetun`, etc. by name.
-      extraOptions = [ "--network=arr-net" ];
+      extraOptions = [
+        "--network=arr-net"
+        # host.docker.internal -> the container's bridge gateway, so widget
+        # urls can name the host without hardcoding a docker subnet.
+        "--add-host=host.docker.internal:host-gateway"
+      ];
     };
   };
 

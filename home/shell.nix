@@ -34,7 +34,12 @@
       sshn   = "ssh n";
       zork   = "frotz ZORKI";
       # Bitwarden CLI unlock — exports BW_SESSION for the current shell.
-      unlock = ''bw unlock > /tmp/bw_env && eval "$(grep -o export.* /tmp/bw_env)" && bw status | grep -o "status.*"'';
+      # --raw straight into the variable: the old form parked a LIVE vault
+      # session token world-readable in /tmp/bw_env, where it outlived the
+      # shell and was readable by every other uid on the box — including the
+      # deliberately less-trusted agent the rest of this config fences out
+      # (2026-08 audit M4).
+      unlock = ''export BW_SESSION="$(bw unlock --raw)" && bw status | grep -o "status.*"'';
     };
 
     sessionVariables = {
