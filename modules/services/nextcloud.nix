@@ -117,7 +117,7 @@
   postgresqlBackup = {
     enable = true;
     startAt = "*-*-* 01:15:00";
-    databases = [ "nextcloud" "immich" ];
+    databases = [ "nextcloud" "immich" "stacks" ];
   };
  };
   systemd.services.nextcloud-setup.serviceConfig = {
