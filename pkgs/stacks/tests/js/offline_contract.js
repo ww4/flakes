@@ -10,7 +10,9 @@
  *
  * Usage: node offline_contract.js <payload.json> <checks.json>
  *   payload.json — exactly what /api/catalog would return (catalog.build()).
- *   checks.json  — [{isbn, expect: "hit", title} | {isbn, expect: "miss"}]
+ *   checks.json  — [{isbn, expect: "hit", title}
+ *                   | {isbn, expect: "miss"}
+ *                   | {isbn, expect: "verdict", verdict: "SKIP_HAVE"}]
  * Exits non-zero with one line per failed expectation.
  */
 'use strict';
@@ -47,6 +49,11 @@ for (const c of checks) {
   } else if (c.expect === 'miss') {
     if (!r || r.verdict !== 'NOT_IN_CATALOG') {
       failures.push(`${c.isbn}: unknown isbn should be NOT_IN_CATALOG, got ${r && r.verdict}`);
+    }
+  } else if (c.expect === 'verdict') {
+    if (!r || r.verdict !== c.verdict) {
+      failures.push(`${c.isbn}: expected verdict ${c.verdict}, got ${r && r.verdict}` +
+                    (r && r.recommendation ? ` ("${r.recommendation}")` : ''));
     }
   } else {
     failures.push(`${c.isbn}: unknown expectation ${c.expect}`);

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlalchemy import func, select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
 from stacks.badges import compute as compute_badges
@@ -74,10 +74,16 @@ def _base_query():
                 Edition.id.in_(select(Copy.edition_id).where(Copy.edition_id.is_not(None)))
             ).label("owned_cover_id"),
             func.min(Edition.cover_id).label("any_cover_id"),
-            func.count(Copy.id).filter(Copy.status == CopyStatus.present).label("present"),
-            func.count(Copy.id).filter(Copy.status == CopyStatus.unverified).label("unverified"),
-            func.count(Copy.id).filter(Copy.status == CopyStatus.lost_flood).label("lost"),
-            func.count(Copy.id)
+            # count(DISTINCT copies.id): the Edition/Copy/WorkTag outer joins
+            # multiply rows, so a bare count() tallied copies x editions x
+            # tags — a work with 40 printings and 1 present copy counted
+            # present=40. Harmless while these fed only booleans; wrong the
+            # moment anything reads them as numbers (and they ship to the
+            # client as numbers).
+            func.count(distinct(Copy.id)).filter(Copy.status == CopyStatus.present).label("present"),
+            func.count(distinct(Copy.id)).filter(Copy.status == CopyStatus.unverified).label("unverified"),
+            func.count(distinct(Copy.id)).filter(Copy.status == CopyStatus.lost_flood).label("lost"),
+            func.count(distinct(Copy.id))
             .filter(
                 Copy.status == CopyStatus.unverified,
                 Copy.provenance == Provenance.re_acquired,
@@ -256,9 +262,16 @@ def wanted_shelf(session: Session, limit: int = ROW_SIZE) -> Shelf:
         .limit(limit)
     )
     items = _rows_to_items(session.execute(q).all())
+    # A true total, not len(items): under the home page's 24-row limit the
+    # shelf silently claimed the want list ended where the row did.
+    total = session.scalar(
+        select(func.count(Work.id)).where(
+            Work.primary_author_id.in_(want_authors) | Work.series_id.in_(want_series)
+        )
+    ) or 0
     return Shelf(key="wanted", title="On your want list",
                  subtitle="Authors and series you're collecting",
-                 total=len(items), items=items)
+                 total=total, items=items)
 
 
 def place_shelves(session: Session, limit_rows: int = 8) -> list[Shelf]:
@@ -327,8 +340,11 @@ def shelf_by_key(session: Session, key: str, limit: int = 500) -> Shelf | None:
             .order_by(Work.series_position.nullslast(), Work.title).limit(limit)
         )
         items = _rows_to_items(session.execute(q).all())
-        return Shelf(key=key, title=row[0], subtitle=f"{len(items)} in the catalog",
-                     total=len(items), items=items)
+        total = session.scalar(
+            select(func.count(Work.id)).where(Work.series_id == int(value))
+        ) or 0
+        return Shelf(key=key, title=row[0], subtitle=f"{total} in the catalog",
+                     total=total, items=items)
 
     if kind == "author":
         row = session.execute(
@@ -339,8 +355,11 @@ def shelf_by_key(session: Session, key: str, limit: int = 500) -> Shelf | None:
         q = _base_query().where(Work.primary_author_id == int(value)) \
             .order_by(Work.title).limit(limit)
         items = _rows_to_items(session.execute(q).all())
-        return Shelf(key=key, title=row[0], subtitle=f"{len(items)} books",
-                     total=len(items), items=items)
+        total = session.scalar(
+            select(func.count(Work.id)).where(Work.primary_author_id == int(value))
+        ) or 0
+        return Shelf(key=key, title=row[0], subtitle=f"{total} books",
+                     total=total, items=items)
 
     if kind == "collection":
         q = (
@@ -351,8 +370,13 @@ def shelf_by_key(session: Session, key: str, limit: int = 500) -> Shelf | None:
             .order_by(Work.title).limit(limit)
         )
         items = _rows_to_items(session.execute(q).all())
-        return Shelf(key=key, title=value, subtitle=f"{len(items)} books",
-                     total=len(items), items=items)
+        total = session.scalar(
+            select(func.count(distinct(Copy.work_id))).where(
+                Copy.source_collections.any(value)
+            )
+        ) or 0
+        return Shelf(key=key, title=value, subtitle=f"{total} books",
+                     total=total, items=items)
 
     if kind in ("place", "tag"):
         # Both are label trees, and both roll up: opening "Frankfort" shows

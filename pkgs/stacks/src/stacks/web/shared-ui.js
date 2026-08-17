@@ -1,10 +1,18 @@
 /* Pieces every page that shows books needs.
  *
- * Loaded after card.js (which owns `esc` and `tagHtml`) and before the
- * page script. Kept separate so browse, shelf and cleanup cannot drift into
- * three slightly different tiles.
+ * NEVER loaded on the same page as card.js (which carries its own `esc` and
+ * `tagHtml`): this file serves the browsing pages, card.js serves the scan
+ * card and the book page. Loading both is an instant redeclaration
+ * SyntaxError — the load-order coupling that once killed edit.js. (The old
+ * header here said the opposite; it predated the book.html unification.)
+ * Kept separate so browse, shelf and cleanup cannot drift into three
+ * slightly different tiles.
  */
 'use strict';
+
+// Every page with this file gets the offline shell; registration used to
+// happen only on index.html, so a browse-first user had no offline app.
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
 /* These live here rather than in card.js because the two files are never
    loaded on the same page: card.js serves the scan card and the book page,
@@ -14,7 +22,9 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function tagHtml(status) {
-  return `<span class="tag ${String(status || '').replace(/\s+/g, '')}">${esc(status)}</span>`;
+  // esc() the class token too: badges include user-assigned tag names,
+  // and a quote in one used to break out of the attribute (audit M1).
+  return `<span class="tag ${esc(String(status || '').replace(/\s+/g, ''))}">${esc(status)}</span>`;
 }
 
 /* A book tile. `badges[0]` is the strongest — LOST outranks WANTED, because
@@ -31,7 +41,7 @@ function bookTile(item, onOpen) {
     : '';
   const primary = (item.badges && item.badges[0]) || item.status;
   const corner = primary && primary !== 'UNCONFIRMED'
-    ? `<span class="corner tag ${primary.replace(/\s+/g, '')}">${esc(primary)}</span>` : '';
+    ? `<span class="corner tag ${esc(primary.replace(/\s+/g, ''))}">${esc(primary)}</span>` : '';
 
   b.innerHTML =
     `<span class="tile-art">${art}` +

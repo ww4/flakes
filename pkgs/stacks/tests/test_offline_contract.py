@@ -43,7 +43,11 @@ class TestOfflineLookupContract:
         from stacks import catalog, db
         from stacks.models import Copy, CopyStatus, Edition, Provenance, Work
 
+        from stacks.models import Series, WantKind, WantRule, WantSource
+
         owned = _isbn("979809999999")
+        loaned = _isbn("979809999998")
+        serieswant = _isbn("979809999997")
 
         with db.session_scope() as s:
             w = Work(title="Offline Contract Fixture", sort_title="offline contract fixture")
@@ -55,6 +59,32 @@ class TestOfflineLookupContract:
             s.flush()
             s.add(Copy(work_id=w.id, edition_id=e.id,
                        status=CopyStatus.present, provenance=Provenance.manual))
+
+            # A book whose only copy is out on loan: still yours (SKIP_HAVE),
+            # but schema 4 never shipped a loaned count, so offline it read
+            # "No copies recorded" and invited buying a duplicate.
+            wl = Work(title="Offline Loaned Fixture", sort_title="offline loaned fixture")
+            s.add(wl)
+            s.flush()
+            el = Edition(work_id=wl.id, isbn13=loaned)
+            s.add(el)
+            s.flush()
+            s.add(Copy(work_id=wl.id, edition_id=el.id,
+                       status=CopyStatus.loaned, provenance=Provenance.manual))
+
+            # An unowned volume of a series being collected: want_series was
+            # in the payload from day one and the client never read it.
+            series = Series(name="Offline Contract Series")
+            s.add(series)
+            s.flush()
+            ws = Work(title="Offline Series Fixture", sort_title="offline series fixture",
+                      series_id=series.id)
+            s.add(ws)
+            s.flush()
+            s.add(Edition(work_id=ws.id, isbn13=serieswant))
+            s.add(WantRule(kind=WantKind.series, source=WantSource.manual,
+                           series_id=series.id, label=series.name,
+                           match_key="offline contract series"))
             s.flush()
             payload = catalog.build(s)
 
@@ -73,6 +103,8 @@ class TestOfflineLookupContract:
         checks_file.write_text(json.dumps([
             {"isbn": owned, "expect": "hit", "title": "Offline Contract Fixture"},
             {"isbn": miss, "expect": "miss"},
+            {"isbn": loaned, "expect": "verdict", "verdict": "SKIP_HAVE"},
+            {"isbn": serieswant, "expect": "verdict", "verdict": "BUY_WANTED"},
         ]))
 
         r = subprocess.run(

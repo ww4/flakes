@@ -268,3 +268,14 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_authors_sort_name'), table_name='authors')
     op.drop_table('authors')
     # ### end Alembic commands ###
+
+    # Dropping the tables does not drop the ENUM TYPES they used — Postgres
+    # keeps them, and the next upgrade-from-base then dies on
+    # DuplicateObject: type "location_kind" already exists. Verified in the
+    # 2026-08 audit: downgrade -> upgrade was never replayable. (An untested
+    # downgrade is not a downgrade — 76d131433779 got this right for its own
+    # enum; the initial schema did not.)
+    for enum_name in ("location_kind", "copy_status", "provenance", "match_tier",
+                      "request_status", "want_kind", "want_source",
+                      "wishlist_reason"):
+        sa.Enum(name=enum_name).drop(op.get_bind(), checkfirst=True)

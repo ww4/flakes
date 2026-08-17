@@ -13,7 +13,7 @@
 const DB_NAME = 'stacks';
 const STORE = 'catalog';
 const KEY = 'catalog';
-const SCHEMA = 4;
+const SCHEMA = 5;
 
 // ---------------------------------------------------------------- storage
 
@@ -89,7 +89,11 @@ function check13(b) {
  * flood" twice reads as the system fretting.
  */
 function decide(w) {
-  const confirmed = (w.p || 0) + (w.loaned || 0);
+  // "o" = out on loan (schema 5). Still yours — a loaned copy counts as
+  // confirmed, matching match.py. This read was `w.loaned` for a key the
+  // builder never emitted, so a book whose only copies were loaned out
+  // looked like "No copies recorded" offline.
+  const confirmed = (w.p || 0) + (w.o || 0);
   const unverified = w.u || 0;
   const lost = w.l || 0;
   // Copies deliberately bought again after the flood. Checked before the loss
@@ -149,6 +153,11 @@ function lookupOffline(cat, code) {
   const d = decide(w);
   const wants = [];
   if (w.a && cat.want_authors.includes(w.a)) wants.push(`author on your want list: ${w.a}`);
+  // want_series shipped in the payload from day one and was never read —
+  // a series being collected produced no BUY_WANTED offline.
+  if (w.s && (cat.want_series || []).includes(w.s)) {
+    wants.push(`series on your want list: ${w.s}`);
+  }
   if (wants.length && d.verdict === 'NOT_IN_CATALOG') {
     d.verdict = 'BUY_WANTED'; d.recommendation = 'On your want list';
   }
@@ -205,7 +214,8 @@ function searchOffline(cat, query) {
                  _exact: t.startsWith(q) });
     }
   }
-  out.sort((a, b) => (b._exact - a._exact) || a.title.localeCompare(b.title));
+  // (a.title || ''): a null-titled work matched by author used to throw here.
+  out.sort((a, b) => (b._exact - a._exact) || (a.title || '').localeCompare(b.title || ''));
   return out.slice(0, 30);
 }
 
@@ -252,7 +262,6 @@ window.addEventListener('unhandledrejection', (e) => {
 
 const el = (id) => document.getElementById(id);
 let catalog = null, detector = null, stream = null;
-let lastCode = null, lastAt = 0;
 
 /* A decoded barcode is not believed until it repeats.
  *
@@ -279,7 +288,7 @@ function hide(id) { el(id).classList.remove('show'); }
    things only the scanner does — haptic feedback and the session log. */
 let lastScanned = null;
 
-function renderCard(c, code) {
+function renderCard(c, code, feedback = true) {
   hide('results');
   el('card').classList.add('show');
   renderBookCard(c, code);
@@ -311,11 +320,17 @@ function renderCard(c, code) {
     open.onclick = () => { location.href = `book.html?id=${c.work_id}`; };
   }
 
-  if (navigator.vibrate) {
-    navigator.vibrate(c.verdict === 'SKIP_HAVE' ? [120]
-      : c.verdict === 'NOT_IN_CATALOG' || c.verdict === 'UNKNOWN' ? [25] : [40, 60, 40]);
+  // Haptics + session log fire once per SCAN, not once per render — check()
+  // renders twice for one scan (instant cached card, then the server
+  // upgrade), and double-logging was invisible only while the cached path
+  // was broken. Opening a book from the log or search passes feedback=false.
+  if (feedback) {
+    if (navigator.vibrate) {
+      navigator.vibrate(c.verdict === 'SKIP_HAVE' ? [120]
+        : c.verdict === 'NOT_IN_CATALOG' || c.verdict === 'UNKNOWN' ? [25] : [40, 60, 40]);
+    }
+    addLog(c, code);
   }
-  addLog(c, code);
 }
 
 function addLog(c, code) {
@@ -358,26 +373,42 @@ function renderResults(hits, query) {
 
 async function showWork(workId) {
   if (!workId) return;
+  const seq = ++renderSeq;
   try {
     const res = await fetch(`api/work/${workId}`);
     if (!res.ok) throw new Error(res.status);
-    renderCard(await res.json(), null);
+    const card = await res.json();
+    if (seq !== renderSeq) return;
+    renderCard(card, null, false);
     el('card').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch {
     // Offline: the cached payload holds counts and titles but no full record.
+    if (seq !== renderSeq) return;
     const w = catalog && catalog.works[String(workId)];
     if (!w) return;
     const d = decide(w);
     renderCard({ ...cardFromCatalog(catalog, workId, null), ...d,
-                 status: statusOf(d.verdict, w), offline: true }, null);
+                 status: statusOf(d.verdict, w), offline: true }, null, false);
   }
 }
 
+/* Whoever holds the newest ticket owns the screen.
+ *
+ * Without this, scan A's slow response could land after the user had moved on
+ * to book B: the late render overwrote B's card AND lastScanned, so pressing
+ * "✓ I have this" while looking at B confirmed A — the worst possible failure
+ * on flaky sale-day Wi-Fi, and invisible afterwards. A response whose ticket
+ * is stale is simply dropped; the ScanEvent server-side still records it.
+ */
+let renderSeq = 0;
+
 async function check(code, source) {
+  const seq = ++renderSeq;
   const off = lookupOffline(catalog, code);
   // A cached hit is authoritative and instant; show it at once, then quietly
   // upgrade to the full record when there is a network.
-  if (off && off.verdict !== 'NOT_IN_CATALOG') renderCard(off, code);
+  const showedCached = !!(off && off.verdict !== 'NOT_IN_CATALOG');
+  if (showedCached) renderCard(off, code);
   try {
     // `shown` is what the DEVICE displayed. When it differs from the server's
     // answer the cached catalog was stale — and that divergence is exactly the
@@ -386,14 +417,17 @@ async function check(code, source) {
     if (off) q.set('shown', off.verdict);
     const res = await fetch(`api/scan/${encodeURIComponent(code)}?${q}`);
     if (!res.ok) throw new Error(res.status);
-    renderCard({ ...(await res.json()), offline: false }, code);
+    const card = { ...(await res.json()), offline: false };
+    if (seq !== renderSeq) return;
+    renderCard(card, code, !showedCached);
   } catch {
+    if (seq !== renderSeq) return;
     if (off) {
       // Say so. Leaving the cached card up unannounced is how a stale verdict
       // passes for a current one.
       renderCard({ ...off,
                    detail: [...(off.detail || []), 'Server did not answer — this is cached data'],
-                 }, code);
+                 }, code, !showedCached);
     } else {
       renderCard({ verdict: 'UNKNOWN', status: 'UNREADABLE',
                    recommendation: 'No network, and nothing cached for this code',
@@ -512,7 +546,7 @@ async function resumeScan() {
   el('card').classList.remove('show');
   el('c-actions').hidden = true;
   hide('results');
-  lastCode = null; lastAt = 0;
+
 
   if (!stream) return beginCamera();
   try {

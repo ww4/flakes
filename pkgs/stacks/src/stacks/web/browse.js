@@ -97,6 +97,9 @@ el('browse-search').addEventListener('submit', async (e) => {
   if (q.length < 2) return;
   try {
     const res = await fetch(`api/search?q=${encodeURIComponent(q)}`);
+    // A 500 used to flow into res.json()/renderSearch and be misreported
+    // as "Search needs a connection." while fully online.
+    if (!res.ok) throw new Error(res.status);
     const hits = await res.json();
     if (hits.length === 1) return openSheet(hits[0].work_id);
     renderSearch(hits, q);

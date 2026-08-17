@@ -28,6 +28,15 @@ from stacks.config import Settings
 log = logging.getLogger(__name__)
 
 
+class OpenLibraryUnavailable(Exception):
+    """Open Library could not be reached (retries exhausted).
+
+    Distinct from a lookup returning None, which means the record does not
+    exist. Callers that report "Open Library doesn't know this ISBN" must
+    never say it about an outage.
+    """
+
+
 @dataclass(slots=True)
 class OLEdition:
     ol_edition_key: str | None
@@ -162,10 +171,13 @@ class OpenLibraryClient:
             await self._client.aclose()
 
     async def _get(self, path: str, **params: Any) -> dict[str, Any] | None:
-        """GET with rate limiting and one retry on 429/5xx.
+        """GET with rate limiting and retries on 429/5xx.
 
-        Returns None for 404 — a missing record is a normal outcome here, not an
-        error, and must be distinguishable from a failed lookup by the caller.
+        Returns None ONLY for "the record does not exist" (404, or non-JSON
+        garbage). An outage that survives every retry raises
+        :class:`OpenLibraryUnavailable` — it used to return None too, which
+        made a five-minute OL blip indistinguishable from "this ISBN is
+        unknown" and let batch runs record absence they never verified.
         """
         for attempt in range(3):
             async with self._sem:
@@ -175,14 +187,22 @@ class OpenLibraryClient:
                 except httpx.HTTPError as e:
                     log.warning("OL request error %s: %s", path, e)
                     if attempt == 2:
-                        raise
+                        raise OpenLibraryUnavailable(str(e)) from e
                     await asyncio.sleep(1.5 * (attempt + 1))
                     continue
 
             if r.status_code == 404:
                 return None
             if r.status_code == 429 or r.status_code >= 500:
-                wait = float(r.headers.get("retry-after", 2 * (attempt + 1)))
+                # retry-after may be seconds OR an HTTP-date; float() on the
+                # date form used to raise ValueError and kill the whole batch
+                # run instead of backing off.
+                raw = r.headers.get("retry-after")
+                try:
+                    wait = float(raw) if raw else 2.0 * (attempt + 1)
+                except ValueError:
+                    wait = 2.0 * (attempt + 1)
+                wait = min(wait, 60.0)
                 log.info("OL %s on %s — backing off %.1fs", r.status_code, path, wait)
                 await asyncio.sleep(wait)
                 continue
@@ -192,7 +212,7 @@ class OpenLibraryClient:
             except ValueError:
                 log.warning("OL returned non-JSON for %s", path)
                 return None
-        return None
+        raise OpenLibraryUnavailable(f"retries exhausted for {path}")
 
     # -- resolution -------------------------------------------------------
 
