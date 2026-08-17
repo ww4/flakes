@@ -32,7 +32,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from stacks.models import (
@@ -66,6 +66,7 @@ class ImportStats:
     works_created: int = 0
     editions_created: int = 0
     copies_created: int = 0
+    copies_already_present: int = 0
     series_created: int = 0
     with_isbn: int = 0
     without_isbn: int = 0
@@ -296,13 +297,40 @@ def import_libib_exports(
                 session.add(edition)
                 session.flush()
                 stats.editions_created += 1
+            elif edition.work_id != work.id:
+                # The ISBN already belongs to another work's edition — common
+                # after enrichment, when a differently-worded title resolved
+                # elsewhere. The ISBN is the stronger identity: follow it.
+                # The old behavior kept the title-matched work AND the foreign
+                # edition, minting a copy whose work and edition.work
+                # disagreed — silently breaking every "owned isbn" join
+                # downstream (2026-08 audit M3).
+                resolved = session.get(Work, edition.work_id)
+                if resolved is not None:
+                    stats.warnings.append(
+                        f"{h.title!r}: ISBN {h.isbn13} already belongs to "
+                        f"{resolved.title!r} — importing the copy there"
+                    )
+                    work = resolved
 
         blob_parts = list(h.notes)
         if h.tags:
             blob_parts.append("tags: " + ", ".join(sorted(h.tags)))
         blob = " | ".join(blob_parts) or None
 
-        for _ in range(h.copies):
+        # Idempotent: a re-run must not double the library. Count the
+        # libib-provenance copies this work already carries and only top up
+        # the difference — re-importing the same exports is a no-op, and an
+        # interrupted import resumes where it stopped (2026-08 audit M3).
+        existing = session.scalar(
+            select(func.count(Copy.id)).where(
+                Copy.work_id == work.id,
+                Copy.provenance == Provenance.libib_import,
+            )
+        ) or 0
+        to_create = max(0, h.copies - existing)
+        stats.copies_already_present += h.copies - to_create
+        for _ in range(to_create):
             session.add(
                 Copy(
                     work_id=work.id,

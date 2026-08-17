@@ -139,7 +139,9 @@ class MatchResult:
         return self.verdict in BUYS
 
 
-def wants_for_work(session: Session, work: Work) -> list[str]:
+def wants_for_work(
+    session: Session, work: Work, scanned_isbn: str | None = None
+) -> list[str]:
     """Standing want rules this book satisfies.
 
     A want rule is not about *this* book — it is about its author, its series,
@@ -177,6 +179,38 @@ def wants_for_work(session: Session, work: Work) -> list[str]:
             hits.append(f"on your want list: {r.label}")
         else:
             hits.append(f"wanted: {r.label}")
+
+    # Publisher rules have no work/author/series anchor, so the query above
+    # can never return them — "DK books" fired only via wants_for_metadata,
+    # i.e. only for books with NO catalog record. An unverified pre-flood DK
+    # book scanned at a sale showed CAUTION with the standing instruction
+    # silently absent (2026-08 audit M4). Match against the publishers of
+    # THIS household's printings — the copies' editions plus the printing in
+    # hand — NOT every edition enrichment attached: a Scholastic-owned work
+    # with one DK printing somewhere among 200 must not fire "DK books".
+    publishers = {
+        p.lower() for (p,) in session.execute(
+            select(Edition.publisher)
+            .join(Copy, Copy.edition_id == Edition.id)
+            .where(Copy.work_id == work.id, Edition.publisher.is_not(None))
+        ).all()
+    }
+    if scanned_isbn:
+        in_hand = session.scalar(
+            select(Edition.publisher).where(
+                Edition.isbn13 == scanned_isbn, Edition.publisher.is_not(None)
+            )
+        )
+        if in_hand:
+            publishers.add(in_hand.lower())
+    if publishers:
+        for rule in session.scalars(
+            select(WantRule).where(
+                WantRule.active.is_(True), WantRule.kind == WantKind.publisher
+            )
+        ).all():
+            if any(rule.label.lower() in p for p in publishers):
+                hits.append(f"publisher on your want list: {rule.label}")
 
     return hits
 
@@ -453,7 +487,7 @@ def evaluate_scan(
         verdict = Verdict.CAUTION_UNVERIFIED
         detail.append(f"matched on title similarity only ({confidence:.0%})")
 
-    wants = wants_for_work(session, work)
+    wants = wants_for_work(session, work, scanned_isbn=isbn13)
     # A book we hold no copies of but which matches a standing want rule is the
     # one case where "buy it" is real advice rather than noise.
     if wants and verdict is Verdict.NOT_IN_CATALOG:

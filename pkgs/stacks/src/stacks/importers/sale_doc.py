@@ -237,6 +237,7 @@ class WantStats:
     needs_review: int = 0
     overridden: int = 0
     ignored: int = 0
+    already_present: int = 0
     by_kind: dict[str, int] = field(default_factory=dict)
 
     def summary(self) -> str:
@@ -296,6 +297,22 @@ def load(session, path: Path, overrides_path: Path | None = None) -> WantStats:
             pw.needs_review = False
             pw.note = ov.get("why")
             stats.overridden += 1
+
+        # Idempotent: re-running the import must not duplicate the standing
+        # instructions. A rule from this document is identified by its
+        # normalised match key (2026-08 audit M3 — a re-run used to double
+        # every rule, and doubled rules doubled every want annotation).
+        already = session.scalar(
+            select(WantRule).where(
+                WantRule.source == WantSource.sale_doc,
+                WantRule.kind == pw.kind,
+                WantRule.match_key == key,
+            )
+        )
+        if already is not None:
+            stats.already_present += 1
+            continue
+
         rule = WantRule(
             kind=pw.kind,
             source=WantSource.sale_doc,
