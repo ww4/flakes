@@ -48,7 +48,7 @@ in
   virtualisation.oci-containers.containers.unpackerr = {
     # `:latest` matches the convention of the rest of the stack (arr.nix,
     # decluttarr.nix) — comin redeploys pull the current image.
-    image = "golift/unpackerr:latest";
+    image = "golift/unpackerr:latest@sha256:4ec141eeb0cb2f971d7c92f21cc40b0d2d50d7920eb7a0557443cca52270c0b0";
 
     environment = {
       inherit TZ;

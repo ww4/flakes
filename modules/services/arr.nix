@@ -169,10 +169,19 @@ in
     "d /var/lib/gluetun                   0700 root  root  - -"
   ];
 
+  # Images are pinned tag@digest (2026-08 audit): a bare :latest re-pulled on
+  # every comin redeploy, which made ~15 containers a standing supply-chain
+  # surface — and containers sit INSIDE the nginx source-gate (nginx-access
+  # allows 172.16.0.0/12), so a compromised upstream image is a LAN-equivalent
+  # attacker. The tag stays for readability; the digest is what deploys.
+  # To bump one deliberately:
+  #   nix run nixpkgs#skopeo -- inspect --format '{{.Digest}}' docker://<image>:<tag>
+  # then update the digest here in a PR. Same pattern in mempool, homepage,
+  # metube, decluttarr, unpackerr, lidarr, lazylibrarian, aurral.
   virtualisation.oci-containers.containers = {
     #--- Prowlarr (indexer hub) ---
     prowlarr = {
-      image = "ghcr.io/linuxserver/prowlarr:latest";
+      image = "ghcr.io/linuxserver/prowlarr:latest@sha256:1295cff29d10b486c0d8324d1559a552140a5932bf8b3d87e398654414f63f92";
       ports = [ "127.0.0.1:${toString ports.prowlarr}:9696" ];
       environment = { inherit PUID PGID TZ; };
       volumes = [
@@ -190,7 +199,7 @@ in
     # Stays OUTSIDE Gluetun's netns — only does HTTP challenge solving, not
     # torrent traffic, so it doesn't need VPN routing.
     flaresolverr = {
-      image = "ghcr.io/flaresolverr/flaresolverr:latest";
+      image = "ghcr.io/flaresolverr/flaresolverr:latest@sha256:139dfee1c6f89249c8d665d1333a42e8ec74ec0a86bc6bb1c8461e10d3a66a47";
       ports = [ "127.0.0.1:${toString ports.flaresolverr}:8191" ];
       environment = {
         inherit TZ;
@@ -201,7 +210,7 @@ in
 
     #--- Sonarr (TV) ---
     sonarr = {
-      image = "ghcr.io/linuxserver/sonarr:latest";
+      image = "ghcr.io/linuxserver/sonarr:latest@sha256:373159ba768e23a3a1c497d9f2b936addf8fd5b1fdce7dd6a14080ac928bfda0";
       ports = [ "127.0.0.1:${toString ports.sonarr}:8989" ];
       environment = { inherit PUID PGID TZ; };
       volumes = [
@@ -214,7 +223,7 @@ in
 
     #--- Radarr (movies) ---
     radarr = {
-      image = "ghcr.io/linuxserver/radarr:latest";
+      image = "ghcr.io/linuxserver/radarr:latest@sha256:a45b5ab0f850f39edb4cc9c95bbd967b52ddc3d4574a4dfb45561177db6c88f4";
       ports = [ "127.0.0.1:${toString ports.radarr}:7878" ];
       environment = { inherit PUID PGID TZ; };
       volumes = [
@@ -227,7 +236,7 @@ in
 
     #--- Jellyseerr (request UI) ---
     jellyseerr = {
-      image = "fallenbagel/jellyseerr:latest";
+      image = "fallenbagel/jellyseerr:latest@sha256:4538137bc5af902dece165f2bf73776d9cf4eafb6dd714670724af8f3eb77764";
       ports = [ "127.0.0.1:${toString ports.jellyseerr}:5055" ];
       environment = { inherit TZ; };
       volumes = [
@@ -241,7 +250,7 @@ in
     # qBittorrent's port 8080 here because qBittorrent itself has no
     # ports field (its netns is borrowed).
     gluetun = {
-      image = "qmcgaw/gluetun:latest";
+      image = "qmcgaw/gluetun:latest@sha256:e3272b29a4bc177b389fbdcb54cf9716ccbfc30f04d8b7a35b0a5be9cdb58461";
       ports = [
         # qBittorrent's web UI. Both sides 8085 (matches WEBUI_PORT below)
         # because the default 8080 collides with Tandoor on this host.
@@ -277,7 +286,7 @@ in
 
     #--- qBittorrent (downloads via Gluetun's netns) ---
     qbittorrent = {
-      image = "ghcr.io/linuxserver/qbittorrent:latest";
+      image = "ghcr.io/linuxserver/qbittorrent:latest@sha256:212b86dff59e3962b4082b5ef20a577e76c8f8527d2ab505cfa887b4bcecb0b0";
       dependsOn = [ "gluetun" ];
       environment = {
         inherit PUID PGID TZ;
@@ -288,7 +297,7 @@ in
         # config automatically — no manual qBittorrent.conf edits needed.
         # Backend API unchanged, so Sonarr/Radarr download-client and the
         # Homepage widget keep working through the same endpoints.
-        DOCKER_MODS = "ghcr.io/gabe565/linuxserver-mod-vuetorrent:latest";
+        DOCKER_MODS = "ghcr.io/gabe565/linuxserver-mod-vuetorrent:latest@sha256:543f484b84489b651ccfed1ac8af62255652c00418143726c1a7d2331035abad";
       };
       volumes = [
         "/var/lib/qbittorrent:/config:rw"

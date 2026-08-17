@@ -30,7 +30,7 @@ in
   ];
 
   virtualisation.oci-containers.containers.aurral = {
-    image = "ghcr.io/lklynet/aurral:latest";
+    image = "ghcr.io/lklynet/aurral:latest@sha256:df151d4ea7d84629005484b7329516f1bd4d579c6dd38dc43bb327347aea6ac3";
     ports = [ "127.0.0.1:${toString hostPort}:3001" ];
     environment = {
       LIDARR_URL = "http://lidarr:8686";

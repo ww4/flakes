@@ -30,7 +30,7 @@ in
   };
 
   virtualisation.oci-containers.containers.metube = {
-    image = "ghcr.io/alexta69/metube:latest";
+    image = "ghcr.io/alexta69/metube:latest@sha256:b4400ee6454c0663a93815dbbde59a02b3fdf244d5186e6c1870429034b4ccb3";
     environment = {
       DOWNLOAD_DIR = "/downloads";
       STATE_DIR    = "/downloads/.metube";

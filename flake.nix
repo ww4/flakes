@@ -16,10 +16,13 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Home Manager — tracks nixpkgs-unstable on master to match our nixpkgs.
+    # Home Manager — release branch matching the nixos-26.05 nixpkgs pin above.
+    # It tracked master from the nixpkgs-unstable era; after the 26.05 move a
+    # `nix flake update` would have pulled an HM expecting newer nixpkgs than
+    # ours (version-mismatch warnings, then option breakage).
     # Wired in via modules/home-manager.nix; user-level config lives in ./home.
     home-manager = {
-      url = "github:nix-community/home-manager";
+      url = "github:nix-community/home-manager/release-26.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
