@@ -9,10 +9,51 @@
 { config, lib, pkgs, ... }:
 
 {
+  # Dedicated user (2026-08 audit L6): this ran as chris, so a bitcoind bug
+  # had chris's SSH keys, GPG keys and wallets in reach, and the RPC cookie
+  # doubled as a chris-owned credential. The cookie consumers (fulcrum's
+  # ExecStartPre and mempool-cookie-sync) both read it as root and are
+  # unaffected. For manual bitcoin-cli use:
+  #   sudo -u bitcoind bitcoin-cli -datadir=/mnt/fusion/bitcoind ...
+  users.users.bitcoind = {
+    isSystemUser = true;
+    group = "bitcoind";
+    home = "/mnt/fusion/bitcoind";
+  };
+  users.groups.bitcoind = { };
+
+  # One-time ownership handoff, ordered before the daemon: flipping the unit
+  # user without this leaves bitcoind unable to read its own chainstate and
+  # crash-looping. Idempotent — a chown to the current owner is a no-op run.
+  # Metadata-only, but the chainstate holds ~100k files; give it room.
+  systemd.services.bitcoind-datadir-owner = {
+    description = "one-time: hand /mnt/fusion/bitcoind to the bitcoind user";
+    before = [ "bitcoind-bitcoin.service" ];
+    requiredBy = [ "bitcoind-bitcoin.service" ];
+    unitConfig.RequiresMountsFor = "/mnt/fusion";
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      TimeoutStartSec = "30min";
+    };
+    script = ''
+      d=/mnt/fusion/bitcoind
+      if [ ! -d "$d" ]; then
+        echo "datadir $d missing — refusing to invent one" >&2
+        exit 1
+      fi
+      owner=$(${pkgs.coreutils}/bin/stat -c %U "$d")
+      if [ "$owner" != "bitcoind" ]; then
+        echo "handing $d from $owner to bitcoind..."
+        ${pkgs.coreutils}/bin/chown -R bitcoind:bitcoind "$d"
+      fi
+    '';
+  };
+
   services.bitcoind.bitcoin = {
     enable = true;
-    user = "chris";
-    group = "users";
+    user = "bitcoind";
+    group = "bitcoind";
     dataDir = "/mnt/fusion/bitcoind";   # moved off nvme root
     prune = 0;                          # full chain
     dbCache = 8000;                     # 8 GB chainstate cache — drops to ~450 MB after IBD
@@ -54,6 +95,8 @@
 
   systemd.services.bitcoind-bitcoin.unitConfig.RequiresMountsFor =
     "/mnt/fusion";
+  systemd.services.bitcoind-bitcoin.after = [ "bitcoind-datadir-owner.service" ];
+  systemd.services.bitcoind-bitcoin.requires = [ "bitcoind-datadir-owner.service" ];
 
   # The mempool backend container (on a docker bridge, e.g. mempool-net) reaches
   # bitcoind RPC via the host gateway 172.17.0.1:8332. rpcbind=0.0.0.0 + the

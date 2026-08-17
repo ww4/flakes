@@ -78,7 +78,8 @@ let
     "/home/chris/gyb"                  # GYB Gmail archive (both accounts)
     # Wallets, keys and credentials — small, irreplaceable.
     "/home/chris/.sparrow"             # Bitcoin wallets (IRA Funds, Multisig)
-    "/home/chris/.local/share/albyhub" # Alby Hub Lightning data
+    "/var/lib/albyhub"                 # Alby Hub Lightning data (privsep home since 2026-08-17)
+    "/home/chris/.local/share/albyhub" # pre-privsep copy — drop once the move is confirmed good
     "/home/chris/.ssh"                 # SSH keys
     "/home/chris/.gnupg"               # GPG keys
     "/home/chris/.config/Element"      # Matrix end-to-end encryption keys
