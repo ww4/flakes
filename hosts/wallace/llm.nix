@@ -6,7 +6,7 @@
 #                  is dropped by modern ROCm, so Vulkan (Mesa RADV) is the only
 #                  GPU path. ~1.93 GB weights fit the card's 4 GB VRAM with room
 #                  for an 8K context. Fast (~25-40 tok/s).
-#   - llama-cpu  : Qwen2.5-7B (Q4) on the 5900X (CPU, -ngl 0). Slower but smarter;
+#   - llama-cpu  : Qwen2.5-32B (Q4) on the 5900X (CPU, -ngl 0). Slower but smarter;
 #                  pick it in the UI's model dropdown when quality > speed.
 #   - open-webui : ChatGPT-style UI, talks to both as OpenAI-compatible backends.
 #                  Exposed via gromit's nginx at chat.rosemaryacres.com (tailnet).

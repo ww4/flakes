@@ -161,8 +161,8 @@ in
       if [ -z "$pass" ]; then pass=$(openssl rand -hex 24); fi
       grep -q '^OPEN_NOTEBOOK_ENCRYPTION_KEY=' "$envf" \
         || printf 'OPEN_NOTEBOOK_ENCRYPTION_KEY=%s\n' "$(openssl rand -hex 32)" >> "$envf"
-      # SURREAL_USER + SURREAL_PASS are read by the SurrealDB container
-      # (sh -c wrapper); SURREAL_PASSWORD is read by the app (upstream name).
+      # SURREAL_USER + SURREAL_PASS are read by the SurrealDB container;
+      # SURREAL_PASSWORD is read by the app (upstream name for the same value).
       grep -q '^SURREAL_USER='     "$envf" || printf 'SURREAL_USER=root\n'    >> "$envf"
       grep -q '^SURREAL_PASS='     "$envf" || printf 'SURREAL_PASS=%s\n'     "$pass" >> "$envf"
       grep -q '^SURREAL_PASSWORD=' "$envf" || printf 'SURREAL_PASSWORD=%s\n' "$pass" >> "$envf"

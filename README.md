@@ -3,7 +3,7 @@
 The NixOS flake for **gromit**: a single mini-tower in rural Kentucky running
 ~50 services — media, photos, documents, a Git forge, a Bitcoin full node,
 single-sign-on, monitoring, and 3-2-1 backups — entirely declaratively. It also
-runs GNOME as a desktop. Public repo; lift anything useful.
+runs KDE Plasma as a desktop. Public repo; lift anything useful.
 
 > A longer, narrative tour (and the unusual part — an AI agent that does real ops
 > work here without being able to break anything) lives in the companion docs

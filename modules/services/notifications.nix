@@ -33,8 +33,8 @@ in
 
   # nginx vhost so anything reaching for ntfy can use the familiar
   # https://ntfy.rosemaryacres.com pattern with a real cert, matching
-  # every other rosemaryacres.com service. The /var/cloudflare-dns-api
-  # already used for other ACME challenges supplies the DNS-01 token.
+  # every other rosemaryacres.com service. The sops-managed Cloudflare
+  # token used for the other ACME DNS-01 challenges supplies this one too.
   services.nginx.virtualHosts."ntfy.rosemaryacres.com" = {
     forceSSL = true;
     enableACME = true;

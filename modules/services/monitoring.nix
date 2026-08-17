@@ -3,20 +3,19 @@
 # Each service binds 127.0.0.1; nginx fronts the user-facing two
 # (grafana, prometheus) at HTTPS. node_exporter is local-only.
 #
-# Alertmanager routes to a tiny webhook→ntfy shim (see ./monitoring-ntfy.nix
-# in a follow-up) so notifications continue to flow through the existing
-# gromit-alerts topic.
+# Alertmanager routes to a tiny webhook→ntfy shim (./alertmanager-ntfy.nix)
+# so notifications continue to flow through the existing gromit-alerts topic.
 #
-# Prometheus retention: 365d at native 1m resolution. Storage is on the
-# nvme (/var/lib/prometheus2), uses ~50–200 MB/year per active target —
-# trivial for this scale.
+# Prometheus retention: effectively unlimited (retentionTime below) at native
+# 1m resolution. Storage is on the nvme (/var/lib/prometheus2), ~50–200
+# MB/year per active target — trivial for this scale.
 { config, lib, pkgs, ... }:
 
 let
   grafanaHost      = "grafana.rosemaryacres.com";
   prometheusHost   = "prometheus.rosemaryacres.com";
   grafanaPort      = 3001;   # avoid 3000 clash with Homepage container
-  prometheusPort   = 9090;   # default, already in firewall.allowedTCPPorts
+  prometheusPort   = 9090;   # default; loopback-bound, fronted by nginx
   alertmanagerPort = 9093;
   nodeExporterPort = 9100;
 in {
@@ -276,14 +275,14 @@ in {
         }
       ];
 
-      # NOTE: dashboards are intentionally NOT provisioned. Grafana 13's
-      # apiserver does not grant the anonymous Viewer read access to
-      # provisioned dashboards in the root/General folder (the Homepage iframe
-      # 403s), and its resource manager wedges provisioned dashboards so they
-      # can't be moved or deleted. Imperative dashboards (live in
-      # /var/lib/grafana) work fine for anonymous embeds — that's why the
-      # Riverwatch graph works. gromit-temps lives in the "Temperatures" folder
-      # (which grants Viewer:View). JSON snapshots are kept under
+      # NOTE: dashboards in THIS module are intentionally not provisioned.
+      # Grafana 13's apiserver does not grant the anonymous Viewer read access
+      # to provisioned dashboards in the root/General folder (the Homepage
+      # iframe 403s), and its resource manager wedges provisioned dashboards
+      # so they can't be moved or deleted. Provisioning into a NAMED folder
+      # avoids both — riverwatch.nix does exactly that ("Riverwatch" folder)
+      # and its anonymous embed works; gromit-temps lives imperatively in the
+      # "Temperatures" folder. JSON snapshots are kept under
       # ./grafana/dashboards/ as re-import references. Alerting (above) IS
       # provisioned — it has no such limitation.
 

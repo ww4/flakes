@@ -45,8 +45,8 @@
       #
       # Postmark authenticates with the server's API token used as BOTH the SMTP
       # username AND password — so BOTH are secrets and must NOT live here (this
-      # attrset renders into the world-readable nix store). Put both lines in the
-      # existing environmentFile /var/lib/vaultwarden/env (root 0600):
+      # attrset renders into the world-readable nix store). Both live in sops
+      # (secrets/vaultwarden-env.yaml -> the environmentFile below):
       #   SMTP_USERNAME=<Postmark Server API token>
       #   SMTP_PASSWORD=<same Postmark Server API token>
       # Upstream rule: once SMTP_USERNAME is set, SMTP_PASSWORD is mandatory — add

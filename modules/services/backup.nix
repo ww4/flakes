@@ -18,7 +18,7 @@ let
     "/var/lib/tandoor-recipes"
     "/var/lib/jellyfin"
     "/var/lib/grafana"                 # dashboards + sqlite state DB
-    "/var/lib/homepage"                # secrets.env — Homepage widget API keys (root 0600)
+    "/var/lib/homepage"                # container state (secrets moved to sops 2026-06-16)
     "/var/lib/forgejo"                 # sqlite DB + bare repos + LFS objects + custom config
     "/var/lib/bitwarden_rs"            # Vaultwarden SQLite vault (NixOS module name is legacy)
     "/var/lib/paperless"               # OCR'd docs + sqlite index

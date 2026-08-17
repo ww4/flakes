@@ -5,7 +5,7 @@
 #
 # Live-data widgets (Jellyfin now-playing, Nextcloud quota, Immich library
 # stats, etc.) read API keys from env vars via Homepage's {{HOMEPAGE_VAR_*}}
-# template syntax. Drop the keys into /var/lib/homepage/secrets.env
+# template syntax. The keys live in sops (secrets/homepage-env.yaml)
 # (root:root, 0600) in dotenv format, then `sudo systemctl restart
 # docker-homepage`:
 #
@@ -106,7 +106,7 @@ let
     #   Sonarr/Radarr/Prowlarr   Settings → General → API Key
     #   Jellyseerr               Settings → "API Key" panel
     # qBittorrent uses username/password (no API key model).
-    # Add to /var/lib/homepage/secrets.env:
+    # Add to the sops file (secrets/homepage-env.yaml):
     #   HOMEPAGE_VAR_PROWLARR_KEY=...
     #   HOMEPAGE_VAR_SONARR_KEY=...
     #   HOMEPAGE_VAR_RADARR_KEY=...
@@ -154,7 +154,7 @@ let
             icon: mdi-music
             # Link-only: Aurral has no Homepage widget integration.
         - qBittorrent:
-            description: Downloads (via Mullvad VPN)
+            description: Downloads (via AirVPN)
             href: https://qbittorrent.rosemaryacres.com
             icon: qbittorrent.png
             widget:
@@ -498,10 +498,11 @@ in {
     };
   };
 
-  # secrets.env must exist before container start, even if empty.
+  # The container reads its secrets from sops (environmentFiles above);
+  # /var/lib/homepage/secrets.env was the pre-sops home and is no longer
+  # read — the tmpfiles rule that kept creating it is gone (2026-08 audit).
   systemd.tmpfiles.rules = [
     "d /var/lib/homepage 0755 root root - -"
-    "f /var/lib/homepage/secrets.env 0600 root root - -"
   ];
 
   # Apex + www on Cloudflare DNS-01; www → apex 301.

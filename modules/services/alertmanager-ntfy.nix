@@ -1,6 +1,6 @@
 # Alertmanager → ntfy webhook shim.
 #
-# Alertmanager fires JSON to http://127.0.0.1:9094/alert; this service
+# Alertmanager fires JSON to http://127.0.0.1:9095/alert; this service
 # unpacks each alert in the batch, formats title/priority/tags, and posts
 # to the existing self-hosted ntfy server on the gromit-alerts topic
 # (same channel the gromit-notify helper + restic jobs already use).
