@@ -1,5 +1,5 @@
 {
-  description = "gromit — NixOS homelab server (with GNOME desktop), Home Manager + flakes";
+  description = "gromit — NixOS homelab server (KDE Plasma desktop), Home Manager + flakes";
 
   inputs = {
     # Pinned to nixos-26.05 stable (2026-08-15) — nixos-unstable rolled to 26.11

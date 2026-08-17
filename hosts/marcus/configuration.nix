@@ -4,7 +4,8 @@
 # PipeWire, NetworkManager + iwd.
 #
 # Joined the fleet flake 2026-06-24 — was its own ~/nixos-config flake on
-# nixpkgs-25.05; now rides nixos-unstable alongside gromit/wallace and applies
+# nixpkgs-25.05; now rides the fleet's nixpkgs pin (nixos-26.05 stable since
+# 2026-08-15) alongside gromit/wallace and applies
 # `main` via comin GitOps (catches up whenever the laptop is online). Laptop/
 # desktop concerns live here; shared infra is imported from ../../modules.
 { config, lib, pkgs, ... }:

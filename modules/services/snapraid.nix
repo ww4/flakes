@@ -12,9 +12,9 @@
 # is recoverable file-by-file via `snapraid fix` once a replacement disk is
 # in place — surviving disks stay readable through the rebuild.
 #
-# Sync runs nightly at 04:00 (after media-mirror's 04:00 Sunday weekly job is
-# offset because sync is a no-op when nothing changed). Scrub runs Mondays at
-# 05:00 covering 12% of data each pass with a 10-day minimum age, giving full
+# Sync runs nightly at 04:00 (a no-op when nothing changed; media-mirror's
+# weekly run is Sun 08:00, well clear of it). Scrub runs Mondays at 05:00
+# covering 12% of data each pass with a 10-day minimum age, giving full
 # array coverage every ~8 weeks.
 #
 # ACTIVATION — set enable=true once:
