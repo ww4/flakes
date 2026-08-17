@@ -19,11 +19,25 @@ let
   alertmanagerPort = 9093;
   nodeExporterPort = 9100;
 in {
+  # The Homepage container polls Prometheus for its widget via
+  # host.docker.internal (the bridge gateway). Two things make that path
+  # work: prometheus listens beyond loopback (below), and this br-+ hole —
+  # interface-scoped firewall rules drop container->host traffic (the
+  # docker-bridge gap), same as the identical hole glances.nix carries for
+  # 61208. Nothing else reaches 9090: it is not in any interface allowlist,
+  # so LAN/Tailscale clients still go through the Authelia'd nginx vhost.
+  networking.firewall.extraCommands = ''
+    iptables -I nixos-fw 1 -i br-+ -p tcp --dport 9090 -j nixos-fw-accept
+  '';
+
   # Prometheus — TSDB + scrape engine.
   services.prometheus = {
     enable = true;
     port = prometheusPort;
-    listenAddress = "127.0.0.1";
+    # 0.0.0.0 so the docker-bridge gateway path answers (the Homepage
+    # widget); the firewall keeps every interface closed except the br-+
+    # hole above, so exposure is loopback + containers, same as glances.
+    listenAddress = "0.0.0.0";
     # Default 5m stales out our 15-min-cadence USGS backfill samples when
     # Grafana picks a >5m step. Bump to 16m so a backfill sample remains
     # queryable until the next one would have arrived.

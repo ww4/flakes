@@ -12,8 +12,11 @@
     enable = true;
     settings = {
       General = {
-        # Enable built-in DHCP client for faster connections
-        EnableNetworkConfiguration = true;
+        # NetworkManager is the connection manager (wifi.backend = "iwd"
+        # above) and owns DHCP. iwd's own network configuration must stay
+        # OFF under NM — two DHCP clients race on WiFi transitions
+        # (2026-08 audit M7; standard NM/iwd guidance).
+        EnableNetworkConfiguration = false;
       };
       Network = {
         # Enable IPv6
