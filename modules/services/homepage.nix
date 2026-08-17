@@ -474,7 +474,7 @@ in {
   virtualisation.oci-containers = {
     backend = "docker";
     containers.homepage = {
-      image = "ghcr.io/gethomepage/homepage:latest";
+      image = "ghcr.io/gethomepage/homepage:latest@sha256:638dacf5c844e908dc06c1fd57a2b5694f8efd91f91f152829ea0c2f547458f2";
       ports = [ "127.0.0.1:${toString port}:3000" ];
       volumes = [
         "${settingsYaml}:/app/config/settings.yaml:ro"

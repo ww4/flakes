@@ -39,7 +39,7 @@ in
     };
 
     mempool-api = {
-      image = "mempool/backend:latest";
+      image = "mempool/backend:latest@sha256:358c0a517c8dcf26e7f5c02447de5bab33ec7e3fa6318685cf8012ce36098e3a";
       dependsOn = [ "mempool-db" ];
       environment = {
         MEMPOOL_BACKEND = "electrum";
@@ -72,7 +72,7 @@ in
     };
 
     mempool-web = {
-      image = "mempool/frontend:latest";
+      image = "mempool/frontend:latest@sha256:0a162e7e0d26a01e9686ddf69c96c4beae5fe10b0daa1020f3d392e033c058f1";
       dependsOn = [ "mempool-api" ];
       environment = {
         FRONTEND_HTTP_PORT = "8080";
@@ -224,7 +224,7 @@ in
   systemd.tmpfiles.rules = [
     "d /var/lib/mempool         0755 root root - -"
     "d /var/lib/mempool/mysql   0755 root root - -"
-    # mempool/backend:latest runs `node backend/server.js` as uid 1001 / gid
+    # mempool/backend:latest@sha256:358c0a517c8dcf26e7f5c02447de5bab33ec7e3fa6318685cf8012ce36098e3a runs `node backend/server.js` as uid 1001 / gid
     # 65533 (verified via host `ps` — the container has no explicit User), and
     # this dir is bind-mounted to /backend/cache. Left root-owned it could never
     # be written: "EACCES: permission denied, open './cache/tmp-cache.json'".

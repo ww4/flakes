@@ -27,12 +27,12 @@ in
   ];
 
   virtualisation.oci-containers.containers.lazylibrarian = {
-    image = "ghcr.io/linuxserver/lazylibrarian:latest";
+    image = "ghcr.io/linuxserver/lazylibrarian:latest@sha256:f5a59edddd2bc35130586a5eeaab83bf409cc0be43fda48c2bf01eb9a1b46b3f";
     ports = [ "127.0.0.1:${toString port}:5299" ];
     environment = {
       inherit PUID PGID TZ;
       # Calibre + ebook conversion tooling docker mod (handy for ebooks; harmless for audiobooks)
-      DOCKER_MODS = "linuxserver/mods:universal-calibre";
+      DOCKER_MODS = "linuxserver/mods:universal-calibre@sha256:f34dea158ed513e3f0d973e7fc40f1a1e156ed0ba35abbf19e8d85c3c0974441";
     };
     volumes = [
       "/var/lib/lazylibrarian:/config:rw"
