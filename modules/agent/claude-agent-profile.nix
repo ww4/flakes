@@ -46,4 +46,16 @@
     reflection.enable = true;   # Stop hook: capture + distill checkpoints
     clock.enable = true;        # UserPromptSubmit: real time on every prompt
   };
+
+  # Read-only restic wrapper for backup verification — allowlisted in
+  # ./sudo.nix, never raw `sudo restic`. Not part of the shared agent-modules
+  # harness (it is gromit-specific: pinned to this host's local repo), so it
+  # is installed here. The 2026-08 audit found the sudo grant dangling: the
+  # module that used to install this file (claude-harness.nix) had been
+  # replaced by this profile without carrying the entry over, so the granted
+  # capability silently did not exist on the box.
+  environment.etc."claude-code/agent-restic-ro.sh" = {
+    source = ./agent-restic-ro.sh;
+    mode = "0555";
+  };
 }
