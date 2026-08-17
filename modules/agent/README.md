@@ -28,9 +28,12 @@ The old `NOPASSWD: ALL` collapsed all three into one. This splits them.
 - **`comin.nix`** — the GitOps applier. Polls the flake repo; `nixos-rebuild test`
   on the `testing` branch (so the agent can self-validate ephemerally), full
   `switch` only when a commit reaches **`main`**. **You merging the PR is the gate.**
-- **`claude-settings.proposed.json`** + **`pretooluse-guard.sh`** — Claude Code
-  harness config: allowlist read-only tools, route writes to git, deny destructive
-  ops at the harness layer (belt-and-suspenders above the OS).
+- **`claude-agent-profile.nix`** — the Claude Code harness (guard, hooks,
+  managed settings), consumed from the shared `agent-modules` flake so gromit
+  and the Broadlinc agent host run ONE definition instead of two drifting
+  copies. The local `claude-harness.nix` and its guard/settings files were
+  removed 2026-08-17 after the audit found them drifted from what actually
+  deploys.
 
 ## How a change flows once active
 
@@ -54,8 +57,10 @@ The old `NOPASSWD: ALL` collapsed all three into one. This splits them.
 5. Move the agent's authorized key from root/chris onto `claude` (in
    `claude-user.nix`); point the agent's connection at `claude@100.82.117.116`.
 6. Import the three `.nix` modules in `configuration.nix`; `nixos-rebuild test`.
-7. Install `claude-settings.proposed.json` into the agent's Claude Code config and
-   wire the hook; confirm reads are allowed and writes/destructive are gated.
+7. (Historical) Install the proposed Claude Code settings and wire the hook —
+   today the managed settings + guard deploy root-owned to /etc/claude-code
+   via the `agent-modules` flake; confirm reads are allowed and
+   writes/destructive are gated.
 8. Tighten the `sudo.nix` allowlist to the exact ops you want me to do unattended.
 9. Once verified, you can drop chris's `NOPASSWD: ALL` (security review Tier 2).
 
