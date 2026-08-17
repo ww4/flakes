@@ -78,22 +78,10 @@ let
     flaresolverr = 8191;  # headless browser proxy for Cloudflare-protected indexers
   };
 
-  # Helper to build a Tailscale-only nginx vhost for a 127.0.0.1 backend.
-  vhost = port: {
-    forceSSL  = true;
-    enableACME = true;
-    acmeRoot   = null;
-    locations."/" = {
-      proxyPass = "http://127.0.0.1:${toString port}";
-      proxyWebsockets = true;
-      extraConfig = ''
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-      '';
-    };
-  };
+  # Tailscale-only nginx vhost for a 127.0.0.1 backend — the shared house
+  # definition; this local name survives so the six call sites below read
+  # the same.
+  vhost = port: import ../lib/proxy-vhost.nix { inherit port; };
   # User-defined Docker network gives the *arr containers DNS-based
   # service discovery (Prowlarr can reach `flaresolverr:8191`, Sonarr
   # can reach `prowlarr:9696`, etc.). The default Docker bridge doesn't
