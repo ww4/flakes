@@ -23,6 +23,16 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # The docstring's premise ("it holds no rows in any database"), enforced
+    # rather than asserted. On any database where it is wrong — a restore
+    # from an old dump, someone else's instance — destroying data silently
+    # is the one thing a migration must never do.
+    count = op.get_bind().execute(sa.text("SELECT count(*) FROM wishlist")).scalar()
+    if count:
+        raise RuntimeError(
+            f"wishlist holds {count} row(s); this migration expects it empty. "
+            "Export or migrate those rows to want_rules first."
+        )
     op.drop_table("wishlist")
     sa.Enum(name="wishlist_reason").drop(op.get_bind(), checkfirst=True)
 

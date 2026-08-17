@@ -10,6 +10,30 @@
 const workId = new URLSearchParams(location.search).get('id');
 let current = null;
 
+/* A phone has no console. app.js reports errors home; this page did not, so
+ * an editor rejection here died in silence. Best-effort and throttled by the
+ * browser's own coalescing; never awaited. */
+window.addEventListener('unhandledrejection', (e) => {
+  try {
+    fetch('api/client-event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'js_rejection', page: 'book',
+                             detail: { message: String(e.reason && e.reason.message || e.reason).slice(0, 300) } }),
+    }).catch(() => {});
+  } catch { /* reporting must never break the page */ }
+});
+window.addEventListener('error', (e) => {
+  try {
+    fetch('api/client-event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'js_error', page: 'book',
+                             detail: { message: String(e.message || '').slice(0, 300) } }),
+    }).catch(() => {});
+  } catch { /* ditto */ }
+});
+
 function paint(card) {
   current = card;
   document.getElementById('page-title').textContent = card.title || 'Book';
@@ -47,7 +71,9 @@ async function act(action, btn) {
   const isbn = (current && current.scanned_isbn)
     || (current && (current.editions || []).map((e) => e.isbn13).filter(Boolean)[0]);
   if (!isbn) {
+    const was = btn.textContent;
     btn.textContent = 'needs an ISBN first';
+    setTimeout(() => { btn.textContent = was; }, 2500);
     return;
   }
   const was = btn.textContent;
@@ -62,6 +88,11 @@ async function act(action, btn) {
     const j = await res.json();
     paint(j.card);
     flash(j.message);
+    // paint() -> wireActions() resets the label and class but a disabled
+    // property survives it — "+ Another copy" (whose whole purpose is
+    // entering a STACK of sale purchases) used to work exactly once per
+    // page load.
+    btn.disabled = false;
   } catch {
     btn.textContent = 'failed — needs a connection';
     setTimeout(() => { btn.textContent = was; btn.disabled = false; }, 2500);
@@ -92,3 +123,7 @@ async function load() {
 }
 
 load();
+
+// The book page is reachable directly (bookmarks, shared links) — it must
+// also plant the offline shell, not just benefit from it.
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

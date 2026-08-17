@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 from sqlalchemy import func, select
 
+from stacks import workops
 from stacks.config import get_settings
 from stacks.db import init_schema, run_migrations, session_scope
 from stacks.enrich.openlibrary import OpenLibraryClient
@@ -185,13 +186,13 @@ async def _enrich(limit: int, expand: bool) -> None:
                     select(Work).where(Work.ol_work_keys.any(key), Work.id != work_id)
                 )
                 if twin is not None:
-                    s.query(Copy).filter(Copy.work_id == work_id).update(
-                        {Copy.work_id: twin.id}, synchronize_session=False
-                    )
-                    s.query(Edition).filter(Edition.work_id == work_id).update(
-                        {Edition.work_id: twin.id}, synchronize_session=False
-                    )
-                    s.delete(work)
+                    # workops.merge_work_into repoints EVERYTHING (copies,
+                    # editions, scan history, want rules, requests, tags).
+                    # The hand-rolled version here repointed only copies +
+                    # editions, so merging a previously-scanned duplicate
+                    # raised IntegrityError out of session_scope and killed
+                    # the whole batch run mid-way.
+                    workops.merge_work_into(s, work, twin)
                     merged += 1
                     work = twin
                 else:

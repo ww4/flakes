@@ -7,7 +7,9 @@ let shelfItems = [];
 
 async function loadShelf() {
   try {
-    const res = await fetch(`api/shelf/${shelfKey}`);
+    // Keys like "collection:Fern's Books" carry user text; unencoded, a #
+    // or % in a collection name broke the request path.
+    const res = await fetch(`api/shelf/${encodeURIComponent(shelfKey)}`);
     if (!res.ok) throw new Error(res.status);
     const sh = await res.json();
     document.getElementById('shelf-title').textContent = sh.title;

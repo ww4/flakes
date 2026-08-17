@@ -306,17 +306,10 @@ def _attach(
 def _drop_work(session: Session, work: Work) -> None:
     """Remove a work and everything that points at it.
 
-    Scan history is detached rather than deleted — what was scanned, and what
-    it was taken to be, stays true after the record it matched is gone.
+    Delegates to workops.delete_work — the one shared implementation — after
+    this file's copy was found missing want_rules/requests detachment (the
+    same class of forgotten-table bug in three hand-rolled copies).
     """
-    from stacks.models import Edition, ScanEvent
+    from stacks import workops
 
-    work.cover_edition_id = None
-    session.flush()
-    session.query(ScanEvent).filter(ScanEvent.matched_work_id == work.id).update(
-        {ScanEvent.matched_work_id: None}, synchronize_session=False
-    )
-    session.query(Copy).filter(Copy.work_id == work.id).delete(synchronize_session=False)
-    session.query(Edition).filter(Edition.work_id == work.id).delete(synchronize_session=False)
-    session.delete(work)
-    session.flush()
+    workops.delete_work(session, work)

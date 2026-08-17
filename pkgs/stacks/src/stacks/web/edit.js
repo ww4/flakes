@@ -141,11 +141,18 @@ async function addIsbn() {
 
 async function removeIsbn(isbn) {
   if (!confirm(`Remove ISBN ${isbn} from this book?`)) return;
-  const eds = await apiJSON(`api/work/${editWorkId}/edition-ids`, 'GET');
-  const id = eds[isbn];
-  if (!id) return;
-  const card = await apiJSON(`api/edition/${id}`, 'DELETE');
-  if (onSaved) onSaved(card);
+  const msg = document.getElementById('e-isbnmsg');
+  try {
+    const eds = await apiJSON(`api/work/${editWorkId}/edition-ids`, 'GET');
+    const id = eds[isbn];
+    if (!id) return;
+    const card = await apiJSON(`api/edition/${id}`, 'DELETE');
+    if (onSaved) onSaved(card);
+  } catch {
+    // Unguarded, this rejection vanished: the user confirmed the dialog,
+    // nothing happened, and nothing said why.
+    if (msg) msg.textContent = 'Could not remove — needs a connection.';
+  }
 }
 
 function copyRows(card) {
@@ -230,9 +237,13 @@ async function loadCovers() {
 }
 
 async function pickCover(editionId) {
-  const card = await apiJSON(`api/work/${editWorkId}`, 'PATCH',
-    editionId === null ? { clear_cover_choice: true } : { cover_edition_id: editionId });
-  if (onSaved) onSaved(card);
+  try {
+    const card = await apiJSON(`api/work/${editWorkId}`, 'PATCH',
+      editionId === null ? { clear_cover_choice: true } : { cover_edition_id: editionId });
+    if (onSaved) onSaved(card);
+  } catch {
+    alert('Cover not changed — needs a connection.');
+  }
 }
 
 async function saveCopy(row) {
@@ -256,9 +267,13 @@ async function deleteCopy(row) {
   const i = parseInt(row.dataset.i, 10);
   if (!confirm('Remove this copy record? Use "discarded" instead if the book left the house.'))
     return;
-  const ids = await apiJSON(`api/work/${editWorkId}/copy-ids`, 'GET');
-  const card = await apiJSON(`api/copy/${ids[i]}`, 'DELETE');
-  if (onSaved) onSaved(card);
+  try {
+    const ids = await apiJSON(`api/work/${editWorkId}/copy-ids`, 'GET');
+    const card = await apiJSON(`api/copy/${ids[i]}`, 'DELETE');
+    if (onSaved) onSaved(card);
+  } catch {
+    alert('Copy not removed — needs a connection.');
+  }
 }
 
 async function deleteWork(title) {

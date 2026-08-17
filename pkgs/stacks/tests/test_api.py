@@ -26,17 +26,34 @@ def client():
 
 @pytest.fixture(scope="module")
 def payload(client):
-    """The payload the phone really receives.
+    """The payload the phone really receives — VERBATIM.
 
     These tests used to exercise a second, parallel builder that the app had
     stopped using — so they could have passed while the real one was broken.
+    (An adapter here also used to re-wrap `isbns` values into the pre-schema-4
+    {"w": id} shape for old readers; that hid the real shape from anyone
+    reading the tests, so the readers were updated instead.)
     """
     r = client.get("/api/catalog")
     assert r.status_code == 200
-    data = r.json()
-    # catalog maps isbn -> work_id directly; the tests below read v["w"].
-    data["isbns"] = {k: {"w": v} for k, v in data["isbns"].items()}
-    return data
+    return r.json()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_openlibrary(monkeypatch):
+    """Every suite run used to send real traffic to Open Library.
+
+    Scanning an unknown ISBN triggers _lookup_external; assertions were
+    written connectivity-tolerantly to survive it, which means they varied
+    with network state. Offline is now the tested condition — the one the
+    app is designed for anyway.
+    """
+    import stacks.api as api_mod
+
+    async def _offline(_isbn):
+        return None
+
+    monkeypatch.setattr(api_mod, "_lookup_external", _offline)
 
 
 class TestHealth:
@@ -57,7 +74,7 @@ class TestOfflineSet:
         the scanner falls through to "not in the catalog".
         """
         works = payload["works"]
-        dangling = [i for i, v in payload["isbns"].items() if str(v["w"]) not in works]
+        dangling = [i for i, v in payload["isbns"].items() if str(v) not in works]
         assert not dangling[:10], f"{len(dangling)} ISBNs point at absent works"
 
     def test_every_work_carries_holding_counts(self, payload):
@@ -92,7 +109,7 @@ class TestScan:
         """
         candidates = [
             i for i, v in payload["isbns"].items()
-            if (w := payload["works"].get(str(v["w"])))
+            if (w := payload["works"].get(str(v)))
             and w["u"] > 0 and w["p"] == 0 and w["l"] == 0
         ]
         if not candidates:
@@ -160,7 +177,7 @@ class TestCardShape:
         """A book you own reports HAVE or UNCONFIRMED — never a scary word."""
         owned = [
             i for i, v in payload["isbns"].items()
-            if (w := payload["works"].get(str(v["w"]))) and (w["p"] or w["u"])
+            if (w := payload["works"].get(str(v))) and (w["p"] or w["u"])
         ]
         assert owned, "no owned holdings to check"
         j = client.get(f"/api/scan/{owned[0]}").json()
@@ -170,13 +187,12 @@ class TestCardShape:
         """The duplicate 'unconfirmed since the flood' regression."""
         unv = [
             i for i, v in payload["isbns"].items()
-            if (w := payload["works"].get(str(v["w"])))
+            if (w := payload["works"].get(str(v)))
             and w["u"] > 0 and w["p"] == 0 and w["l"] == 0
         ]
         if not unv:
             pytest.skip("no purely-unverified holdings")
         j = client.get(f"/api/scan/{unv[0]}").json()
-        assert "unconfirmed since the flood" in j["recommendation"].lower() or True
         repeated = [d for d in j["detail"] if "unconfirmed" in d.lower()]
         assert not repeated, f"detail repeats the recommendation: {repeated}"
 
@@ -191,7 +207,7 @@ class TestScannedEditionContext:
 
     def _owned_isbn(self, payload):
         for i, v in payload["isbns"].items():
-            w = payload["works"].get(str(v["w"]))
+            w = payload["works"].get(str(v))
             if w and (w["p"] or w["u"]):
                 return i
         return None
@@ -347,7 +363,7 @@ class TestConfirm:
     def test_confirming_promotes_an_unverified_holding(self, client, payload):
         unv = [
             i for i, v in payload["isbns"].items()
-            if (w := payload["works"].get(str(v["w"])))
+            if (w := payload["works"].get(str(v)))
             and w["u"] > 0 and w["p"] == 0
         ]
         if not unv:
@@ -526,9 +542,11 @@ class TestAddIsbn:
         if wid is None:
             pytest.skip("no ISBN-less work available")
         r = client.post(f"/api/work/{wid}/isbn", json={"isbn13": "9780441172710"})
-        # 9780441172710 has a wrong check digit but a valid 978 prefix, so it is
-        # repaired rather than refused — the failure mode we care about is junk.
-        assert r.status_code in (200, 400)
+        # 9780441172710 has a wrong check digit. add_isbn passes repair=False
+        # (typed/scanned input is never check-digit-repaired), so this must be
+        # refused — the old "in (200, 400)" accepted opposite outcomes and
+        # verified nothing.
+        assert r.status_code == 400
 
     def test_rejects_nonsense(self, client):
         wid = self._isbnless_work(client)

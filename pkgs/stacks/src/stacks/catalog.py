@@ -33,7 +33,13 @@ from stacks.models import (
 
 #: Bump when the shape changes so cached clients refetch rather than
 #: misinterpret. The client refuses a payload whose version it does not know.
-SCHEMA_VERSION = 4
+#:
+#: 5: works carry "o" (loaned count) — the client's decide() always read it,
+#:    but the builder never emitted it, so a book whose only copies were out
+#:    on loan looked like "No copies recorded" offline and invited buying a
+#:    duplicate. The version check could not catch it: it guards the NUMBER,
+#:    not the shape; tests/js/offline_contract.js guards the shape.
+SCHEMA_VERSION = 5
 
 
 def build(session: Session) -> dict:
@@ -51,8 +57,8 @@ def build(session: Session) -> dict:
             "x": w.description,
             # Holding counts are filled in below rather than joined, because
             # the client needs them on every verdict and a nested lookup on a
-            # phone is slower than four integers sitting right here.
-            "p": 0, "u": 0, "l": 0, "r": 0,
+            # phone is slower than five integers sitting right here.
+            "p": 0, "u": 0, "l": 0, "r": 0, "o": 0,
         }
 
     isbns: dict[str, int] = {}
@@ -92,6 +98,8 @@ def build(session: Session) -> dict:
                 w["r"] += 1
         elif c.status.value == "lost_flood":
             w["l"] += 1
+        elif c.status.value == "loaned":
+            w["o"] += 1
 
     want_authors = sorted({
         authors[a] for (a,) in session.execute(

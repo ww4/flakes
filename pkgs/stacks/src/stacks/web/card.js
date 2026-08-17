@@ -32,7 +32,9 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function tagHtml(status) {
-  return `<span class="tag ${String(status || '').replace(/\s+/g, '')}">${esc(status)}</span>`;
+  // esc() the class token too: badges include user-assigned tag names,
+  // and a quote in one used to break out of the attribute (audit M1).
+  return `<span class="tag ${esc(String(status || '').replace(/\s+/g, ''))}">${esc(status)}</span>`;
 }
 
 const $ = (id) => document.getElementById(id);

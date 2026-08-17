@@ -13,6 +13,7 @@ what they are holding.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -25,7 +26,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from stacks import catalog, covers, labels
+from stacks import catalog, covers, labels, workops
 from stacks.badges import DERIVED as DERIVED_BADGES
 from stacks.badges import compute as compute_badges
 from stacks.browse import all_shelves as browse_shelves
@@ -34,7 +35,11 @@ from stacks.cleanup import all_groups as cleanup_groups
 from stacks.config import get_settings
 from stacks.coverchoice import choose as choose_cover
 from stacks.db import get_engine, session_scope
-from stacks.enrich.openlibrary import OpenLibraryClient, _author_key
+from stacks.enrich.openlibrary import (
+    OpenLibraryClient,
+    OpenLibraryUnavailable,
+    _author_key,
+)
 from stacks.match import (
     BUYS,
     STATUS_LABEL,
@@ -80,7 +85,19 @@ app = FastAPI(
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
+log = logging.getLogger("stacks.api")
+
+
 def get_session() -> Session:
+    """Session dependency.
+
+    CONVENTION: every endpoint that writes calls ``s.commit()`` itself,
+    in-request, before building its response. session_scope's own commit runs
+    in dependency teardown, which on FastAPI >=0.106 executes AFTER the
+    response has been sent — an error there would return 200 for a write that
+    never happened. The teardown commit remains only as a harmless no-op
+    backstop (committing a clean session does nothing).
+    """
     with session_scope() as s:
         yield s
 
@@ -416,7 +433,14 @@ async def _lookup_external(isbn13: str) -> dict | None:
                 "description": description,
                 "cover": OpenLibraryClient.cover_url(isbn13),
             }
+    except OpenLibraryUnavailable as exc:
+        # Outage, not absence — say so in the log; the caller still gets None
+        # (a scan must answer even with OL down), but nobody should read
+        # "not found" out of this line later.
+        log.warning("Open Library unavailable during lookup of %s: %s", isbn13, exc)
+        return None
     except Exception:  # noqa: BLE001 — an unavailable lookup must not break a scan
+        log.exception("external lookup failed for %s", isbn13)
         return None
 
 
@@ -453,6 +477,12 @@ async def scan(
 
     external = None
     if result.work is None and (isbn := to_isbn13(code, repair=False)):
+        # Nothing has been written yet — end the read transaction before the
+        # await. The OL lookup can take tens of seconds under rate-limit
+        # backoff, and holding a connection "idle in transaction" for that
+        # long was the audit's textbook case of a transaction spanning an
+        # external call.
+        s.rollback()
         external = await _lookup_external(isbn)
         if external:
             result = evaluate_scan(s, code, title_hint=title, external=external)
@@ -469,6 +499,15 @@ async def scan(
             user_agent=(request.headers.get("user-agent") or "")[:300] or None,
         )
     )
+    # Commit the scan log in-request (teardown commit runs after the response
+    # is sent on FastAPI >=0.106, so a failure there is invisible). Unlike
+    # the mutating endpoints, a telemetry write must never cost someone the
+    # scan answer at a sale — on failure, log and serve the card anyway.
+    try:
+        s.commit()
+    except Exception:  # noqa: BLE001
+        log.exception("scan: could not record the ScanEvent; serving the card anyway")
+        s.rollback()
 
     if result.work is not None:
         # repair=False, same as evaluate_scan: this code came off a camera, and
@@ -511,20 +550,43 @@ def search(q: str, limit: int = 25, s: Session = Depends(get_session)) -> list[S
     23 works in this library, and collapsing that to one makes browsing
     impossible. Each hit carries its status so the list is readable without
     opening anything.
+
+    This is the hottest interactive path — it fires per keystroke — so the
+    per-hit edition and owned-isbn lookups are batched into one query each
+    across all hits (they used to run per hit: ~5 queries x 25 hits per
+    keystroke). The remaining per-hit work is _result_for_work's holding and
+    want lookups. The limit is clamped server-side; it used to be
+    client-controlled and unbounded.
     """
+    limit = max(1, min(limit, 50))
+    matches = search_works(s, q, limit=limit)
+    ids = [w.id for w, _ in matches]
+    if not ids:
+        return []
+
+    eds_by_work: dict[int, list[Edition]] = {}
+    for e in s.scalars(
+        select(Edition).where(Edition.work_id.in_(ids))
+        .order_by(Edition.work_id, Edition.publish_year.desc().nullslast())
+    ):
+        eds_by_work.setdefault(e.work_id, []).append(e)
+
+    owned_by_work: dict[int, set[str]] = {}
+    for wid, isbn in s.execute(
+        select(Copy.work_id, Edition.isbn13)
+        .join(Edition, Copy.edition_id == Edition.id)
+        .where(Copy.work_id.in_(ids), Edition.isbn13.is_not(None))
+    ).all():
+        owned_by_work.setdefault(wid, set()).add(isbn)
+
     out: list[SearchHit] = []
-    for work, _score in search_works(s, q, limit=limit):
+    for work, _score in matches:
         result = _result_for_work(s, work)
         verdict, headline = result.verdict, result.headline
         holding = result.holding
-        editions, _ = _editions_and_cover(s, work.id)
+        editions = eds_by_work.get(work.id, [])
         newest = next((e for e in editions if e.publish_year), None)
-        owned = {
-            i for (i,) in s.execute(
-                select(Edition.isbn13).join(Copy, Copy.edition_id == Edition.id)
-                .where(Copy.work_id == work.id, Edition.isbn13.is_not(None))
-            ).all()
-        }
+        owned = owned_by_work.get(work.id, set())
         pick = choose_cover(
             editions, chosen_edition_id=work.cover_edition_id, owned_isbns=owned
         )
@@ -677,7 +739,7 @@ def patch_work(work_id: int, body: WorkPatch, s: Session = Depends(get_session))
     if body.author is not None:
         name = body.author.strip()
         if not name:
-            work.primary_author_id = None
+            work.primary_author = None
         else:
             sort_name = normalize_author(name)
             author = s.scalar(select(Author).where(Author.sort_name == sort_name))
@@ -685,19 +747,31 @@ def patch_work(work_id: int, body: WorkPatch, s: Session = Depends(get_session))
                 author = Author(name=name, sort_name=sort_name)
                 s.add(author)
                 s.flush()
-            work.primary_author_id = author.id
+            # Assign the RELATIONSHIP, not the fk column: work.primary_author
+            # is lazy="joined" and already cached from s.get(), so setting
+            # only primary_author_id left the cached object stale and the
+            # card returned by this very PATCH showed the old author.
+            work.primary_author = author
 
     if body.series is not None:
         label = body.series.strip()
         if not label:
-            work.series_id = None
+            work.series = None
         else:
-            series = s.scalar(select(Series).where(Series.name.ilike(label)))
+            # lower()== rather than ilike: ilike treats % and _ in the typed
+            # name as wildcards, so "100% Kids" could bind the work to some
+            # arbitrary existing series. Also matches how labels and the
+            # importers resolve series names, so there is one identity rule.
+            series = s.scalar(
+                select(Series).where(func.lower(Series.name) == label.lower())
+            )
             if series is None:
                 series = Series(name=label)
                 s.add(series)
                 s.flush()
-            work.series_id = series.id
+            # Relationship, not fk column — same staleness trap as the
+            # author above.
+            work.series = series
 
     if body.clear_cover_choice:
         work.cover_edition_id = None
@@ -707,7 +781,7 @@ def patch_work(work_id: int, body: WorkPatch, s: Session = Depends(get_session))
             raise HTTPException(status_code=400, detail="that edition is not this book")
         work.cover_edition_id = ed.id
 
-    s.flush()
+    s.commit()
     return _card_for_work(s, work, _result_for_work(s, work))
 
 
@@ -850,7 +924,7 @@ async def add_isbn(work_id: int, body: IsbnIn, s: Session = Depends(get_session)
     s.query(Copy).filter(Copy.work_id == work_id, Copy.edition_id.is_(None)).update(
         {Copy.edition_id: edition.id}, synchronize_session=False
     )
-    s.flush()
+    s.commit()
     return _card_for_work(s, work, _result_for_work(s, work), scanned_isbn=isbn)
 
 
@@ -871,7 +945,7 @@ def delete_edition(edition_id: int, s: Session = Depends(get_session)) -> BookCa
         {Copy.edition_id: None}, synchronize_session=False
     )
     s.delete(ed)
-    s.flush()
+    s.commit()
     return _card_for_work(s, work, _result_for_work(s, work))
 
 
@@ -910,7 +984,7 @@ def patch_copy(copy_id: int, body: CopyPatch, s: Session = Depends(get_session))
         copy.condition = body.condition.strip() or None
 
     work = s.get(Work, copy.work_id)
-    s.flush()
+    s.commit()
     return _card_for_work(s, work, _result_for_work(s, work))
 
 
@@ -926,7 +1000,7 @@ def delete_copy(copy_id: int, s: Session = Depends(get_session)) -> BookCard:
         raise HTTPException(status_code=404, detail="no such copy")
     work = s.get(Work, copy.work_id)
     s.delete(copy)
-    s.flush()
+    s.commit()
     return _card_for_work(s, work, _result_for_work(s, work))
 
 
@@ -946,25 +1020,12 @@ def delete_work(work_id: int, confirm_title: str, s: Session = Depends(get_sessi
             status_code=400, detail="confirm_title must match the work's title exactly"
         )
 
-    copies = s.scalars(select(Copy).where(Copy.work_id == work_id)).all()
-    editions = s.scalars(select(Edition).where(Edition.work_id == work_id)).all()
-    n_c, n_e = len(copies), len(editions)
-    work.cover_edition_id = None
-
-    # Scan history points at works. Detach rather than delete: what was scanned
-    # and what it was decided to be is an audit trail, and it stays true even
-    # once the record it matched is gone. Without this the delete fails on a
-    # foreign key — which it did, the first time it was used in anger.
-    s.query(ScanEvent).filter(ScanEvent.matched_work_id == work_id).update(
-        {ScanEvent.matched_work_id: None}, synchronize_session=False
-    )
-    s.flush()
-    for c in copies:
-        s.delete(c)
-    for e in editions:
-        s.delete(e)
-    s.delete(work)
-    s.flush()
+    # One shared implementation (workops.delete_work) — this endpoint, the
+    # list_split parent-drop and the enrich twin-merge each used to hand-roll
+    # FK detachment and each forgot a different table (want_rules and
+    # requests here: deleting a work a sale-doc rule targeted was a 500).
+    n_c, n_e = workops.delete_work(s, work)
+    s.commit()
     return {"deleted": True, "copies": n_c, "editions": n_e}
 
 
@@ -1003,10 +1064,10 @@ def add_tag(work_id: int, body: TagIn, s: Session = Depends(get_session)) -> Boo
     if work is None:
         raise HTTPException(status_code=404, detail="no such work")
 
-    name = body.name.strip().upper()
+    name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="a tag needs a name")
-    if name in DERIVED_BADGES:
+    if any(p.strip().upper() in DERIVED_BADGES for p in labels.split_path(name)):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -1015,14 +1076,17 @@ def add_tag(work_id: int, body: TagIn, s: Session = Depends(get_session)) -> Boo
             ),
         )
 
-    tag = s.scalar(select(Tag).where(Tag.name == name))
-    if tag is None:
-        tag = Tag(name=name, color=body.color)
-        s.add(tag)
-        s.flush()
+    # One identity rule for tags: labels.find_or_create — case-insensitive
+    # match, case-preserving storage, scoped per tree level. This endpoint
+    # used to uppercase and match globally, so "sell" (labels page) and
+    # "SELL" (here) became two tags, and a same-named tag nested under an
+    # unrelated parent could be attached by accident.
+    tag = labels.find_or_create(s, "tag", name)
+    if body.color and not tag.color:
+        tag.color = body.color
     if not s.get(WorkTag, (work_id, tag.id)):
         s.add(WorkTag(work_id=work_id, tag_id=tag.id))
-    s.flush()
+    s.commit()
     return _card_for_work(s, work, _result_for_work(s, work))
 
 
@@ -1031,12 +1095,20 @@ def remove_tag(work_id: int, name: str, s: Session = Depends(get_session)) -> Bo
     work = s.get(Work, work_id)
     if work is None:
         raise HTTPException(status_code=404, detail="no such work")
-    tag = s.scalar(select(Tag).where(Tag.name == name.strip().upper()))
-    if tag is not None:
+    # Case-insensitive, and tolerant of same-named tags at different tree
+    # levels: drop whichever of them this work actually carries. (The old
+    # exact-uppercase match could neither find a cased tag nor a nested one.)
+    tags = s.scalars(
+        select(Tag).where(func.lower(Tag.name) == name.strip().lower())
+    ).all()
+    removed = False
+    for tag in tags:
         link = s.get(WorkTag, (work_id, tag.id))
         if link is not None:
             s.delete(link)
-            s.flush()
+            removed = True
+    if removed:
+        s.commit()
     return _card_for_work(s, work, _result_for_work(s, work))
 
 
@@ -1109,6 +1181,9 @@ def client_event(
         page=(body.page or "")[:64] or None,
         user_agent=(request.headers.get("user-agent") or "")[:300] or None,
     ))
+    # This endpoint never flushed at all — the write rode entirely on the
+    # teardown commit, which runs after the {"ok": true} has been sent.
+    s.commit()
     return {"ok": True}
 
 
@@ -1244,7 +1319,15 @@ async def confirm(
     if work is None:
         # Never seen. Ask Open Library what it is; if even that comes back
         # empty we still record the book, because the barcode in your hand is
-        # evidence enough that it exists.
+        # evidence enough that it exists. (On an OL outage the record is
+        # created as "Unidentified book <isbn>" — enrich resolves the real
+        # title later, since the work has no ol_work_keys yet.)
+        #
+        # Only reads so far — end the transaction before the await, so the
+        # connection is not "idle in transaction" for the seconds-to-minutes
+        # an OL rate-limit backoff can take. The writes below open a fresh
+        # transaction and commit in-request.
+        s.rollback()
         meta = await _lookup_external(isbn13) or {}
         title = (meta.get("title") or "").strip() or f"Unidentified book {isbn13}"
         author = None
@@ -1302,7 +1385,7 @@ async def confirm(
         target.last_verified_at = now
         if body.note:
             target.notes = f"{target.notes or ''} || {body.note}".strip(" |")[:2000]
-        s.flush()
+        s.commit()
         return ConfirmOut(
             outcome="marked_missing",
             message="Marked as not on the shelf",
@@ -1322,7 +1405,7 @@ async def confirm(
         )
         if already is not None:
             already.last_verified_at = now
-            s.flush()
+            s.commit()
             return ConfirmOut(
                 outcome="already_confirmed",
                 message="Already confirmed on the shelf",
@@ -1357,7 +1440,7 @@ async def confirm(
         outcome = "added" if created_work else "copy_added"
         message = "Added to the library" if created_work else "Another copy recorded"
 
-    s.flush()
+    s.commit()
     return ConfirmOut(
         outcome=outcome, message=message,
         card=_card_for_work(s, work, _result_for_work(s, work), scanned_isbn=isbn13),
@@ -1448,7 +1531,7 @@ def create_label(kind: str, body: LabelIn, s: Session = Depends(get_session)) ->
             detail="HAVE, LOST, REPLACED and UNCONFIRMED are computed, not assigned",
         )
     node = labels.find_or_create(s, kind, body.path)
-    s.flush()
+    s.commit()
     return LabelNodeOut(
         id=node.id, name=node.name, path=labels.path_of(s, kind, node.id),
         parent_id=node.parent_id,
@@ -1486,7 +1569,7 @@ def rename_label(
         node.name = name
     if body.sort_order is not None:
         node.sort_order = body.sort_order
-    s.flush()
+    s.commit()
     return LabelNodeOut(
         id=node.id, name=node.name, path=labels.path_of(s, kind, node.id),
         parent_id=node.parent_id,
@@ -1541,7 +1624,7 @@ def delete_label(kind: str, node_id: int, s: Session = Depends(get_session)) -> 
                     [{"work_id": w, "tag_id": parent_id} for w in fresh],
                 )
     s.delete(node)
-    s.flush()
+    s.commit()
     return {"deleted": True, "promoted_to": parent_id}
 
 
@@ -1586,6 +1669,7 @@ def bulk_place(body: BulkIn, s: Session = Depends(get_session)) -> dict:
         node = labels.find_or_create(s, "place", body.path)
         s.flush()
     n = labels.place_works(s, work_ids, node.id if node else None)
+    s.commit()
     return {
         "works": len(work_ids),
         "copies": n,
@@ -1607,6 +1691,7 @@ def bulk_tag(body: BulkIn, s: Session = Depends(get_session)) -> dict:
     node = labels.find_or_create(s, "tag", body.path)
     s.flush()
     n = labels.tag_works(s, work_ids, node.id, add=body.add)
+    s.commit()
     return {
         "works": len(work_ids),
         "changed": n,

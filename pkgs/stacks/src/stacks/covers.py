@@ -66,6 +66,19 @@ _locks: dict[str, asyncio.Lock] = {}
 _global = asyncio.Semaphore(3)
 
 
+def _write_atomic(path: Path, content: bytes) -> None:
+    """Write via a temp file + rename.
+
+    Covers are served with `immutable` cache headers, so a crash mid-write
+    used to leave a truncated JPEG that browsers would then cache forever.
+    rename() on the same filesystem is atomic; readers see the old state or
+    the whole file, never a torso.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(content)
+    tmp.replace(path)
+
+
 class _Limiter:
     """Keep us under Open Library's cover rate limit.
 
@@ -129,11 +142,19 @@ async def fetch_by_id(settings: Settings, cover_id: int, size: str = "M") -> Pat
         log.info("cover fetch failed for id %s: %s", cover_id, exc)
         return None
 
-    if r.status_code != 200 or len(r.content) < 512:
+    if r.status_code == 200 and len(r.content) >= 512:
+        _write_atomic(path, r.content)
+        return path
+    if r.status_code == 404 or r.status_code == 200:
+        # 404, or the 1x1 placeholder OL sometimes serves with a 200: this id
+        # genuinely has no art. Only THESE are remembered forever.
         _remember_miss(settings, key)
         return None
-    path.write_bytes(r.content)
-    return path
+    # 429/5xx/anything else is the server having a moment, not a fact about
+    # the cover — recording it as a permanent miss (as this used to) meant a
+    # rate-limited batch run silently blanked covers for good.
+    log.info("cover fetch for id %s got %s — will retry another day", cover_id, r.status_code)
+    return None
 
 
 def stored_path(settings: Settings, key: str, size: str = "M") -> Path:
@@ -181,14 +202,19 @@ async def fetch(settings: Settings, isbn13: str, size: str = "M") -> Path | None
             log.info("cover fetch failed for %s: %s", isbn13, exc)
             return None
 
+        if r.status_code == 200 and len(r.content) >= 512:
+            _write_atomic(path, r.content)
+            return path
         # Open Library answers 404 for "no cover", and sometimes returns a
-        # 1x1 placeholder instead — treat both as a miss.
-        if r.status_code != 200 or len(r.content) < 512:
+        # 1x1 placeholder instead — both are facts about the book, remembered
+        # forever. Transient statuses (429/5xx) are NOT: recording them as
+        # permanent misses meant one rate-limited run blanked covers for good.
+        if r.status_code == 404 or r.status_code == 200:
             _remember_miss(settings, f"{size}:{isbn13}")
-            return None
-
-        path.write_bytes(r.content)
-        return path
+        else:
+            log.info("cover fetch for %s got %s — will retry another day",
+                     isbn13, r.status_code)
+        return None
 
 
 def stats(settings: Settings) -> dict:
