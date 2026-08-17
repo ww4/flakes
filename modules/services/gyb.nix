@@ -13,13 +13,24 @@
 #       --action backup \
 #       --local-folder /home/chris/gyb/GYB-GMail-Backup-<account>
 # Once each account's OAuth token exists, the nightly timer runs unattended.
+#
+# The account list lives in sops (secrets/gyb-accounts.yaml, one address per
+# line), read at runtime — this repo is public via the GitHub mirror and the
+# script lands in the world-readable store, so personal addresses hardcoded
+# here were spam-harvestable (2026-08 audit L5). Add an account by editing
+# the secret with `sops`; no rebuild of this file needed.
 { config, lib, pkgs, ... }:
 
 let
-  accounts = [ "driveonwood@gmail.com" "kymetro9999@gmail.com" ];
   gybRoot = "/home/chris/gyb";
 in
 {
+  sops.secrets."gyb-accounts" = {
+    sopsFile = ../../secrets/gyb-accounts.yaml;
+    key = "gyb-accounts";
+    owner = "chris";
+  };
+
   environment.systemPackages = [ pkgs.gyb ];
 
   systemd.services.gyb-backup = {
@@ -31,12 +42,13 @@ in
     };
     script = ''
       rc=0
-      for acct in ${lib.concatStringsSep " " accounts}; do
+      while IFS= read -r acct; do
+        [ -n "$acct" ] || continue
         echo "GYB backup: $acct"
         ${pkgs.gyb}/bin/gyb --config-folder "${gybRoot}/$acct" \
           --email "$acct" --action backup \
           --local-folder "${gybRoot}/GYB-GMail-Backup-$acct" || rc=1
-      done
+      done < ${config.sops.secrets."gyb-accounts".path}
       exit $rc
     '';
   };
