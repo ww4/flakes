@@ -91,18 +91,40 @@ in
       image = "ghcr.io/remsky/kokoro-fastapi-cpu:v0.7.2";
       environment = {
         PYTHONUNBUFFERED = "1";
-        # The model (~350 MB v1_0/kokoro-v1_0.pth) is NOT baked into the image.
-        # Without this, startup crash-loops with `File not found:
-        # v1_0/kokoro-v1_0.pth` (initial deploy hit restart counter 638). The
-        # script downloads on first boot into the volume below, so subsequent
-        # starts are instant. Idempotent — a re-download is skipped if present.
+        # Belt-and-braces only. The model IS baked into the image (verified by
+        # reading the image config: the build runs
+        #   python download_model.py --output api/src/models/v1_0
+        #     && chown -R appuser:appuser /app/api/src/models
+        # so a correct container needs no runtime fetch). Kept because it is a
+        # no-op when the file is present, and it means a future image tag that
+        # DID ship without the model would still self-heal — now that nothing
+        # shadows the directory, the download lands in the image's own
+        # appuser-owned tree instead of a root-owned bind-mount.
         DOWNLOAD_MODEL = "true";
       };
-      # Persist the downloaded model + any voice tensors cached on first use,
-      # so a container recreate doesn't re-fetch. Volume also hides the
-      # image's /app/api/src/models entirely, so DOWNLOAD_MODEL is the only
-      # path to a populated tree.
-      volumes = [ "${stateDir}/kokoro:/app/api/src/models" ];
+      # NO volume here, deliberately — see below.
+      #
+      # There used to be `${stateDir}/kokoro:/app/api/src/models`, intended to
+      # persist the model across container recreates. It was the entire bug,
+      # twice over: the image already ships a populated
+      # /app/api/src/models, and bind-mounting an empty host directory over it
+      # HID the model. Symptoms, in order:
+      #   1. `File not found: v1_0/kokoro-v1_0.pth` -> crash-loop (restart 638).
+      #   2. DOWNLOAD_MODEL=true was added to fix (1). That moved the failure
+      #      rather than fixing it: the runtime downloader then tried to
+      #      mkdir inside the bind-mount, which tmpfiles created root:root 0700,
+      #      while the image runs as `appuser` (uid 1000, per `useradd -m -u
+      #      1000 appuser` in the image build) ->
+      #      `PermissionError: [Errno 13] Permission denied: 'api/src/models/v1_0'`
+      #      (upstream remsky/Kokoro-FastAPI#364).
+      # Dropping the mount removes both, needs no uid coupling between the host
+      # directory and the image's user, and costs nothing: the model travels in
+      # the image, so there is no ~350 MB re-fetch to avoid. Voice tensors
+      # cached at runtime become ephemeral across a recreate, which is the only
+      # thing given up and is cheap to regenerate.
+      # Do NOT re-add a mount at this path without first checking what the image
+      # already puts there.
+      #
       # No host port: the app reaches Kokoro over the docker network at
       # http://kokoro:8880 (network-alias below). Not needed on the host.
       extraOptions = [ "--network=${netName}" "--network-alias=kokoro" ];
@@ -186,7 +208,10 @@ in
     "d ${stateDir}          0700 root root - -"
     "d ${stateDir}/surreal  0700 root root - -"
     "d ${stateDir}/data     0700 root root - -"
-    "d ${stateDir}/kokoro   0700 root root - -"
+    # NOTE: no ${stateDir}/kokoro entry — the Kokoro container no longer
+    # bind-mounts anything (see the comment on that container). The existing
+    # /var/lib/open-notebook/kokoro directory is now unused and can be removed
+    # by hand; tmpfiles will not delete it.
   ];
 
   # DNS: notebook.rosemaryacres.com -> 100.82.117.116 (proxy off), created
