@@ -82,6 +82,12 @@ const PAGES = {
   'labels.html': ['shared-ui.js', 'labels.js'],
 };
 
+// Reused by offline_contract.js, which loads index.html's scripts the same
+// way and then exercises lookupOffline against a real catalog payload.
+module.exports = { WEB, makeEl, idsIn, makeContext, PAGES };
+
+if (require.main !== module) return;
+
 let failed = false;
 for (const [page, scripts] of Object.entries(PAGES)) {
   // Fresh globals per page, with only the ids that page really declares.

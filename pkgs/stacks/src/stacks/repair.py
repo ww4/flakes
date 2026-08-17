@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from stacks.models import Copy, CopyStatus
+from stacks.models import Copy, CopyStatus, Provenance
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +81,14 @@ def absorb_unverified_into_loss(session: Session) -> tuple[int, int]:
 
     The pre-flood collection is preserved on the surviving record — it is real
     provenance, and losing it would erase where the book used to live.
+
+    ``re_acquired`` copies are NOT absorbed. A loss plus a replacement is two
+    copies of one book — list_split._attach creates exactly that pair on
+    purpose, because collapsing them loses the fact that a replacement exists.
+    This routine once merged them anyway: after ``stacks repair-copies`` a
+    re-bought flood loss showed BUY_REPLACE ("The flood took this — not
+    replaced yet"), inviting a third copy — the exact failure the verdict
+    engine exists to prevent.
     """
     work_ids = [
         wid for (wid,) in session.execute(
@@ -105,7 +113,11 @@ def absorb_unverified_into_loss(session: Session) -> tuple[int, int]:
             continue
         unverified = session.scalars(
             select(Copy)
-            .where(Copy.work_id == wid, Copy.status == CopyStatus.unverified)
+            .where(
+                Copy.work_id == wid,
+                Copy.status == CopyStatus.unverified,
+                Copy.provenance != Provenance.re_acquired,
+            )
             .order_by(Copy.id)
         ).all()
 

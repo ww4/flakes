@@ -824,3 +824,35 @@ class TestLabelApi:
     def test_a_nonexistent_label_shelf_404s(self, client):
         assert client.get("/api/shelf/place:99999999").status_code == 404
         assert client.get("/api/shelf/place:not-a-number").status_code == 404
+
+
+class TestConfirmGuards:
+    """The confirm endpoint creates permanent records; its door checks matter."""
+
+    def test_misread_check_digit_is_rejected(self, client):
+        """9780306406157 is valid; ...50 is one misread digit away.
+
+        With repair on, to_isbn13 rebuilt the check digit and the scan
+        resolved (or created!) a plausibly different book. Scanned input gets
+        repair=False everywhere — evaluate_scan always did, confirm now does.
+        """
+        r = client.post("/api/confirm/9780306406150")
+        assert r.status_code == 400
+
+    def test_unknown_action_is_rejected(self, client):
+        """Free-text action fell through to "record another present copy".
+
+        A typo or a stale client used to silently duplicate a holding; the
+        Literal type turns it into a 422 before any lookup happens.
+        """
+        r = client.post("/api/confirm/9780306406157", json={"action": "Confirm"})
+        assert r.status_code == 422
+
+    def test_card_carries_desired_copies(self, client, payload):
+        """The editor renders and PATCHes desired_copies; a card without the
+        field made every Save silently reset it to 1."""
+        if not payload["works"]:
+            pytest.skip("empty catalog")
+        wid, w = next(iter(payload["works"].items()))
+        card = client.get(f"/api/work/{wid}").json()
+        assert card["desired_copies"] == w["d"]

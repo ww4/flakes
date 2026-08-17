@@ -134,3 +134,47 @@ class TestIdempotence:
         assert after_first == after_second == 1
         assert stats.duplicate_losses_removed == 0
         assert stats.unverified_absorbed == 0
+
+
+class TestReplacementsSurviveAbsorb:
+    """A loss plus a replacement is two copies of one book — on purpose.
+
+    list_split._attach records a re-bought flood loss as a lost_flood copy AND
+    an unverified/re_acquired copy. absorb_unverified_into_loss once merged
+    them anyway: the replacement vanished, the work read as "lost, not
+    replaced", and the card said BUY_REPLACE for a book already re-bought —
+    the exact double-purchase the verdict engine exists to prevent.
+    """
+
+    def test_re_acquired_copy_is_not_absorbed(self, session, work):
+        from stacks.models import Copy, CopyStatus, Provenance
+        from stacks.repair import absorb_unverified_into_loss
+
+        _copy(session, work, CopyStatus.lost_flood, Provenance.flood_doc)
+        _copy(session, work, CopyStatus.unverified, Provenance.re_acquired)
+
+        absorb_unverified_into_loss(session)
+
+        remaining = session.query(Copy).filter(Copy.work_id == work.id).all()
+        assert len(remaining) == 2, "the replacement was merged into the loss"
+        assert {c.status for c in remaining} == {
+            CopyStatus.lost_flood, CopyStatus.unverified
+        }
+
+    def test_plain_unverified_still_absorbs_next_to_a_replacement(self, session, work):
+        from stacks.models import Copy, CopyStatus, Provenance
+        from stacks.repair import absorb_unverified_into_loss
+
+        _copy(session, work, CopyStatus.lost_flood, Provenance.flood_doc)
+        _copy(session, work, CopyStatus.unverified, Provenance.re_acquired)
+        _copy(session, work, CopyStatus.unverified, Provenance.libib_import)
+
+        # The routine sweeps every work in the database, so its returned
+        # counter includes whatever the populated dev catalog happens to hold;
+        # assert on this work's copies, not the global tally.
+        absorb_unverified_into_loss(session)
+
+        remaining = session.query(Copy).filter(Copy.work_id == work.id).all()
+        assert len(remaining) == 2
+        kept_unverified = [c for c in remaining if c.status == CopyStatus.unverified]
+        assert [c.provenance for c in kept_unverified] == [Provenance.re_acquired]

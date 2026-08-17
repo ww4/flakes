@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
@@ -151,6 +152,10 @@ class BookCard(BaseModel):
     unverified: int = 0
     lost_flood: int = 0
     loaned: int = 0
+    #: How many copies are wanted. The editor renders and PATCHes this field;
+    #: before it was on the card, the edit panel defaulted the input to 1 and
+    #: every Save silently reset "not wanted" (0) and "collecting more" (2+).
+    desired_copies: int = 1
 
     # depth
     editions_known: int = 0
@@ -346,6 +351,7 @@ def _card_for_work(
         unverified=h.unverified,
         lost_flood=h.lost_flood,
         loaned=h.loaned,
+        desired_copies=work.desired_copies,
         editions_known=len(editions),
         # The full list runs to hundreds after enrichment; the newest dozen are
         # what someone holding a book actually compares against.
@@ -465,7 +471,10 @@ async def scan(
     )
 
     if result.work is not None:
-        return _card_for_work(s, result.work, result, scanned_isbn=to_isbn13(code))
+        # repair=False, same as evaluate_scan: this code came off a camera, and
+        # rebuilding a failed check digit can resolve a misread to a different
+        # plausible book (normalize.py explains the arithmetic).
+        return _card_for_work(s, result.work, result, scanned_isbn=to_isbn13(code, repair=False))
 
     card = BookCard(
         status=STATUS_LABEL.get(result.verdict, "NOT OWNED"),
@@ -1186,7 +1195,13 @@ class ConfirmIn(BaseModel):
     #:           confirmed present, it says so rather than inventing a second.
     #: add     — I genuinely own another copy of this.
     #: unhave  — I looked and it is not there; demote to missing.
-    action: str = "confirm"
+    #:
+    #: Literal, not str: anything unrecognised — a typo, "Confirm", a stale
+    #: client sending an action this server never heard of — used to fall
+    #: through to the else branch and silently record ANOTHER present copy,
+    #: the very double-record the idempotent branch was added to kill. Now
+    #: it is a 422 at the door.
+    action: Literal["confirm", "add", "unhave"] = "confirm"
     note: str | None = None
 
 
@@ -1212,7 +1227,12 @@ async def confirm(
       by scanning them on the way home.
     """
     body = body or ConfirmIn()
-    isbn13 = to_isbn13(code)
+    # repair=False is load-bearing here more than anywhere: this endpoint
+    # CREATES works, editions and present copies from a scan. With repair on,
+    # a single misread digit passes the check-digit rebuild and permanently
+    # records a copy under a plausibly different book (normalize.py:
+    # "108 distinct valid-looking ISBNs are reachable from one misread digit").
+    isbn13 = to_isbn13(code, repair=False)
     if not isbn13:
         raise HTTPException(status_code=400, detail="not a readable ISBN")
 

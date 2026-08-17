@@ -21,12 +21,40 @@ import pytest
 NEEDS_DB = bool(os.environ.get("DATABASE_URL"))
 
 
+#: The devdb runs on a Unix socket inside the checkout; its URL always names
+#: the .devdb-run socket dir. The production service uses the system postgres
+#: via a plain local socket. This is the discriminator the guard keys on.
+_DEVDB_MARKER = ".devdb-run"
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _rollback_everything():
-    """Bind the app's session factory to a transaction we control."""
+    """Bind the app's session factory to a transaction we control.
+
+    Refuses to engage for anything that is not the devdb. The rollback below
+    is sound, but it is the ONLY thing between the mutating API suite and
+    whatever DATABASE_URL points at — and pytest run with the production env
+    (DATABASE_URL=postgresql+psycopg:///stacks) would happily exercise
+    confirm/delete/rename against the live catalog protected by nothing but
+    this transaction holding. Live data has been corrupted by an unisolated
+    suite once already; a structural refusal is cheaper than a second time.
+    Set STACKS_TEST_DB_OK=1 to override deliberately (e.g. a throwaway CI
+    database with a different socket path).
+    """
     if not NEEDS_DB:
         yield
         return
+
+    url = os.environ["DATABASE_URL"]
+    if _DEVDB_MARKER not in url and not os.environ.get("STACKS_TEST_DB_OK"):
+        pytest.exit(
+            f"refusing to run DB tests against {url!r}: it does not look like "
+            f"the devdb (no {_DEVDB_MARKER!r} in the URL). This suite mutates "
+            "whatever it is pointed at and relies on one rollback for safety. "
+            "Use scripts/devdb.sh, or set STACKS_TEST_DB_OK=1 if this really "
+            "is a disposable database.",
+            returncode=2,
+        )
 
     from sqlalchemy.orm import sessionmaker
 
