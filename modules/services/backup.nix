@@ -4,9 +4,8 @@
 # Media lives on /mnt/fusion and is handled separately (a weekly rsync mirror
 # to the backup pool — not yet configured).
 #
-# Secrets are kept out of git, in root-only files on the host:
-#   /var/lib/restic/password  - repo encryption passphrase (shared by both repos)
-#   /var/lib/restic/b2-env    - B2_ACCOUNT_ID / B2_ACCOUNT_KEY for the B2 repo
+# Secrets come from sops (secrets/restic-password.yaml, secrets/restic-b2.yaml),
+# decrypted to root-only runtime paths — see the sops.secrets blocks below.
 { config, lib, pkgs, ... }:
 
 let
@@ -32,6 +31,33 @@ let
     # history. No attachments in the space, so nothing to exclude.
     "/var/lib/silverbullet"
     "/var/backup/postgresql"
+    # Stacks book catalog. The database (the only record of what the flood
+    # destroyed) rides /var/backup/postgresql above — "stacks" is in the
+    # postgresqlBackup.databases list in nextcloud.nix. This dir adds the
+    # cover cache + known-missing.txt: re-fetchable from Open Library in
+    # theory, but 2,100+ covers took real time to accumulate.
+    "/var/lib/stacks"
+    # Authelia — without these, restic restores every app but not the SSO in
+    # front of them: TOTP/webauthn enrollments + OIDC consents (SQLite in
+    # authelia-main) and the on-box-generated storage-encryption key, OIDC
+    # issuer RSA key and users.yml (authelia-secrets). All must be
+    # re-bootstrapped by hand if lost.
+    "/var/lib/authelia-main"
+    "/var/lib/authelia-secrets"
+    # qBittorrent config tier: fastresume + .torrent files. Losing this kills
+    # every private-tracker seed at once — sentinel.nix documents DarkPeers
+    # turning ~3 days of seeding downtime into automated warnings→bans. This
+    # is the :config volume only (SQLite-sized); media lives on /mnt/fusion.
+    "/var/lib/qbittorrent"
+    # arr-family config: indexer credentials (private trackers), quality
+    # profiles, history DBs. Small SQLite state, painful to rebuild by hand.
+    "/var/lib/prowlarr"
+    "/var/lib/sonarr"
+    "/var/lib/radarr"
+    "/var/lib/jellyseerr"
+    "/var/lib/lidarr"
+    "/var/lib/lazylibrarian"
+    "/var/lib/aurral"                  # includes hand-placed secrets.env
 
     # Nextcloud external storage (the /Bitcoin and /Fusion mounts). Live data
     # not covered by /var/lib/nextcloud. /mnt/fusion/nextcloud is ~199 GB.

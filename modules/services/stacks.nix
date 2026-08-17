@@ -208,6 +208,9 @@ in
 
   # Cover art is the bulk of the state and is re-fetchable from Open Library,
   # but the catalog itself is not: it is the only record of what the flood
-  # destroyed. Postgres is already captured by the nightly pg_dump in
-  # modules/services/backup.nix.
+  # destroyed. The database is dumped nightly via postgresqlBackup ("stacks"
+  # in the databases list, nextcloud.nix) and the dump dir plus
+  # /var/lib/stacks ride restic via criticalPaths in backup.nix. (Until
+  # 2026-08-17 this comment claimed coverage that did not exist — the
+  # 2026-08 code audit found the DB in no backup job at all.)
 }
