@@ -183,18 +183,10 @@ in
   };
 
   # --- publication ------------------------------------------------------
-  services.nginx.virtualHosts.${domain} = {
-    forceSSL = true;
-    enableACME = true;
-    acmeRoot = null;
-    locations."/" = {
-      proxyPass = "http://127.0.0.1:${toString port}";
-      proxyWebsockets = true;
+  services.nginx.virtualHosts.${domain} =
+    import ../lib/proxy-vhost.nix {
+      inherit port;
       extraConfig = ''
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
 
         # The offline catalog is ~7.5 MB of JSON that compresses to ~1.5 MB,
         # and the whole premise of handing the phone everything is that
@@ -204,7 +196,6 @@ in
         proxy_read_timeout 120s;
       '';
     };
-  };
 
   # Cover art is the bulk of the state and is re-fetchable from Open Library,
   # but the catalog itself is not: it is the only record of what the flood
