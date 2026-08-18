@@ -47,13 +47,28 @@ def deadline_hours($r):
                | .hash ],
 
     per_tracker: [ $rules[] as $r
-      | ([ $all[] | select((.tracker // "") != "" and (.tracker | test($r.match))) ]) as $ts
+      # minProgress gates whether an obligation attaches at all. DigitalCore's
+      # rule reads "a torrent that you have started to download 10% or more",
+      # so a barely-started torrent carries NO obligation and must not be
+      # reported at risk. 0 means "every torrent on this tracker counts".
+      | ([ $all[]
+           | select((.tracker // "") != "" and (.tracker | test($r.match)))
+           | select(.progress >= $r.minProgress) ]) as $ts
       | ([ $ts[] | select(met($r) | not) ]) as $unmet
       | {
           id:    $r.id,
           label: $r.label,
+          # Carried through so the caller does not have to re-read the rules
+          # table to time each tracker's grace.
+          grace_seconds: $r.graceSeconds,
+          cure_days:     $r.cureDays,
           total: ($ts | length),
           unmet: ($unmet | length),
+          # Hashes carrying an outstanding obligation that are not earning
+          # credit right now. The caller times how long each has been in this
+          # set, which is what turns "not seeding" into "N seconds of a 1-hour
+          # grace consumed".
+          at_risk: [ $unmet[] | select(is_seeding | not) | .hash ],
           # THE signal: requirement still outstanding AND not currently earning
           # credit. This is what was true for 19 h on 2026-08-17 with nothing
           # watching it.

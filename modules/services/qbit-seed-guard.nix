@@ -65,10 +65,43 @@ let
   # `tracker-hnr-rules` memory for the prose version and any nuance that does
   # not reduce to numbers.
   #
-  #   seedSeconds  required seeding time
-  #   ratioAlt     ratio that satisfies the rule instead (0 = no ratio route)
-  #   withinDays   deadline measured from download completion (0 = none)
+  #   seedSeconds   required seeding time
+  #   ratioAlt      ratio that satisfies the rule instead (0 = no ratio route)
+  #   withinDays    deadline to BANK the requirement, from download completion
+  #                 (0 = none). NOT the same thing as a cure window — see below.
+  #   minProgress   obligation only attaches once this much is downloaded
+  #                 (0 = every torrent on the tracker counts)
+  #   graceSeconds  how long a torrent may go without announcing before the
+  #                 tracker records an H&R (0 = no published grace). Drives
+  #                 qbit_hnr_grace_used_ratio, so each tracker gets an alert
+  #                 proportional to its own tolerance instead of one shared
+  #                 fixed delay.
+  #   cureDays      DOCUMENTATION ONLY, and deliberately separate from
+  #                 withinDays: the window to remove an H&R the tracker has
+  #                 ALREADY recorded. That is tracker-side state — qBittorrent
+  #                 cannot see it — so it is never computed here, only quoted
+  #                 in the alert runbook. Conflating it with withinDays would
+  #                 silently mis-measure both.
   trackers = [
+    {
+      id = "digitalcore";
+      label = "DigitalCore";
+      match = "digitalcore\\.club";
+      seedSeconds = 5 * 24 * 3600;   # 5 days
+      ratioAlt = 1.0;                # ...or 1:1
+      withinDays = 0;
+      minProgress = 0.10;            # "started to download 10% or more"
+      graceSeconds = 3600;           # ⚠️ ONE HOUR without an announce = H&R
+      cureDays = 10;                 # then it is permanent: points / upload credit / donation
+      # ⚠️ The tightest tracker here by two orders of magnitude — DarkPeers
+      # allows 24 h, DigitalCore allows 1 h. The dangerous case is a storage
+      # outage: qbit-seed-guard deliberately DEFERS recovery while a pool
+      # member is unhealthy (a recheck would only fail), and that is exactly
+      # when this hour burns. Hence the grace-ratio alert, which fires at 25%
+      # of the grace = 15 min here, leaving 45 min to act.
+      # Account level, not visible from qBittorrent: 5 uncured H&R => warning,
+      # continued accumulation => download ban.
+    }
     {
       id = "darkpeers";
       label = "DarkPeers";
@@ -76,9 +109,9 @@ let
       seedSeconds = 6 * 24 * 3600;   # 6 days
       ratioAlt = 1.0;                # ...or 1:1
       withinDays = 0;
-      # Also: must not be disconnected >24 h during the seeding period. We do
-      # not try to model the tracker's own offline clock — we alert on
-      # not_seeding within 30 min, which is two orders of magnitude inside it.
+      minProgress = 0;
+      graceSeconds = 24 * 3600;      # must not be disconnected >24 h
+      cureDays = 0;
     }
     {
       id = "retrotoon";
@@ -87,6 +120,9 @@ let
       seedSeconds = 72 * 3600;       # 72 h — "strictest and most important rule"
       ratioAlt = 0;                  # no ratio shortcut
       withinDays = 10;               # must be banked within 10 days of download
+      minProgress = 0;
+      graceSeconds = 0;              # no published announce grace
+      cureDays = 0;
     }
     {
       id = "torrentleech";
@@ -95,11 +131,13 @@ let
       seedSeconds = 10 * 24 * 3600;  # 10 days for Chris's user class
       ratioAlt = 0;
       withinDays = 0;
-      # Nuance not expressible here: TL raises an H&R reminder as soon as a
-      # torrent stops seeding and CLEARS it as soon as it resumes; a warning
-      # only lands at 50+ concurrent H&R for 5+ consecutive days. So TL is
-      # forgiving of a blip but unforgiving of a long silence — which is
-      # exactly what not_seeding measures.
+      minProgress = 0;
+      graceSeconds = 0;              # H&R raised immediately, but CLEARS on resume
+      cureDays = 0;
+      # Nuance not expressible as a number: TL raises an H&R as soon as a
+      # torrent stops and clears it as soon as it resumes; a warning only lands
+      # at 50+ concurrent H&R for 5+ consecutive days. So TL forgives a blip
+      # but not a long silence — which is what not_seeding_seconds measures.
     }
   ];
 
@@ -140,6 +178,54 @@ let
       n_missing=$(jq -r '.totals.missing_files' <<<"$report")
       n_total=$(jq -r '.totals.torrents' <<<"$report")
       echo "torrents=$n_total missingFiles=$n_missing"
+
+      # ── how long has each at-risk torrent been off the air? ───────────────
+      # A count of not-seeding torrents cannot answer "how much of DigitalCore's
+      # one-hour grace is gone?". Stamp each hash the first run it appears at
+      # risk, clear it when it recovers, and the difference is the real elapsed
+      # time — accurate to the 5 min timer regardless of restarts.
+      NS="$STATE/notseeding"
+      mkdir -p "$NS"
+      risk_now=$(mktemp)
+      jq -r '.per_tracker[] | .at_risk[]' <<<"$report" | sort -u > "$risk_now"
+
+      while read -r h; do
+        [ -n "$h" ] || continue
+        [ -f "$NS/$h" ] || echo "$now" > "$NS/$h"
+      done < "$risk_now"
+
+      # Forget torrents that recovered, so the next outage times from zero.
+      for f in "$NS"/*; do
+        [ -e "$f" ] || continue
+        b=$(basename "$f")
+        grep -qx "$b" "$risk_now" || rm -f "$f"
+      done
+
+      # Longest-running outage per tracker, and how much of that tracker's
+      # published grace it has consumed.
+      grace_tmp=$(mktemp)
+      while IFS=$'\t' read -r tid grace; do
+        [ -n "$tid" ] || continue
+        worst=0
+        while read -r h; do
+          [ -n "$h" ] || continue
+          [ -f "$NS/$h" ] || continue
+          since=$(cat "$NS/$h" 2>/dev/null || echo "$now")
+          d=$(( now - since ))
+          [ "$d" -gt "$worst" ] && worst=$d
+        done < <(jq -r --arg t "$tid" '.per_tracker[] | select(.id==$t) | .at_risk[]' <<<"$report")
+        # -1 => this tracker publishes no announce grace, so no ratio applies
+        # and the alert must not treat it as 0% consumed (which would look fine).
+        if [ "$grace" -gt 0 ]; then
+          ratio=$(awk -v w="$worst" -v g="$grace" 'BEGIN{printf "%.4f", w/g}')
+        else
+          ratio=-1
+        fi
+        printf '%s %s %s\n' "$tid" "$worst" "$ratio" >> "$grace_tmp"
+        if [ "$worst" -gt 0 ]; then
+          echo "  $tid: worst not-seeding streak ''${worst}s (grace=''${grace}s, used=$ratio)"
+        fi
+      done < <(jq -r '.per_tracker[] | "\(.id)\t\(.grace_seconds)"' <<<"$report")
 
       # ── announce health for private-tracker torrents ──────────────────────
       # /torrents/info does not carry per-tracker status, so ask per torrent —
@@ -253,6 +339,15 @@ let
           "qbit_hnr_not_seeding{tracker=\"\(.id)\"} \(.not_seeding)\n" +
           "qbit_hnr_breached{tracker=\"\(.id)\"} \(.breached)\n" +
           "qbit_hnr_min_hours_to_deadline{tracker=\"\(.id)\"} \(.min_hours_to_deadline)"' <<<"$report"
+        echo "# HELP qbit_hnr_not_seeding_seconds Longest current not-seeding streak among torrents with an outstanding obligation."
+        echo "# TYPE qbit_hnr_not_seeding_seconds gauge"
+        echo "# HELP qbit_hnr_grace_used_ratio Fraction of the tracker's announce grace consumed by that streak (-1 = tracker publishes no grace)."
+        echo "# TYPE qbit_hnr_grace_used_ratio gauge"
+        while read -r tid worst ratio; do
+          [ -n "$tid" ] || continue
+          echo "qbit_hnr_not_seeding_seconds{tracker=\"$tid\"} $worst"
+          echo "qbit_hnr_grace_used_ratio{tracker=\"$tid\"} $ratio"
+        done < "$grace_tmp"
         echo "# HELP qbit_tracker_not_working Private-tracker torrents whose tracker is not in the working state."
         echo "# TYPE qbit_tracker_not_working gauge"
         echo "qbit_tracker_not_working $n_not_working"
@@ -265,7 +360,7 @@ let
       } > "$mtmp"
       chmod 0644 "$mtmp"
       mv -f "$mtmp" "${textfileDir}/qbit-seed-guard.prom" || rm -f "$mtmp"
-      rm -f "$not_working_file"
+      rm -f "$not_working_file" "$risk_now" "$grace_tmp"
 
       jq -r '.per_tracker[] | "  \(.label): total=\(.total) unmet=\(.unmet) not_seeding=\(.not_seeding) breached=\(.breached) min_h_to_deadline=\(.min_hours_to_deadline)"' <<<"$report"
     '';
