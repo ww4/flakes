@@ -48,13 +48,35 @@ let
       # 1) gluetun's current public IP + when it was last (re)established. gluetun
       #    logs to journald (docker journald driver); its own line carries an
       #    RFC3339 timestamp as field 1.
-      line="$(journalctl CONTAINER_NAME=gluetun --since -12h --no-pager 2>/dev/null \
+      #
+      # ⚠️ gluetun logs that line only when the IP is (re)established. A tunnel
+      # that has been STABLE for longer than the lookback emits nothing, so the
+      # old `--since -12h` + "no line => skip" turned this watchdog OFF exactly
+      # when the VPN was healthiest — it had been logging "no gluetun public-IP
+      # line in window; skip" every 60 s and never evaluating (found 2026-08-18,
+      # tunnel stable ~19 h). That is the same skipped-forever hole the header
+      # describes closing for the empty-qBit-IP case.
+      #
+      # Fix: cache the last IP we ever saw. A missing line then means "stable",
+      # not "unknown" — and the cached epoch is old, which correctly reads as
+      # settled. Only a genuinely never-seen IP still skips.
+      CACHE="$STATE/last-gluetun-ip"
+      g_ip=""; g_epoch=0
+      line="$(journalctl CONTAINER_NAME=gluetun --since -7d --no-pager 2>/dev/null \
                 | grep 'Public IP address is' | tail -1 || true)"
-      [ -n "$line" ] || { echo "no gluetun public-IP line in window; skip"; exit 0; }
-      g_ip="$(grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' <<<"$line" | head -1)"
-      g_ts="$(awk '{for(i=1;i<=NF;i++) if($i ~ /^20[0-9-]+T[0-9:]+Z?$/){print $i; exit}}' <<<"$line")"
-      g_epoch="$(date -d "$g_ts" +%s 2>/dev/null || echo 0)"
-      { [ -n "$g_ip" ] && [ "$g_epoch" -gt 0 ]; } || { echo "unparseable gluetun IP/ts; skip"; exit 0; }
+      if [ -n "$line" ]; then
+        g_ip="$(grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' <<<"$line" | head -1)"
+        g_ts="$(awk '{for(i=1;i<=NF;i++) if($i ~ /^20[0-9-]+T[0-9:]+Z?$/){print $i; exit}}' <<<"$line")"
+        g_epoch="$(date -d "$g_ts" +%s 2>/dev/null || echo 0)"
+        if [ -n "$g_ip" ] && [ "$g_epoch" -gt 0 ]; then
+          printf '%s %s\n' "$g_ip" "$g_epoch" > "$CACHE"
+        fi
+      fi
+      if { [ -z "$g_ip" ] || [ "$g_epoch" -le 0 ]; } && [ -r "$CACHE" ]; then
+        read -r g_ip g_epoch < "$CACHE" || true
+        echo "no gluetun public-IP line in journal window (tunnel stable) — using cached $g_ip"
+      fi
+      { [ -n "$g_ip" ] && [ "$g_epoch" -gt 0 ]; } || { echo "no gluetun IP known yet (no journal line, no cache); skip"; exit 0; }
 
       age=$(( now - g_epoch ))
       if [ "$age" -lt "$SETTLE" ]; then
