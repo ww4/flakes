@@ -42,9 +42,18 @@
         echo "datadir $d missing — refusing to invent one" >&2
         exit 1
       fi
-      owner=$(${pkgs.coreutils}/bin/stat -c %U "$d")
-      if [ "$owner" != "bitcoind" ]; then
-        echo "handing $d from $owner to bitcoind..."
+      # Check the THING, not a proxy. The first version checked the top-level
+      # dir's owner — but the bitcoind module's own tmpfiles rule chowns that
+      # one directory during activation, BEFORE this unit runs, so the guard
+      # said "done" on its very first invocation, the recursive chown never
+      # happened, and bitcoind started as its new user unable to read its own
+      # chris-owned files (2026-08-18 incident: "settings.json — please check
+      # permissions", with fulcrum + mempool down as dependents). Scanning
+      # for ANY entry not owned by bitcoind cannot false-positive; once the
+      # tree is fully migrated the scan is one metadata sweep and no chown.
+      straggler=$(${pkgs.findutils}/bin/find "$d" ! -user bitcoind -print -quit)
+      if [ -n "$straggler" ]; then
+        echo "handing $d contents to bitcoind (first hit: $straggler)..."
         ${pkgs.coreutils}/bin/chown -R bitcoind:bitcoind "$d"
       fi
     '';
