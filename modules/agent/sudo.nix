@@ -91,6 +91,29 @@ in
         { command = "/etc/claude-code/agent-restic-ro.sh";   options = nopw; }
         { command = "/etc/claude-code/agent-restic-ro.sh *"; options = nopw; }
 
+        # --- Field network diagnostics on marcus (added 2026-08-18) ---
+        # Evidence: the Craigmyle Tractor camera outage. The agent diagnosed a
+        # stale VLAN handing out a parallel 192.168.128.0/24 on the same wire,
+        # but could not do three things unaided — add a temporary address to
+        # reach that subnet, run a DHCP DISCOVER, or capture a single packet —
+        # so Chris had to be its hands for each. Finding the rogue subnet at
+        # all came down to luck (Amcrest broadcast their IP config over mDNS;
+        # the site's Dahua and Hikvision cameras advertise nothing).
+        #
+        # NOT raw tcpdump/nmap/ip. `netdiag-priv` is a fixed-purpose wrapper
+        # with a closed vocabulary: interface names and CIDRs are regex- and
+        # range-validated, capture filters are selected from a named profile
+        # list rather than passed in, tcpdump never receives -w/-W/-z (file
+        # writes and its postrotate exec hook), captures are snaplength-limited
+        # to headers so a client's payload traffic is never collected, and
+        # temporary addresses carry a kernel lifetime so they expire on their
+        # own instead of lingering on someone else's network. See
+        # hosts/marcus/netdiag-priv.sh — it is the only privileged entry point
+        # of the toolkit, which keeps the audit surface to one file.
+        # Inert on gromit (netdiag is a marcus-only module).
+        { command = "${sw}/netdiag-priv";                    options = nopw; }
+        { command = "${sw}/netdiag-priv *";                  options = nopw; }
+
         # NOTE: for reading specific root/service-owned files (e.g. the
         # vaultwarden sqlite DB), prefer a tiny purpose wrapper in /etc that the
         # agent may run, rather than `sudo cat *` (which leaks every secret).
