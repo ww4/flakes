@@ -145,7 +145,7 @@ let
 
   qbit-seed-guard = pkgs.writeShellApplication {
     name = "qbit-seed-guard";
-    runtimeInputs = [ pkgs.curl pkgs.jq pkgs.coreutils pkgs.gnugrep gromit-notify ];
+    runtimeInputs = [ pkgs.curl pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.gawk gromit-notify ];
     text = ''
       QBIT="${qbitUrl}"
       STATE="''${STATE_DIRECTORY:-/var/lib/qbit-seed-guard}"
