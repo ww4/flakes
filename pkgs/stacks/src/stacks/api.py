@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -459,34 +460,16 @@ def healthz() -> dict:
     return {"ok": True}
 
 
-@app.get("/api/scan/{code}", response_model=BookCard)
-async def scan(
+def _scan_finish(
+    s: Session,
+    result: MatchResult,
+    external: dict | None,
     code: str,
-    request: Request,
-    title: str | None = None,
-    source: str | None = None,
-    shown: str | None = None,
-    s: Session = Depends(get_session),
+    source: str | None,
+    shown: str | None,
+    user_agent: str | None,
 ) -> BookCard:
-    """Evaluate one scanned barcode, returning everything known about the book.
-
-    ``title`` reaches the fuzzy path for a book with no barcode — most of what
-    the flood destroyed predates ISBNs entirely.
-    """
-    result = evaluate_scan(s, code, title_hint=title)
-
-    external = None
-    if result.work is None and (isbn := to_isbn13(code, repair=False)):
-        # Nothing has been written yet — end the read transaction before the
-        # await. The OL lookup can take tens of seconds under rate-limit
-        # backoff, and holding a connection "idle in transaction" for that
-        # long was the audit's textbook case of a transaction spanning an
-        # external call.
-        s.rollback()
-        external = await _lookup_external(isbn)
-        if external:
-            result = evaluate_scan(s, code, title_hint=title, external=external)
-
+    """Record the ScanEvent and build the card — the sync half of /api/scan."""
     s.add(
         ScanEvent(
             scanned_code=code[:64],
@@ -496,7 +479,7 @@ async def scan(
             context={"headline": result.headline, "wants": result.wants},
             source=(source or "unknown")[:16],
             client_verdict=(shown or None),
-            user_agent=(request.headers.get("user-agent") or "")[:300] or None,
+            user_agent=user_agent,
         )
     )
     # Commit the scan log in-request (teardown commit runs after the response
@@ -532,6 +515,48 @@ async def scan(
         card.cover = external.get("cover")
         card.source = "openlibrary"
     return card
+
+
+@app.get("/api/scan/{code}", response_model=BookCard)
+async def scan(
+    code: str,
+    request: Request,
+    title: str | None = None,
+    source: str | None = None,
+    shown: str | None = None,
+    s: Session = Depends(get_session),
+) -> BookCard:
+    """Evaluate one scanned barcode, returning everything known about the book.
+
+    ``title`` reaches the fuzzy path for a book with no barcode — most of what
+    the flood destroyed predates ISBNs entirely.
+
+    The DB-heavy phases run in the threadpool: this is an async endpoint (it
+    awaits Open Library), and running the sync Session on the event loop
+    stalled every concurrent request for the duration (2026-08 audit M2).
+    Sequential use of one Session from worker threads is safe — nothing here
+    touches it concurrently.
+    """
+    result = await run_in_threadpool(evaluate_scan, s, code, title_hint=title)
+
+    external = None
+    if result.work is None and (isbn := to_isbn13(code, repair=False)):
+        # Nothing has been written yet — end the read transaction before the
+        # await. The OL lookup can take tens of seconds under rate-limit
+        # backoff, and holding a connection "idle in transaction" for that
+        # long was the audit's textbook case of a transaction spanning an
+        # external call.
+        await run_in_threadpool(s.rollback)
+        external = await _lookup_external(isbn)
+        if external:
+            result = await run_in_threadpool(
+                evaluate_scan, s, code, title_hint=title, external=external
+            )
+
+    return await run_in_threadpool(
+        _scan_finish, s, result, external, code, source, shown,
+        (request.headers.get("user-agent") or "")[:300] or None,
+    )
 
 
 @app.get("/api/work/{work_id}", response_model=BookCard)
@@ -860,6 +885,55 @@ class IsbnIn(BaseModel):
     isbn13: str
 
 
+def _add_isbn_check(s: Session, work_id: int, isbn: str) -> bool:
+    """404/409 gate for /api/work/{id}/isbn; True when the edition exists."""
+    if s.get(Work, work_id) is None:
+        raise HTTPException(status_code=404, detail="no such work")
+    existing = s.scalar(select(Edition).where(Edition.isbn13 == isbn))
+    if existing is not None and existing.work_id != work_id:
+        other = s.get(Work, existing.work_id)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"that ISBN already belongs to \u201c{other.title if other else '?'}\u201d. "
+                "If these are the same book, merge them instead of duplicating the ISBN."
+            ),
+        )
+    return existing is not None
+
+
+def _add_isbn_finish(
+    s: Session, work_id: int, isbn: str, meta: dict, cover_id: int | None
+) -> BookCard:
+    """The write half of /api/work/{id}/isbn — runs after any OL awaits."""
+    work = s.get(Work, work_id)
+    if work is None:
+        raise HTTPException(status_code=404, detail="no such work")
+    edition = s.scalar(select(Edition).where(Edition.isbn13 == isbn))
+    if edition is not None and edition.work_id != work_id:
+        # Re-checked after the transaction gap around the OL awaits.
+        raise HTTPException(status_code=409, detail="that ISBN was just claimed by another book")
+    if edition is None:
+        edition = Edition(
+            work_id=work_id, isbn13=isbn,
+            publisher=meta.get("publisher"), publish_year=meta.get("year"),
+            cover_id=cover_id,
+        )
+        s.add(edition)
+        s.flush()
+        # A work with no description yet gains one for free.
+        if not work.description and meta.get("description"):
+            work.description = meta["description"]
+
+    # Point copies with no printing recorded at this one — usually the reason
+    # someone is adding it: "this bare record is that book on the shelf".
+    s.query(Copy).filter(Copy.work_id == work_id, Copy.edition_id.is_(None)).update(
+        {Copy.edition_id: edition.id}, synchronize_session=False
+    )
+    s.commit()
+    return _card_for_work(s, work, _result_for_work(s, work), scanned_isbn=isbn)
+
+
 @app.post("/api/work/{work_id}/isbn", response_model=BookCard)
 async def add_isbn(work_id: int, body: IsbnIn, s: Session = Depends(get_session)) -> BookCard:
     """Attach an ISBN to a book.
@@ -872,10 +946,6 @@ async def add_isbn(work_id: int, body: IsbnIn, s: Session = Depends(get_session)
     Adding one also pulls the printing's details and cover from Open Library, so
     a bare title becomes a real record.
     """
-    work = s.get(Work, work_id)
-    if work is None:
-        raise HTTPException(status_code=404, detail="no such work")
-
     isbn = to_isbn13(body.isbn13, repair=False)
     if not isbn:
         raise HTTPException(
@@ -883,20 +953,16 @@ async def add_isbn(work_id: int, body: IsbnIn, s: Session = Depends(get_session)
             detail="that is not a valid ISBN — check for a typo (the check digit failed)",
         )
 
-    existing = s.scalar(select(Edition).where(Edition.isbn13 == isbn))
-    if existing is not None and existing.work_id != work_id:
-        other = s.get(Work, existing.work_id)
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"that ISBN already belongs to \u201c{other.title if other else '?'}\u201d. "
-                "If these are the same book, merge them instead of duplicating the ISBN."
-            ),
-        )
+    known = await run_in_threadpool(_add_isbn_check, s, work_id, isbn)
 
-    if existing is None:
+    meta: dict = {}
+    cover_id = None
+    if not known:
+        # Reads only so far — end the transaction before the awaits (the OL
+        # lookups can take tens of seconds under backoff), same discipline
+        # as scan/confirm.
+        await run_in_threadpool(s.rollback)
         meta = await _lookup_external(isbn) or {}
-        cover_id = None
         try:
             settings = get_settings()
             async with OpenLibraryClient(settings) as ol:
@@ -907,25 +973,7 @@ async def add_isbn(work_id: int, body: IsbnIn, s: Session = Depends(get_session)
         except Exception:  # noqa: BLE001 — metadata is a bonus, the ISBN is the point
             pass
 
-        s.add(Edition(
-            work_id=work_id, isbn13=isbn,
-            publisher=meta.get("publisher"), publish_year=meta.get("year"),
-            cover_id=cover_id,
-        ))
-        s.flush()
-
-        # A work with no description yet gains one for free.
-        if not work.description and meta.get("description"):
-            work.description = meta["description"]
-
-    # Point copies with no printing recorded at this one — usually the reason
-    # someone is adding it: "this bare record is that book on the shelf".
-    edition = s.scalar(select(Edition).where(Edition.isbn13 == isbn))
-    s.query(Copy).filter(Copy.work_id == work_id, Copy.edition_id.is_(None)).update(
-        {Copy.edition_id: edition.id}, synchronize_session=False
-    )
-    s.commit()
-    return _card_for_work(s, work, _result_for_work(s, work), scanned_isbn=isbn)
+    return await run_in_threadpool(_add_isbn_finish, s, work_id, isbn, meta, cover_id)
 
 
 @app.delete("/api/edition/{edition_id}", response_model=BookCard)
@@ -1311,10 +1359,16 @@ async def confirm(
     if not isbn13:
         raise HTTPException(status_code=400, detail="not a readable ISBN")
 
-    work, _tier = resolve_work_by_isbn(s, isbn13)
-    edition = s.scalar(select(Edition).where(Edition.isbn13 == isbn13))
+    def _resolve():
+        w, _tier = resolve_work_by_isbn(s, isbn13)
+        e = s.scalar(select(Edition).where(Edition.isbn13 == isbn13))
+        return w, e
+
+    # DB work runs in the threadpool throughout: this endpoint awaits Open
+    # Library, and sync Session calls on the event loop stalled every
+    # concurrent request (2026-08 audit M2).
+    work, edition = await run_in_threadpool(_resolve)
     meta: dict = {}
-    created_work = False
 
     if work is None:
         # Never seen. Ask Open Library what it is; if even that comes back
@@ -1325,10 +1379,25 @@ async def confirm(
         #
         # Only reads so far — end the transaction before the await, so the
         # connection is not "idle in transaction" for the seconds-to-minutes
-        # an OL rate-limit backoff can take. The writes below open a fresh
-        # transaction and commit in-request.
-        s.rollback()
+        # an OL rate-limit backoff can take. The writes in _confirm_apply
+        # open a fresh transaction and commit in-request.
+        await run_in_threadpool(s.rollback)
         meta = await _lookup_external(isbn13) or {}
+
+    return await run_in_threadpool(_confirm_apply, s, isbn13, body, work, edition, meta)
+
+
+def _confirm_apply(
+    s: Session,
+    isbn13: str,
+    body: ConfirmIn,
+    work: Work | None,
+    edition: Edition | None,
+    meta: dict,
+) -> ConfirmOut:
+    """The write half of /api/confirm — everything after the OL await."""
+    created_work = False
+    if work is None:
         title = (meta.get("title") or "").strip() or f"Unidentified book {isbn13}"
         author = None
         if meta.get("author"):
