@@ -115,6 +115,12 @@ in
         { command = "${sw}/netdiag-priv";                    options = nopw; }
         { command = "${sw}/netdiag-priv *";                  options = nopw; }
 
+        # Label a device in the netwatch baseline (added 2026-08-19). Scoped to
+        # the `accept` verb ONLY — not bare `netwatch`, which would also allow
+        # triggering scans/reports as root. Pure curation: it sets a label and
+        # an accepted flag on an existing record and can do nothing else.
+        { command = "${sw}/netwatch accept *";               options = nopw; }
+
         # NOTE: for reading specific root/service-owned files (e.g. the
         # vaultwarden sqlite DB), prefer a tiny purpose wrapper in /etc that the
         # agent may run, rather than `sudo cat *` (which leaks every secret).
