@@ -60,11 +60,22 @@ refresh_one() {
     return 1
   fi
 
-  # --ff-only is the fail-safe: if the tree is dirty or has diverged we skip
-  # rather than manufacture a merge commit in someone's archive.
-  if ! git -C "$path" pull --quiet --ff-only 2>&1; then
-    log "$name: pull skipped (dirty or diverged) — not refreshing"
-    return 1
+  # A brand-new archive has no origin/main yet. Demanding one would mean a
+  # freshly-added show could never bootstrap itself onto the server.
+  if git -C "$path" rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+    # --ff-only is the fail-safe: if the tree is dirty or has diverged we skip
+    # rather than manufacture a merge commit in someone's archive.
+    #
+    # `origin main` is spelled out on purpose. A bare `git pull` needs upstream
+    # TRACKING, which a freshly-bootstrapped archive does not have — so the run
+    # after a bootstrap failed with "dirty or diverged" and the archive would
+    # have quietly rotted to STALE three weeks later.
+    if ! git -C "$path" pull --quiet --ff-only origin main 2>&1; then
+      log "$name: pull skipped (dirty or diverged) — not refreshing"
+      return 1
+    fi
+  else
+    log "$name: origin has no main yet — bootstrapping"
   fi
 
   if ! out=$(cd "$path" && python3 build.py 2>&1); then
@@ -82,11 +93,6 @@ refresh_one() {
   # had no new episodes. Stamp it so freshness tracks the CHECK, not the feed.
   date +%s > "$stamp"
 
-  if [ "$newcount" -eq 0 ]; then
-    log "$name: no new episodes"
-    return 0
-  fi
-
   # One path at a time: a single unexpected/ignored path must not abort the
   # whole staging step and leave us silently committing nothing.
   local g
@@ -94,20 +100,38 @@ refresh_one() {
     [ -e "$path/$g" ] || continue
     git -C "$path" add -- "$g" 2>/dev/null || log "$name: could not stage $g (ignored?)"
   done
+
   if git -C "$path" diff --cached --quiet; then
-    log "$name: $newcount new reported but no tracked changes — nothing to commit"
+    [ "$newcount" -gt 0 ] && \
+      log "$name: $newcount new reported but no tracked changes to commit"
+  else
+    git -C "$path" -c user.name=ww4-bot -c user.email=bot@rosemaryacres.com \
+      commit --quiet -m "archive: weekly refresh — $newcount new episode(s)" || {
+        log "$name: commit failed"; return 1; }
+  fi
+
+  # Push whenever we are ahead of the server — NOT merely when this run found
+  # something. Two cases depend on it: bootstrapping an archive whose origin has
+  # no main yet, and retrying a commit whose push failed on an earlier run.
+  # Gating the push on newcount stranded that commit forever, because the next
+  # run finds nothing new and returns early.
+  local ahead=0
+  if ! git -C "$path" rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+    ahead=1
+  else
+    ahead=$(git -C "$path" rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+  fi
+
+  if [ "$ahead" -eq 0 ]; then
+    log "$name: up to date with origin (no new episodes)"
     return 0
   fi
 
-  git -C "$path" -c user.name=ww4-bot -c user.email=bot@rosemaryacres.com \
-    commit --quiet -m "archive: weekly refresh — $newcount new episode(s)" || {
-      log "$name: commit failed"; return 1; }
-
   if ! git -C "$path" push --quiet origin HEAD:main 2>&1; then
-    log "$name: push failed (commit is local; next run will retry)"
+    log "$name: push failed ($ahead commit(s) local; next run will retry)"
     return 1
   fi
-  log "$name: +$newcount episode(s), pushed"
+  log "$name: pushed ($ahead commit(s), +$newcount episode(s) this run)"
   return 0
 }
 
