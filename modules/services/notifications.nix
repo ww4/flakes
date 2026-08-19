@@ -55,24 +55,44 @@ in
     path = [ pkgs.ntfy-sh pkgs.coreutils pkgs.gnugrep ];
     serviceConfig = { Type = "oneshot"; RemainAfterExit = true; };
     script = ''
-      cfg=/etc/ntfy/server.yml
       pwfile=/var/lib/ntfy-sh/subscriber-password.txt
       envfile=/var/lib/ntfy-sh/homepage-ntfy.env
 
-      if ! ntfy --config "$cfg" user list 2>/dev/null | grep -q "^user chris"; then
+      # ⚠️ NO --config FLAG EXISTS on `ntfy user`/`ntfy access`. Passing one
+      # made the first version of this unit die immediately after writing the
+      # password file — so the password existed, the ACCOUNT never did, and the
+      # phone got "user chris not authorized" while notifications were already
+      # locked down. These are server-side commands: they read the default
+      # /etc/ntfy/server.yml and operate on its auth-file directly.
+
+      # Reuse an existing password rather than minting a new one, so a re-run
+      # never invalidates a password already typed into the phone.
+      if [ -s "$pwfile" ]; then
+        pw=$(cat "$pwfile")
+      else
         pw=$(head -c 32 /dev/urandom | base64 | tr -dc "A-Za-z0-9" | head -c 24)
         umask 077
         printf "%s\n" "$pw" > "$pwfile"
-        # Same credential feeds the homepage widget, via an env file that is
-        # NOT in the nix store. environmentFiles is a list, so this sits
-        # alongside the sops one without touching it.
-        printf "HOMEPAGE_VAR_NTFY_USER=chris\nHOMEPAGE_VAR_NTFY_PASS=%s\n" "$pw" > "$envfile"
-        NTFY_PASSWORD="$pw" ntfy --config "$cfg" user add chris
-        echo "ntfy-provision: created subscriber 'chris'. Password: sudo cat $pwfile"
       fi
-      ntfy --config "$cfg" access chris "gromit-alerts" rw || true
-      chmod 600 "$pwfile" 2>/dev/null || true
-      chmod 640 "$envfile" 2>/dev/null || true
+
+      # ntfy creates user.db on first start; wait rather than race it.
+      for _ in $(seq 1 30); do
+        ntfy user list >/dev/null 2>&1 && break
+        sleep 2
+      done
+
+      # Add, or if the account already exists, force its password to match the
+      # file. That makes the file authoritative and the unit self-healing,
+      # instead of depending on parsing `user list` output.
+      if ! NTFY_PASSWORD="$pw" ntfy user add chris 2>/dev/null; then
+        NTFY_PASSWORD="$pw" ntfy user change-pass chris
+      fi
+      ntfy access chris "gromit-alerts" rw
+
+      printf "HOMEPAGE_VAR_NTFY_USER=chris\nHOMEPAGE_VAR_NTFY_PASS=%s\n" "$pw" > "$envfile"
+      chmod 600 "$pwfile"
+      chmod 640 "$envfile"
+      echo "ntfy-provision: subscriber 'chris' ready. Password: sudo cat $pwfile"
     '';
   };
 
