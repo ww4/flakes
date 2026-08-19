@@ -51,7 +51,15 @@ def quiet_hours() -> bool:
 def notify(title: str, body: str, priority: str = "default",
            tags: str = "eyes", critical: bool = False) -> None:
     """Post to ntfy. Non-critical alerts go silent during quiet hours rather
-    than being suppressed — they still land, they just do not buzz."""
+    than being suppressed — they still land, they just do not buzz.
+
+    ⚠️ `critical` is for HARM IN PROGRESS ONLY — something actively wrong with
+    the network that is worth waking someone for. It is NOT for "netwatch
+    itself is broken". On 2026-08-19 the self-check failures were marked
+    critical, so a blind scanner paged at ntfy priority 4 every 15 minutes from
+    23:00 to 07:15 and woke Chris. A watchdog that cannot see needs fixing that
+    morning; it does not need anyone out of bed.
+    """
     if quiet_hours() and not critical:
         priority = "low"
     safe = re.sub(r"[^\x20-\x7e]", "", title)[:200]
@@ -62,6 +70,43 @@ def notify(title: str, body: str, priority: str = "default",
         urllib.request.urlopen(req, timeout=10).read()
     except OSError as exc:
         print(f"netwatch: ntfy post failed: {exc!r}", file=sys.stderr)
+
+
+def alert_once(state: dict, key: str, title: str, body: str,
+               priority: str = "default", tags: str = "eyes",
+               critical: bool = False, rearm_hours: int = 12) -> None:
+    """Notify only when this condition is NEWLY true, or has gone stale.
+
+    The house rule is notify on state CHANGE, and netwatch broke it badly: one
+    unchanging fault ("scan found no hosts") produced 34 identical
+    notifications between 23:00 and 07:15 on 2026-08-19, every 15 minutes, all
+    night. The condition never changed — only the clock did.
+
+    So an alert fires once, then stays quiet while the condition persists. It
+    re-arms after `rearm_hours` so a problem that is still there tomorrow says
+    so once more rather than being forgotten entirely. `alert_clear` resets it
+    the moment the condition resolves, so a recurrence pages promptly instead
+    of being swallowed by the re-arm window.
+    """
+    fired = state.setdefault("alerted", {})
+    prev = fired.get(key)
+    if prev:
+        try:
+            age_h = (datetime.now(timezone.utc)
+                     - datetime.fromisoformat(prev)).total_seconds() / 3600.0
+        except ValueError:
+            age_h = rearm_hours + 1
+        if age_h < rearm_hours:
+            print(f"netwatch: [{key}] still true, alert suppressed "
+                  f"({age_h:.1f}h since last)")
+            return
+    fired[key] = now()
+    notify(title, body, priority, tags, critical)
+
+
+def alert_clear(state: dict, key: str) -> None:
+    """Condition resolved — the next occurrence should alert immediately."""
+    state.setdefault("alerted", {}).pop(key, None)
 
 
 def load_state() -> dict:
@@ -170,35 +215,47 @@ def cmd_scan() -> int:
     """Every 15 min: presence diff against the accepted baseline."""
     state = load_state()
     iface = default_iface()
+    # NOTE on all three self-check failures below: they are NOT `critical`.
+    # A broken watchdog is a fix-this-today problem, not a wake-up-now one, and
+    # the unit already exits non-zero — which trips the existing
+    # SystemdUnitFailed alerting through the normal channel. That escalation
+    # path worked correctly on 2026-08-19 (fired 07:02, resolved 07:22) while
+    # netwatch's own priority-4 pages were pure noise on top of it.
     if not iface:
-        notify("netwatch: no default route",
-               "Cannot determine an interface to scan. netwatch is blind.",
-               "high", "warning", critical=True)
+        alert_once(state, "no-route", "netwatch: no default route",
+                   "Cannot determine an interface to scan. netwatch is blind.",
+                   "high", "warning")
+        save_state(state)
         return 1
 
     rows = arp_census(iface)
 
     # --- the two failure modes that must never read as "all clear" ---
     if not rows:
-        notify("netwatch: scan returned NOTHING",
-               f"arp-scan on {iface} produced zero hosts. This is a broken "
-               f"check, not a quiet network — netwatch is not watching.\n"
-               f"Check: netdiag-priv arpscan {iface}",
-               "high", "warning", critical=True)
+        alert_once(state, "scan-empty", "netwatch: scan found no hosts",
+                   f"arp-scan on {iface} produced zero hosts. This is a broken "
+                   f"check, not a quiet network — netwatch is not watching.\n"
+                   f"Check: netdiag-priv arpscan {iface}",
+                   "high", "warning")
+        save_state(state)
         return 1
+    alert_clear(state, "scan-empty")
 
     counts = (state.get("counts") or [])[-19:] + [len(rows)]
     state["counts"] = counts
     if len(counts) >= 5:
         median = sorted(counts[:-1])[len(counts[:-1]) // 2]
         if len(rows) < median * SANITY_FRACTION:
-            notify("netwatch: scan DEGRADED",
-                   f"Found {len(rows)} hosts; the running median is {median}. "
-                   f"Treating this as a failed sweep rather than reporting "
-                   f"{median - len(rows)} devices as newly missing.",
-                   "high", "warning", critical=True)
+            alert_once(state, "scan-degraded", "netwatch: scan DEGRADED",
+                       f"Found {len(rows)} hosts; the running median is "
+                       f"{median}. Treating this as a failed sweep rather than "
+                       f"reporting {median - len(rows)} devices as newly "
+                       f"missing.",
+                       "high", "warning")
             save_state(state)
             return 1
+    alert_clear(state, "scan-degraded")
+    alert_clear(state, "no-route")
 
     devices = state.setdefault("devices", {})
     seeding = state.get("seeded") is None
@@ -270,11 +327,14 @@ def cmd_scan() -> int:
     gw_mac = next((m for i, m, _ in rows if i == gw_ip), None)
     known_gw = state.setdefault("gateway", {})
     if gw_mac and known_gw.get("mac") and known_gw["mac"] != gw_mac:
-        notify("netwatch: GATEWAY MAC CHANGED",
-               f"{gw_ip} was {known_gw['mac']}, now {gw_mac}.\n"
-               f"This is the signature of ARP spoofing / a MITM, or the router "
-               f"was genuinely replaced. Verify before trusting the LAN.",
-               "urgent", "rotating_light", critical=True)
+        # Keyed by the NEW mac so a genuine second change still pages; a single
+        # unchanged situation does not re-page every 15 minutes.
+        alert_once(state, f"gw-mac:{gw_mac}", "netwatch: GATEWAY MAC CHANGED",
+                   f"{gw_ip} was {known_gw['mac']}, now {gw_mac}.\n"
+                   f"This is the signature of ARP spoofing / a MITM, or the "
+                   f"router was genuinely replaced. Verify before trusting "
+                   f"the LAN.",
+                   "urgent", "rotating_light", critical=True)
     if gw_mac:
         known_gw.update({"ip": gw_ip, "mac": gw_mac})
 
@@ -310,11 +370,20 @@ def cmd_scan() -> int:
                f"Normal after a DHCP lease change; suspicious if this device "
                f"is supposed to hold a reservation.",
                "default", "arrows_counterclockwise")
+    # Keyed by the IP AND the exact set of claimants, so the same standing
+    # conflict pages once rather than every 15 minutes, while a different pair
+    # of devices fighting still gets its own alert.
+    seen_dups = set()
     for ip, macs in dup:
-        notify("netwatch: DUPLICATE IP",
-               f"{ip} is claimed by {len(macs)} MACs:\n" + "\n".join(macs) +
-               "\nEither an address conflict or ARP spoofing.",
-               "high", "warning", critical=True)
+        key = "dup:" + ip + ":" + ",".join(macs)
+        seen_dups.add(key)
+        alert_once(state, key, "netwatch: DUPLICATE IP",
+                   f"{ip} is claimed by {len(macs)} MACs:\n" + "\n".join(macs) +
+                   "\nEither an address conflict or ARP spoofing.",
+                   "high", "warning", critical=True)
+    for key in [k for k in state.get("alerted", {}) if k.startswith("dup:")]:
+        if key not in seen_dups:
+            alert_clear(state, key)
 
     state["last_scan"] = now()
     save_state(state)
