@@ -33,6 +33,14 @@
 { config, lib, pkgs, ... }:
 
 let
+  # The tools netwatch.py actually shells out to (`netdiag-priv arpscan`, and
+  # `netdiag rogue|storm|exposure|listen|cameras|unifi|audit`). These are NOT in
+  # `pkgs` — they are this repo's derivations, shared with default.nix via
+  # packages.nix. environment.systemPackages putting them on the INTERACTIVE
+  # PATH is exactly what made the omission invisible: every hand-run worked
+  # while every timer-driven scan died with FileNotFoundError.
+  inherit (import ./packages.nix { inherit pkgs; }) netdiag netdiagPriv;
+
   netwatch = pkgs.writers.writePython3Bin "netwatch" {
     flakeIgnore = [ "E501" "E203" "W503" "W504" ];
   } (builtins.readFile ./netwatch.py);
@@ -41,7 +49,8 @@ let
   # skips the sudo hop entirely. Type=oneshot, no lingering process.
   job = description: args: {
     inherit description;
-    path = with pkgs; [ netwatch iproute2 nmap curl coreutils gnugrep gawk ];
+    path = [ netwatch netdiag netdiagPriv ]
+      ++ (with pkgs; [ iproute2 nmap curl coreutils gnugrep gawk ]);
     serviceConfig = {
       Type = "oneshot";
       StateDirectory = "netwatch";
