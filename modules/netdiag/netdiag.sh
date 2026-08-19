@@ -179,7 +179,12 @@ cmd_census() {
               "$ip" -oG - 2>/dev/null | grep -oE '[0-9]+/open' | cut -d/ -f1 | paste -sd, || true)
     cls=$(classify "$vendor" "$ports")
     printf '%-16s %-18s %-28s %s\n' "$ip" "$mac" "${vendor:0:27}" "$cls"
-  done < <(if [[ -n $target ]]; then priv arpscan "$iface" "$target"; else priv arpscan "$iface"; fi)
+    # Deduplicate on ip+mac. arp-scan runs --retry=3 and prints one line per
+    # REPLY, so a host answering two probes would otherwise be listed twice and
+    # port-scanned twice. (Same root cause as the false duplicate-IP alerts in
+    # netwatch on 2026-08-19 — a repeated reply is not a second device.)
+  done < <(if [[ -n $target ]]; then priv arpscan "$iface" "$target"; else priv arpscan "$iface"; fi \
+             | awk '!seen[$1 FS $2]++')
 }
 
 cmd_storm() {
