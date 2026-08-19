@@ -13,7 +13,7 @@
   imports = [
     ./hardware-configuration.nix
     ./network-tools.nix                       # iwd WiFi backend + network troubleshooting tools
-    ./netdiag.nix                             # field network diagnostics for client service calls
+    ../../modules/netdiag                     # network diagnostics (shared with gromit)
 
     # Shared fleet infra. (Home-Manager for chris is configured inline below so
     # marcus can layer ./hyprland.nix on top of the shared ../../home config.)

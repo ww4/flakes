@@ -1,8 +1,20 @@
-# NETDIAG — field network diagnostics for client service calls.
+# NETDIAG — network diagnostics, for client service calls AND the home LAN.
 #
 # Chris carries marcus to client sites; the working pattern is "put the laptop
 # on their network and start investigating". This module makes that a real
 # capability rather than improvised shell.
+#
+# ENABLED ON BOTH gromit AND marcus, deliberately — and gromit is arguably the
+# more capable of the two, which inverts the obvious intuition:
+#   - gromit is WIRED (enp3s0). marcus is usually on wifi, and most layer-2
+#     diagnostics either do not work at all over wifi or return actively
+#     misleading numbers (see the WIFI WARNING in netdiag.sh). For the home
+#     LAN, run these on gromit.
+#   - gromit is ALWAYS ON. Rogue DHCP and rogue IPv6 RA are intermittent by
+#     nature and reward long observation; marcus is intermittently online.
+#   - the agent lives on gromit, so diagnosing the home network no longer
+#     depends on someone having booted the laptop.
+# marcus keeps it because it is the machine that travels.
 #
 # Built 2026-08-18 out of the Craigmyle Tractor camera outage, then broadened by
 # a research pass into the problems that actually recur on service calls:
@@ -93,7 +105,7 @@ let
   };
 in
 {
-  # LLDP — RECEIVE-ONLY.
+  # LLDP — RECEIVE-ONLY on BOTH hosts.
   #
   # The default (advertising) mode would broadcast LLDP frames into a client's
   # layer-2 domain and insert this laptop into their switch's neighbour table.

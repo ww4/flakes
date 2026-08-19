@@ -108,9 +108,10 @@ in
         # to headers so a client's payload traffic is never collected, and
         # temporary addresses carry a kernel lifetime so they expire on their
         # own instead of lingering on someone else's network. See
-        # hosts/marcus/netdiag-priv.sh — it is the only privileged entry point
-        # of the toolkit, which keeps the audit surface to one file.
-        # Inert on gromit (netdiag is a marcus-only module).
+        # modules/netdiag/netdiag-priv.sh — it is the only privileged entry
+        # point of the toolkit, which keeps the audit surface to one file.
+        # LIVE ON BOTH gromit and marcus: netdiag is a shared module, and
+        # gromit is the better L2 platform of the two (wired, always on).
         { command = "${sw}/netdiag-priv";                    options = nopw; }
         { command = "${sw}/netdiag-priv *";                  options = nopw; }
 
