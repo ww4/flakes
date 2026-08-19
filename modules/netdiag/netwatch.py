@@ -23,15 +23,21 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import socket
 import subprocess
 import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 STATE_DIR = os.environ.get("NETWATCH_STATE", "/var/lib/netwatch")
 STATE_FILE = os.path.join(STATE_DIR, "state.json")
 NTFY = os.environ.get("NETWATCH_NTFY", "http://127.0.0.1:8090/gromit-alerts")
+# Base for the ntfy action buttons. Hosted under the ntfy vhost, which already
+# has DNS + a cert and inherits the LAN/Tailscale source gate.
+ACTION_BASE = os.environ.get(
+    "NETWATCH_ACTION_BASE",
+    "https://ntfy.rosemaryacres.com/netwatch-action")
 
 # A scan that finds fewer than this fraction of the running median host count is
 # treated as broken rather than believed. Picked low enough that a genuinely
@@ -49,19 +55,109 @@ def quiet_hours() -> bool:
 
 
 def notify(title: str, body: str, priority: str = "default",
-           tags: str = "eyes", critical: bool = False) -> None:
-    """Post to ntfy. Non-critical alerts go silent during quiet hours rather
-    than being suppressed — they still land, they just do not buzz."""
-    if quiet_hours() and not critical:
+           tags: str = "eyes", actions: str = "") -> None:
+    """Post to ntfy, never louder than quiet hours allow.
+
+    ⚠️ THERE IS DELIBERATELY NO ESCAPE HATCH. This function used to take a
+    `critical` flag that skipped the quiet-hours downgrade, and netwatch used it
+    for spoofing signatures and self-check failures. Chris's rule, 2026-08-19:
+
+        "I don't care about man in the middle or arp spoofing at 3:00 a.m. when
+        I'm asleep... I don't want to be awoken unless there's a physical threat
+        to my family such as fire, a flood or an electrical problem. That goes
+        for all classes of network traffic."
+
+    Every event netwatch can raise is a network event, so NOTHING here may ever
+    pierce quiet hours. The parameter is gone rather than merely defaulted to
+    False, so a future edit cannot reintroduce a 3 a.m. page by passing a flag.
+    The attacker is not going anywhere by morning.
+    """
+    if quiet_hours():
         priority = "low"
     safe = re.sub(r"[^\x20-\x7e]", "", title)[:200]
-    req = urllib.request.Request(
-        NTFY, data=body.encode(),
-        headers={"Title": safe, "Priority": priority, "Tags": tags})
+    headers = {"Title": safe, "Priority": priority, "Tags": tags}
+    if actions:
+        headers["Actions"] = actions
+    req = urllib.request.Request(NTFY, data=body.encode(), headers=headers)
     try:
         urllib.request.urlopen(req, timeout=10).read()
     except OSError as exc:
         print(f"netwatch: ntfy post failed: {exc!r}", file=sys.stderr)
+
+
+def flush_held(state: dict) -> None:
+    """Deliver everything held overnight, once, after quiet hours end.
+
+    Chris's instruction for anything fishy on the network is "diagnose it,
+    possibly isolate it, make a note and flag me in the morning". This is the
+    flag-in-the-morning half: findings raised between 22:00 and 07:00 are held
+    and arrive as ONE consolidated summary, rather than as a trickle of silent
+    drawer notifications he has to reconstruct a timeline from.
+    """
+    held = state.get("held") or []
+    if not held or quiet_hours():
+        return
+    # A handful: replay each one intact, because they carry their ACTION BUTTONS
+    # and a summary would strip them — leaving him back at "here is a thing you
+    # cannot act on", which is the problem this was built to solve. In the
+    # morning several actionable notifications beat one unactionable digest.
+    if len(held) <= 5:
+        for h in held:
+            notify(h["title"], f"[held from {h['at'][11:16]}Z overnight]\n" + h["body"],
+                   h.get("priority", "default"), h.get("tags", "eyes"),
+                   h.get("actions", ""))
+    else:
+        # A flood is itself the finding; summarise rather than spam.
+        lines = [f"- {h['at'][11:16]}Z  {h['title']}" for h in held]
+        notify(f"netwatch: {len(held)} finding(s) overnight",
+               "Held through quiet hours, as agreed:\n" + "\n".join(lines) +
+               "\n\nDetail: netwatch status  ·  /var/lib/netwatch/",
+               "default", "dog")
+    state["held"] = []
+
+
+def alert_once(state: dict, key: str, title: str, body: str,
+               priority: str = "default", tags: str = "eyes",
+               rearm_hours: int = 12, actions: str = "") -> None:
+    """Notify only when this condition is NEWLY true, or has gone stale.
+
+    The house rule is notify on state CHANGE, and netwatch broke it badly: one
+    unchanging fault ("scan found no hosts") produced 34 identical
+    notifications between 23:00 and 07:15 on 2026-08-19, every 15 minutes, all
+    night. The condition never changed — only the clock did.
+
+    So an alert fires once, then stays quiet while the condition persists. It
+    re-arms after `rearm_hours` so a problem that is still there tomorrow says
+    so once more rather than being forgotten entirely. `alert_clear` resets it
+    the moment the condition resolves, so a recurrence pages promptly instead
+    of being swallowed by the re-arm window.
+    """
+    fired = state.setdefault("alerted", {})
+    prev = fired.get(key)
+    if prev:
+        try:
+            age_h = (datetime.now(timezone.utc)
+                     - datetime.fromisoformat(prev)).total_seconds() / 3600.0
+        except ValueError:
+            age_h = rearm_hours + 1
+        if age_h < rearm_hours:
+            print(f"netwatch: [{key}] still true, alert suppressed "
+                  f"({age_h:.1f}h since last)")
+            return
+    fired[key] = now()
+    if quiet_hours():
+        # Hold it. flush_held() delivers one consolidated summary after 07:00.
+        state.setdefault("held", []).append(
+            {"at": now(), "title": title, "body": body,
+             "priority": priority, "tags": tags, "actions": actions})
+        print(f"netwatch: [{key}] held until morning — {title}")
+        return
+    notify(title, body, priority, tags, actions)
+
+
+def alert_clear(state: dict, key: str) -> None:
+    """Condition resolved — the next occurrence should alert immediately."""
+    state.setdefault("alerted", {}).pop(key, None)
 
 
 def load_state() -> dict:
@@ -169,36 +265,49 @@ def hostname_for(ip: str) -> str:
 def cmd_scan() -> int:
     """Every 15 min: presence diff against the accepted baseline."""
     state = load_state()
+    flush_held(state)   # deliver anything held overnight, once, after 07:00
     iface = default_iface()
+    # NOTE on all three self-check failures below: they are NOT `critical`.
+    # A broken watchdog is a fix-this-today problem, not a wake-up-now one, and
+    # the unit already exits non-zero — which trips the existing
+    # SystemdUnitFailed alerting through the normal channel. That escalation
+    # path worked correctly on 2026-08-19 (fired 07:02, resolved 07:22) while
+    # netwatch's own priority-4 pages were pure noise on top of it.
     if not iface:
-        notify("netwatch: no default route",
-               "Cannot determine an interface to scan. netwatch is blind.",
-               "high", "warning", critical=True)
+        alert_once(state, "no-route", "netwatch: no default route",
+                   "Cannot determine an interface to scan. netwatch is blind.",
+                   "high", "warning")
+        save_state(state)
         return 1
 
     rows = arp_census(iface)
 
     # --- the two failure modes that must never read as "all clear" ---
     if not rows:
-        notify("netwatch: scan returned NOTHING",
-               f"arp-scan on {iface} produced zero hosts. This is a broken "
-               f"check, not a quiet network — netwatch is not watching.\n"
-               f"Check: netdiag-priv arpscan {iface}",
-               "high", "warning", critical=True)
+        alert_once(state, "scan-empty", "netwatch: scan found no hosts",
+                   f"arp-scan on {iface} produced zero hosts. This is a broken "
+                   f"check, not a quiet network — netwatch is not watching.\n"
+                   f"Check: netdiag-priv arpscan {iface}",
+                   "high", "warning")
+        save_state(state)
         return 1
+    alert_clear(state, "scan-empty")
 
     counts = (state.get("counts") or [])[-19:] + [len(rows)]
     state["counts"] = counts
     if len(counts) >= 5:
         median = sorted(counts[:-1])[len(counts[:-1]) // 2]
         if len(rows) < median * SANITY_FRACTION:
-            notify("netwatch: scan DEGRADED",
-                   f"Found {len(rows)} hosts; the running median is {median}. "
-                   f"Treating this as a failed sweep rather than reporting "
-                   f"{median - len(rows)} devices as newly missing.",
-                   "high", "warning", critical=True)
+            alert_once(state, "scan-degraded", "netwatch: scan DEGRADED",
+                       f"Found {len(rows)} hosts; the running median is "
+                       f"{median}. Treating this as a failed sweep rather than "
+                       f"reporting {median - len(rows)} devices as newly "
+                       f"missing.",
+                       "high", "warning")
             save_state(state)
             return 1
+    alert_clear(state, "scan-degraded")
+    alert_clear(state, "no-route")
 
     devices = state.setdefault("devices", {})
     seeding = state.get("seeded") is None
@@ -264,17 +373,21 @@ def cmd_scan() -> int:
         if len(macs) > 1:
             dup.append((ip, sorted(macs)))
 
-    # Gateway MAC change = someone is answering for the router. Always critical,
-    # always bypasses quiet hours: this is an attack in progress, not a report.
+    # Gateway MAC change = someone is answering for the router: ARP spoofing /
+    # MITM, or the router was replaced. Serious, and still NOT worth waking
+    # anyone for — it is held until morning like every other network finding.
     gw_ip = gateway_ip()
     gw_mac = next((m for i, m, _ in rows if i == gw_ip), None)
     known_gw = state.setdefault("gateway", {})
     if gw_mac and known_gw.get("mac") and known_gw["mac"] != gw_mac:
-        notify("netwatch: GATEWAY MAC CHANGED",
-               f"{gw_ip} was {known_gw['mac']}, now {gw_mac}.\n"
-               f"This is the signature of ARP spoofing / a MITM, or the router "
-               f"was genuinely replaced. Verify before trusting the LAN.",
-               "urgent", "rotating_light", critical=True)
+        # Keyed by the NEW mac so a genuine second change still pages; a single
+        # unchanged situation does not re-page every 15 minutes.
+        alert_once(state, f"gw-mac:{gw_mac}", "netwatch: GATEWAY MAC CHANGED",
+                   f"{gw_ip} was {known_gw['mac']}, now {gw_mac}.\n"
+                   f"This is the signature of ARP spoofing / a MITM, or the "
+                   f"router was genuinely replaced. Verify before trusting "
+                   f"the LAN.",
+                   "high", "rotating_light")
     if gw_mac:
         known_gw.update({"ip": gw_ip, "mac": gw_mac})
 
@@ -299,22 +412,48 @@ def cmd_scan() -> int:
                     "per-network randomisation, not a spoof.")
         else:
             hint = ""
-        notify(f"netwatch: NEW DEVICE {who} ({ip})",
-               f"{mac}\n{vendor}{hint}\n\n"
-               f"Accept it:  netwatch accept {mac} <label>\n"
-               f"Inspect it: netdiag identify {ip}",
-               "high", "eyes")
+        # Two single-use nonces, one per button, bound to this MAC. The buttons
+        # replace the shell command this notification used to end with — which
+        # was unusable on a phone, and so amounted to no call to action at all.
+        acts = state.setdefault("actions", {})
+        exp = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(
+            timespec="seconds")
+        n_acc, n_inv = secrets.token_urlsafe(16), secrets.token_urlsafe(16)
+        acts[n_acc] = {"mac": mac, "verb": "accept", "exp": exp}
+        acts[n_inv] = {"mac": mac, "verb": "investigate", "exp": exp}
+        buttons = (
+            f"http, Accept, {ACTION_BASE}/{n_acc}/accept, method=POST, clear=true; "
+            f"http, Investigate, {ACTION_BASE}/{n_inv}/investigate, method=POST"
+        )
+        # Through alert_once, NOT notify: an unknown device appearing at 03:00
+        # is exactly the "something fishy" case Chris wants held and flagged in
+        # the morning, not trickled into the drawer overnight one at a time.
+        alert_once(state, f"new:{mac}", f"netwatch: NEW DEVICE {who} ({ip})",
+                   f"{mac}\n{vendor}{hint}\n\n"
+                   f"Accept adds it to the baseline. Investigate fingerprints "
+                   f"it and sends the findings back.",
+                   "high", "eyes", actions=buttons)
     for mac, old_ip, new_ip in rebound:
-        notify("netwatch: device changed address",
-               f"{mac}\n{old_ip} -> {new_ip}\n"
-               f"Normal after a DHCP lease change; suspicious if this device "
-               f"is supposed to hold a reservation.",
-               "default", "arrows_counterclockwise")
+        alert_once(state, f"rebound:{mac}:{new_ip}",
+                   "netwatch: device changed address",
+                   f"{mac}\n{old_ip} -> {new_ip}\n"
+                   f"Normal after a DHCP lease change; suspicious if this "
+                   f"device is supposed to hold a reservation.",
+                   "default", "arrows_counterclockwise")
+    # Keyed by the IP AND the exact set of claimants, so the same standing
+    # conflict pages once rather than every 15 minutes, while a different pair
+    # of devices fighting still gets its own alert.
+    seen_dups = set()
     for ip, macs in dup:
-        notify("netwatch: DUPLICATE IP",
-               f"{ip} is claimed by {len(macs)} MACs:\n" + "\n".join(macs) +
-               "\nEither an address conflict or ARP spoofing.",
-               "high", "warning", critical=True)
+        key = "dup:" + ip + ":" + ",".join(macs)
+        seen_dups.add(key)
+        alert_once(state, key, "netwatch: DUPLICATE IP",
+                   f"{ip} is claimed by {len(macs)} MACs:\n" + "\n".join(macs) +
+                   "\nEither an address conflict or ARP spoofing.",
+                   "high", "warning")
+    for key in [k for k in state.get("alerted", {}) if k.startswith("dup:")]:
+        if key not in seen_dups:
+            alert_clear(state, key)
 
     state["last_scan"] = now()
     save_state(state)
@@ -402,9 +541,11 @@ def cmd_report() -> int:
     if unaccepted:
         flags.append(f"{len(unaccepted)} unaccepted device(s)")
     if flags:
+        # An L2 loop used to be sent critical here. It is a network event, so
+        # it is not — the daily report now runs after quiet hours anyway.
         notify("netwatch: daily report needs attention",
                " · ".join(flags) + f"\n\nFull report: {path}",
-               "default", "dog", critical="L2 LOOP" in flags)
+               "default", "dog")
 
     state["last_report"] = now()
     save_state(state)

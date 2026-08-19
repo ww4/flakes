@@ -14,16 +14,22 @@
 #                   IP, gateway MAC change. ~10 s. This is the intrusion signal.
 #   drift  hourly   per-known-host open-port diff -> a device that started
 #                   listening on something new.
-#   report 06:45    the health report: rogue DHCP/RA, storm/loop, UPnP+NAT-PMP
+#   report 07:10    the health report: rogue DHCP/RA, storm/loop, UPnP+NAT-PMP
 #                   exposure, subnet histogram. After quiet hours end, so its
 #                   ping lands at a civil time.
 #   audit  Sun 08:00  camera census, unadopted APs, gateway exposure audit.
 #
-# ALERTING follows the house rules. Non-critical notifications drop to `low`
-# priority during quiet hours rather than being suppressed — they still land,
-# they just do not buzz (same idiom as media-mirror.sh). Three things bypass
-# quiet hours because they are harm-in-progress rather than a report: a gateway
-# MAC change (ARP spoofing / MITM), a duplicate IP, and a detected L2 loop.
+# ⚠️ ALERTING: NOTHING HERE MAY EVER WAKE ANYONE. Chris's rule, 2026-08-19,
+# after a spoofing-signature design woke him: "I don't care about man in the
+# middle or arp spoofing at 3:00 a.m. ... I don't want to be awoken unless
+# there's a physical threat to my family such as fire, a flood or an electrical
+# problem. That goes for all classes of network traffic."
+#
+# Every event netwatch raises is a network event, so the `critical` escape hatch
+# was REMOVED from notify() outright — not defaulted off, removed — so no future
+# edit can reintroduce a 3 a.m. page. Findings raised during quiet hours are
+# HELD and delivered as one consolidated summary after 07:00 ("diagnose it,
+# make a note and flag me in the morning").
 #
 # ⚠️ THE POINT OF THE WATCHDOG BELOW: a guard dog that silently fails looks
 # exactly like a quiet network. netwatch itself refuses to report an empty or
@@ -41,6 +47,11 @@ let
   # while every timer-driven scan died with FileNotFoundError.
   inherit (import ./packages.nix { inherit pkgs; }) netdiag netdiagPriv;
 
+  # The endpoint behind the ntfy notification buttons.
+  netwatchActions = pkgs.writers.writePython3Bin "netwatch-actions" {
+    flakeIgnore = [ "E501" "E203" "W503" "W504" ];
+  } (builtins.readFile ./netwatch-actions.py);
+
   netwatch = pkgs.writers.writePython3Bin "netwatch" {
     flakeIgnore = [ "E501" "E203" "W503" "W504" ];
   } (builtins.readFile ./netwatch.py);
@@ -54,6 +65,8 @@ let
     serviceConfig = {
       Type = "oneshot";
       StateDirectory = "netwatch";
+      StateDirectoryMode = "0770";
+      Group = "netwatch";
       # It reads the network and writes one state dir; it needs nothing else.
       ProtectHome = true;
       PrivateTmp = true;
@@ -73,7 +86,48 @@ let
   };
 in
 {
-  environment.systemPackages = [ netwatch ];
+  environment.systemPackages = [ netwatch netwatchActions ];
+
+  # --- The notification action buttons ------------------------------------
+  # A NEW DEVICE alert used to end in a shell command, which is unusable on a
+  # phone: readable but not runnable, so effectively no call to action at all.
+  # It now carries Accept / Investigate buttons that call this service.
+  #
+  # Loopback-only, proxied under the EXISTING ntfy vhost — which already has
+  # DNS and a certificate, and inherits the LAN/Tailscale source gate from
+  # nginx-access.nix, so no new subdomain, cert or Authelia rule is needed.
+  # Hosting it there is also coherent: these are the notification's own
+  # callbacks.
+  systemd.services.netwatch-actions = {
+    description = "netwatch notification action endpoint (ntfy buttons)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network.target" ];
+    path = with pkgs; [ netwatch nmap curl iproute2 coreutils ];
+    serviceConfig = {
+      ExecStart = lib.getExe netwatchActions;
+      Restart = "on-failure";
+      # Writes the netwatch baseline, so it shares the state dir. Runs as its
+      # own user rather than root: it is the only network-facing piece here.
+      User = "netwatch-act";
+      Group = "netwatch";
+      StateDirectory = "netwatch";
+      StateDirectoryMode = "0770";
+      ProtectHome = true;
+      PrivateTmp = true;
+      NoNewPrivileges = true;
+    };
+  };
+
+  users.users.netwatch-act = {
+    isSystemUser = true;
+    group = "netwatch";
+    description = "netwatch notification action endpoint";
+  };
+  users.groups.netwatch = { };
+
+  services.nginx.virtualHosts."ntfy.rosemaryacres.com".locations."/netwatch-action/" = {
+    proxyPass = "http://127.0.0.1:8799";
+  };
 
   systemd.services.netwatch-scan   = job "netwatch: presence diff (new devices)" "scan";
   systemd.services.netwatch-drift  = job "netwatch: open-port drift on known hosts" "drift";
@@ -82,9 +136,10 @@ in
 
   systemd.timers.netwatch-scan   = timer "netwatch presence diff every 15 min" "*:0/15";
   systemd.timers.netwatch-drift  = timer "netwatch port drift hourly" "hourly";
-  # 06:45 — before the 07:00 quiet-hours boundary lifts by only a few minutes,
-  # so the summary is waiting rather than arriving in the middle of the night.
-  systemd.timers.netwatch-report = timer "netwatch daily report" "*-*-* 06:45:00";
+  # 07:10 — AFTER the 07:00 quiet-hours boundary, not before it. Scheduling a
+  # notifying job at 06:45 put it inside quiet hours, which was wrong even at
+  # low priority: a morning-facing job belongs in the morning.
+  systemd.timers.netwatch-report = timer "netwatch daily report" "*-*-* 07:10:00";
   systemd.timers.netwatch-audit  = timer "netwatch weekly audit" "Sun *-*-* 08:00:00";
 
   # --- Watchdog for the watchdog -------------------------------------------
