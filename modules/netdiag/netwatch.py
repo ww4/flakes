@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import urllib.request
@@ -145,6 +146,26 @@ def is_randomised(mac: str) -> bool:
         return False
 
 
+def hostname_for(ip: str) -> str:
+    """Reverse-DNS name, or "".
+
+    The gateway's DHCP server registers client names (wallace.lan, Pixel-7.lan,
+    Marys-Air.lan), which makes this the single most useful identifier
+    available — far better than a MAC, and free. Deliberately stdlib-only via
+    the system resolver, so the unit gains no new dependency.
+    """
+    try:
+        name = socket.gethostbyaddr(ip)[0]
+    except (OSError, socket.herror, socket.gaierror):
+        return ""
+    # Strip the search domain: "wallace.lan" -> "wallace". Keep it recognisable.
+    for suffix in (".lan", ".local", ".home", ".localdomain"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return "" if name in ("_gateway", ip) else name
+
+
 def cmd_scan() -> int:
     """Every 15 min: presence diff against the accepted baseline."""
     state = load_state()
@@ -181,7 +202,18 @@ def cmd_scan() -> int:
 
     devices = state.setdefault("devices", {})
     seeding = state.get("seeded") is None
-    new, rebound, dup = [], [], []
+    new, rebound, dup, rotated = [], [], [], []
+
+    # Hostname -> the accepted MAC currently holding it. This is what makes MAC
+    # ROTATION survivable: phones randomise their MAC per network and re-roll it
+    # periodically, so a device accepted yesterday reappears under a brand-new
+    # MAC and would otherwise alert as a stranger every time. The DHCP-registered
+    # name is stable across that, so it — not the MAC — is the durable identity.
+    known_by_host: dict[str, str] = {}
+    for m, r in devices.items():
+        h = r.get("hostname") or ""
+        if h and r.get("accepted"):
+            known_by_host.setdefault(h, m)
 
     by_ip: dict[str, set[str]] = {}
     for ip, mac, vendor in rows:
@@ -191,15 +223,31 @@ def cmd_scan() -> int:
         by_ip.setdefault(ip, set()).add(mac)
         rec = devices.get(mac)
         if rec is None:
+            host = hostname_for(ip)
+            prior = known_by_host.get(host) if host else None
+            if prior and prior in devices:
+                # Same name, new MAC: a re-randomisation, not a new device.
+                # Carry the label and acceptance across so curation survives.
+                old = devices.pop(prior)
+                old.update({"ip": ip, "last_seen": now(), "hostname": host})
+                if vendor and vendor != "unknown":
+                    old["vendor"] = vendor
+                devices[mac] = old
+                known_by_host[host] = mac
+                rotated.append((host, prior, mac))
+                continue
             devices[mac] = {
                 "first_seen": now(), "last_seen": now(), "ip": ip,
                 "vendor": vendor, "label": "", "ports": [],
+                "hostname": host,
                 # Seeding auto-accepts everything present on the first run, so
                 # day one is not an alert storm nobody reads.
                 "accepted": seeding,
             }
+            if host:
+                known_by_host.setdefault(host, mac)
             if not seeding:
-                new.append((ip, mac, vendor))
+                new.append((ip, mac, vendor, host))
         else:
             if rec.get("ip") != ip:
                 rebound.append((mac, rec.get("ip"), ip))
@@ -207,6 +255,10 @@ def cmd_scan() -> int:
             rec["last_seen"] = now()
             if vendor and vendor != "unknown":
                 rec["vendor"] = vendor
+            # Backfill names for devices recorded before this existed, and pick
+            # up a rename (a device renamed on the router should show its name).
+            if not rec.get("hostname"):
+                rec["hostname"] = hostname_for(ip)
 
     for ip, macs in by_ip.items():
         if len(macs) > 1:
@@ -234,9 +286,20 @@ def cmd_scan() -> int:
                f"Review: netwatch status",
                "default", "dog")
 
-    for ip, mac, vendor in new:
-        hint = " — likely a phone/laptop (randomised MAC)" if is_randomised(mac) else ""
-        notify(f"netwatch: NEW DEVICE {ip}",
+    for host, old_mac, new_mac in rotated:
+        # Informational, and quiet. This is a phone doing exactly what modern
+        # phones do; alerting at it weekly would train Chris to ignore netwatch.
+        print(f"netwatch: {host} re-randomised its MAC "
+              f"({old_mac} -> {new_mac}) — same device, label preserved")
+
+    for ip, mac, vendor, host in new:
+        who = host or vendor or "unknown device"
+        if is_randomised(mac):
+            hint = ("\nMAC is locally administered — a phone/laptop using "
+                    "per-network randomisation, not a spoof.")
+        else:
+            hint = ""
+        notify(f"netwatch: NEW DEVICE {who} ({ip})",
                f"{mac}\n{vendor}{hint}\n\n"
                f"Accept it:  netwatch accept {mac} <label>\n"
                f"Inspect it: netdiag identify {ip}",
@@ -395,13 +458,26 @@ def cmd_status() -> int:
     print(f"last scan : {state.get('last_scan')}")
     print(f"last report: {state.get('last_report')}")
     print(f"devices   : {len(devices)}")
+
+    def ipkey(kv):
+        try:
+            return [int(o) for o in kv[1].get("ip", "0.0.0.0").split(".")]
+        except ValueError:
+            return [0, 0, 0, 0]
+
+    print("\nKNOWN DEVICES:")
+    print(f"  {'IP':<16} {'NAME':<24} {'MAC':<18} VENDOR")
+    for mac, d in sorted(devices.items(), key=ipkey):
+        # label (human-set) beats hostname (DHCP-registered) beats nothing.
+        name = d.get("label") or d.get("hostname") or ""
+        tag = " [rand]" if is_randomised(mac) else ""
+        mark = "" if d.get("accepted") else "  <-- UNACCEPTED"
+        print(f"  {d.get('ip', '?'):<16} {name[:24]:<24} {mac}{tag:<7} "
+              f"{(d.get('vendor') or '?')[:26]}{mark}")
+
     pending = [(m, d) for m, d in devices.items() if not d.get("accepted")]
     if pending:
-        print(f"\nAWAITING ACCEPTANCE ({len(pending)}):")
-        for mac, d in pending:
-            tag = " [randomised]" if is_randomised(mac) else ""
-            print(f"  {d.get('ip', '?'):<16} {mac}  {d.get('vendor', '?')}{tag}")
-        print("\n  netwatch accept <mac> <label>")
+        print(f"\n{len(pending)} awaiting acceptance — netwatch accept <mac> <label>")
     return 0
 
 
