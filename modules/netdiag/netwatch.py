@@ -107,15 +107,34 @@ def gateway_ip() -> str:
 
 
 def arp_census(iface: str) -> list[tuple[str, str, str]]:
-    """[(ip, mac, vendor)] from netdiag-priv. Runs as root under systemd."""
+    """Distinct [(ip, mac, vendor)] from netdiag-priv. Root under systemd.
+
+    ⚠️ DEDUPLICATION IS LOAD-BEARING, not tidiness. arp-scan runs with
+    --retry=3 and prints one line per REPLY, so a host that answers more than
+    one probe appears more than once. That is normal and says nothing about
+    the network. Treating those rows as separate hosts caused two real faults
+    on 2026-08-19:
+
+      - the same MAC appeared 2-3x under one IP, which the duplicate-IP check
+        read as an address conflict and reported as possible ARP SPOOFING.
+      - the host COUNT was inflated by the extra rows, and that count feeds the
+        running median behind the degraded-scan floor, so the floor was being
+        calibrated against a number that bounced with retry luck.
+
+    A genuine conflict is one IP with two DIFFERENT MACs. Row count never was
+    the signal.
+    """
     out = run(["netdiag-priv", "arpscan", iface], timeout=180)
-    rows = []
+    seen: dict[tuple[str, str], str] = {}
     for line in out.splitlines():
         parts = line.split("\t") if "\t" in line else line.split(None, 2)
         if len(parts) >= 2 and re.match(r"^\d+\.\d+\.\d+\.\d+$", parts[0]):
             vendor = parts[2].strip() if len(parts) > 2 else "unknown"
-            rows.append((parts[0], parts[1].lower(), vendor))
-    return rows
+            key = (parts[0], parts[1].lower())
+            # Keep the most informative vendor string across duplicate replies.
+            if key not in seen or seen[key] in ("", "unknown"):
+                seen[key] = vendor
+    return [(ip, mac, vendor) for (ip, mac), vendor in seen.items()]
 
 
 def is_randomised(mac: str) -> bool:
@@ -164,9 +183,12 @@ def cmd_scan() -> int:
     seeding = state.get("seeded") is None
     new, rebound, dup = [], [], []
 
-    by_ip: dict[str, list[str]] = {}
+    by_ip: dict[str, set[str]] = {}
     for ip, mac, vendor in rows:
-        by_ip.setdefault(ip, []).append(mac)
+        # A SET, not a list. The conflict signal is "how many DIFFERENT MACs
+        # claim this address", and a list counts repeated sightings of the same
+        # one — which is what produced the false spoofing alerts.
+        by_ip.setdefault(ip, set()).add(mac)
         rec = devices.get(mac)
         if rec is None:
             devices[mac] = {
@@ -188,7 +210,7 @@ def cmd_scan() -> int:
 
     for ip, macs in by_ip.items():
         if len(macs) > 1:
-            dup.append((ip, macs))
+            dup.append((ip, sorted(macs)))
 
     # Gateway MAC change = someone is answering for the router. Always critical,
     # always bypasses quiet hours: this is an attack in progress, not a report.

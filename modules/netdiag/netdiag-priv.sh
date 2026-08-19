@@ -128,8 +128,15 @@ cmd_capture() {
 cmd_arpscan() {
   local iface=${1-} target=${2-}
   valid_iface "$iface"
-  # --plain drops the banner; duplicates are NOT suppressed (no --ignoredups)
-  # because a duplicate reply is exactly the IP-conflict signal we want.
+  # --plain drops the banner. Duplicate replies are left UNSUPPRESSED (no
+  # --ignoredups) so a human reading raw output sees exactly what came back.
+  #
+  # ⚠️ A DUPLICATE REPLY IS NOT AN IP CONFLICT. This comment previously claimed
+  # it was, and netwatch was built on that claim — with --retry=3 a host simply
+  # answers more than one probe, so the same IP+MAC prints repeatedly. On
+  # 2026-08-19 that produced alerts naming a single MAC 2-3 times as "possible
+  # ARP spoofing". A real conflict is one IP with two DIFFERENT MACs. Any
+  # automated consumer of this output must deduplicate on (ip, mac) first.
   if [[ -z $target ]]; then
     arp-scan --interface="$iface" --localnet --retry=3 --plain
   else
