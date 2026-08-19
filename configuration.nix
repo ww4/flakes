@@ -36,6 +36,7 @@
     ./modules/agent/digest.nix              # weekly headless digest (claude -p /catch-up -> ntfy)
     ./modules/agent/claude-config-sync.nix  # hourly pull of the synced global ~/.claude/CLAUDE.md
     ./modules/services/content-archives.nix  # weekly rebuild of the podcast transcript corpora
+    ./modules/services/podcast-triage.nix    # mine the discovery archives for episodes worth Chris's time
 
     # Services.
     ./modules/services/nginx-access.nix     # source-gate all vhosts to Tailscale + LAN (security review 2026-06-04)
@@ -111,8 +112,30 @@
   services.contentArchives = {
     enable = true;
     archives = [
-      { name = "lup-archive";  path = "/home/claude/lup-archive"; }
-      { name = "twib-archive"; path = "/home/claude/twib-archive"; }
+      # PERSONAL — Chris listens to these; archived so questions about what was
+      # discussed can be answered from the text.
+      { name = "lup-archive";     path = "/home/claude/lup-archive"; }
+      { name = "twib-archive";    path = "/home/claude/twib-archive"; }
+      { name = "audible-archive"; path = "/home/claude/audible-archive"; }
+      { name = "wbd-archive";     path = "/home/claude/wbd-archive"; }
+      # DISCOVERY — Chris does NOT listen to these. Archived purely so
+      # podcast-triage can surface the occasional episode worth his time.
+      { name = "tftc-archive";         path = "/home/claude/tftc-archive"; }
+      { name = "rhr-archive";          path = "/home/claude/rhr-archive"; }
+      { name = "citadel-archive";      path = "/home/claude/citadel-archive"; }
+      { name = "btcexplained-archive"; path = "/home/claude/btcexplained-archive"; }
+    ];
+  };
+
+  # The discovery half: rank new episodes from the shows Chris does not listen
+  # to, then have the reader judge which few are actually worth his time.
+  services.podcastTriage = {
+    enable = true;
+    archives = [
+      "/home/claude/tftc-archive"
+      "/home/claude/rhr-archive"
+      "/home/claude/citadel-archive"
+      "/home/claude/btcexplained-archive"
     ];
   };
 }
