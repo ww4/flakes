@@ -36,6 +36,7 @@
     ./modules/agent/claude-agent-profile.nix # harness profile (shared agent-modules flake)
     ./modules/agent/digest.nix              # weekly headless digest (claude -p /catch-up -> ntfy)
     ./modules/agent/claude-config-sync.nix  # hourly pull of the synced global ~/.claude/CLAUDE.md
+    ./modules/services/content-archives.nix  # weekly rebuild of the podcast transcript corpora
 
     # Services.
     ./modules/services/nginx-access.nix     # source-gate all vhosts to Tailscale + LAN (security review 2026-06-04)
@@ -104,4 +105,15 @@
   # The NixOS release the system was first installed from. Leave it pinned —
   # see `man configuration.nix`.
   system.stateVersion = "22.11";
+
+  # Weekly refresh of the podcast transcript corpora. Only LIVE shows: ww4/
+  # sh-archive is absent on purpose — Self-Hosted ended at "150: The Last One",
+  # so re-fetching it forever would be noise.
+  services.contentArchives = {
+    enable = true;
+    archives = [
+      { name = "lup-archive";  path = "/home/claude/lup-archive"; }
+      { name = "twib-archive"; path = "/home/claude/twib-archive"; }
+    ];
+  };
 }
