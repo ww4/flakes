@@ -23,15 +23,21 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import socket
 import subprocess
 import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 STATE_DIR = os.environ.get("NETWATCH_STATE", "/var/lib/netwatch")
 STATE_FILE = os.path.join(STATE_DIR, "state.json")
 NTFY = os.environ.get("NETWATCH_NTFY", "http://127.0.0.1:8090/gromit-alerts")
+# Base for the ntfy action buttons. Hosted under the ntfy vhost, which already
+# has DNS + a cert and inherits the LAN/Tailscale source gate.
+ACTION_BASE = os.environ.get(
+    "NETWATCH_ACTION_BASE",
+    "https://ntfy.rosemaryacres.com/netwatch-action")
 
 # A scan that finds fewer than this fraction of the running median host count is
 # treated as broken rather than believed. Picked low enough that a genuinely
@@ -49,7 +55,7 @@ def quiet_hours() -> bool:
 
 
 def notify(title: str, body: str, priority: str = "default",
-           tags: str = "eyes") -> None:
+           tags: str = "eyes", actions: str = "") -> None:
     """Post to ntfy, never louder than quiet hours allow.
 
     ⚠️ THERE IS DELIBERATELY NO ESCAPE HATCH. This function used to take a
@@ -69,9 +75,10 @@ def notify(title: str, body: str, priority: str = "default",
     if quiet_hours():
         priority = "low"
     safe = re.sub(r"[^\x20-\x7e]", "", title)[:200]
-    req = urllib.request.Request(
-        NTFY, data=body.encode(),
-        headers={"Title": safe, "Priority": priority, "Tags": tags})
+    headers = {"Title": safe, "Priority": priority, "Tags": tags}
+    if actions:
+        headers["Actions"] = actions
+    req = urllib.request.Request(NTFY, data=body.encode(), headers=headers)
     try:
         urllib.request.urlopen(req, timeout=10).read()
     except OSError as exc:
@@ -90,17 +97,28 @@ def flush_held(state: dict) -> None:
     held = state.get("held") or []
     if not held or quiet_hours():
         return
-    lines = [f"- {h['at'][11:16]}Z  {h['title']}" for h in held]
-    notify(f"netwatch: {len(held)} finding(s) overnight",
-           "Held through quiet hours, as agreed:\n" + "\n".join(lines) +
-           "\n\nDetail: netwatch status  ·  /var/lib/netwatch/",
-           "default", "dog")
+    # A handful: replay each one intact, because they carry their ACTION BUTTONS
+    # and a summary would strip them — leaving him back at "here is a thing you
+    # cannot act on", which is the problem this was built to solve. In the
+    # morning several actionable notifications beat one unactionable digest.
+    if len(held) <= 5:
+        for h in held:
+            notify(h["title"], f"[held from {h['at'][11:16]}Z overnight]\n" + h["body"],
+                   h.get("priority", "default"), h.get("tags", "eyes"),
+                   h.get("actions", ""))
+    else:
+        # A flood is itself the finding; summarise rather than spam.
+        lines = [f"- {h['at'][11:16]}Z  {h['title']}" for h in held]
+        notify(f"netwatch: {len(held)} finding(s) overnight",
+               "Held through quiet hours, as agreed:\n" + "\n".join(lines) +
+               "\n\nDetail: netwatch status  ·  /var/lib/netwatch/",
+               "default", "dog")
     state["held"] = []
 
 
 def alert_once(state: dict, key: str, title: str, body: str,
                priority: str = "default", tags: str = "eyes",
-               rearm_hours: int = 12) -> None:
+               rearm_hours: int = 12, actions: str = "") -> None:
     """Notify only when this condition is NEWLY true, or has gone stale.
 
     The house rule is notify on state CHANGE, and netwatch broke it badly: one
@@ -130,10 +148,11 @@ def alert_once(state: dict, key: str, title: str, body: str,
     if quiet_hours():
         # Hold it. flush_held() delivers one consolidated summary after 07:00.
         state.setdefault("held", []).append(
-            {"at": now(), "title": title, "body": body})
+            {"at": now(), "title": title, "body": body,
+             "priority": priority, "tags": tags, "actions": actions})
         print(f"netwatch: [{key}] held until morning — {title}")
         return
-    notify(title, body, priority, tags)
+    notify(title, body, priority, tags, actions)
 
 
 def alert_clear(state: dict, key: str) -> None:
@@ -393,14 +412,27 @@ def cmd_scan() -> int:
                     "per-network randomisation, not a spoof.")
         else:
             hint = ""
+        # Two single-use nonces, one per button, bound to this MAC. The buttons
+        # replace the shell command this notification used to end with — which
+        # was unusable on a phone, and so amounted to no call to action at all.
+        acts = state.setdefault("actions", {})
+        exp = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(
+            timespec="seconds")
+        n_acc, n_inv = secrets.token_urlsafe(16), secrets.token_urlsafe(16)
+        acts[n_acc] = {"mac": mac, "verb": "accept", "exp": exp}
+        acts[n_inv] = {"mac": mac, "verb": "investigate", "exp": exp}
+        buttons = (
+            f"http, Accept, {ACTION_BASE}/{n_acc}/accept, method=POST, clear=true; "
+            f"http, Investigate, {ACTION_BASE}/{n_inv}/investigate, method=POST"
+        )
         # Through alert_once, NOT notify: an unknown device appearing at 03:00
-        # is exactly the "something fishy" case Chris wants held and summarised
-        # in the morning, not trickled into the drawer overnight one at a time.
+        # is exactly the "something fishy" case Chris wants held and flagged in
+        # the morning, not trickled into the drawer overnight one at a time.
         alert_once(state, f"new:{mac}", f"netwatch: NEW DEVICE {who} ({ip})",
                    f"{mac}\n{vendor}{hint}\n\n"
-                   f"Accept it:  netwatch accept {mac} <label>\n"
-                   f"Inspect it: netdiag identify {ip}",
-                   "high", "eyes")
+                   f"Accept adds it to the baseline. Investigate fingerprints "
+                   f"it and sends the findings back.",
+                   "high", "eyes", actions=buttons)
     for mac, old_ip, new_ip in rebound:
         alert_once(state, f"rebound:{mac}:{new_ip}",
                    "netwatch: device changed address",

@@ -47,6 +47,11 @@ let
   # while every timer-driven scan died with FileNotFoundError.
   inherit (import ./packages.nix { inherit pkgs; }) netdiag netdiagPriv;
 
+  # The endpoint behind the ntfy notification buttons.
+  netwatchActions = pkgs.writers.writePython3Bin "netwatch-actions" {
+    flakeIgnore = [ "E501" "E203" "W503" "W504" ];
+  } (builtins.readFile ./netwatch-actions.py);
+
   netwatch = pkgs.writers.writePython3Bin "netwatch" {
     flakeIgnore = [ "E501" "E203" "W503" "W504" ];
   } (builtins.readFile ./netwatch.py);
@@ -60,6 +65,8 @@ let
     serviceConfig = {
       Type = "oneshot";
       StateDirectory = "netwatch";
+      StateDirectoryMode = "0770";
+      Group = "netwatch";
       # It reads the network and writes one state dir; it needs nothing else.
       ProtectHome = true;
       PrivateTmp = true;
@@ -79,7 +86,48 @@ let
   };
 in
 {
-  environment.systemPackages = [ netwatch ];
+  environment.systemPackages = [ netwatch netwatchActions ];
+
+  # --- The notification action buttons ------------------------------------
+  # A NEW DEVICE alert used to end in a shell command, which is unusable on a
+  # phone: readable but not runnable, so effectively no call to action at all.
+  # It now carries Accept / Investigate buttons that call this service.
+  #
+  # Loopback-only, proxied under the EXISTING ntfy vhost — which already has
+  # DNS and a certificate, and inherits the LAN/Tailscale source gate from
+  # nginx-access.nix, so no new subdomain, cert or Authelia rule is needed.
+  # Hosting it there is also coherent: these are the notification's own
+  # callbacks.
+  systemd.services.netwatch-actions = {
+    description = "netwatch notification action endpoint (ntfy buttons)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network.target" ];
+    path = with pkgs; [ netwatch nmap curl iproute2 coreutils ];
+    serviceConfig = {
+      ExecStart = lib.getExe netwatchActions;
+      Restart = "on-failure";
+      # Writes the netwatch baseline, so it shares the state dir. Runs as its
+      # own user rather than root: it is the only network-facing piece here.
+      User = "netwatch-act";
+      Group = "netwatch";
+      StateDirectory = "netwatch";
+      StateDirectoryMode = "0770";
+      ProtectHome = true;
+      PrivateTmp = true;
+      NoNewPrivileges = true;
+    };
+  };
+
+  users.users.netwatch-act = {
+    isSystemUser = true;
+    group = "netwatch";
+    description = "netwatch notification action endpoint";
+  };
+  users.groups.netwatch = { };
+
+  services.nginx.virtualHosts."ntfy.rosemaryacres.com".locations."/netwatch-action/" = {
+    proxyPass = "http://127.0.0.1:8799";
+  };
 
   systemd.services.netwatch-scan   = job "netwatch: presence diff (new devices)" "scan";
   systemd.services.netwatch-drift  = job "netwatch: open-port drift on known hosts" "drift";
