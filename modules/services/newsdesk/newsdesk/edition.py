@@ -371,7 +371,11 @@ def _footer_markdown(stale: list[dict], awake: list[dict], passed,
                    "</summary>")
         out.append("")
         for r in sorted(passed, key=lambda r: -(r["score"] or 0)):
-            out.append(f"- {r['title']} — {r['source']}")
+            # Linked and tracked. A click here is the strongest single signal
+            # the system gets: it means the reader put something in front of
+            # him that should have been an item, and he went and read it
+            # anyway. See feedback.missed_clicks.
+            out.append(f"- [{r['title']}](/news/r?i={r['id']}) — {r['source']}")
         out.append("")
         out.append("</details>")
         out.append("")

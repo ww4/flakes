@@ -207,6 +207,14 @@ time. Say roughly how long it is. Keep the anchor voice.
   hour. ~4,000 words. [nd:<id>]
 ```
 
+**An `evergreen` candidate plays by different rules.** These come from archives
+that are known-good in full — Rick's blog is the first — and exactly one slot is
+reserved for them, so at most one can ever appear. Do not judge it on
+newsworthiness or importance; it is decades old and that is the point. Include
+it when it would be a pleasure to reread, and *especially* when it happens to
+speak to something else in today's edition — say so if it does. Leaving it out
+on a strong day is fine. Never explain that it is old.
+
 `shown_before` on a candidate tells you how many times it has already been
 offered and not read. **Do not treat that as a mark against it.** He asked for
 these to come back around; a piece he has skipped three times may simply not

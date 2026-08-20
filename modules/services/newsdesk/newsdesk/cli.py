@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from . import collect as collect_mod
+from . import corpus as corpus_mod
 from . import edition as edition_mod
 from . import feedback, gradeserver
 from . import sources as sources_mod
@@ -39,6 +40,19 @@ def cmd_collect(args) -> int:
     print(f"newsdesk: {stats['ok']} ok, {stats['not_modified']} unchanged, "
           f"{stats['failed']} failed, {stats['new_items']} new item(s)",
           file=sys.stderr)
+    return 0
+
+
+def cmd_ingest(args) -> int:
+    """Walk the local corpus sources (directories of markdown, not feeds)."""
+    con = _con(args)
+    stats = corpus_mod.ingest(con, load_profile(), only=args.source)
+    print(json.dumps(stats))
+    if stats["missing"]:
+        print(f"newsdesk: {stats['missing']} corpus director(ies) MISSING",
+              file=sys.stderr)
+    print(f"newsdesk: {stats['added']} new post(s) from {stats['corpora']} corpus/corpora "
+          f"({stats['skipped']} stubs skipped)", file=sys.stderr)
     return 0
 
 
@@ -152,6 +166,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("collect", help="poll every enabled source")
     p.add_argument("--source", help="just this one, for debugging")
     p.set_defaults(func=cmd_collect)
+
+    p = sub.add_parser("ingest", help="ingest local corpus sources")
+    p.add_argument("--source")
+    p.set_defaults(func=cmd_ingest)
 
     p = sub.add_parser("rank", help="build the shortlist for an edition")
     p.add_argument("--kind", choices=sorted(edition_mod.KINDS), default="brief")

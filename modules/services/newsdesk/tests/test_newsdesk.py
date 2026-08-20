@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from newsdesk import collect as collect_mod  # noqa: E402
 from newsdesk import edition as edition_mod  # noqa: E402
 from newsdesk import feedback, feeds, gradeserver  # noqa: E402
+from newsdesk import corpus as corpus_mod  # noqa: E402
 from newsdesk import longform  # noqa: E402
 from newsdesk import sources as sources_mod  # noqa: E402
 from newsdesk.db import connect, seed_sources  # noqa: E402
@@ -1167,3 +1168,117 @@ class TestLongform(Base):
         page = (self.dir / "web" / rel).read_text()
         self.assertNotIn("<script>alert", page)
         self.assertIn("&lt;script&gt;", page)
+
+
+class TestCorpusAndEvergreen(Base):
+    def setUp(self):
+        super().setUp()
+        self.corpus = self.dir / "corpus"
+        self.corpus.mkdir()
+        self.con.execute(
+            "INSERT INTO sources (name, lane, url, tier, cap, kind, evergreen, longform)"
+            " VALUES ('Archive','agrarian',?, 'core',1,'corpus',1,1)", (str(self.corpus),))
+        self.con.commit()
+
+    def _post(self, name, title, words, date="2004-06-01", junk=False):
+        body = "Server error: there was an error. " if junk else ""
+        body += "word " * words
+        (self.corpus / name).write_text(
+            f"---\ndate: {date}\ntitle: '{title}'\nurl: http://e.invalid/{name}\n---\n\n"
+            f"# {title}\n*{date}*\n\n{body}")
+
+    def test_ingests_local_markdown(self):
+        self._post("a.md", "An essay", 500)
+        stats = corpus_mod.ingest(self.con, PROFILE)
+        self.assertEqual(stats["added"], 1)
+        row = self.con.execute("SELECT title, url, published, words FROM items").fetchone()
+        self.assertEqual(row["title"], "An essay")
+        self.assertEqual(row["url"], "http://e.invalid/a.md")
+        self.assertTrue(row["published"].startswith("2004-06-01"))
+
+    def test_ingest_is_idempotent(self):
+        self._post("a.md", "An essay", 500)
+        corpus_mod.ingest(self.con, PROFILE)
+        corpus_mod.ingest(self.con, PROFILE)
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM items").fetchone()[0], 1)
+
+    def test_scrape_wreckage_is_dropped(self):
+        """The real archive contains pages like 'UserLand Frontier Server Error'."""
+        self._post("err.md", "UserLand Frontier Server Error", 400, junk=True)
+        self._post("ok.md", "A real post", 400)
+        stats = corpus_mod.ingest(self.con, PROFILE)
+        self.assertEqual(stats["added"], 1)
+        self.assertEqual(stats["skipped"], 1)
+
+    def test_stubs_are_dropped(self):
+        self._post("stub.md", "Two lines", 20)
+        self.assertEqual(corpus_mod.ingest(self.con, PROFILE)["added"], 0)
+
+    def test_a_missing_corpus_directory_is_not_a_quiet_success(self):
+        self.con.execute("UPDATE sources SET url='/nonexistent/path' WHERE name='Archive'")
+        self.con.commit()
+        stats = corpus_mod.ingest(self.con, PROFILE)
+        self.assertEqual(stats["missing"], 1)
+        self.assertIn("not found",
+                      self.con.execute("SELECT last_error FROM sources").fetchone()[0])
+
+    def test_collect_never_tries_to_fetch_a_corpus(self):
+        """Polling a directory would fail every run and mark a healthy archive dead."""
+        real = feeds.fetch_feed
+        feeds.fetch_feed = lambda url, **kw: (_ for _ in ()).throw(
+            AssertionError(f"corpus source was fetched over HTTP: {url}"))
+        try:
+            self.add_source("Feed", "linux", url="https://f.invalid")
+            feeds.fetch_feed = FakeFeeds({"https://f.invalid": feeds.FeedResult(
+                entries=[], etag=None, last_modified=None)})
+            stats = collect_mod.collect(self.con, PROFILE)
+            self.assertEqual(stats["sources"], 1, "the corpus source was polled")
+        finally:
+            feeds.fetch_feed = real
+
+    def test_evergreen_gets_exactly_one_reserved_slot(self):
+        """479 Dry Creek posts against a ~500 pool would otherwise appear daily."""
+        for n in range(30):
+            self._post(f"e{n}.md", f"old essay {n}", 1200)
+        corpus_mod.ingest(self.con, PROFILE)
+        self.add_source("Fresh", "ideas")
+        self.add_item("Fresh", "ideas", "a new essay", words=2000)
+        picks = longform.shortlist(self.con)
+        ever = [p for p in picks if p["evergreen"]]
+        self.assertEqual(len(ever), 1, "evergreen must take exactly one slot")
+        self.assertIn("Fresh", {p["source"] for p in picks})
+
+    def test_evergreen_is_flagged_for_the_reader(self):
+        self._post("a.md", "An old essay", 1200)
+        corpus_mod.ingest(self.con, PROFILE)
+        self.assertTrue(longform.shortlist(self.con)[0]["evergreen"])
+
+
+class TestMissedClicks(Base):
+    def test_a_click_on_a_rejected_item_promotes_its_source(self):
+        """Chris: a massive indicator it should have been valued higher."""
+        self.add_source("Under", "linux", cap=2, weight=1.0)
+        i = self.add_item("Under", "linux", "the one he went and read",
+                          state="passed_over")
+        longform.record_click(self.con, i)
+        self.assertEqual([m["id"] for m in feedback.missed_clicks(self.con)], [i])
+        report = feedback.tune(self.con, PROFILE)
+        row = self.con.execute("SELECT cap, weight FROM sources WHERE name='Under'").fetchone()
+        self.assertEqual(row["cap"], 3)
+        self.assertGreater(row["weight"], 1.0)
+        self.assertIn("not-selected", report)
+
+    def test_one_missed_click_outweighs_the_demotion_threshold(self):
+        """A demotion needs four thumbs-down; a missed click needs one."""
+        self.add_source("Under", "linux", cap=2)
+        i = self.add_item("Under", "linux", "read anyway", state="passed_over")
+        longform.record_click(self.con, i)
+        feedback.tune(self.con, PROFILE)
+        self.assertEqual(
+            self.con.execute("SELECT cap FROM sources WHERE name='Under'").fetchone()[0], 3)
+
+    def test_a_click_on_a_published_item_is_not_a_missed_click(self):
+        self.add_source("Fine", "linux")
+        i = self.add_item("Fine", "linux", "was published", state="published")
+        longform.record_click(self.con, i)
+        self.assertEqual(feedback.missed_clicks(self.con), [])

@@ -105,7 +105,7 @@ def eligible(con: sqlite3.Connection, *, min_words: int = MIN_WORDS,
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=COOLDOWN_DAYS)).isoformat()
     rows = con.execute(
-        "SELECT i.*, s.tier, s.note AS source_note FROM items i"
+        "SELECT i.*, s.tier, s.note AS source_note, s.evergreen FROM items i"
         " JOIN sources s ON s.name = i.source"
         " WHERE i.words >= ?"
         "   AND i.clicked_at IS NULL"          # read -> retired, never returns
@@ -133,7 +133,21 @@ def shortlist(con: sqlite3.Connection, *, limit: int = SHORTLIST,
     out: list[dict] = []
     spare: list[sqlite3.Row] = []
 
-    for row in eligible(con, min_words=min_words, seed=seed):
+    rows = eligible(con, min_words=min_words, seed=seed)
+
+    # Evergreen archives get ONE reserved slot between them, never more.
+    # Rick's blog alone is 479 eligible pieces against a pool of ~500; left to
+    # compete it would appear every single morning, which is not what "sprinkle
+    # some in occasionally" means. Reserving the slot also guarantees the
+    # reader always HAS the option when the day's news happens to resonate.
+    evergreens = [r for r in rows if r["evergreen"]]
+    if evergreens:
+        pick = evergreens[0]
+        seen_sources.add(pick["source"])
+        seen_lanes.add(pick["lane"])
+        out.append(_as_candidate(pick))
+
+    for row in (r for r in rows if not r["evergreen"]):
         if len(out) >= limit:
             break
         if row["source"] in seen_sources:
@@ -160,6 +174,7 @@ def shortlist(con: sqlite3.Connection, *, limit: int = SHORTLIST,
 def _as_candidate(row: sqlite3.Row) -> dict:
     return {
         "id": row["id"],
+        "evergreen": bool(row["evergreen"]),
         "lane": row["lane"],
         "source": row["source"],
         "source_note": row["source_note"] or "",

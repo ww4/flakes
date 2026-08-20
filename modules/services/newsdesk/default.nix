@@ -67,6 +67,7 @@ let
 
     # A failed poll is one source's problem, never the edition's.
     ${nd} collect || echo "newsdesk: collect returned non-zero — continuing"
+    ${nd} ingest || echo "newsdesk: corpus ingest returned non-zero — continuing"
 
     kind=${kindExpr}
     n="$(${nd} rank --kind "$kind" | head -1)" || n=0
@@ -281,6 +282,7 @@ in
         ${nd} sources --page ${cfg.spaceDir}/Sources.md || \
           echo "newsdesk: sources page sync failed — continuing"
         ${nd} collect
+        ${nd} ingest
       '';
     };
 

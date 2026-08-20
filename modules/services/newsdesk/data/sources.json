@@ -17,7 +17,9 @@
   "",
   "2026-08-20: 24 long-form sources added for the good-reads section. They are ordinary sources \u2014 they feed the daily lanes too \u2014 but they were chosen for essays rather than news, which is why several publish under one item a week.",
   "",
-  "longform: may this source produce a GOOD READ? Word count is not a quality gate \u2014 tested against the real backlog it admitted release notes, a newsletter and a link roundup, which then crowded the essays out of the shortlist. Newsletters, aggregators, notice feeds and every release feed are false. They still feed the daily lanes normally."
+  "longform: may this source produce a GOOD READ? Word count is not a quality gate \u2014 tested against the real backlog it admitted release notes, a newsletter and a link roundup, which then crowded the essays out of the shortlist. Newsletters, aggregators, notice feeds and every release feed are false. They still feed the daily lanes normally.",
+  "",
+  "kind: 'feed' polls a URL; 'corpus' walks a local directory of markdown on gromit and is never fetched. evergreen: the archive is known-good, so it is not judged on newsworthiness and shares ONE reserved good-reads slot."
  ],
  "sources": [
   {
@@ -34,7 +36,9 @@
    },
    "note": "Nearly dormant (last post 2025-12), long archive of real technique.",
    "dormant": true,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Dark Mountain",
@@ -50,7 +54,27 @@
     "on": "2026-08-20"
    },
    "note": "Writing from the far end of the industrial-decline question. Uneven; when it lands it lands. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
+  },
+  {
+   "name": "Dry Creek Chronicles (archive)",
+   "lane": "agrarian",
+   "url": "/home/claude/drycreek-archive/posts",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "corpus",
+   "evergreen": true,
+   "probe": {
+    "last_seen": null,
+    "per_week": null,
+    "on": "2026-08-20"
+   },
+   "note": "Rick's blog, 2000-2024, ingested from the local ww4/drycreek-archive (2,520 posts; 1,443 usable after dropping scrape wreckage; 472 over 800 words). EVERGREEN: not judged on newsworthiness and never graded \u2014 it is all worth revisiting. Gets ONE reserved good-reads slot between all evergreen sources, so it appears occasionally rather than every day."
   },
   {
    "name": "Dry Creek Chronicles (wordpress)",
@@ -66,7 +90,9 @@
    },
    "note": "Rick's blog. Quiet since 2024-11 \u2014 this is how he finds out if it restarts.",
    "dormant": true,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Front Porch Republic",
@@ -82,7 +108,9 @@
    },
    "note": "Localism, place, scale, limits. The intellectual end of simple living.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Root Simple",
@@ -98,7 +126,9 @@
    },
    "note": "Urban homesteading, low-tech skills. Slow lately.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Small Farmer's Journal",
@@ -114,7 +144,45 @@
    },
    "note": "Draft animals and small-farm practice. Nobody else publishes this.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
+  },
+  {
+   "name": "The Berry Center",
+   "lane": "agrarian",
+   "url": "https://berrycenter.org/feed/",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-05-27",
+    "per_week": 0.1,
+    "on": "2026-08-20"
+   },
+   "note": "Founded by Wendell Berry's family to carry on his work. Publishes essays in his tradition and occasionally his own."
+  },
+  {
+   "name": "The Land Institute",
+   "lane": "agrarian",
+   "url": "https://landinstitute.org/feed/",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-06-18",
+    "per_week": 0.7,
+    "on": "2026-08-20"
+   },
+   "note": "Perennial grain agriculture and the science behind it. Wes Jackson's outfit; Berry's long collaborator."
   },
   {
    "name": "The Prairie Homestead",
@@ -130,7 +198,9 @@
    },
    "note": "Practical homestead technique. Some course-selling; judge filters.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "0xB10C",
@@ -146,7 +216,9 @@
    },
    "note": "Mempool/network measurement from someone who instruments the real thing.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Bitcoin Core PR Review Club",
@@ -162,7 +234,9 @@
    },
    "note": "Runs in seasons; long gaps are normal, not a dead feed.",
    "dormant": true,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Bitcoin Optech Newsletter",
@@ -178,7 +252,9 @@
    },
    "note": "The single highest-signal Bitcoin source in existence. Weekly, technical, zero price talk.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Blockstream engineering",
@@ -194,7 +270,9 @@
    },
    "note": "Engineering posts are good; marketing posts are not. Judge filters.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Brink (bitcoin dev funding)",
@@ -210,7 +288,27 @@
    },
    "note": "Who is being paid to work on what \u2014 a leading indicator of what lands next year.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
+  },
+  {
+   "name": "Casa",
+   "lane": "bitcoin",
+   "url": "https://blog.casa.io/rss/",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-08-18",
+    "per_week": 0.3,
+    "on": "2026-08-20"
+   },
+   "note": "Self-custody engineering: multisig, key rotation, recovery. Write-ups explain the reasoning."
   },
   {
    "name": "Checkonchain (James Check)",
@@ -226,7 +324,27 @@
     "on": "2026-08-20"
    },
    "note": "On-chain analytics \u2014 flows, cost basis, supply dynamics. Chris asked for this one by name. It exists to fill the deliberate hole in this catalogue: nothing else here explains a MARKET MOVE. EDITORIAL: publish when a move is explained with on-chain evidence. Never publish a price level, a target or a forecast on its own.",
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
+  },
+  {
+   "name": "Coinkite / Coldcard",
+   "lane": "bitcoin",
+   "url": "https://blog.coinkite.com/feed.xml",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 2.0,
+    "on": "2026-08-20"
+   },
+   "note": "Coldcard internals and security design. He runs their hardware."
   },
   {
    "name": "Delving Bitcoin (forum)",
@@ -242,7 +360,9 @@
    },
    "note": "Where protocol arguments actually happen, before they reach any podcast.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Fedimint blog",
@@ -258,7 +378,27 @@
    },
    "note": "DORMANT since 2025-06. Kept because it is cheap and would matter if it revives.",
    "dormant": true,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
+  },
+  {
+   "name": "Foundation Devices",
+   "lane": "bitcoin",
+   "url": "https://foundation.xyz/feed/",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 0.6,
+    "on": "2026-08-20"
+   },
+   "note": "Passport hardware wallet \u2014 firmware and hardware design write-ups."
   },
   {
    "name": "Jameson Lopp",
@@ -274,7 +414,9 @@
    },
    "note": "Self-custody and node operations, occasionally security-research grade.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Stacker News (top)",
@@ -290,7 +432,9 @@
    },
    "note": "Community aggregator. Capped hard; it is a discovery surface, not a source. EDITORIAL: aggregator. Publish only if the discussion itself is the value.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "All Power Labs",
@@ -306,7 +450,9 @@
    },
    "note": "DORMANT since 2026-01. The commercial gasifier people; worth noticing if they wake.",
    "dormant": true,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Austin Vernon",
@@ -322,7 +468,9 @@
     "on": "2026-08-20"
    },
    "note": "First-principles engineering economics \u2014 energy, chemicals, manufacturing. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Backwoods/Off-grid: Solar Power World",
@@ -338,7 +486,9 @@
    },
    "note": "Trade press. Mostly product announcements; occasionally a real install teardown.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Construction Physics",
@@ -354,7 +504,9 @@
    },
    "note": "How things get built and why they cost what they cost.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Do the Math (Tom Murphy)",
@@ -370,7 +522,9 @@
    },
    "note": "A physicist doing the arithmetic on energy claims. Nearly zero noise.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Drive On Wood forum",
@@ -386,7 +540,9 @@
    },
    "note": "His own wood-gas community. Forum firehose is small (1.2/wk) and on-topic by construction. EDITORIAL: publish only DISCUSSION \u2014 people arguing, diagnosing, or working a problem out. Chris knows what a gasifier is and does not need another build log. Reject photo threads, build pictures, show-and-tell and 'here is my rig' posts however on-topic they look.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Energy Institute at Haas",
@@ -402,7 +558,9 @@
    },
    "note": "Grid economics from people who model it.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Hackaday: Green Hacks tag",
@@ -418,7 +576,9 @@
    },
    "note": "The Hackaday sub-feed that is actually on-topic, without the other 48/wk.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Living Energy Farm",
@@ -434,7 +594,9 @@
    },
    "note": "DORMANT since 2025-05. Off-grid DC power done for real, at a working farm.",
    "dormant": true,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Low-tech Magazine",
@@ -450,7 +612,9 @@
    },
    "note": "The closest thing to a house journal for this interest. NOTE: expired TLS cert on their solar-powered server \u2014 needs an explicit per-feed insecure flag.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "No Tech Magazine",
@@ -466,7 +630,9 @@
    },
    "note": "DORMANT since 2025-06. Sister publication to Low-tech.",
    "dormant": true,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Open Source Ecology",
@@ -482,7 +648,9 @@
    },
    "note": "DORMANT since 2025-07.",
    "dormant": true,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Practical Engineering",
@@ -498,7 +666,9 @@
    },
    "note": "Infrastructure explained by an engineer who builds it.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Resilience.org",
@@ -514,7 +684,9 @@
    },
    "note": "Good material buried in advocacy. Cap and judge hard.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Roots of Progress",
@@ -530,7 +702,9 @@
     "on": "2026-08-20"
    },
    "note": "The history and philosophy of technological progress. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Wood gas: Gasifiers forum (Reddit)",
@@ -546,7 +720,9 @@
    },
    "note": "Tiny volume, perfectly on-topic. Nothing else covers gasification this directly. EDITORIAL: same as Drive On Wood \u2014 ideas and problem-solving only, never build logs or photo dumps.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Aeon",
@@ -562,7 +738,9 @@
     "on": "2026-08-20"
    },
    "note": "Essays on philosophy, science and being human. 8/wk, so cap it. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Asterisk Magazine",
@@ -578,7 +756,9 @@
     "on": "2026-08-20"
    },
    "note": "Careful, numerate essays. Quarterly-ish. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Astral Codex Ten",
@@ -594,7 +774,9 @@
    },
    "note": "Long and uneven. Cap 2 and let the judge be ruthless.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Bunnie Huang",
@@ -610,7 +792,9 @@
    },
    "note": "Hardware, supply chains, manufacturing reality.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Craig Mod",
@@ -626,7 +810,9 @@
     "on": "2026-08-20"
    },
    "note": "Walking, place, books and software. Some of the best prose in tech. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Damn Interesting",
@@ -642,7 +828,9 @@
     "on": "2026-08-20"
    },
    "note": "Deeply researched narrative non-fiction. Infrequent. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Experimental History",
@@ -658,7 +846,9 @@
     "on": "2026-08-20"
    },
    "note": "Adam Mastroianni on psychology and how science actually works. Funny and serious at once. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Interconnected (Matt Webb)",
@@ -674,7 +864,9 @@
     "on": "2026-08-20"
    },
    "note": "Short, inventive thinking about computing and physical things. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Ken Shirriff",
@@ -690,7 +882,9 @@
    },
    "note": "Chip and hardware archaeology. Nothing else like it.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Longreads",
@@ -706,7 +900,9 @@
     "on": "2026-08-20"
    },
    "note": "A curated longform digest \u2014 someone else's picks. Judge the linked piece, never the roundup. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Nautilus",
@@ -722,7 +918,9 @@
     "on": "2026-08-20"
    },
    "note": "Science essays, 70/wk. Hard cap; mine, do not read. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Noema Magazine",
@@ -738,7 +936,9 @@
     "on": "2026-08-20"
    },
    "note": "Long essays on technology, governance and the long term. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Palladium Magazine",
@@ -754,7 +954,9 @@
     "on": "2026-08-20"
    },
    "note": "Institutions, states and how societies actually function. Unusual angles. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Quanta Magazine",
@@ -770,7 +972,9 @@
     "on": "2026-08-20"
    },
    "note": "Mathematics and physics explained properly. Rare in being both rigorous and readable. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Simon Willison",
@@ -786,7 +990,9 @@
    },
    "note": "The most reliable LLM-practice signal available, 19/wk of it. EDITORIAL: he posts many short release notes. Publish the essays and the worked experiments; reject bare 'library 1.2.3 released' entries.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Slime Mold Time Mold",
@@ -802,7 +1008,9 @@
     "on": "2026-08-20"
    },
    "note": "Long, strange, rigorous investigations. Rare but substantial. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "The Convivial Society",
@@ -818,7 +1026,9 @@
     "on": "2026-08-20"
    },
    "note": "Michael Sacasas on technology, attention and place. Illich's tradition \u2014 squarely his interests. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "The Intrinsic Perspective",
@@ -834,7 +1044,9 @@
     "on": "2026-08-20"
    },
    "note": "Erik Hoel on neuroscience, consciousness and culture. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "The New Atlantis",
@@ -850,7 +1062,9 @@
     "on": "2026-08-20"
    },
    "note": "Technology and the human person. The best writing anywhere on what tools do to us. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "The Public Domain Review",
@@ -866,7 +1080,9 @@
     "on": "2026-08-20"
    },
    "note": "Essays on the odd corners of the archive. Pure food for thought. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Works in Progress",
@@ -882,7 +1098,9 @@
    },
    "note": "Long-form on why progress stalls. Quarterly-ish.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "fasterthanli.me",
@@ -898,7 +1116,9 @@
    },
    "note": "Quiet since 2025-12. Deep systems explainers when it moves.",
    "dormant": true,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Antirez",
@@ -914,7 +1134,27 @@
     "on": "2026-08-20"
    },
    "note": "Salvatore Sanfilippo (Redis) on programming and craft. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
+  },
+  {
+   "name": "Backblaze",
+   "lane": "linux",
+   "url": "https://www.backblaze.com/blog/feed/",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 1.5,
+    "on": "2026-08-20"
+   },
+   "note": "\u2b50 Quarterly hard-drive failure statistics across ~300k drives \u2014 directly useful for the SnapRAID pools \u2014 plus storage-engineering write-ups."
   },
   {
    "name": "Brendan Gregg",
@@ -930,7 +1170,27 @@
     "on": "2026-08-20"
    },
    "note": "Systems performance from the person who defined the field. DORMANT \u2014 no post since Feb 2026. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
+  },
+  {
+   "name": "ClickHouse",
+   "lane": "linux",
+   "url": "https://clickhouse.com/rss.xml",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 1.6,
+    "on": "2026-08-20"
+   },
+   "note": "Column-store internals and benchmark methodology."
   },
   {
    "name": "Dan Luu",
@@ -946,7 +1206,9 @@
    },
    "note": "Rare and long. Every post is a slot well spent.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Determinate Systems blog",
@@ -962,7 +1224,27 @@
    },
    "note": "Nix tooling from the people shipping most of it.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
+  },
+  {
+   "name": "Discord Engineering",
+   "lane": "linux",
+   "url": "https://discord.com/blog/rss.xml",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-08-17",
+    "per_week": 1.4,
+    "on": "2026-08-20"
+   },
+   "note": "Real-time systems and database migrations, told as process."
   },
   {
    "name": "Drew DeVault",
@@ -978,7 +1260,27 @@
    },
    "note": "Opinionated; occasionally an important systems argument.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
+  },
+  {
+   "name": "Dropbox Tech",
+   "lane": "linux",
+   "url": "https://dropbox.tech/feed",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-08-18",
+    "per_week": 0.4,
+    "on": "2026-08-20"
+   },
+   "note": "Storage and sync engineering at scale."
   },
   {
    "name": "Fabien Sanglard",
@@ -994,7 +1296,63 @@
     "on": "2026-08-20"
    },
    "note": "Deep, patient dissections of old software and hardware. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
+  },
+  {
+   "name": "Fly.io",
+   "lane": "linux",
+   "url": "https://fly.io/blog/feed.xml",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-07-24",
+    "per_week": 0.5,
+    "on": "2026-08-20"
+   },
+   "note": "Infrastructure engineering written unusually well."
+  },
+  {
+   "name": "GitHub Engineering",
+   "lane": "linux",
+   "url": "https://github.blog/engineering/feed/",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-08-10",
+    "per_week": 0.5,
+    "on": "2026-08-20"
+   },
+   "note": "Occasional deep dives on migrations and scaling."
+  },
+  {
+   "name": "Grafana Labs",
+   "lane": "linux",
+   "url": "https://grafana.com/blog/index.xml",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-07-31",
+    "per_week": 1.0,
+    "on": "2026-08-20"
+   },
+   "note": "He runs Grafana. Release engineering and observability write-ups."
   },
   {
    "name": "Hackaday",
@@ -1010,7 +1368,9 @@
    },
    "note": "49/wk. The general feed; Green Hacks is carried separately.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Hacker News (best)",
@@ -1026,7 +1386,9 @@
    },
    "note": "210/wk even filtered to 'best'. Pure discovery surface. EDITORIAL: aggregator. Judge the linked thing, never the ranking.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Hillel Wayne",
@@ -1042,7 +1404,27 @@
     "on": "2026-08-20"
    },
    "note": "Formal methods and software engineering, empirically minded. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
+  },
+  {
+   "name": "Honeycomb",
+   "lane": "linux",
+   "url": "https://www.honeycomb.io/feed",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 2.6,
+    "on": "2026-08-20"
+   },
+   "note": "Observability engineering and incident analysis. 2.6/wk, some is marketing."
   },
   {
    "name": "Jeff Geerling",
@@ -1058,7 +1440,9 @@
    },
    "note": "Homelab hardware tested by someone who publishes the failures.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Julia Evans",
@@ -1074,7 +1458,9 @@
    },
    "note": "Explains the thing you thought you understood.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Krebs on Security",
@@ -1090,7 +1476,9 @@
    },
    "note": "The security story that actually matters, once or twice a week.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "LWN.net headlines",
@@ -1106,7 +1494,9 @@
    },
    "note": "The kernel and distro record of account. Some items paywalled for a week.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Michael Stapelberg",
@@ -1122,7 +1512,27 @@
    },
    "note": "Distri/Debian internals, home network engineering.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
+  },
+  {
+   "name": "Netflix Tech Blog",
+   "lane": "linux",
+   "url": "https://netflixtechblog.com/feed",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-08-07",
+    "per_week": 1.5,
+    "on": "2026-08-20"
+   },
+   "note": "Large-scale systems write-ups; skip the ML-recommendation ones unless the method is the point."
   },
   {
    "name": "NixOS Discourse",
@@ -1138,7 +1548,9 @@
    },
    "note": "42/wk. Mine for breakage reports on modules he runs. EDITORIAL: reject ordinary support requests and one-person breakage. Publish design discussion, RFC outcomes, and breakage that affects modules he runs.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "NixOS blog",
@@ -1154,7 +1566,27 @@
    },
    "note": "Release announcements and RFC outcomes.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
+  },
+  {
+   "name": "Oxide Computer",
+   "lane": "linux",
+   "url": "https://oxide.computer/blog/feed",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-08-13",
+    "per_week": 0.1,
+    "on": "2026-08-20"
+   },
+   "note": "Rack-scale hardware and systems software from first principles. Rare and deep."
   },
   {
    "name": "Phoronix",
@@ -1170,7 +1602,27 @@
    },
    "note": "112/wk of benchmarks and kernel commits. Cap hard.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
+  },
+  {
+   "name": "PlanetScale",
+   "lane": "linux",
+   "url": "https://planetscale.com/blog/rss.xml",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false,
+   "probe": {
+    "last_seen": "2026-08-18",
+    "per_week": 1.2,
+    "on": "2026-08-20"
+   },
+   "note": "MySQL/Vitess internals and performance work."
   },
   {
    "name": "Rachel by the Bay",
@@ -1186,7 +1638,9 @@
    },
    "note": "Operational war stories, unmatched. WARNING: her server refused/timed out on both probe attempts from gromit \u2014 verify fetchability before trusting this slot. \u26a0\ufe0f OBSERVED 2026-08-19/20: times out from gromit on every attempt. Kept because the writing is worth chasing down, but expect it to sit in the failing list until the cause is found.",
    "dormant": true,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Self-Host Weekly (noted.lol)",
@@ -1202,7 +1656,9 @@
    },
    "note": "A human already did the self-hosting triage for the week.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Servethehome",
@@ -1218,7 +1674,9 @@
    },
    "note": "Server hardware teardowns and used-gear economics.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Tailscale blog",
@@ -1234,7 +1692,9 @@
    },
    "note": "He runs it as the perimeter at home and at work.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Ubuntu Security Notices",
@@ -1250,7 +1710,9 @@
    },
    "note": "Work-relevant: every Broadlinc backend VM is Ubuntu. Filter to installed packages.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Vermaden (BSD/UNIX ops)",
@@ -1266,7 +1728,9 @@
    },
    "note": "Deep UNIX ops write-ups, weekly-ish valuable link roundups.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Xe Iaso",
@@ -1282,7 +1746,9 @@
    },
    "note": "NixOS-adjacent infrastructure writing.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "lobste.rs",
@@ -1298,7 +1764,9 @@
    },
    "note": "175/wk, high average quality. The judge earns its keep here. EDITORIAL: aggregator. Judge the linked thing, never the ranking.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "oss-security (openwall)",
@@ -1314,7 +1782,9 @@
    },
    "note": "Filter to software he actually runs, else it is 35/wk of other people's CVEs.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "r/selfhosted (top/week)",
@@ -1330,7 +1800,9 @@
    },
    "note": "Pre-ranked by the sub. Discovery of tools, not analysis. \u26a0\ufe0f OBSERVED: Reddit rate-limits this box (HTTP 429) intermittently \u2014 succeeded on two of three real runs. EDITORIAL: a discovery surface. Publish a tool only if the post explains something about running it, not because it exists.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Adam Tooze \u2014 Chartbook",
@@ -1346,7 +1818,9 @@
    },
    "note": "Economic history applied to the present. Verbose; the judge trims.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "American Affairs",
@@ -1362,7 +1836,9 @@
     "on": "2026-08-20"
    },
    "note": "Long-form political economy and industrial policy. Publishes in quarterly bursts. LONGFORM: added for the good-reads section.",
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Apricitas Economics",
@@ -1378,7 +1854,9 @@
    },
    "note": "Chart-heavy. Quiet since May 2026.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Bank Underground (BoE staff)",
@@ -1394,7 +1872,9 @@
    },
    "note": "Bank of England staff writing without a press office. Genuinely esoteric.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Conversable Economist",
@@ -1410,7 +1890,9 @@
    },
    "note": "Timothy Taylor surfacing working papers most people never see.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Doomberg",
@@ -1426,7 +1908,9 @@
    },
    "note": "Energy-first macro. PAYWALLED \u2014 expect headline + teaser only.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "FRED Blog",
@@ -1442,7 +1926,9 @@
    },
    "note": "Short, data-first, one chart per post.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Klement on Investing",
@@ -1458,7 +1944,9 @@
    },
    "note": "One research note a day, usually a paper summarised honestly.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Liberty Street Economics (NY Fed)",
@@ -1474,7 +1962,9 @@
    },
    "note": "Same idea from the NY Fed: primary research, no punditry layer.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Lyn Alden",
@@ -1490,7 +1980,9 @@
    },
    "note": "Rare, long, structural. Publishes ~monthly; every piece is worth the slot.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Marginal Revolution",
@@ -1506,7 +1998,9 @@
    },
    "note": "35/wk of mostly links. Capped; occasionally the best thing all week.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Mises Wire",
@@ -1522,7 +2016,9 @@
    },
    "note": "Heavy ideological load at 35/wk. Cap 1 and let the judge earn it.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Wolf Street",
@@ -1538,7 +2034,9 @@
    },
    "note": "Credit, housing, freight. Reads the data series, not the narrative.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "APNIC Blog",
@@ -1554,7 +2052,9 @@
    },
    "note": "Routing, DNS and measurement, written by operators.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Ars/Broadband? Light Reading",
@@ -1570,7 +2070,9 @@
    },
    "note": "Telecom trade press. Cap 1; mostly vendor noise.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Cloudflare Blog",
@@ -1586,7 +2088,9 @@
    },
    "note": "Post-mortems and protocol work; skip the product launches.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "RIPE Labs",
@@ -1602,7 +2106,9 @@
    },
    "note": "Same, from the European registry. Esoteric and genuinely useful.",
    "dormant": false,
-   "longform": true
+   "longform": true,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Telecompetitor (rural broadband)",
@@ -1618,7 +2124,9 @@
    },
    "note": "35/wk, press-release heavy \u2014 but it is the BEAD/rural-funding beat, which is his industry. \u26a0\ufe0f OBSERVED: returns HTTP 403 to a scripted user-agent on every attempt. It will decay into dormancy rather than warn forever; needs a browser UA or dropping.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "BTCPay Server releases",
@@ -1634,7 +2142,9 @@
    },
    "note": "",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Bitcoin Core releases",
@@ -1650,7 +2160,9 @@
    },
    "note": "",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Bitcoin Knots releases",
@@ -1666,7 +2178,9 @@
    },
    "note": "He runs Knots.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Core Lightning releases",
@@ -1682,7 +2196,9 @@
    },
    "note": "",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Forgejo releases",
@@ -1698,7 +2214,9 @@
    },
    "note": "He self-hosts it and it is the source of truth for every repo.",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Fulcrum releases",
@@ -1714,7 +2232,9 @@
    },
    "note": "",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Lightning: LDK releases",
@@ -1730,7 +2250,9 @@
    },
    "note": "",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "NixOS weekly (nixpkgs releases)",
@@ -1746,7 +2268,9 @@
    },
    "note": "",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "Sparrow Wallet releases",
@@ -1762,7 +2286,9 @@
    },
    "note": "",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "mempool.space releases",
@@ -1778,7 +2304,9 @@
    },
    "note": "",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   },
   {
    "name": "nix-bitcoin releases",
@@ -1794,7 +2322,9 @@
    },
    "note": "",
    "dormant": false,
-   "longform": false
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false
   }
  ],
  "dropped": [
