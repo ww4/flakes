@@ -24,8 +24,6 @@ from pathlib import Path
 
 from .db import now, state_dir, write_atomic
 
-GRADE_LOG = "access.log"
-
 # Bounds. Deliberately tight — a tuner that can swing hard on four clicks is a
 # tuner that will overfit one bad week.
 CAP_MIN, CAP_MAX = 1, 5
@@ -39,38 +37,9 @@ SPACE_TAG_DOWN = re.compile(r"#meh\b", re.IGNORECASE)
 SPACE_ID = re.compile(r"nd:(\d+)")
 
 
-def ingest_web(con: sqlite3.Connection, log_path: Path | None = None) -> int:
-    """Read the nginx grading log.
-
-    The log line is `$time_iso8601 $arg_e $arg_i $arg_v`; nginx writes `-` for
-    a missing argument. Re-reading the whole file every time is intentional:
-    the write is an upsert keyed on (item, surface), so ingestion is idempotent
-    and there is no offset file to get out of sync. Rotation loses nothing that
-    is not already in the database.
-    """
-    path = log_path or (state_dir() / "grades" / GRADE_LOG)
-    if not path.exists():
-        return 0
-    n = 0
-    for line in path.read_text(errors="replace").splitlines():
-        parts = line.split()
-        if len(parts) < 4:
-            continue
-        ts, _edition, raw_id, raw_v = parts[0], parts[1], parts[2], parts[3]
-        if not raw_id.isdigit():
-            continue
-        value = {"up": 1, "down": -1}.get(raw_v.lower())
-        if value is None:
-            continue
-        if con.execute("SELECT 1 FROM items WHERE id=?", (int(raw_id),)).fetchone() is None:
-            continue
-        con.execute(
-            "INSERT INTO grades (item_id, via, value, at) VALUES (?,'web',?,?)"
-            " ON CONFLICT(item_id, via) DO UPDATE SET value=excluded.value, at=excluded.at",
-            (int(raw_id), value, ts))
-        n += 1
-    con.commit()
-    return n
+# Web grades no longer arrive through this module at all: newsdesk-grade
+# writes them straight to the `grades` table as they are clicked. See
+# gradeserver.py for why that is a service and not an nginx access_log.
 
 
 def ingest_space(con: sqlite3.Connection, space_dir: Path) -> int:
