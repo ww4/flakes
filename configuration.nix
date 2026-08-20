@@ -37,6 +37,7 @@
     ./modules/agent/digest.nix              # weekly headless digest (claude -p /catch-up -> ntfy)
     ./modules/agent/claude-config-sync.nix  # hourly pull of the synced global ~/.claude/CLAUDE.md
     ./modules/services/content-archives.nix  # weekly rebuild of the podcast transcript corpora
+    ./modules/services/newsdesk              # personal RSS news digest (collect -> rank -> claude -p -> page)
 
     # Services.
     ./modules/services/nginx-access.nix     # source-gate all vhosts to Tailscale + LAN (security review 2026-06-04)
@@ -116,4 +117,13 @@
       { name = "twib-archive"; path = "/home/claude/twib-archive"; }
     ];
   };
+
+  # The newsdesk: 86 esoteric RSS sources across eight interest lanes, ranked,
+  # judged by `claude -p`, and published as a short edition at
+  # digest.rosemaryacres.com/news/. Design + the source catalogue's reasoning:
+  # ww4/nixos-homelab-improvements docs/newsdesk-research.md.
+  #
+  # Defaults carry the schedule (weekday 07:00 brief, Saturday long-read,
+  # release notes batched to Mondays) and the quiet-hours notification guard.
+  services.newsdesk.enable = true;
 }
