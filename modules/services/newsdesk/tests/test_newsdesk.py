@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from newsdesk import collect as collect_mod  # noqa: E402
 from newsdesk import edition as edition_mod  # noqa: E402
 from newsdesk import feedback, feeds, gradeserver  # noqa: E402
+from newsdesk import sources as sources_mod  # noqa: E402
 from newsdesk.db import connect, seed_sources  # noqa: E402
 from newsdesk.score import score_text  # noqa: E402
 
@@ -832,3 +833,159 @@ class TestSeed(Base):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# ---------------------------------------------------------------------------
+# the human-editable source list
+# ---------------------------------------------------------------------------
+
+class TestSourcesPage(Base):
+    """He edits the control block; the table is regenerated and never parsed
+    back. Everything here guards the promise that an instruction is either
+    applied or returned WITH A REASON — never silently dropped."""
+
+    def setUp(self):
+        super().setUp()
+        self.add_source("Existing", "linux", cap=2)
+        self.page = self.dir / "space" / "Sources.md"
+        self.page.parent.mkdir(parents=True, exist_ok=True)
+        self._real = feeds.fetch_feed
+
+    def tearDown(self):
+        feeds.fetch_feed = self._real
+        super().tearDown()
+
+    def _good_feed(self):
+        return lambda url, **kw: feeds.FeedResult(
+            entries=[feeds.Entry(guid="a", url="u", title="t", body="x",
+                                 published=datetime.now(timezone.utc))],
+            etag=None, last_modified=None)
+
+    def _write(self, control):
+        self.page.write_text("# Newsdesk sources\n\n```control\n" + control + "\n```\n")
+
+    def _sync(self):
+        return sources_mod.sync(self.con, self.page)
+
+    def test_add_by_url_validates_the_feed_first(self):
+        feeds.fetch_feed = self._good_feed()
+        self._write('+ https://new.invalid/feed lane=energy tier=core cap=3 name="New Thing"')
+        self._sync()
+        row = self.con.execute("SELECT * FROM sources WHERE name='New Thing'").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual((row["lane"], row["tier"], row["cap"]), ("energy", "core", 3))
+        self.assertIn("added", self.page.read_text())
+
+    def test_a_url_that_is_not_a_feed_is_refused_with_a_reason(self):
+        feeds.fetch_feed = lambda url, **kw: (_ for _ in ()).throw(ValueError("not a feed"))
+        self._write("+ https://bad.invalid/page lane=energy")
+        self._sync()
+        self.assertIsNone(
+            self.con.execute("SELECT 1 FROM sources WHERE url LIKE '%bad.invalid%'").fetchone())
+        text = self.page.read_text()
+        self.assertIn("not added", text)
+        self.assertIn("bad.invalid", text, "the failed line must come BACK, not vanish")
+
+    def test_quoted_names_with_spaces_survive(self):
+        """Source names have spaces. `name=Some Thing` used to capture only
+        'Some' and glue 'Thing' onto the URL."""
+        feeds.fetch_feed = self._good_feed()
+        self._write('+ https://sp.invalid/feed lane=macro name="Bank of Somewhere"')
+        self._sync()
+        row = self.con.execute(
+            "SELECT url FROM sources WHERE name='Bank of Somewhere'").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["url"], "https://sp.invalid/feed")
+
+    def test_add_without_a_lane_is_returned(self):
+        feeds.fetch_feed = self._good_feed()
+        self._write("+ https://new.invalid/feed")
+        self._sync()
+        self.assertIn("needs lane=", self.page.read_text())
+
+    def test_disable_keeps_the_row_and_its_grades(self):
+        self._write("- Existing")
+        self._sync()
+        row = self.con.execute("SELECT enabled FROM sources WHERE name='Existing'").fetchone()
+        self.assertEqual(row["enabled"], 0)
+        self.assertIsNotNone(
+            self.con.execute("SELECT 1 FROM sources WHERE name='Existing'").fetchone(),
+            "disabling must never delete — history and grades hang off this row")
+
+    def test_reenable_by_name(self):
+        self.con.execute("UPDATE sources SET enabled=0, fail_streak=9 WHERE name='Existing'")
+        self.con.commit()
+        self._write("+ Existing")
+        self._sync()
+        row = self.con.execute("SELECT enabled, fail_streak FROM sources WHERE name='Existing'").fetchone()
+        self.assertEqual((row["enabled"], row["fail_streak"]), (1, 0))
+
+    def test_change_settings(self):
+        self._write("= Existing cap=4 tier=firehose")
+        self._sync()
+        row = self.con.execute("SELECT cap, tier FROM sources WHERE name='Existing'").fetchone()
+        self.assertEqual((row["cap"], row["tier"]), (4, "firehose"))
+
+    def test_lane_change_moves_existing_items_too(self):
+        self.add_item("Existing", "linux", "t")
+        self._write("= Existing lane=ideas")
+        self._sync()
+        self.assertEqual(
+            self.con.execute("SELECT lane FROM items WHERE source='Existing'").fetchone()[0],
+            "ideas")
+
+    def test_unknown_name_is_returned_not_ignored(self):
+        self._write("- Nonexistent Source")
+        self._sync()
+        self.assertIn("no source called", self.page.read_text())
+
+    def test_bad_setting_is_returned(self):
+        self._write("= Existing frobnicate=7")
+        self._sync()
+        self.assertIn("unknown setting", self.page.read_text())
+
+    def test_probe_reports_without_adding(self):
+        feeds.fetch_feed = self._good_feed()
+        self._write("? https://maybe.invalid/feed")
+        self._sync()
+        self.assertIsNone(
+            self.con.execute("SELECT 1 FROM sources WHERE url LIKE '%maybe.invalid%'").fetchone())
+        self.assertIn("looks like a feed", self.page.read_text())
+
+    def test_successful_instructions_are_cleared_from_the_block(self):
+        self._write("- Existing")
+        self._sync()
+        block = sources_mod.CONTROL_RE.search(self.page.read_text()).group(1)
+        self.assertEqual(block.strip(), "", "an applied instruction must not run twice")
+
+    def test_applying_twice_is_not_double_applied(self):
+        feeds.fetch_feed = self._good_feed()
+        self._write("+ https://new.invalid/feed lane=energy name=Twice")
+        self._sync()
+        self._sync()
+        self.assertEqual(
+            self.con.execute("SELECT COUNT(*) FROM sources WHERE name='Twice'").fetchone()[0], 1)
+
+    def test_duplicate_add_is_refused(self):
+        feeds.fetch_feed = self._good_feed()
+        self._write("+ https://example.invalid/Existing lane=linux name=Existing")
+        self._sync()
+        self.assertIn("already in the list", self.page.read_text())
+
+    def test_table_regenerates_and_editing_it_does_nothing(self):
+        self._sync()
+        text = self.page.read_text()
+        self.assertIn("Existing", text)
+        self.assertIn("| Source | Tier | Cap |", text)
+        # Mangle the table; the next sync must rebuild it and change no state.
+        self.page.write_text(text.replace("| Existing", "| DELETED-BY-HAND"))
+        self._sync()
+        self.assertIsNotNone(
+            self.con.execute("SELECT 1 FROM sources WHERE name='Existing'").fetchone())
+        self.assertIn("Existing", self.page.read_text())
+
+    def test_missing_page_is_created(self):
+        self.assertFalse(self.page.exists())
+        self._sync()
+        self.assertTrue(self.page.exists())
+        self.assertIn("```control", self.page.read_text())

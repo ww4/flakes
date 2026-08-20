@@ -15,6 +15,7 @@ from pathlib import Path
 from . import collect as collect_mod
 from . import edition as edition_mod
 from . import feedback, gradeserver
+from . import sources as sources_mod
 from .db import connect, load_profile, seed_sources, state_dir, write_atomic
 
 
@@ -115,6 +116,16 @@ def cmd_tune(args) -> int:
     return 0
 
 
+def cmd_sources(args) -> int:
+    """Apply the control block on the Sources page, then rewrite the page."""
+    con = _con(args)
+    page = Path(args.page)
+    res = sources_mod.sync(con, page)
+    print(f"newsdesk: sources page synced — {res['applied']} instruction(s) "
+          f"applied, {res['returned']} returned")
+    return 0
+
+
 def cmd_stats(args) -> int:
     print(json.dumps(feedback.stats(_con(args)), indent=1))
     return 0
@@ -168,6 +179,12 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("tune", help="apply source tuning, propose term changes")
     p.add_argument("--space")
     p.set_defaults(func=cmd_tune)
+
+    p = sub.add_parser("sources",
+                       help="apply the Sources page control block and rewrite it")
+    p.add_argument("--page", required=True,
+                   help="path to Areas/Newsdesk/Sources.md in the space")
+    p.set_defaults(func=cmd_sources)
 
     sub.add_parser("stats", help="counts").set_defaults(func=cmd_stats)
     sub.add_parser("stale", help="sources that are failing or gone quiet").set_defaults(func=cmd_stale)

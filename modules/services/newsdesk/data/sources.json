@@ -152,6 +152,21 @@
    "dormant": true
   },
   {
+   "name": "Checkonchain (James Check)",
+   "lane": "bitcoin",
+   "url": "https://newsletter.checkonchain.com/feed",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 2.9,
+    "on": "2026-08-20"
+   },
+   "note": "On-chain analytics \u2014 flows, cost basis, supply dynamics. Chris asked for this one by name. It exists to fill the deliberate hole in this catalogue: nothing else here explains a MARKET MOVE. EDITORIAL: publish when a move is explained with on-chain evidence. Never publish a price level, a target or a forecast on its own."
+  },
+  {
    "name": "Bitcoin Core releases",
    "lane": "release-radar",
    "url": "https://github.com/bitcoin/bitcoin/releases.atom",
