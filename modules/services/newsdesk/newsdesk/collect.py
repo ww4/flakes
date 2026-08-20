@@ -80,7 +80,10 @@ def _poll(row: sqlite3.Row) -> dict:
 
 
 def collect(con: sqlite3.Connection, profile: dict, *, only: str | None = None) -> dict:
-    q = "SELECT * FROM sources WHERE enabled = 1"
+    # 'corpus' sources are local directories walked by `newsdesk ingest`, not
+    # URLs to poll. Fetching one would fail every run and eventually mark a
+    # perfectly healthy archive as dead.
+    q = "SELECT * FROM sources WHERE enabled = 1 AND kind = 'feed'"
     args: tuple = ()
     if only:
         q += " AND name = ?"

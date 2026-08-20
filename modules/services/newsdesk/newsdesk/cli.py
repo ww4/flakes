@@ -13,8 +13,10 @@ import sys
 from pathlib import Path
 
 from . import collect as collect_mod
+from . import corpus as corpus_mod
 from . import edition as edition_mod
 from . import feedback, gradeserver
+from . import sources as sources_mod
 from .db import connect, load_profile, seed_sources, state_dir, write_atomic
 
 
@@ -38,6 +40,19 @@ def cmd_collect(args) -> int:
     print(f"newsdesk: {stats['ok']} ok, {stats['not_modified']} unchanged, "
           f"{stats['failed']} failed, {stats['new_items']} new item(s)",
           file=sys.stderr)
+    return 0
+
+
+def cmd_ingest(args) -> int:
+    """Walk the local corpus sources (directories of markdown, not feeds)."""
+    con = _con(args)
+    stats = corpus_mod.ingest(con, load_profile(), only=args.source)
+    print(json.dumps(stats))
+    if stats["missing"]:
+        print(f"newsdesk: {stats['missing']} corpus director(ies) MISSING",
+              file=sys.stderr)
+    print(f"newsdesk: {stats['added']} new post(s) from {stats['corpora']} corpus/corpora "
+          f"({stats['skipped']} stubs skipped)", file=sys.stderr)
     return 0
 
 
@@ -115,6 +130,16 @@ def cmd_tune(args) -> int:
     return 0
 
 
+def cmd_sources(args) -> int:
+    """Apply the control block on the Sources page, then rewrite the page."""
+    con = _con(args)
+    page = Path(args.page)
+    res = sources_mod.sync(con, page)
+    print(f"newsdesk: sources page synced — {res['applied']} instruction(s) "
+          f"applied, {res['returned']} returned")
+    return 0
+
+
 def cmd_stats(args) -> int:
     print(json.dumps(feedback.stats(_con(args)), indent=1))
     return 0
@@ -142,6 +167,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--source", help="just this one, for debugging")
     p.set_defaults(func=cmd_collect)
 
+    p = sub.add_parser("ingest", help="ingest local corpus sources")
+    p.add_argument("--source")
+    p.set_defaults(func=cmd_ingest)
+
     p = sub.add_parser("rank", help="build the shortlist for an edition")
     p.add_argument("--kind", choices=sorted(edition_mod.KINDS), default="brief")
     p.add_argument("--dry-run", action="store_true",
@@ -168,6 +197,12 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("tune", help="apply source tuning, propose term changes")
     p.add_argument("--space")
     p.set_defaults(func=cmd_tune)
+
+    p = sub.add_parser("sources",
+                       help="apply the Sources page control block and rewrite it")
+    p.add_argument("--page", required=True,
+                   help="path to Areas/Newsdesk/Sources.md in the space")
+    p.set_defaults(func=cmd_sources)
 
     sub.add_parser("stats", help="counts").set_defaults(func=cmd_stats)
     sub.add_parser("stale", help="sources that are failing or gone quiet").set_defaults(func=cmd_stale)

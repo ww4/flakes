@@ -29,6 +29,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from newsdesk import collect as collect_mod  # noqa: E402
 from newsdesk import edition as edition_mod  # noqa: E402
 from newsdesk import feedback, feeds, gradeserver  # noqa: E402
+from newsdesk import corpus as corpus_mod  # noqa: E402
+from newsdesk import longform  # noqa: E402
+from newsdesk import sources as sources_mod  # noqa: E402
 from newsdesk.db import connect, seed_sources  # noqa: E402
 from newsdesk.score import score_text  # noqa: E402
 
@@ -832,3 +835,450 @@ class TestSeed(Base):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# ---------------------------------------------------------------------------
+# the human-editable source list
+# ---------------------------------------------------------------------------
+
+class TestSourcesPage(Base):
+    """He edits the control block; the table is regenerated and never parsed
+    back. Everything here guards the promise that an instruction is either
+    applied or returned WITH A REASON — never silently dropped."""
+
+    def setUp(self):
+        super().setUp()
+        self.add_source("Existing", "linux", cap=2)
+        self.page = self.dir / "space" / "Sources.md"
+        self.page.parent.mkdir(parents=True, exist_ok=True)
+        self._real = feeds.fetch_feed
+
+    def tearDown(self):
+        feeds.fetch_feed = self._real
+        super().tearDown()
+
+    def _good_feed(self):
+        return lambda url, **kw: feeds.FeedResult(
+            entries=[feeds.Entry(guid="a", url="u", title="t", body="x",
+                                 published=datetime.now(timezone.utc))],
+            etag=None, last_modified=None)
+
+    def _write(self, control):
+        self.page.write_text("# Newsdesk sources\n\n```control\n" + control + "\n```\n")
+
+    def _sync(self):
+        return sources_mod.sync(self.con, self.page)
+
+    def test_add_by_url_validates_the_feed_first(self):
+        feeds.fetch_feed = self._good_feed()
+        self._write('+ https://new.invalid/feed lane=energy tier=core cap=3 name="New Thing"')
+        self._sync()
+        row = self.con.execute("SELECT * FROM sources WHERE name='New Thing'").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual((row["lane"], row["tier"], row["cap"]), ("energy", "core", 3))
+        self.assertIn("added", self.page.read_text())
+
+    def test_a_url_that_is_not_a_feed_is_refused_with_a_reason(self):
+        feeds.fetch_feed = lambda url, **kw: (_ for _ in ()).throw(ValueError("not a feed"))
+        self._write("+ https://bad.invalid/page lane=energy")
+        self._sync()
+        self.assertIsNone(
+            self.con.execute("SELECT 1 FROM sources WHERE url LIKE '%bad.invalid%'").fetchone())
+        text = self.page.read_text()
+        self.assertIn("not added", text)
+        self.assertIn("bad.invalid", text, "the failed line must come BACK, not vanish")
+
+    def test_quoted_names_with_spaces_survive(self):
+        """Source names have spaces. `name=Some Thing` used to capture only
+        'Some' and glue 'Thing' onto the URL."""
+        feeds.fetch_feed = self._good_feed()
+        self._write('+ https://sp.invalid/feed lane=macro name="Bank of Somewhere"')
+        self._sync()
+        row = self.con.execute(
+            "SELECT url FROM sources WHERE name='Bank of Somewhere'").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["url"], "https://sp.invalid/feed")
+
+    def test_add_without_a_lane_is_returned(self):
+        feeds.fetch_feed = self._good_feed()
+        self._write("+ https://new.invalid/feed")
+        self._sync()
+        self.assertIn("needs lane=", self.page.read_text())
+
+    def test_disable_keeps_the_row_and_its_grades(self):
+        self._write("- Existing")
+        self._sync()
+        row = self.con.execute("SELECT enabled FROM sources WHERE name='Existing'").fetchone()
+        self.assertEqual(row["enabled"], 0)
+        self.assertIsNotNone(
+            self.con.execute("SELECT 1 FROM sources WHERE name='Existing'").fetchone(),
+            "disabling must never delete — history and grades hang off this row")
+
+    def test_reenable_by_name(self):
+        self.con.execute("UPDATE sources SET enabled=0, fail_streak=9 WHERE name='Existing'")
+        self.con.commit()
+        self._write("+ Existing")
+        self._sync()
+        row = self.con.execute("SELECT enabled, fail_streak FROM sources WHERE name='Existing'").fetchone()
+        self.assertEqual((row["enabled"], row["fail_streak"]), (1, 0))
+
+    def test_change_settings(self):
+        self._write("= Existing cap=4 tier=firehose")
+        self._sync()
+        row = self.con.execute("SELECT cap, tier FROM sources WHERE name='Existing'").fetchone()
+        self.assertEqual((row["cap"], row["tier"]), (4, "firehose"))
+
+    def test_lane_change_moves_existing_items_too(self):
+        self.add_item("Existing", "linux", "t")
+        self._write("= Existing lane=ideas")
+        self._sync()
+        self.assertEqual(
+            self.con.execute("SELECT lane FROM items WHERE source='Existing'").fetchone()[0],
+            "ideas")
+
+    def test_unknown_name_is_returned_not_ignored(self):
+        self._write("- Nonexistent Source")
+        self._sync()
+        self.assertIn("no source called", self.page.read_text())
+
+    def test_bad_setting_is_returned(self):
+        self._write("= Existing frobnicate=7")
+        self._sync()
+        self.assertIn("unknown setting", self.page.read_text())
+
+    def test_probe_reports_without_adding(self):
+        feeds.fetch_feed = self._good_feed()
+        self._write("? https://maybe.invalid/feed")
+        self._sync()
+        self.assertIsNone(
+            self.con.execute("SELECT 1 FROM sources WHERE url LIKE '%maybe.invalid%'").fetchone())
+        self.assertIn("looks like a feed", self.page.read_text())
+
+    def test_successful_instructions_are_cleared_from_the_block(self):
+        self._write("- Existing")
+        self._sync()
+        block = sources_mod.CONTROL_RE.search(self.page.read_text()).group(1)
+        self.assertEqual(block.strip(), "", "an applied instruction must not run twice")
+
+    def test_applying_twice_is_not_double_applied(self):
+        feeds.fetch_feed = self._good_feed()
+        self._write("+ https://new.invalid/feed lane=energy name=Twice")
+        self._sync()
+        self._sync()
+        self.assertEqual(
+            self.con.execute("SELECT COUNT(*) FROM sources WHERE name='Twice'").fetchone()[0], 1)
+
+    def test_duplicate_add_is_refused(self):
+        feeds.fetch_feed = self._good_feed()
+        self._write("+ https://example.invalid/Existing lane=linux name=Existing")
+        self._sync()
+        self.assertIn("already in the list", self.page.read_text())
+
+    def test_table_regenerates_and_editing_it_does_nothing(self):
+        self._sync()
+        text = self.page.read_text()
+        self.assertIn("Existing", text)
+        self.assertIn("| Source | Tier | Cap |", text)
+        # Mangle the table; the next sync must rebuild it and change no state.
+        self.page.write_text(text.replace("| Existing", "| DELETED-BY-HAND"))
+        self._sync()
+        self.assertIsNotNone(
+            self.con.execute("SELECT 1 FROM sources WHERE name='Existing'").fetchone())
+        self.assertIn("Existing", self.page.read_text())
+
+    def test_missing_page_is_created(self):
+        self.assertFalse(self.page.exists())
+        self._sync()
+        self.assertTrue(self.page.exists())
+        self.assertIn("```control", self.page.read_text())
+
+
+# ---------------------------------------------------------------------------
+# good reads: rotation, retirement, archive
+# ---------------------------------------------------------------------------
+
+class TestLongform(Base):
+    """The rules Chris specified: an unread piece comes back at a lower weight,
+    a click retires it, and only picks get archived."""
+
+    def setUp(self):
+        super().setUp()
+        self.add_source("Essays", "ideas", cap=2)
+        self.add_source("Other", "energy", cap=2)
+
+    def _long(self, source, lane, title, **kw):
+        return self.add_item(source, lane, title, words=2500, **kw)
+
+    def test_no_recency_filter(self):
+        """THE point of the section: a 2019 essay is as good as today's."""
+        old = self._long("Essays", "ideas", "ancient essay", published=_iso(1500))
+        ids = [c["id"] for c in longform.shortlist(self.con)]
+        self.assertIn(old, ids)
+
+    def test_short_items_are_not_good_reads(self):
+        self.add_item("Essays", "ideas", "a note", words=200)
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_a_click_retires_it_for_good(self):
+        i = self._long("Essays", "ideas", "essay")
+        self.assertTrue(longform.record_click(self.con, i))
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_being_shown_does_not_retire_it(self):
+        """Not clicking is not a no. It comes back around."""
+        i = self._long("Essays", "ideas", "essay")
+        longform.mark_shown(self.con, [i])
+        # inside the cooldown it rests...
+        self.assertEqual(longform.shortlist(self.con), [])
+        # ...and afterwards it returns.
+        self.con.execute("UPDATE items SET last_shown_at=? WHERE id=?", (_iso(30), i))
+        self.con.commit()
+        self.assertEqual([c["id"] for c in longform.shortlist(self.con)], [i])
+
+    def test_it_returns_at_a_lower_weight_but_never_zero(self):
+        i = self._long("Essays", "ideas", "essay")
+        row = self.con.execute("SELECT * FROM items WHERE id=?", (i,)).fetchone()
+        self.assertEqual(longform.weight(row), 1.0)
+        self.con.execute("UPDATE items SET shown_count=3 WHERE id=?", (i,))
+        self.con.commit()
+        row = self.con.execute("SELECT * FROM items WHERE id=?", (i,)).fetchone()
+        self.assertLess(longform.weight(row), 1.0)
+        self.con.execute("UPDATE items SET shown_count=50 WHERE id=?", (i,))
+        self.con.commit()
+        row = self.con.execute("SELECT * FROM items WHERE id=?", (i,)).fetchone()
+        self.assertGreaterEqual(longform.weight(row), longform.MIN_MULTIPLIER,
+                                "a good essay must never decay out of reach")
+
+    def test_thumbs_down_retires_it(self):
+        i = self._long("Essays", "ideas", "essay")
+        self.con.execute("INSERT INTO grades (item_id, via, value, at) VALUES (?,'web',-1,?)",
+                         (i, _iso(0)))
+        self.con.commit()
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_already_published_as_news_is_excluded(self):
+        self._long("Essays", "ideas", "essay", state="published")
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_passed_over_by_the_news_judge_is_still_eligible(self):
+        """Losing a news slot is not a verdict on it as an essay."""
+        i = self._long("Essays", "ideas", "essay", state="passed_over")
+        self.assertIn(i, [c["id"] for c in longform.shortlist(self.con)])
+
+    def test_one_per_source_and_one_per_lane(self):
+        """The backlog is 30% one author. Without this it is his blog."""
+        for n in range(5):
+            self._long("Essays", "ideas", f"essay {n}", score=100 - n)
+        self._long("Other", "energy", "other essay", score=1)
+        picks = longform.shortlist(self.con)
+        self.assertEqual(len(picks), 2)
+        self.assertEqual({p["source"] for p in picks}, {"Essays", "Other"})
+        self.assertEqual({p["lane"] for p in picks}, {"ideas", "energy"})
+
+    def test_a_crowded_lane_does_not_squeeze_out_a_thin_one(self):
+        """The backlog is 40% linux and 2% network. Ordering by score alone
+        gives three systems essays every morning; the lane rule is what puts
+        the thin lanes in front of him. Breaking it left the previous test
+        green, which is why this one exists."""
+        for n in range(10):
+            self.add_source(f"Big{n}", "ideas")
+            self._long(f"Big{n}", "ideas", f"ideas essay {n}", score=500 + n)
+        self.add_source("Thin", "network")
+        self._long("Thin", "network", "the one network essay", score=1)
+        picks = longform.shortlist(self.con, limit=3)
+        self.assertEqual(len(picks), 3)
+        self.assertIn("network", {p["lane"] for p in picks},
+                      "the thin lane was crowded out by higher scores")
+
+    def test_selection_does_not_use_the_news_keyword_score(self):
+        """The profile ranks NEWS about what he runs. Ordering essays by it
+        buries anything not about his stack — which is the opposite of what
+        this section is for."""
+        self.add_source("Essayist", "ideas")
+        self.add_source("Techie", "linux")
+        self._long("Techie", "linux", "nixos nixos nixos", score=900)
+        self._long("Essayist", "ideas", "a beautiful essay about nothing", score=0)
+        # Across many day-seeds the zero-scoring essay must lead sometimes;
+        # under score-ordering it would never lead.
+        led = sum(1 for d in range(40)
+                  if longform.shortlist(self.con, limit=1, seed=f"day-{d}")[0]["source"]
+                  == "Essayist")
+        self.assertGreater(led, 5, "the low-scoring essay never gets a look")
+
+    def test_a_much_shown_piece_still_comes_around(self):
+        self.add_source("A2", "ideas")
+        fresh = self._long("Essays", "ideas", "never shown")
+        old = self._long("A2", "ideas", "shown five times")
+        self.con.execute("UPDATE items SET shown_count=5, last_shown_at=? WHERE id=?",
+                         (_iso(60), old))
+        self.con.commit()
+        led = sum(1 for d in range(60)
+                  if longform.shortlist(self.con, limit=1, seed=f"d{d}")[0]["id"] == old)
+        self.assertGreater(led, 3, "a repeatedly-skipped piece never resurfaces")
+        self.assertLess(led, 40, "a repeatedly-skipped piece is not being demoted at all")
+
+    def test_a_release_note_is_never_a_good_read(self):
+        """Found by running against the live backlog: a 1,296-word Bitcoin
+        Knots release note took a shortlist slot."""
+        self.add_source("Releases", "release-radar")
+        self._long("Releases", "release-radar", "v29.3 release notes", score=999)
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_a_source_can_opt_out_of_being_a_good_read(self):
+        """Newsletters and aggregators are long but are not essays."""
+        self._long("Essays", "ideas", "essay")
+        self.con.execute("UPDATE sources SET longform=0 WHERE name='Essays'")
+        self.con.commit()
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_disabled_source_drops_out(self):
+        i = self._long("Essays", "ideas", "essay")
+        self.con.execute("UPDATE sources SET enabled=0 WHERE name='Essays'")
+        self.con.commit()
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_archive_writes_a_page_and_records_it(self):
+        i = self._long("Essays", "ideas", "essay", body="word " * 900)
+        rel = longform.archive(self.con, i, web_dir=self.dir / "web")
+        self.assertIsNotNone(rel)
+        page = (self.dir / "web" / rel)
+        self.assertTrue(page.exists())
+        text = page.read_text()
+        self.assertIn("original", text)
+        self.assertIn("noindex", text, "the personal archive must not be indexable")
+        self.assertIn("rights remain with the", text)
+        self.assertEqual(
+            self.con.execute("SELECT archived_path FROM items WHERE id=?", (i,)).fetchone()[0],
+            rel)
+
+    def test_archive_is_idempotent(self):
+        i = self._long("Essays", "ideas", "essay", body="word " * 900)
+        a = longform.archive(self.con, i, web_dir=self.dir / "web")
+        b = longform.archive(self.con, i, web_dir=self.dir / "web")
+        self.assertEqual(a, b)
+
+    def test_archive_skips_when_there_is_no_real_text(self):
+        i = self._long("Essays", "ideas", "essay", body="too short")
+        self.assertIsNone(longform.archive(self.con, i, web_dir=self.dir / "web"))
+
+    def test_archive_escapes_html_in_the_text(self):
+        i = self._long("Essays", "ideas", "essay",
+                       body="<script>alert(1)</script> " + "word " * 900)
+        rel = longform.archive(self.con, i, web_dir=self.dir / "web")
+        page = (self.dir / "web" / rel).read_text()
+        self.assertNotIn("<script>alert", page)
+        self.assertIn("&lt;script&gt;", page)
+
+
+class TestCorpusAndEvergreen(Base):
+    def setUp(self):
+        super().setUp()
+        self.corpus = self.dir / "corpus"
+        self.corpus.mkdir()
+        self.con.execute(
+            "INSERT INTO sources (name, lane, url, tier, cap, kind, evergreen, longform)"
+            " VALUES ('Archive','agrarian',?, 'core',1,'corpus',1,1)", (str(self.corpus),))
+        self.con.commit()
+
+    def _post(self, name, title, words, date="2004-06-01", junk=False):
+        body = "Server error: there was an error. " if junk else ""
+        body += "word " * words
+        (self.corpus / name).write_text(
+            f"---\ndate: {date}\ntitle: '{title}'\nurl: http://e.invalid/{name}\n---\n\n"
+            f"# {title}\n*{date}*\n\n{body}")
+
+    def test_ingests_local_markdown(self):
+        self._post("a.md", "An essay", 500)
+        stats = corpus_mod.ingest(self.con, PROFILE)
+        self.assertEqual(stats["added"], 1)
+        row = self.con.execute("SELECT title, url, published, words FROM items").fetchone()
+        self.assertEqual(row["title"], "An essay")
+        self.assertEqual(row["url"], "http://e.invalid/a.md")
+        self.assertTrue(row["published"].startswith("2004-06-01"))
+
+    def test_ingest_is_idempotent(self):
+        self._post("a.md", "An essay", 500)
+        corpus_mod.ingest(self.con, PROFILE)
+        corpus_mod.ingest(self.con, PROFILE)
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM items").fetchone()[0], 1)
+
+    def test_scrape_wreckage_is_dropped(self):
+        """The real archive contains pages like 'UserLand Frontier Server Error'."""
+        self._post("err.md", "UserLand Frontier Server Error", 400, junk=True)
+        self._post("ok.md", "A real post", 400)
+        stats = corpus_mod.ingest(self.con, PROFILE)
+        self.assertEqual(stats["added"], 1)
+        self.assertEqual(stats["skipped"], 1)
+
+    def test_stubs_are_dropped(self):
+        self._post("stub.md", "Two lines", 20)
+        self.assertEqual(corpus_mod.ingest(self.con, PROFILE)["added"], 0)
+
+    def test_a_missing_corpus_directory_is_not_a_quiet_success(self):
+        self.con.execute("UPDATE sources SET url='/nonexistent/path' WHERE name='Archive'")
+        self.con.commit()
+        stats = corpus_mod.ingest(self.con, PROFILE)
+        self.assertEqual(stats["missing"], 1)
+        self.assertIn("not found",
+                      self.con.execute("SELECT last_error FROM sources").fetchone()[0])
+
+    def test_collect_never_tries_to_fetch_a_corpus(self):
+        """Polling a directory would fail every run and mark a healthy archive dead."""
+        real = feeds.fetch_feed
+        feeds.fetch_feed = lambda url, **kw: (_ for _ in ()).throw(
+            AssertionError(f"corpus source was fetched over HTTP: {url}"))
+        try:
+            self.add_source("Feed", "linux", url="https://f.invalid")
+            feeds.fetch_feed = FakeFeeds({"https://f.invalid": feeds.FeedResult(
+                entries=[], etag=None, last_modified=None)})
+            stats = collect_mod.collect(self.con, PROFILE)
+            self.assertEqual(stats["sources"], 1, "the corpus source was polled")
+        finally:
+            feeds.fetch_feed = real
+
+    def test_evergreen_gets_exactly_one_reserved_slot(self):
+        """479 Dry Creek posts against a ~500 pool would otherwise appear daily."""
+        for n in range(30):
+            self._post(f"e{n}.md", f"old essay {n}", 1200)
+        corpus_mod.ingest(self.con, PROFILE)
+        self.add_source("Fresh", "ideas")
+        self.add_item("Fresh", "ideas", "a new essay", words=2000)
+        picks = longform.shortlist(self.con)
+        ever = [p for p in picks if p["evergreen"]]
+        self.assertEqual(len(ever), 1, "evergreen must take exactly one slot")
+        self.assertIn("Fresh", {p["source"] for p in picks})
+
+    def test_evergreen_is_flagged_for_the_reader(self):
+        self._post("a.md", "An old essay", 1200)
+        corpus_mod.ingest(self.con, PROFILE)
+        self.assertTrue(longform.shortlist(self.con)[0]["evergreen"])
+
+
+class TestMissedClicks(Base):
+    def test_a_click_on_a_rejected_item_promotes_its_source(self):
+        """Chris: a massive indicator it should have been valued higher."""
+        self.add_source("Under", "linux", cap=2, weight=1.0)
+        i = self.add_item("Under", "linux", "the one he went and read",
+                          state="passed_over")
+        longform.record_click(self.con, i)
+        self.assertEqual([m["id"] for m in feedback.missed_clicks(self.con)], [i])
+        report = feedback.tune(self.con, PROFILE)
+        row = self.con.execute("SELECT cap, weight FROM sources WHERE name='Under'").fetchone()
+        self.assertEqual(row["cap"], 3)
+        self.assertGreater(row["weight"], 1.0)
+        self.assertIn("not-selected", report)
+
+    def test_one_missed_click_outweighs_the_demotion_threshold(self):
+        """A demotion needs four thumbs-down; a missed click needs one."""
+        self.add_source("Under", "linux", cap=2)
+        i = self.add_item("Under", "linux", "read anyway", state="passed_over")
+        longform.record_click(self.con, i)
+        feedback.tune(self.con, PROFILE)
+        self.assertEqual(
+            self.con.execute("SELECT cap FROM sources WHERE name='Under'").fetchone()[0], 3)
+
+    def test_a_click_on_a_published_item_is_not_a_missed_click(self):
+        self.add_source("Fine", "linux")
+        i = self.add_item("Fine", "linux", "was published", state="published")
+        longform.record_click(self.con, i)
+        self.assertEqual(feedback.missed_clicks(self.con), [])

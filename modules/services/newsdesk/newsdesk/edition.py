@@ -21,7 +21,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import feeds
+from . import feeds, longform
 from .collect import awakened_sources, stale_sources
 from .db import now, state_dir, write_atomic
 
@@ -151,12 +151,17 @@ def rank(con: sqlite3.Connection, kind: str, *, fetch_articles: bool = True,
             "text": (row["body"] or row["summary"] or "")[:12000],
         })
 
+    # Good reads ride along in the same file but are chosen from a separate
+    # pool with no recency filter — see longform.py for why that matters.
+    reads = [] if dry_run else longform.shortlist(con)
+
     return {
         "kind": kind,
         "edition": edition_id(kind),
         "considered": len(rows),
         "shortlisted": len(candidates),
         "candidates": candidates,
+        "good_reads": reads,
     }
 
 
@@ -202,10 +207,15 @@ def _short_date(iso: str | None) -> str:
         return ""
 
 
-def _grade_links(item_id: int, edition: str, url: str, published: str | None) -> str:
+def _grade_links(item_id: int, edition: str, url: str, published: str | None,
+                 archived: str | None = None) -> str:
     when = _short_date(published)
     stamp = f'<span class="when">{when}</span> · ' if when else ""
-    return (f'{stamp}<a href="{url}">source</a> · '
+    # The source link routes through /news/r, which records the click and then
+    # redirects. For a good read that click is the "I read it" signal that
+    # retires it from rotation.
+    arch = f' · <a href="/news/{archived}">archived</a>' if archived else ""
+    return (f'{stamp}<a href="/news/r?i={item_id}">source</a>{arch} · '
             f'<a href="/news/g?e={edition}&i={item_id}&v=up">&#128077;</a> '
             f'<a href="/news/g?e={edition}&i={item_id}&v=down">&#128078;</a>')
 
@@ -235,6 +245,31 @@ def publish(con: sqlite3.Connection, kind: str, judged_md: str, *,
 
     published_ids = [int(m) for m in TOKEN.findall(judged_md) if int(m) in by_id]
 
+    # Good reads are not in `short` — they come from a separate pool — so any
+    # token the news shortlist does not account for is resolved directly.
+    extra = [int(m) for m in set(TOKEN.findall(judged_md)) if int(m) not in by_id]
+    read_ids: list[int] = []
+    if extra:
+        rows = con.execute(
+            "SELECT i.*, s.tier FROM items i JOIN sources s ON s.name=i.source"
+            f" WHERE i.id IN ({','.join('?' * len(extra))})", extra).fetchall()
+        for r in rows:
+            by_id[r["id"]] = r
+            if (r["words"] or 0) >= longform.MIN_WORDS:
+                read_ids.append(r["id"])
+
+    # SHOWN means he saw it in a published edition — not that the reader
+    # considered it. A candidate the reader passed over was never in front of
+    # him, so it must not be penalised. Only what actually appears counts.
+    if read_ids:
+        longform.mark_shown(con, read_ids)
+        # Only the picks get archived. Text is cheap; the whole intake is not.
+        for rid in read_ids:
+            try:
+                longform.archive(con, rid, web_dir=web)
+            except Exception:  # noqa: BLE001 — never cost the edition
+                pass
+
     # --- markdown for the space: tokens become plain links -----------------
     space_md = TOKEN.sub(
         lambda m: (f"([source]({by_id[int(m.group(1))]['url']})"
@@ -255,7 +290,8 @@ def publish(con: sqlite3.Connection, kind: str, judged_md: str, *,
     # --- HTML: tokens become source + grading links ------------------------
     html_md = TOKEN.sub(
         lambda m: _grade_links(int(m.group(1)), eid, by_id[int(m.group(1))]["url"],
-                               by_id[int(m.group(1))]["published"])
+                               by_id[int(m.group(1))]["published"],
+                               _archived_of(con, int(m.group(1))))
         if int(m.group(1)) in by_id else "",
         judged_md)
     html_body = _render_html(f"{html_md}\n\n{footer_md}", cmark)
@@ -297,6 +333,11 @@ def publish(con: sqlite3.Connection, kind: str, judged_md: str, *,
             "fell_back": fell_back, "tldr": tldr}
 
 
+def _archived_of(con: sqlite3.Connection, item_id: int) -> str | None:
+    row = con.execute("SELECT archived_path FROM items WHERE id=?", (item_id,)).fetchone()
+    return row["archived_path"] if row else None
+
+
 def _fallback_markdown(short) -> str:
     lines = ["> **The reader did not complete.** This is the raw keyword ranking,",
              "> unjudged — expect noise. `journalctl -u newsdesk-*` has the detail.",
@@ -330,7 +371,11 @@ def _footer_markdown(stale: list[dict], awake: list[dict], passed,
                    "</summary>")
         out.append("")
         for r in sorted(passed, key=lambda r: -(r["score"] or 0)):
-            out.append(f"- {r['title']} — {r['source']}")
+            # Linked and tracked. A click here is the strongest single signal
+            # the system gets: it means the reader put something in front of
+            # him that should have been an item, and he went and read it
+            # anyway. See feedback.missed_clicks.
+            out.append(f"- [{r['title']}](/news/r?i={r['id']}) — {r['source']}")
         out.append("")
         out.append("</details>")
         out.append("")

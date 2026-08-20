@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .db import now, state_dir, write_atomic
@@ -69,6 +70,20 @@ def ingest_space(con: sqlite3.Connection, space_dir: Path) -> int:
     return n
 
 
+def missed_clicks(con: sqlite3.Connection, days: int = 30) -> list[sqlite3.Row]:
+    """Items he opened from the "not selected" list.
+
+    Chris: "that's a massive indicator that this should maybe have been valued
+    higher." It is a stronger signal than a thumbs-up, because he had to go
+    looking past the edition to find it — nothing prompted him.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return con.execute(
+        "SELECT id, source, lane, title, clicked_at FROM items"
+        " WHERE state = 'passed_over' AND clicked_at IS NOT NULL"
+        "   AND clicked_at >= ? ORDER BY clicked_at DESC", (cutoff,)).fetchall()
+
+
 def _grade_totals(con: sqlite3.Connection) -> dict[int, int]:
     """One net grade per item, so grading in both surfaces is not double-counted."""
     out: dict[int, int] = {}
@@ -81,9 +96,9 @@ def _grade_totals(con: sqlite3.Connection) -> dict[int, int]:
 def tune(con: sqlite3.Connection, profile: dict) -> str:
     """Apply bounded source adjustments; propose term changes. Returns a report."""
     totals = _grade_totals(con)
-    if not totals:
-        return ("No grades recorded yet, so nothing was tuned. That is a fine "
-                "state to be in — grading is optional.")
+    if not totals and not missed_clicks(con):
+        return ("No grades or click-throughs recorded yet, so nothing was "
+                "tuned. That is a fine state to be in — grading is optional.")
 
     graded_items = con.execute(
         "SELECT id, source, title, body, summary FROM items WHERE id IN"
@@ -95,6 +110,28 @@ def tune(con: sqlite3.Connection, profile: dict) -> str:
         per_source.setdefault(r["source"], []).append(totals[r["id"]])
 
     applied: list[str] = []
+
+    # A click from the rejected list outranks a thumbs-up: he went looking.
+    # One is enough to promote the source, where a demotion needs four.
+    missed = missed_clicks(con)
+    missed_by_source: dict[str, int] = {}
+    for m in missed:
+        missed_by_source[m["source"]] = missed_by_source.get(m["source"], 0) + 1
+    for source, n in sorted(missed_by_source.items()):
+        row = con.execute("SELECT cap, weight FROM sources WHERE name=?",
+                          (source,)).fetchone()
+        if row is None:
+            continue
+        new_cap = min(CAP_MAX, row["cap"] + 1)
+        new_weight = min(WEIGHT_MAX, round(row["weight"] * 1.25, 3))
+        if (new_cap, new_weight) != (row["cap"], row["weight"]):
+            con.execute("UPDATE sources SET cap=?, weight=? WHERE name=?",
+                        (new_cap, new_weight, source))
+            applied.append(f"**{source}**: cap {row['cap']}→{new_cap}, weight "
+                           f"{row['weight']}→{new_weight} — you opened {n} item(s) "
+                           f"from the NOT-SELECTED list, which says the reader "
+                           f"undervalued it")
+
     for source, votes in sorted(per_source.items()):
         up = sum(1 for v in votes if v > 0)
         down = sum(1 for v in votes if v < 0)
@@ -149,6 +186,10 @@ def tune(con: sqlite3.Connection, profile: dict) -> str:
     report = [f"# Newsdesk tuning — {now()[:10]}", "",
               f"{len(totals)} graded item(s): {n_up} relevant, {n_down} not interesting.",
               ""]
+    if missed:
+        report += [f"⚠️ **{len(missed)} item(s) you opened from the not-selected "
+                   "list.** These should have been in the edition:", ""]
+        report += [f"- {m['title']} — {m['source']}" for m in missed[:12]] + [""]
     if applied:
         report += ["## Applied (source weights, bounded)", ""] + [f"- {a}" for a in applied] + [""]
     else:

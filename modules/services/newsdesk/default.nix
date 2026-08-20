@@ -55,12 +55,19 @@ let
         exit 0
       }
 
-    # Grades first, so the ranking already reflects anything he clicked since
-    # the last run, and so a log rotation cannot lose them.
+    # His source edits FIRST — before anything is collected — so an
+    # instruction written overnight takes effect this morning rather than
+    # tomorrow. Failure here must not stop the edition.
+    ${nd} sources --page ${cfg.spaceDir}/Sources.md || \
+      echo "newsdesk: sources page sync failed — continuing"
+
+    # Then grades, so the ranking reflects anything he clicked since the last
+    # run.
     ${nd} grade --space ${cfg.spaceDir} || true
 
     # A failed poll is one source's problem, never the edition's.
     ${nd} collect || echo "newsdesk: collect returned non-zero — continuing"
+    ${nd} ingest || echo "newsdesk: corpus ingest returned non-zero — continuing"
 
     kind=${kindExpr}
     n="$(${nd} rank --kind "$kind" | head -1)" || n=0
@@ -272,7 +279,10 @@ in
         ${nd} seed \
           --catalogue ${newsdesk}/share/newsdesk/sources.json \
           --profile ${newsdesk}/share/newsdesk/interests.json
+        ${nd} sources --page ${cfg.spaceDir}/Sources.md || \
+          echo "newsdesk: sources page sync failed — continuing"
         ${nd} collect
+        ${nd} ingest
       '';
     };
 
@@ -389,8 +399,14 @@ in
         alias = "${cfg.stateDir}/web/";
         extraConfig = "index index.html; autoindex on;";
       };
-      # Exact match wins over the /news/ prefix above.
+      # Exact matches win over the /news/ prefix above.
       "= /news/g".extraConfig = ''
+        proxy_pass http://127.0.0.1:${toString cfg.gradePort};
+        proxy_set_header Host $host;
+      '';
+      # Click-through: records that he opened the piece, then redirects to the
+      # source. For a good read that click is the "I read it" signal.
+      "= /news/r".extraConfig = ''
         proxy_pass http://127.0.0.1:${toString cfg.gradePort};
         proxy_set_header Host $host;
       '';

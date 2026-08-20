@@ -18,7 +18,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -38,6 +38,17 @@ CREATE TABLE IF NOT EXISTS sources (
     -- Excluded from stale warnings; cleared (once, loudly) on the next item.
     dormant       INTEGER NOT NULL DEFAULT 0,
     awakened_at   TEXT,
+    -- Is this source capable of producing a GOOD READ? Word count alone is not
+    -- a quality gate: run against the real backlog it admitted release notes,
+    -- newsletters and link roundups, which then ate the shortlist slots that
+    -- essays should have had. Newsletters, aggregators and notice feeds get 0.
+    longform      INTEGER NOT NULL DEFAULT 1,
+    -- 'feed' polls a URL; 'corpus' walks a directory of markdown on this box.
+    kind          TEXT NOT NULL DEFAULT 'feed',
+    -- Evergreen sources are not graded and not judged on newsworthiness — the
+    -- whole archive is already known-good. They are sprinkled in, one slot at
+    -- a time, rather than competing on merit.
+    evergreen     INTEGER NOT NULL DEFAULT 0,
     -- tuned columns: written by the tuner and by hand, never by the seeder
     cap           INTEGER NOT NULL DEFAULT 1,
     weight        REAL    NOT NULL DEFAULT 1.0,
@@ -69,6 +80,14 @@ CREATE TABLE IF NOT EXISTS items (
     -- new -> shortlisted -> published | passed_over ; expired = aged out unseen
     state      TEXT NOT NULL DEFAULT 'new',
     edition    TEXT,
+    -- Long-read rotation. An unread good essay is not a rejected one: it goes
+    -- back in the pool at a lower weight and comes around again. A CLICK is
+    -- what retires it, because a click means he read it.
+    shown_count   INTEGER NOT NULL DEFAULT 0,
+    last_shown_at TEXT,
+    clicked_at    TEXT,
+    -- Where our own copy of the text lives, for picks only.
+    archived_path TEXT,
     UNIQUE (source, guid)
 );
 CREATE INDEX IF NOT EXISTS items_state  ON items (state, score DESC);
@@ -108,6 +127,47 @@ def state_dir() -> Path:
     return Path(os.environ.get("NEWSDESK_STATE", "/var/lib/newsdesk"))
 
 
+# Columns added after v1. CREATE TABLE IF NOT EXISTS will not add a column to a
+# table that already exists, and the live database does — so every addition has
+# to be applied explicitly or the deploy lands a schema the code does not have.
+MIGRATIONS = {
+    "items": {
+        "shown_count": "INTEGER NOT NULL DEFAULT 0",
+        "last_shown_at": "TEXT",
+        "clicked_at": "TEXT",
+        "archived_path": "TEXT",
+    },
+    "sources": {
+        "dormant": "INTEGER NOT NULL DEFAULT 0",
+        "awakened_at": "TEXT",
+        "longform": "INTEGER NOT NULL DEFAULT 1",
+        "kind": "TEXT NOT NULL DEFAULT 'feed'",
+        "evergreen": "INTEGER NOT NULL DEFAULT 0",
+    },
+}
+
+
+# Indexes that depend on migrated columns. These CANNOT live in SCHEMA: on an
+# existing database executescript() runs before the ALTERs, and a CREATE INDEX
+# naming a column that is not there yet aborts the whole connect(). Found by
+# opening a copy of the live database, which is the only way this shows up.
+POST_MIGRATION_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS items_longform"
+    " ON items (words, clicked_at, last_shown_at)",
+]
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    for table, columns in MIGRATIONS.items():
+        have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        for name, decl in columns.items():
+            if name not in have:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+    for stmt in POST_MIGRATION_INDEXES:
+        con.execute(stmt)
+    con.commit()
+
+
 def connect(path: Path | None = None) -> sqlite3.Connection:
     p = path or (state_dir() / "news.db")
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -116,8 +176,10 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
+    _migrate(con)
     con.execute(
-        "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
+        "INSERT INTO meta (key, value) VALUES ('schema_version', ?)"
+        " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (str(SCHEMA_VERSION),),
     )
     con.commit()
@@ -138,10 +200,13 @@ def seed_sources(con: sqlite3.Connection, catalogue: Path) -> tuple[int, int]:
         if cur.fetchone() is None:
             con.execute(
                 "INSERT INTO sources (name, lane, url, tier, insecure_tls, note,"
-                " dormant, cap) VALUES (?,?,?,?,?,?,?,?)",
+                " dormant, longform, kind, evergreen, cap)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (s["name"], s["lane"], s["url"], s["tier"],
                  int(bool(s.get("insecure_tls"))), s.get("note", ""),
-                 int(bool(s.get("dormant"))), int(s["cap"])),
+                 int(bool(s.get("dormant"))), int(s.get("longform", True)),
+                 s.get("kind", "feed"), int(bool(s.get("evergreen"))),
+                 int(s["cap"])),
             )
             added += 1
         else:
@@ -149,10 +214,11 @@ def seed_sources(con: sqlite3.Connection, catalogue: Path) -> tuple[int, int]:
             # woken up, a later deploy carrying the old catalogue must not put
             # it back to sleep.
             con.execute(
-                "UPDATE sources SET lane=?, url=?, tier=?, insecure_tls=?, note=?"
-                " WHERE name=?",
+                "UPDATE sources SET lane=?, url=?, tier=?, insecure_tls=?, note=?,"
+                " longform=?, kind=?, evergreen=? WHERE name=?",
                 (s["lane"], s["url"], s["tier"], int(bool(s.get("insecure_tls"))),
-                 s.get("note", ""), s["name"]),
+                 s.get("note", ""), int(s.get("longform", True)),
+                 s.get("kind", "feed"), int(bool(s.get("evergreen"))), s["name"]),
             )
             updated += 1
     con.commit()
