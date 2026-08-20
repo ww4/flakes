@@ -122,6 +122,18 @@ in
     locations."/" = {
       proxyPass = "http://127.0.0.1:8090";
       recommendedProxySettings = true;
+      # The ntfy Android app opens a WEBSOCKET for instant delivery. Without
+      # this the upgrade handshake never completes and the app reports
+      # "WebSocket not supported ... Expected HTTP 101", then falls back to
+      # polling — slower notifications and more battery.
+      #
+      # recommendedProxySettings does NOT cover this: it sets only Host and the
+      # X-Forwarded-* headers. WebSocket additionally needs HTTP/1.1 plus the
+      # Upgrade/Connection headers, which every other websocket vhost on this
+      # box sets explicitly. This one never did — a latent gap since the vhost
+      # was created, unrelated to the 2026-08-19 auth change that made Chris
+      # look at the connection screen and notice it.
+      proxyWebsockets = true;
       extraConfig = ''
         proxy_buffering off;
         proxy_read_timeout 1h;     # ntfy event-stream connections are long-lived
