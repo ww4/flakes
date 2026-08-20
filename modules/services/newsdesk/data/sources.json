@@ -11,7 +11,9 @@
   "       Caps are the whole reason a 2/wk newsletter is not buried by a",
   "       210/wk aggregator.",
   "",
-  "dormant: this source had published nothing for over 120 days when the catalogue was built. It is kept deliberately \u2014 polling costs nothing and the point is to notice if it WAKES UP. Dormant sources are excluded from the edition's stale-source warnings (a warning that fires every single day is one you stop reading), and the flag clears itself the moment the source publishes again, which is announced once."
+  "dormant: this source had published nothing for over 120 days when the catalogue was built. It is kept deliberately \u2014 polling costs nothing and the point is to notice if it WAKES UP. Dormant sources are excluded from the edition's stale-source warnings (a warning that fires every single day is one you stop reading), and the flag clears itself the moment the source publishes again, which is announced once.",
+  "",
+  "note: ALSO an editorial instruction. The reader is handed each candidate's note as `source_note` and told to obey it, so a source's standing policy ('discussion only, never build logs') is DATA that can be retuned here without touching the judge prompt."
  ],
  "sources": [
   {
@@ -131,7 +133,7 @@
     "per_week": 5.7,
     "on": "2026-08-19"
    },
-   "note": "Community aggregator. Capped hard; it is a discovery surface, not a source.",
+   "note": "Community aggregator. Capped hard; it is a discovery surface, not a source. EDITORIAL: aggregator. Publish only if the discussion itself is the value.",
    "dormant": false
   },
   {
@@ -536,7 +538,7 @@
     "per_week": 1.2,
     "on": "2026-08-19"
    },
-   "note": "His own wood-gas community. Forum firehose is small (1.2/wk) and on-topic by construction.",
+   "note": "His own wood-gas community. Forum firehose is small (1.2/wk) and on-topic by construction. EDITORIAL: publish only DISCUSSION \u2014 people arguing, diagnosing, or working a problem out. Chris knows what a gasifier is and does not need another build log. Reject photo threads, build pictures, show-and-tell and 'here is my rig' posts however on-topic they look.",
    "dormant": false
   },
   {
@@ -551,7 +553,7 @@
     "per_week": 0.1,
     "on": "2026-08-19"
    },
-   "note": "Tiny volume, perfectly on-topic. Nothing else covers gasification this directly.",
+   "note": "Tiny volume, perfectly on-topic. Nothing else covers gasification this directly. EDITORIAL: same as Drive On Wood \u2014 ideas and problem-solving only, never build logs or photo dumps.",
    "dormant": false
   },
   {
@@ -1031,7 +1033,7 @@
     "per_week": 29.2,
     "on": "2026-08-19"
    },
-   "note": "Pre-ranked by the sub. Discovery of tools, not analysis. \u26a0\ufe0f OBSERVED: Reddit rate-limits this box (HTTP 429) intermittently \u2014 succeeded on two of three real runs.",
+   "note": "Pre-ranked by the sub. Discovery of tools, not analysis. \u26a0\ufe0f OBSERVED: Reddit rate-limits this box (HTTP 429) intermittently \u2014 succeeded on two of three real runs. EDITORIAL: a discovery surface. Publish a tool only if the post explains something about running it, not because it exists.",
    "dormant": false
   },
   {
@@ -1046,7 +1048,7 @@
     "per_week": 42.0,
     "on": "2026-08-19"
    },
-   "note": "42/wk. Mine for breakage reports on modules he runs.",
+   "note": "42/wk. Mine for breakage reports on modules he runs. EDITORIAL: reject ordinary support requests and one-person breakage. Publish design discussion, RFC outcomes, and breakage that affects modules he runs.",
    "dormant": false
   },
   {
@@ -1061,7 +1063,7 @@
     "per_week": 175.0,
     "on": "2026-08-19"
    },
-   "note": "175/wk, high average quality. The judge earns its keep here.",
+   "note": "175/wk, high average quality. The judge earns its keep here. EDITORIAL: aggregator. Judge the linked thing, never the ranking.",
    "dormant": false
   },
   {
@@ -1076,7 +1078,7 @@
     "per_week": 210.0,
     "on": "2026-08-19"
    },
-   "note": "210/wk even filtered to 'best'. Pure discovery surface.",
+   "note": "210/wk even filtered to 'best'. Pure discovery surface. EDITORIAL: aggregator. Judge the linked thing, never the ranking.",
    "dormant": false
   },
   {
@@ -1226,7 +1228,7 @@
     "per_week": 19.1,
     "on": "2026-08-19"
    },
-   "note": "The most reliable LLM-practice signal available, 19/wk of it.",
+   "note": "The most reliable LLM-practice signal available, 19/wk of it. EDITORIAL: he posts many short release notes. Publish the essays and the worked experiments; reject bare 'library 1.2.3 released' entries.",
    "dormant": false
   },
   {

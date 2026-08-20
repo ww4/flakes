@@ -539,6 +539,18 @@ class TestRank(Base):
         self.assertEqual(
             edition_mod.rank(self.con, "longread", fetch_articles=False)["shortlisted"], 1)
 
+    def test_source_editorial_note_reaches_the_reader(self):
+        """A source's standing policy is data. It is useless if the reader
+        never sees it — which is exactly how a photo-only build thread got
+        published on 2026-08-20."""
+        self.add_source("Forum", "energy", cap=2)
+        self.con.execute("UPDATE sources SET note=? WHERE name='Forum'",
+                         ("EDITORIAL: discussion only, never build logs.",))
+        self.con.commit()
+        self.add_item("Forum", "energy", "build pictures", score=5)
+        res = edition_mod.rank(self.con, "brief", fetch_articles=False)
+        self.assertIn("discussion only", res["candidates"][0]["source_note"])
+
     def test_dry_run_changes_nothing(self):
         self.add_source("A", "linux", cap=5)
         self.add_item("A", "linux", "t", score=5)
@@ -610,6 +622,21 @@ class TestPublish(Base):
         self.con.commit()
         self._publish(f"[nd:{self.kept}]")
         self.assertIn("Back from the dead", (self.web / "index.html").read_text())
+
+    def test_item_dates_are_rendered_not_left_to_the_reader(self):
+        self.con.execute("UPDATE items SET published=? WHERE id=?",
+                         ("2026-08-18T10:00:00+00:00", self.kept))
+        self.con.commit()
+        self._publish(f"- **kept** [nd:{self.kept}]\n")
+        self.assertIn("18 Aug", (self.web / "index.html").read_text())
+
+    def test_raw_scores_are_not_shown_to_the_reader(self):
+        """They are meaningless to him, and this edition proved they are not
+        even correlated with what is worth publishing."""
+        self._publish(f"- **kept** [nd:{self.kept}]\n")
+        page = (self.web / "index.html").read_text()
+        self.assertIn("Not selected", page)
+        self.assertNotIn("score", page.lower())
 
     def test_stale_sources_appear_in_the_edition(self):
         self.con.execute("UPDATE sources SET fail_streak=9, last_error='dead'"
