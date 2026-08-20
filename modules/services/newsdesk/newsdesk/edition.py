@@ -79,7 +79,7 @@ def rank(con: sqlite3.Connection, kind: str, *, fetch_articles: bool = True,
     cutoff = (datetime.now(timezone.utc)
               - timedelta(days=spec["max_age_days"])).isoformat()
     rows = con.execute(
-        "SELECT i.*, s.tier, s.cap, s.weight, s.insecure_tls"
+        "SELECT i.*, s.tier, s.cap, s.weight, s.insecure_tls, s.note AS source_note"
         " FROM items i JOIN sources s ON s.name = i.source"
         " WHERE i.state = 'new' AND i.score IS NOT NULL AND s.enabled = 1"
         " AND i.words >= ?"
@@ -137,6 +137,11 @@ def rank(con: sqlite3.Connection, kind: str, *, fetch_articles: bool = True,
             "id": c["id"],
             "lane": c["lane"],
             "source": c["source"],
+            # The catalogue's per-source editorial policy, handed to the reader
+            # so a source's standing instructions are DATA. Chris can retune
+            # what a source is for by editing sources.json, with no prompt
+            # change: "filter this forum for discussion, not build logs".
+            "source_note": c["source_note"] or "",
             "tier": c["tier"],
             "title": c["title"],
             "url": c["url"],
@@ -187,8 +192,20 @@ def _fill_thin_bodies(con: sqlite3.Connection, chosen) -> None:
 TOKEN = re.compile(r"\[nd:(\d+)\]")
 
 
-def _grade_links(item_id: int, edition: str, url: str) -> str:
-    return (f'<a href="{url}">source</a> · '
+def _short_date(iso: str | None) -> str:
+    """`18 Aug` — enough to see at a glance whether this is today's news."""
+    if not iso:
+        return ""
+    try:
+        return datetime.fromisoformat(iso).strftime("%-d %b")
+    except ValueError:
+        return ""
+
+
+def _grade_links(item_id: int, edition: str, url: str, published: str | None) -> str:
+    when = _short_date(published)
+    stamp = f'<span class="when">{when}</span> · ' if when else ""
+    return (f'{stamp}<a href="{url}">source</a> · '
             f'<a href="/news/g?e={edition}&i={item_id}&v=up">&#128077;</a> '
             f'<a href="/news/g?e={edition}&i={item_id}&v=down">&#128078;</a>')
 
@@ -220,7 +237,10 @@ def publish(con: sqlite3.Connection, kind: str, judged_md: str, *,
 
     # --- markdown for the space: tokens become plain links -----------------
     space_md = TOKEN.sub(
-        lambda m: f"([source]({by_id[int(m.group(1))]['url']}) `nd:{m.group(1)}`)"
+        lambda m: (f"([source]({by_id[int(m.group(1))]['url']})"
+                   f"{' · ' + _short_date(by_id[int(m.group(1))]['published'])
+                      if _short_date(by_id[int(m.group(1))]['published']) else ''}"
+                   f" `nd:{m.group(1)}`)")
         if int(m.group(1)) in by_id else "",
         judged_md)
 
@@ -234,7 +254,8 @@ def publish(con: sqlite3.Connection, kind: str, judged_md: str, *,
 
     # --- HTML: tokens become source + grading links ------------------------
     html_md = TOKEN.sub(
-        lambda m: _grade_links(int(m.group(1)), eid, by_id[int(m.group(1))]["url"])
+        lambda m: _grade_links(int(m.group(1)), eid, by_id[int(m.group(1))]["url"],
+                               by_id[int(m.group(1))]["published"])
         if int(m.group(1)) in by_id else "",
         judged_md)
     html_body = _render_html(f"{html_md}\n\n{footer_md}", cmark)
@@ -309,7 +330,7 @@ def _footer_markdown(stale: list[dict], awake: list[dict], passed,
                    "</summary>")
         out.append("")
         for r in sorted(passed, key=lambda r: -(r["score"] or 0)):
-            out.append(f"- {r['title']} — {r['source']} · score {r['score']}")
+            out.append(f"- {r['title']} — {r['source']}")
         out.append("")
         out.append("</details>")
         out.append("")
@@ -332,6 +353,7 @@ def _render_html(md: str, cmark: str | None) -> str:
 STYLE = (
     "body{max-width:46rem;margin:2rem auto;padding:0 1rem;"
     "font:16px/1.6 system-ui,-apple-system,sans-serif;color:#e6e6e6;background:#181818}"
+    ".when{color:#888;font-size:.85em}"
     "h1,h2,h3{line-height:1.25;margin-top:1.4em}"
     "code{background:#2c2c2c;padding:.1em .35em;border-radius:3px;font-size:.9em}"
     "pre{background:#2c2c2c;padding:.8em;border-radius:6px;overflow:auto}"

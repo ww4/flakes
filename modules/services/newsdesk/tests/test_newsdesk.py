@@ -17,7 +17,10 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -25,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from newsdesk import collect as collect_mod  # noqa: E402
 from newsdesk import edition as edition_mod  # noqa: E402
-from newsdesk import feedback, feeds  # noqa: E402
+from newsdesk import feedback, feeds, gradeserver  # noqa: E402
 from newsdesk.db import connect, seed_sources  # noqa: E402
 from newsdesk.score import score_text  # noqa: E402
 
@@ -536,6 +539,18 @@ class TestRank(Base):
         self.assertEqual(
             edition_mod.rank(self.con, "longread", fetch_articles=False)["shortlisted"], 1)
 
+    def test_source_editorial_note_reaches_the_reader(self):
+        """A source's standing policy is data. It is useless if the reader
+        never sees it — which is exactly how a photo-only build thread got
+        published on 2026-08-20."""
+        self.add_source("Forum", "energy", cap=2)
+        self.con.execute("UPDATE sources SET note=? WHERE name='Forum'",
+                         ("EDITORIAL: discussion only, never build logs.",))
+        self.con.commit()
+        self.add_item("Forum", "energy", "build pictures", score=5)
+        res = edition_mod.rank(self.con, "brief", fetch_articles=False)
+        self.assertIn("discussion only", res["candidates"][0]["source_note"])
+
     def test_dry_run_changes_nothing(self):
         self.add_source("A", "linux", cap=5)
         self.add_item("A", "linux", "t", score=5)
@@ -608,6 +623,21 @@ class TestPublish(Base):
         self._publish(f"[nd:{self.kept}]")
         self.assertIn("Back from the dead", (self.web / "index.html").read_text())
 
+    def test_item_dates_are_rendered_not_left_to_the_reader(self):
+        self.con.execute("UPDATE items SET published=? WHERE id=?",
+                         ("2026-08-18T10:00:00+00:00", self.kept))
+        self.con.commit()
+        self._publish(f"- **kept** [nd:{self.kept}]\n")
+        self.assertIn("18 Aug", (self.web / "index.html").read_text())
+
+    def test_raw_scores_are_not_shown_to_the_reader(self):
+        """They are meaningless to him, and this edition proved they are not
+        even correlated with what is worth publishing."""
+        self._publish(f"- **kept** [nd:{self.kept}]\n")
+        page = (self.web / "index.html").read_text()
+        self.assertIn("Not selected", page)
+        self.assertNotIn("score", page.lower())
+
     def test_stale_sources_appear_in_the_edition(self):
         self.con.execute("UPDATE sources SET fail_streak=9, last_error='dead'"
                          " WHERE name='A'")
@@ -622,43 +652,79 @@ class TestPublish(Base):
 # ---------------------------------------------------------------------------
 
 class TestFeedback(Base):
+    """Grades now arrive through the real loopback service.
+
+    These drive an actual HTTP server on an ephemeral port rather than a stub,
+    because the previous design was killed by things a stub cannot model — the
+    endpoint's behaviour at the edges IS the feature now.
+    """
+
     def setUp(self):
         super().setUp()
         self.add_source("A", "linux", cap=2)
         self.ids = [self.add_item("A", "linux", f"t{i}", state="published")
                     for i in range(6)]
+        gradeserver.GradeHandler.db_path = self.dir / "test.db"
+        self.httpd = gradeserver.ThreadingHTTPServer(
+            ("127.0.0.1", 0), gradeserver.GradeHandler)
+        self.port = self.httpd.server_address[1]
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
 
-    def _log(self, lines):
-        p = self.dir / "grades" / "access.log"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("\n".join(lines) + "\n")
-        return p
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(timeout=5)
+        super().tearDown()
 
-    def test_web_ingest_and_idempotency(self):
-        self._log([f"2026-08-20T07:01:00-04:00 ed-1 {self.ids[0]} up",
-                   f"2026-08-20T07:02:00-04:00 ed-1 {self.ids[1]} down"])
-        self.assertEqual(feedback.ingest_web(self.con), 2)
-        feedback.ingest_web(self.con)
-        n = self.con.execute("SELECT COUNT(*) FROM grades").fetchone()[0]
-        self.assertEqual(n, 2, "re-reading the log duplicated grades")
+    def _get(self, query: str) -> int:
+        url = f"http://127.0.0.1:{self.port}/news/g?{query}"
+        try:
+            with urllib.request.urlopen(url, timeout=10) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    def _grade(self, item_id, v="up") -> int:
+        return self._get(f"e=ed-1&i={item_id}&v={v}")
+
+    def test_a_click_records_a_grade(self):
+        self.assertEqual(self._grade(self.ids[0], "up"), 204)
+        row = self.con.execute("SELECT via, value FROM grades WHERE item_id=?",
+                               (self.ids[0],)).fetchone()
+        self.assertEqual((row["via"], row["value"]), ("web", 1))
+
+    def test_clicking_twice_does_not_duplicate(self):
+        self._grade(self.ids[0], "up")
+        self._grade(self.ids[0], "up")
+        self.assertEqual(
+            self.con.execute("SELECT COUNT(*) FROM grades").fetchone()[0], 1)
 
     def test_regrading_overwrites(self):
-        self._log([f"2026-08-20T07:01:00-04:00 ed-1 {self.ids[0]} up"])
-        feedback.ingest_web(self.con)
-        self._log([f"2026-08-20T07:01:00-04:00 ed-1 {self.ids[0]} up",
-                   f"2026-08-20T09:00:00-04:00 ed-1 {self.ids[0]} down"])
-        feedback.ingest_web(self.con)
-        v = self.con.execute("SELECT value FROM grades WHERE item_id=?",
-                             (self.ids[0],)).fetchone()[0]
-        self.assertEqual(v, -1)
+        self._grade(self.ids[0], "up")
+        self._grade(self.ids[0], "down")
+        self.assertEqual(
+            self.con.execute("SELECT value FROM grades WHERE item_id=?",
+                             (self.ids[0],)).fetchone()[0], -1)
 
-    def test_malformed_log_lines_ignored(self):
-        self._log(["garbage", "- - - -", f"x y {self.ids[0]} sideways", ""])
-        self.assertEqual(feedback.ingest_web(self.con), 0)
+    def test_malformed_requests_are_rejected(self):
+        for q in ("", "i=abc&v=up", f"i={self.ids[0]}", f"i={self.ids[0]}&v=sideways",
+                  "i=&v=up"):
+            self.assertEqual(self._get(q), 400, q)
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM grades").fetchone()[0], 0)
 
-    def test_grade_for_unknown_item_ignored(self):
-        self._log(["2026-08-20T07:01:00-04:00 ed-1 987654 up"])
-        self.assertEqual(feedback.ingest_web(self.con), 0)
+    def test_grade_for_unknown_item_is_404(self):
+        self.assertEqual(self._grade(987654), 404)
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM grades").fetchone()[0], 0)
+
+    def test_unknown_path_is_404(self):
+        url = f"http://127.0.0.1:{self.port}/etc/passwd"
+        try:
+            with urllib.request.urlopen(url, timeout=10) as r:
+                code = r.status
+        except urllib.error.HTTPError as e:
+            code = e.code
+        self.assertEqual(code, 404)
 
     def test_space_tags_ingested(self):
         page = self.dir / "space2"
@@ -678,9 +744,8 @@ class TestFeedback(Base):
         self.assertIn("optional", report)
 
     def test_downvotes_demote_within_bounds(self):
-        self._log([f"2026-08-20T07:0{i}:00-04:00 ed-1 {self.ids[i]} down"
-                   for i in range(5)])
-        feedback.ingest_web(self.con)
+        for i in range(5):
+            self._grade(self.ids[i], "down")
         feedback.tune(self.con, PROFILE)
         row = self.con.execute("SELECT cap, weight, enabled FROM sources WHERE name='A'").fetchone()
         self.assertEqual(row["cap"], 1)
@@ -690,29 +755,24 @@ class TestFeedback(Base):
     def test_cap_never_falls_below_one(self):
         self.con.execute("UPDATE sources SET cap=1 WHERE name='A'")
         self.con.commit()
-        self._log([f"2026-08-20T07:0{i}:00-04:00 ed-1 {self.ids[i]} down"
-                   for i in range(5)])
-        feedback.ingest_web(self.con)
+        for i in range(5):
+            self._grade(self.ids[i], "down")
         feedback.tune(self.con, PROFILE)
         self.assertEqual(
             self.con.execute("SELECT cap FROM sources WHERE name='A'").fetchone()[0], 1)
 
     def test_upvotes_promote(self):
-        self._log([f"2026-08-20T07:0{i}:00-04:00 ed-1 {self.ids[i]} up"
-                   for i in range(4)])
-        feedback.ingest_web(self.con)
+        for i in range(4):
+            self._grade(self.ids[i], "up")
         feedback.tune(self.con, PROFILE)
         row = self.con.execute("SELECT cap, weight FROM sources WHERE name='A'").fetchone()
         self.assertEqual(row["cap"], 3)
         self.assertGreater(row["weight"], 1.0)
 
     def test_mixed_feedback_does_nothing(self):
-        self._log([f"2026-08-20T07:01:00-04:00 ed-1 {self.ids[0]} up",
-                   f"2026-08-20T07:02:00-04:00 ed-1 {self.ids[1]} down",
-                   f"2026-08-20T07:03:00-04:00 ed-1 {self.ids[2]} down",
-                   f"2026-08-20T07:04:00-04:00 ed-1 {self.ids[3]} down",
-                   f"2026-08-20T07:05:00-04:00 ed-1 {self.ids[4]} down"])
-        feedback.ingest_web(self.con)
+        self._grade(self.ids[0], "up")
+        for i in range(1, 5):
+            self._grade(self.ids[i], "down")
         feedback.tune(self.con, PROFILE)
         row = self.con.execute("SELECT cap, weight FROM sources WHERE name='A'").fetchone()
         self.assertEqual((row["cap"], row["weight"]), (2, 1.0))
@@ -722,9 +782,8 @@ class TestFeedback(Base):
             self.con.execute("UPDATE items SET body='wood gas everywhere' WHERE id=?",
                              (self.ids[i],))
         self.con.commit()
-        self._log([f"2026-08-20T07:0{i}:00-04:00 ed-1 {self.ids[i]} down"
-                   for i in range(4)])
-        feedback.ingest_web(self.con)
+        for i in range(4):
+            self._grade(self.ids[i], "down")
         report = feedback.tune(self.con, PROFILE)
         self.assertIn("NOT applied", report)
         self.assertIn("wood gas", report)
@@ -736,8 +795,7 @@ class TestFeedback(Base):
         page = self.dir / "space3"
         page.mkdir()
         (page / "e.md").write_text(f"- [ ] x `nd:{self.ids[0]}` #good\n")
-        self._log([f"2026-08-20T07:01:00-04:00 ed-1 {self.ids[0]} up"])
-        feedback.ingest_web(self.con)
+        self._grade(self.ids[0], "up")
         feedback.ingest_space(self.con, page)
         totals = feedback._grade_totals(self.con)
         self.assertEqual(totals[self.ids[0]], 1)

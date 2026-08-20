@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import collect as collect_mod
 from . import edition as edition_mod
-from . import feedback
+from . import feedback, gradeserver
 from .db import connect, load_profile, seed_sources, state_dir, write_atomic
 
 
@@ -89,16 +89,23 @@ def cmd_publish(args) -> int:
 
 
 def cmd_grade(args) -> int:
+    """Ingest the SPACE grading surface only.
+
+    Web grades arrive live via newsdesk-grade and are already in the table.
+    """
     con = _con(args)
-    n_web = feedback.ingest_web(con)
     n_space = feedback.ingest_space(con, Path(args.space)) if args.space else 0
-    print(f"newsdesk: ingested {n_web} web grade(s), {n_space} space grade(s)")
+    print(f"newsdesk: ingested {n_space} space grade(s)")
     return 0
+
+
+def cmd_serve(args) -> int:
+    return gradeserver.serve(host=args.host, port=args.port,
+                             db_path=Path(args.db) if args.db else None)
 
 
 def cmd_tune(args) -> int:
     con = _con(args)
-    feedback.ingest_web(con)
     if args.space:
         feedback.ingest_space(con, Path(args.space))
     report = feedback.tune(con, load_profile())
@@ -149,9 +156,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--cmark")
     p.set_defaults(func=cmd_publish)
 
-    p = sub.add_parser("grade", help="ingest grades from both surfaces")
+    p = sub.add_parser("grade", help="ingest grades from the SilverBullet pages")
     p.add_argument("--space")
     p.set_defaults(func=cmd_grade)
+
+    p = sub.add_parser("serve", help="run the grading endpoint (loopback only)")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8123)
+    p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("tune", help="apply source tuning, propose term changes")
     p.add_argument("--space")

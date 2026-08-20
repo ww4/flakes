@@ -176,6 +176,14 @@ in
       '';
     };
 
+    gradePort = lib.mkOption {
+      type = lib.types.port;
+      default = 8123;
+      description = ''
+        Loopback port for the grading endpoint. nginx proxies /news/g to it.
+      '';
+    };
+
     briefSchedule = lib.mkOption {
       type = lib.types.str;
       default = "Mon..Fri 07:00";
@@ -241,14 +249,11 @@ in
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [ newsdesk ];
 
-    # nginx writes the grading log; the tuner (running as `claude`) reads it.
-    # Owner nginx, group the service user, 0750 — the narrowest arrangement
-    # that lets one write and the other read.
-    systemd.tmpfiles.rules = [
-      "d ${cfg.stateDir} 0755 ${cfg.user} ${cfg.user} - -"
-      "d ${cfg.stateDir}/web 0755 ${cfg.user} ${cfg.user} - -"
-      "d ${cfg.stateDir}/grades 0750 ${config.services.nginx.user} ${cfg.user} - -"
-    ];
+    # NOTE: there are deliberately NO tmpfiles rules here any more. The units'
+    # own StateDirectory=newsdesk creates /var/lib/newsdesk, and the app creates
+    # web/ itself as it writes. The rules that used to be here named a group
+    # that did not exist, failed silently, and left nginx pointing at a missing
+    # directory — see gradeserver.py for the full postmortem.
 
     systemd.services.newsdesk-collect = {
       description = "Newsdesk — poll the feeds";
@@ -345,35 +350,49 @@ in
       };
     };
 
-    # The grading endpoint. nginx answers 204 and records the click in a
-    # dedicated log; there is no service to run and no auth surface to get
-    # wrong, and the vhost's existing source gate already means only the
-    # tailnet can reach it.
-    #
-    # ⚠️ Accepted tradeoff: these are GET links, so a link-prefetching client
-    # could in principle register a grade he did not intend. The alternative
-    # (POST, or a confirmation page) costs the one-tap ergonomics that make
-    # optional grading actually happen.
-    # commonHttpConfig, NOT appendHttpConfig: nginx resolves a log_format name
-    # at parse time, and appendHttpConfig lands AFTER the server blocks that
-    # reference it. Caught by running `nginx -t` against the rendered config —
-    # it fails with `unknown log format "newsdesk_grade"`, which would have
-    # taken down every vhost on the box at deploy, not just this one.
-    services.nginx.commonHttpConfig = ''
-      log_format newsdesk_grade '$time_iso8601 $arg_e $arg_i $arg_v';
-    '';
+    # The grading endpoint is a separate loopback service, NOT an nginx
+    # access_log. That is the whole lesson of the 2026-08-20 outage: anything
+    # nginx must OPEN at config-parse time can stop nginx from starting, and a
+    # dead nginx is every vhost on the box, not just this one. `proxy_pass` to
+    # 127.0.0.1 is something nginx can always do; if the grade service is down,
+    # one link 502s and nothing else notices.
+    systemd.services.newsdesk-grade = {
+      description = "Newsdesk — grading endpoint (loopback)";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network.target" ];
+      serviceConfig = {
+        Type = "simple";
+        User = cfg.user;
+        StateDirectory = "newsdesk";
+        Restart = "on-failure";
+        RestartSec = "5s";
+        Environment = [ "NEWSDESK_STATE=${cfg.stateDir}" "HOME=/home/${cfg.user}" ];
+        ExecStart = "${nd} serve --host 127.0.0.1 --port ${toString cfg.gradePort}";
+        # It answers unauthenticated GETs, so give it the narrowest profile
+        # that still lets it write one SQLite file.
+        ProtectSystem = "strict";
+        ReadWritePaths = [ cfg.stateDir ];
+        ProtectHome = true;
+        PrivateDevices = true;
+        NoNewPrivileges = true;
+        RestrictAddressFamilies = [ "AF_INET" "AF_UNIX" ];
+        SystemCallFilter = [ "@system-service" ];
+      };
+    };
 
     services.nginx.virtualHosts.${cfg.virtualHost}.locations = {
       "= /news".extraConfig = "return 301 /news/;";
       "/news/" = {
+        # `alias` is resolved per REQUEST, not at parse time, so a missing
+        # directory here 404s instead of refusing to start. That asymmetry is
+        # exactly why the log had to move and this can stay.
         alias = "${cfg.stateDir}/web/";
         extraConfig = "index index.html; autoindex on;";
       };
       # Exact match wins over the /news/ prefix above.
       "= /news/g".extraConfig = ''
-        access_log ${cfg.stateDir}/grades/access.log newsdesk_grade;
-        default_type text/plain;
-        return 204;
+        proxy_pass http://127.0.0.1:${toString cfg.gradePort};
+        proxy_set_header Host $host;
       '';
     };
   };

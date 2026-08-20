@@ -41,6 +41,7 @@
 
     # Services.
     ./modules/services/nginx-access.nix     # source-gate all vhosts to Tailscale + LAN (security review 2026-06-04)
+    ./modules/services/nginx-log-paths-check.nix # eval-time guard: an nginx log outside its writable set = every vhost down
     ./modules/services/blocky.nix           # local split-horizon DNS: rosemaryacres.com -> LAN IP so hostnames resolve with the WAN down
     ./modules/services/jellyfin.nix
     ./modules/services/audiobookshelf.nix
