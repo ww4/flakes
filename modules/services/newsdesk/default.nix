@@ -242,12 +242,23 @@ in
     environment.systemPackages = [ newsdesk ];
 
     # nginx writes the grading log; the tuner (running as `claude`) reads it.
-    # Owner nginx, group the service user, 0750 — the narrowest arrangement
-    # that lets one write and the other read.
-    systemd.tmpfiles.rules = [
-      "d ${cfg.stateDir} 0755 ${cfg.user} ${cfg.user} - -"
-      "d ${cfg.stateDir}/web 0755 ${cfg.user} ${cfg.user} - -"
-      "d ${cfg.stateDir}/grades 0750 ${config.services.nginx.user} ${cfg.user} - -"
+    # Owner nginx, group the service user's PRIMARY GROUP, 0750 — the narrowest
+    # arrangement that lets one write and the other read.
+    #
+    # ⚠️ The group must be the user's actual primary group, NOT the user name.
+    # `claude` is an isNormalUser, so its group is `users`; no group named
+    # `claude` exists. Naming one anyway made all three rules fail with
+    # `Failed to resolve group 'claude': Unknown group`, so /var/lib/newsdesk
+    # was never created — and since the grading location does
+    # `access_log ${cfg.stateDir}/grades/access.log`, a path nginx opens at
+    # PARSE time, nginx then refused to start at all and took every vhost on
+    # the box down with it (2026-08-20, comin deploy exited 4).
+    systemd.tmpfiles.rules = let
+      stateGroup = config.users.users.${cfg.user}.group;
+    in [
+      "d ${cfg.stateDir} 0755 ${cfg.user} ${stateGroup} - -"
+      "d ${cfg.stateDir}/web 0755 ${cfg.user} ${stateGroup} - -"
+      "d ${cfg.stateDir}/grades 0750 ${config.services.nginx.user} ${stateGroup} - -"
     ];
 
     systemd.services.newsdesk-collect = {
