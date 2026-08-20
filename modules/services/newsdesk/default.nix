@@ -397,8 +397,14 @@ in
         alias = "${cfg.stateDir}/web/";
         extraConfig = "index index.html; autoindex on;";
       };
-      # Exact match wins over the /news/ prefix above.
+      # Exact matches win over the /news/ prefix above.
       "= /news/g".extraConfig = ''
+        proxy_pass http://127.0.0.1:${toString cfg.gradePort};
+        proxy_set_header Host $host;
+      '';
+      # Click-through: records that he opened the piece, then redirects to the
+      # source. For a good read that click is the "I read it" signal.
+      "= /news/r".extraConfig = ''
         proxy_pass http://127.0.0.1:${toString cfg.gradePort};
         proxy_set_header Host $host;
       '';

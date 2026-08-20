@@ -13,743 +13,44 @@
   "",
   "dormant: this source had published nothing for over 120 days when the catalogue was built. It is kept deliberately \u2014 polling costs nothing and the point is to notice if it WAKES UP. Dormant sources are excluded from the edition's stale-source warnings (a warning that fires every single day is one you stop reading), and the flag clears itself the moment the source publishes again, which is announced once.",
   "",
-  "note: ALSO an editorial instruction. The reader is handed each candidate's note as `source_note` and told to obey it, so a source's standing policy ('discussion only, never build logs') is DATA that can be retuned here without touching the judge prompt."
+  "note: ALSO an editorial instruction. The reader is handed each candidate's note as `source_note` and told to obey it, so a source's standing policy ('discussion only, never build logs') is DATA that can be retuned here without touching the judge prompt.",
+  "",
+  "2026-08-20: 24 long-form sources added for the good-reads section. They are ordinary sources \u2014 they feed the daily lanes too \u2014 but they were chosen for essays rather than news, which is why several publish under one item a week.",
+  "",
+  "longform: may this source produce a GOOD READ? Word count is not a quality gate \u2014 tested against the real backlog it admitted release notes, a newsletter and a link roundup, which then crowded the essays out of the shortlist. Newsletters, aggregators, notice feeds and every release feed are false. They still feed the daily lanes normally."
  ],
  "sources": [
   {
-   "name": "Bitcoin Optech Newsletter",
-   "lane": "bitcoin",
-   "url": "https://bitcoinops.org/feed.xml",
-   "tier": "core",
-   "cap": 3,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-18",
-    "per_week": 2.2,
-    "on": "2026-08-19"
-   },
-   "note": "The single highest-signal Bitcoin source in existence. Weekly, technical, zero price talk.",
-   "dormant": false
-  },
-  {
-   "name": "Delving Bitcoin (forum)",
-   "lane": "bitcoin",
-   "url": "https://delvingbitcoin.org/latest.rss",
-   "tier": "core",
-   "cap": 4,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-18",
-    "per_week": 6.0,
-    "on": "2026-08-19"
-   },
-   "note": "Where protocol arguments actually happen, before they reach any podcast.",
-   "dormant": false
-  },
-  {
-   "name": "Bitcoin Core PR Review Club",
-   "lane": "bitcoin",
-   "url": "https://bitcoincore.reviews/feed.xml",
-   "tier": "core",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-04-08",
-    "per_week": 0.2,
-    "on": "2026-08-19"
-   },
-   "note": "Runs in seasons; long gaps are normal, not a dead feed.",
-   "dormant": true
-  },
-  {
-   "name": "0xB10C",
-   "lane": "bitcoin",
-   "url": "https://b10c.me/feed.xml",
-   "tier": "core",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-11",
-    "per_week": 0.2,
-    "on": "2026-08-19"
-   },
-   "note": "Mempool/network measurement from someone who instruments the real thing.",
-   "dormant": false
-  },
-  {
-   "name": "Brink (bitcoin dev funding)",
-   "lane": "bitcoin",
-   "url": "https://brink.dev/feed.xml",
-   "tier": "watch",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-17",
-    "per_week": 0.5,
-    "on": "2026-08-19"
-   },
-   "note": "Who is being paid to work on what \u2014 a leading indicator of what lands next year.",
-   "dormant": false
-  },
-  {
-   "name": "Blockstream engineering",
-   "lane": "bitcoin",
-   "url": "https://blog.blockstream.com/rss/",
-   "tier": "watch",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 1.1,
-    "on": "2026-08-19"
-   },
-   "note": "Engineering posts are good; marketing posts are not. Judge filters.",
-   "dormant": false
-  },
-  {
-   "name": "Jameson Lopp",
-   "lane": "bitcoin",
-   "url": "https://blog.lopp.net/rss/",
-   "tier": "watch",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-17",
-    "per_week": 0.2,
-    "on": "2026-08-19"
-   },
-   "note": "Self-custody and node operations, occasionally security-research grade.",
-   "dormant": false
-  },
-  {
-   "name": "Stacker News (top)",
-   "lane": "bitcoin",
-   "url": "https://stacker.news/rss",
-   "tier": "firehose",
-   "cap": 3,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 5.7,
-    "on": "2026-08-19"
-   },
-   "note": "Community aggregator. Capped hard; it is a discovery surface, not a source. EDITORIAL: aggregator. Publish only if the discussion itself is the value.",
-   "dormant": false
-  },
-  {
-   "name": "Fedimint blog",
-   "lane": "bitcoin",
-   "url": "https://fedimint.org/blog/rss.xml",
+   "name": "Backwoods Home Magazine",
+   "lane": "agrarian",
+   "url": "https://www.backwoodshome.com/feed/",
    "tier": "watch",
    "cap": 1,
    "insecure_tls": false,
    "probe": {
-    "last_seen": "2025-06-30",
+    "last_seen": "2025-12-06",
     "per_week": 0.1,
     "on": "2026-08-19"
    },
-   "note": "DORMANT since 2025-06. Kept because it is cheap and would matter if it revives.",
-   "dormant": true
+   "note": "Nearly dormant (last post 2025-12), long archive of real technique.",
+   "dormant": true,
+   "longform": true
   },
   {
-   "name": "Checkonchain (James Check)",
-   "lane": "bitcoin",
-   "url": "https://newsletter.checkonchain.com/feed",
-   "tier": "core",
-   "cap": 2,
+   "name": "Dark Mountain",
+   "lane": "agrarian",
+   "url": "https://dark-mountain.net/feed/",
+   "tier": "watch",
+   "cap": 1,
    "insecure_tls": false,
    "dormant": false,
    "probe": {
-    "last_seen": "2026-08-20",
-    "per_week": 2.9,
+    "last_seen": "2026-07-02",
+    "per_week": 0.4,
     "on": "2026-08-20"
    },
-   "note": "On-chain analytics \u2014 flows, cost basis, supply dynamics. Chris asked for this one by name. It exists to fill the deliberate hole in this catalogue: nothing else here explains a MARKET MOVE. EDITORIAL: publish when a move is explained with on-chain evidence. Never publish a price level, a target or a forecast on its own."
-  },
-  {
-   "name": "Bitcoin Core releases",
-   "lane": "release-radar",
-   "url": "https://github.com/bitcoin/bitcoin/releases.atom",
-   "tier": "core",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-07-10",
-    "per_week": 0.9,
-    "on": "2026-08-19"
-   },
-   "note": "",
-   "dormant": false
-  },
-  {
-   "name": "Bitcoin Knots releases",
-   "lane": "release-radar",
-   "url": "https://github.com/bitcoinknots/bitcoin/releases.atom",
-   "tier": "core",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-08",
-    "per_week": 0.4,
-    "on": "2026-08-19"
-   },
-   "note": "He runs Knots.",
-   "dormant": false
-  },
-  {
-   "name": "Fulcrum releases",
-   "lane": "release-radar",
-   "url": "https://github.com/cculianu/Fulcrum/releases.atom",
-   "tier": "core",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-05-07",
-    "per_week": 0.1,
-    "on": "2026-08-19"
-   },
-   "note": "",
-   "dormant": false
-  },
-  {
-   "name": "mempool.space releases",
-   "lane": "release-radar",
-   "url": "https://github.com/mempool/mempool/releases.atom",
-   "tier": "core",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-06-18",
-    "per_week": 0.4,
-    "on": "2026-08-19"
-   },
-   "note": "",
-   "dormant": false
-  },
-  {
-   "name": "nix-bitcoin releases",
-   "lane": "release-radar",
-   "url": "https://github.com/fort-nix/nix-bitcoin/releases.atom",
-   "tier": "core",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-13",
-    "per_week": 0.2,
-    "on": "2026-08-19"
-   },
-   "note": "",
-   "dormant": false
-  },
-  {
-   "name": "Sparrow Wallet releases",
-   "lane": "release-radar",
-   "url": "https://github.com/sparrowwallet/sparrow/releases.atom",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-07-30",
-    "per_week": 0.2,
-    "on": "2026-08-19"
-   },
-   "note": "",
-   "dormant": false
-  },
-  {
-   "name": "Core Lightning releases",
-   "lane": "release-radar",
-   "url": "https://github.com/ElementsProject/lightning/releases.atom",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-07-22",
-    "per_week": 0.8,
-    "on": "2026-08-19"
-   },
-   "note": "",
-   "dormant": false
-  },
-  {
-   "name": "Lightning: LDK releases",
-   "lane": "release-radar",
-   "url": "https://github.com/lightningdevkit/rust-lightning/releases.atom",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-05",
-    "per_week": 0.9,
-    "on": "2026-08-19"
-   },
-   "note": "",
-   "dormant": false
-  },
-  {
-   "name": "BTCPay Server releases",
-   "lane": "release-radar",
-   "url": "https://github.com/btcpayserver/btcpayserver/releases.atom",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-10",
-    "per_week": 1.5,
-    "on": "2026-08-19"
-   },
-   "note": "",
-   "dormant": false
-  },
-  {
-   "name": "Forgejo releases",
-   "lane": "release-radar",
-   "url": "https://codeberg.org/forgejo/forgejo/releases.rss",
-   "tier": "core",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-07-30",
-    "per_week": 0.6,
-    "on": "2026-08-19"
-   },
-   "note": "He self-hosts it and it is the source of truth for every repo.",
-   "dormant": false
-  },
-  {
-   "name": "NixOS weekly (nixpkgs releases)",
-   "lane": "release-radar",
-   "url": "https://github.com/NixOS/nixpkgs/releases.atom",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-05-30",
-    "per_week": 0.2,
-    "on": "2026-08-19"
-   },
-   "note": "",
-   "dormant": false
-  },
-  {
-   "name": "Lyn Alden",
-   "lane": "macro",
-   "url": "https://www.lynalden.com/feed/",
-   "tier": "core",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-07-15",
-    "per_week": 0.1,
-    "on": "2026-08-19"
-   },
-   "note": "Rare, long, structural. Publishes ~monthly; every piece is worth the slot.",
-   "dormant": false
-  },
-  {
-   "name": "Bank Underground (BoE staff)",
-   "lane": "macro",
-   "url": "https://bankunderground.co.uk/feed/",
-   "tier": "core",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-13",
-    "per_week": 0.9,
-    "on": "2026-08-19"
-   },
-   "note": "Bank of England staff writing without a press office. Genuinely esoteric.",
-   "dormant": false
-  },
-  {
-   "name": "Liberty Street Economics (NY Fed)",
-   "lane": "macro",
-   "url": "https://libertystreeteconomics.newyorkfed.org/feed/",
-   "tier": "watch",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 2.0,
-    "on": "2026-08-19"
-   },
-   "note": "Same idea from the NY Fed: primary research, no punditry layer.",
-   "dormant": false
-  },
-  {
-   "name": "FRED Blog",
-   "lane": "macro",
-   "url": "https://fredblog.stlouisfed.org/feed/",
-   "tier": "watch",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-17",
-    "per_week": 2.2,
-    "on": "2026-08-19"
-   },
-   "note": "Short, data-first, one chart per post.",
-   "dormant": false
-  },
-  {
-   "name": "Adam Tooze \u2014 Chartbook",
-   "lane": "macro",
-   "url": "https://adamtooze.substack.com/feed",
-   "tier": "watch",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 10.0,
-    "on": "2026-08-19"
-   },
-   "note": "Economic history applied to the present. Verbose; the judge trims.",
-   "dormant": false
-  },
-  {
-   "name": "Wolf Street",
-   "lane": "macro",
-   "url": "https://wolfstreet.com/feed/",
-   "tier": "watch",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-20",
-    "per_week": 14.0,
-    "on": "2026-08-19"
-   },
-   "note": "Credit, housing, freight. Reads the data series, not the narrative.",
-   "dormant": false
-  },
-  {
-   "name": "Klement on Investing",
-   "lane": "macro",
-   "url": "https://klementoninvesting.substack.com/feed",
-   "tier": "watch",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 3.8,
-    "on": "2026-08-19"
-   },
-   "note": "One research note a day, usually a paper summarised honestly.",
-   "dormant": false
-  },
-  {
-   "name": "Conversable Economist",
-   "lane": "macro",
-   "url": "https://conversableeconomist.com/feed/",
-   "tier": "watch",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 5.0,
-    "on": "2026-08-19"
-   },
-   "note": "Timothy Taylor surfacing working papers most people never see.",
-   "dormant": false
-  },
-  {
-   "name": "Doomberg",
-   "lane": "macro",
-   "url": "https://doomberg.substack.com/feed",
-   "tier": "watch",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-18",
-    "per_week": 2.0,
-    "on": "2026-08-19"
-   },
-   "note": "Energy-first macro. PAYWALLED \u2014 expect headline + teaser only.",
-   "dormant": false
-  },
-  {
-   "name": "Apricitas Economics",
-   "lane": "macro",
-   "url": "https://www.apricitas.io/feed",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-05-03",
-    "per_week": 0.3,
-    "on": "2026-08-19"
-   },
-   "note": "Chart-heavy. Quiet since May 2026.",
-   "dormant": false
-  },
-  {
-   "name": "Marginal Revolution",
-   "lane": "macro",
-   "url": "https://marginalrevolution.com/feed",
-   "tier": "firehose",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 35.0,
-    "on": "2026-08-19"
-   },
-   "note": "35/wk of mostly links. Capped; occasionally the best thing all week.",
-   "dormant": false
-  },
-  {
-   "name": "Mises Wire",
-   "lane": "macro",
-   "url": "https://mises.org/rss.xml",
-   "tier": "firehose",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 35.0,
-    "on": "2026-08-19"
-   },
-   "note": "Heavy ideological load at 35/wk. Cap 1 and let the judge earn it.",
-   "dormant": false
-  },
-  {
-   "name": "Low-tech Magazine",
-   "lane": "energy",
-   "url": "https://solar.lowtechmagazine.com/feeds/all.rss.xml",
-   "tier": "core",
-   "cap": 2,
-   "insecure_tls": true,
-   "probe": {
-    "last_seen": "2026-04-22",
-    "per_week": null,
-    "on": "2026-08-19"
-   },
-   "note": "The closest thing to a house journal for this interest. NOTE: expired TLS cert on their solar-powered server \u2014 needs an explicit per-feed insecure flag.",
-   "dormant": false
-  },
-  {
-   "name": "Do the Math (Tom Murphy)",
-   "lane": "energy",
-   "url": "https://dothemath.ucsd.edu/feed/",
-   "tier": "core",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-18",
-    "per_week": 0.9,
-    "on": "2026-08-19"
-   },
-   "note": "A physicist doing the arithmetic on energy claims. Nearly zero noise.",
-   "dormant": false
-  },
-  {
-   "name": "Drive On Wood forum",
-   "lane": "energy",
-   "url": "https://forum.driveonwood.com/latest.rss",
-   "tier": "core",
-   "cap": 3,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 1.2,
-    "on": "2026-08-19"
-   },
-   "note": "His own wood-gas community. Forum firehose is small (1.2/wk) and on-topic by construction. EDITORIAL: publish only DISCUSSION \u2014 people arguing, diagnosing, or working a problem out. Chris knows what a gasifier is and does not need another build log. Reject photo threads, build pictures, show-and-tell and 'here is my rig' posts however on-topic they look.",
-   "dormant": false
-  },
-  {
-   "name": "Wood gas: Gasifiers forum (Reddit)",
-   "lane": "energy",
-   "url": "https://www.reddit.com/r/gasification/.rss",
-   "tier": "core",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-04-28",
-    "per_week": 0.1,
-    "on": "2026-08-19"
-   },
-   "note": "Tiny volume, perfectly on-topic. Nothing else covers gasification this directly. EDITORIAL: same as Drive On Wood \u2014 ideas and problem-solving only, never build logs or photo dumps.",
-   "dormant": false
-  },
-  {
-   "name": "Construction Physics",
-   "lane": "energy",
-   "url": "https://www.construction-physics.com/feed",
-   "tier": "watch",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-15",
-    "per_week": 2.0,
-    "on": "2026-08-19"
-   },
-   "note": "How things get built and why they cost what they cost.",
-   "dormant": false
-  },
-  {
-   "name": "Practical Engineering",
-   "lane": "energy",
-   "url": "https://practical.engineering/blog?format=rss",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-18",
-    "per_week": 0.5,
-    "on": "2026-08-19"
-   },
-   "note": "Infrastructure explained by an engineer who builds it.",
-   "dormant": false
-  },
-  {
-   "name": "Energy Institute at Haas",
-   "lane": "energy",
-   "url": "https://energyathaas.wordpress.com/feed/",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-17",
-    "per_week": 1.1,
-    "on": "2026-08-19"
-   },
-   "note": "Grid economics from people who model it.",
-   "dormant": false
-  },
-  {
-   "name": "Hackaday: Green Hacks tag",
-   "lane": "energy",
-   "url": "https://hackaday.com/category/green-hacks/feed/",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-09",
-    "per_week": 1.3,
-    "on": "2026-08-19"
-   },
-   "note": "The Hackaday sub-feed that is actually on-topic, without the other 48/wk.",
-   "dormant": false
-  },
-  {
-   "name": "Resilience.org",
-   "lane": "energy",
-   "url": "https://www.resilience.org/feed/",
-   "tier": "firehose",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-14",
-    "per_week": 5.5,
-    "on": "2026-08-19"
-   },
-   "note": "Good material buried in advocacy. Cap and judge hard.",
-   "dormant": false
-  },
-  {
-   "name": "Backwoods/Off-grid: Solar Power World",
-   "lane": "energy",
-   "url": "https://www.solarpowerworldonline.com/feed/",
-   "tier": "firehose",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 17.5,
-    "on": "2026-08-19"
-   },
-   "note": "Trade press. Mostly product announcements; occasionally a real install teardown.",
-   "dormant": false
-  },
-  {
-   "name": "All Power Labs",
-   "lane": "energy",
-   "url": "http://www.allpowerlabs.com/feed",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-01-30",
-    "per_week": 0.0,
-    "on": "2026-08-19"
-   },
-   "note": "DORMANT since 2026-01. The commercial gasifier people; worth noticing if they wake.",
-   "dormant": true
-  },
-  {
-   "name": "No Tech Magazine",
-   "lane": "energy",
-   "url": "https://www.notechmagazine.com/feed",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2025-06-28",
-    "per_week": 0.3,
-    "on": "2026-08-19"
-   },
-   "note": "DORMANT since 2025-06. Sister publication to Low-tech.",
-   "dormant": true
-  },
-  {
-   "name": "Open Source Ecology",
-   "lane": "energy",
-   "url": "https://www.opensourceecology.org/feed/",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2025-07-27",
-    "per_week": 0.0,
-    "on": "2026-08-19"
-   },
-   "note": "DORMANT since 2025-07.",
-   "dormant": true
-  },
-  {
-   "name": "Living Energy Farm",
-   "lane": "energy",
-   "url": "https://livingenergyfarm.org/feed/",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2025-05-24",
-    "per_week": 0.0,
-    "on": "2026-08-19"
-   },
-   "note": "DORMANT since 2025-05. Off-grid DC power done for real, at a working farm.",
-   "dormant": true
-  },
-  {
-   "name": "Front Porch Republic",
-   "lane": "agrarian",
-   "url": "https://www.frontporchrepublic.com/feed/",
-   "tier": "core",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 7.8,
-    "on": "2026-08-19"
-   },
-   "note": "Localism, place, scale, limits. The intellectual end of simple living.",
-   "dormant": false
-  },
-  {
-   "name": "Small Farmer's Journal",
-   "lane": "agrarian",
-   "url": "https://smallfarmersjournal.com/feed/",
-   "tier": "core",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 5.4,
-    "on": "2026-08-19"
-   },
-   "note": "Draft animals and small-farm practice. Nobody else publishes this.",
-   "dormant": false
+   "note": "Writing from the far end of the industrial-decline question. Uneven; when it lands it lands. LONGFORM: added for the good-reads section.",
+   "longform": true
   },
   {
    "name": "Dry Creek Chronicles (wordpress)",
@@ -764,22 +65,24 @@
     "on": "2026-08-19"
    },
    "note": "Rick's blog. Quiet since 2024-11 \u2014 this is how he finds out if it restarts.",
-   "dormant": true
+   "dormant": true,
+   "longform": true
   },
   {
-   "name": "The Prairie Homestead",
+   "name": "Front Porch Republic",
    "lane": "agrarian",
-   "url": "https://www.theprairiehomestead.com/feed",
-   "tier": "watch",
-   "cap": 1,
+   "url": "https://www.frontporchrepublic.com/feed/",
+   "tier": "core",
+   "cap": 2,
    "insecure_tls": false,
    "probe": {
-    "last_seen": "2026-08-18",
-    "per_week": 1.0,
+    "last_seen": "2026-08-19",
+    "per_week": 7.8,
     "on": "2026-08-19"
    },
-   "note": "Practical homestead technique. Some course-selling; judge filters.",
-   "dormant": false
+   "note": "Localism, place, scale, limits. The intellectual end of simple living.",
+   "dormant": false,
+   "longform": true
   },
   {
    "name": "Root Simple",
@@ -794,502 +97,488 @@
     "on": "2026-08-19"
    },
    "note": "Urban homesteading, low-tech skills. Slow lately.",
-   "dormant": false
+   "dormant": false,
+   "longform": true
   },
   {
-   "name": "Backwoods Home Magazine",
+   "name": "Small Farmer's Journal",
    "lane": "agrarian",
-   "url": "https://www.backwoodshome.com/feed/",
+   "url": "https://smallfarmersjournal.com/feed/",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 5.4,
+    "on": "2026-08-19"
+   },
+   "note": "Draft animals and small-farm practice. Nobody else publishes this.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "The Prairie Homestead",
+   "lane": "agrarian",
+   "url": "https://www.theprairiehomestead.com/feed",
    "tier": "watch",
    "cap": 1,
    "insecure_tls": false,
    "probe": {
-    "last_seen": "2025-12-06",
-    "per_week": 0.1,
+    "last_seen": "2026-08-18",
+    "per_week": 1.0,
     "on": "2026-08-19"
    },
-   "note": "Nearly dormant (last post 2025-12), long archive of real technique.",
-   "dormant": true
+   "note": "Practical homestead technique. Some course-selling; judge filters.",
+   "dormant": false,
+   "longform": true
   },
   {
-   "name": "LWN.net headlines",
-   "lane": "linux",
-   "url": "https://lwn.net/headlines/newrss",
+   "name": "0xB10C",
+   "lane": "bitcoin",
+   "url": "https://b10c.me/feed.xml",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-11",
+    "per_week": 0.2,
+    "on": "2026-08-19"
+   },
+   "note": "Mempool/network measurement from someone who instruments the real thing.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Bitcoin Core PR Review Club",
+   "lane": "bitcoin",
+   "url": "https://bitcoincore.reviews/feed.xml",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-04-08",
+    "per_week": 0.2,
+    "on": "2026-08-19"
+   },
+   "note": "Runs in seasons; long gaps are normal, not a dead feed.",
+   "dormant": true,
+   "longform": true
+  },
+  {
+   "name": "Bitcoin Optech Newsletter",
+   "lane": "bitcoin",
+   "url": "https://bitcoinops.org/feed.xml",
    "tier": "core",
    "cap": 3,
    "insecure_tls": false,
    "probe": {
+    "last_seen": "2026-08-18",
+    "per_week": 2.2,
+    "on": "2026-08-19"
+   },
+   "note": "The single highest-signal Bitcoin source in existence. Weekly, technical, zero price talk.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Blockstream engineering",
+   "lane": "bitcoin",
+   "url": "https://blog.blockstream.com/rss/",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 1.1,
+    "on": "2026-08-19"
+   },
+   "note": "Engineering posts are good; marketing posts are not. Judge filters.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Brink (bitcoin dev funding)",
+   "lane": "bitcoin",
+   "url": "https://brink.dev/feed.xml",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-17",
+    "per_week": 0.5,
+    "on": "2026-08-19"
+   },
+   "note": "Who is being paid to work on what \u2014 a leading indicator of what lands next year.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Checkonchain (James Check)",
+   "lane": "bitcoin",
+   "url": "https://newsletter.checkonchain.com/feed",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
     "last_seen": "2026-08-20",
-    "per_week": 52.5,
-    "on": "2026-08-19"
+    "per_week": 2.9,
+    "on": "2026-08-20"
    },
-   "note": "The kernel and distro record of account. Some items paywalled for a week.",
-   "dormant": false
+   "note": "On-chain analytics \u2014 flows, cost basis, supply dynamics. Chris asked for this one by name. It exists to fill the deliberate hole in this catalogue: nothing else here explains a MARKET MOVE. EDITORIAL: publish when a move is explained with on-chain evidence. Never publish a price level, a target or a forecast on its own.",
+   "longform": false
   },
   {
-   "name": "Rachel by the Bay",
-   "lane": "linux",
-   "url": "https://rachelbythebay.com/w/atom.xml",
+   "name": "Delving Bitcoin (forum)",
+   "lane": "bitcoin",
+   "url": "https://delvingbitcoin.org/latest.rss",
    "tier": "core",
-   "cap": 2,
+   "cap": 4,
    "insecure_tls": false,
    "probe": {
-    "last_seen": "2023-10-12",
-    "per_week": null,
+    "last_seen": "2026-08-18",
+    "per_week": 6.0,
     "on": "2026-08-19"
    },
-   "note": "Operational war stories, unmatched. WARNING: her server refused/timed out on both probe attempts from gromit \u2014 verify fetchability before trusting this slot. \u26a0\ufe0f OBSERVED 2026-08-19/20: times out from gromit on every attempt. Kept because the writing is worth chasing down, but expect it to sit in the failing list until the cause is found.",
-   "dormant": true
+   "note": "Where protocol arguments actually happen, before they reach any podcast.",
+   "dormant": false,
+   "longform": true
   },
   {
-   "name": "Julia Evans",
-   "lane": "linux",
-   "url": "https://jvns.ca/atom.xml",
-   "tier": "core",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-07-21",
-    "per_week": 0.2,
-    "on": "2026-08-19"
-   },
-   "note": "Explains the thing you thought you understood.",
-   "dormant": false
-  },
-  {
-   "name": "Dan Luu",
-   "lane": "linux",
-   "url": "https://danluu.com/atom.xml",
-   "tier": "core",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-09",
-    "per_week": 0.1,
-    "on": "2026-08-19"
-   },
-   "note": "Rare and long. Every post is a slot well spent.",
-   "dormant": false
-  },
-  {
-   "name": "Self-Host Weekly (noted.lol)",
-   "lane": "linux",
-   "url": "https://noted.lol/rss/",
-   "tier": "core",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-07-04",
-    "per_week": 0.7,
-    "on": "2026-08-19"
-   },
-   "note": "A human already did the self-hosting triage for the week.",
-   "dormant": false
-  },
-  {
-   "name": "NixOS blog",
-   "lane": "linux",
-   "url": "https://nixos.org/blog/announcements-rss.xml",
-   "tier": "core",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-07-10",
-    "per_week": 0.1,
-    "on": "2026-08-19"
-   },
-   "note": "Release announcements and RFC outcomes.",
-   "dormant": false
-  },
-  {
-   "name": "Michael Stapelberg",
-   "lane": "linux",
-   "url": "https://michael.stapelberg.ch/feed.xml",
+   "name": "Fedimint blog",
+   "lane": "bitcoin",
+   "url": "https://fedimint.org/blog/rss.xml",
    "tier": "watch",
    "cap": 1,
    "insecure_tls": false,
    "probe": {
-    "last_seen": "2026-08-09",
+    "last_seen": "2025-06-30",
+    "per_week": 0.1,
+    "on": "2026-08-19"
+   },
+   "note": "DORMANT since 2025-06. Kept because it is cheap and would matter if it revives.",
+   "dormant": true,
+   "longform": true
+  },
+  {
+   "name": "Jameson Lopp",
+   "lane": "bitcoin",
+   "url": "https://blog.lopp.net/rss/",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-17",
     "per_week": 0.2,
     "on": "2026-08-19"
    },
-   "note": "Distri/Debian internals, home network engineering.",
-   "dormant": false
+   "note": "Self-custody and node operations, occasionally security-research grade.",
+   "dormant": false,
+   "longform": true
   },
   {
-   "name": "Vermaden (BSD/UNIX ops)",
-   "lane": "linux",
-   "url": "https://vermaden.wordpress.com/feed/",
+   "name": "Stacker News (top)",
+   "lane": "bitcoin",
+   "url": "https://stacker.news/rss",
+   "tier": "firehose",
+   "cap": 3,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 5.7,
+    "on": "2026-08-19"
+   },
+   "note": "Community aggregator. Capped hard; it is a discovery surface, not a source. EDITORIAL: aggregator. Publish only if the discussion itself is the value.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "All Power Labs",
+   "lane": "energy",
+   "url": "http://www.allpowerlabs.com/feed",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-01-30",
+    "per_week": 0.0,
+    "on": "2026-08-19"
+   },
+   "note": "DORMANT since 2026-01. The commercial gasifier people; worth noticing if they wake.",
+   "dormant": true,
+   "longform": true
+  },
+  {
+   "name": "Austin Vernon",
+   "lane": "energy",
+   "url": "https://austinvernon.site/rss.xml",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-07-10",
+    "per_week": 0.3,
+    "on": "2026-08-20"
+   },
+   "note": "First-principles engineering economics \u2014 energy, chemicals, manufacturing. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Backwoods/Off-grid: Solar Power World",
+   "lane": "energy",
+   "url": "https://www.solarpowerworldonline.com/feed/",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 17.5,
+    "on": "2026-08-19"
+   },
+   "note": "Trade press. Mostly product announcements; occasionally a real install teardown.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Construction Physics",
+   "lane": "energy",
+   "url": "https://www.construction-physics.com/feed",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-15",
+    "per_week": 2.0,
+    "on": "2026-08-19"
+   },
+   "note": "How things get built and why they cost what they cost.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Do the Math (Tom Murphy)",
+   "lane": "energy",
+   "url": "https://dothemath.ucsd.edu/feed/",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-18",
+    "per_week": 0.9,
+    "on": "2026-08-19"
+   },
+   "note": "A physicist doing the arithmetic on energy claims. Nearly zero noise.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Drive On Wood forum",
+   "lane": "energy",
+   "url": "https://forum.driveonwood.com/latest.rss",
+   "tier": "core",
+   "cap": 3,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 1.2,
+    "on": "2026-08-19"
+   },
+   "note": "His own wood-gas community. Forum firehose is small (1.2/wk) and on-topic by construction. EDITORIAL: publish only DISCUSSION \u2014 people arguing, diagnosing, or working a problem out. Chris knows what a gasifier is and does not need another build log. Reject photo threads, build pictures, show-and-tell and 'here is my rig' posts however on-topic they look.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Energy Institute at Haas",
+   "lane": "energy",
+   "url": "https://energyathaas.wordpress.com/feed/",
    "tier": "watch",
    "cap": 1,
    "insecure_tls": false,
    "probe": {
     "last_seen": "2026-08-17",
-    "per_week": 1.8,
+    "per_week": 1.1,
     "on": "2026-08-19"
    },
-   "note": "Deep UNIX ops write-ups, weekly-ish valuable link roundups.",
-   "dormant": false
+   "note": "Grid economics from people who model it.",
+   "dormant": false,
+   "longform": true
   },
   {
-   "name": "Xe Iaso",
-   "lane": "linux",
-   "url": "https://xeiaso.net/blog.rss",
+   "name": "Hackaday: Green Hacks tag",
+   "lane": "energy",
+   "url": "https://hackaday.com/category/green-hacks/feed/",
    "tier": "watch",
    "cap": 1,
    "insecure_tls": false,
    "probe": {
-    "last_seen": "2026-08-19",
+    "last_seen": "2026-08-09",
     "per_week": 1.3,
     "on": "2026-08-19"
    },
-   "note": "NixOS-adjacent infrastructure writing.",
-   "dormant": false
+   "note": "The Hackaday sub-feed that is actually on-topic, without the other 48/wk.",
+   "dormant": false,
+   "longform": true
   },
   {
-   "name": "Drew DeVault",
-   "lane": "linux",
-   "url": "https://drewdevault.com/blog/index.xml",
+   "name": "Living Energy Farm",
+   "lane": "energy",
+   "url": "https://livingenergyfarm.org/feed/",
    "tier": "watch",
    "cap": 1,
    "insecure_tls": false,
    "probe": {
-    "last_seen": "2026-07-23",
+    "last_seen": "2025-05-24",
+    "per_week": 0.0,
+    "on": "2026-08-19"
+   },
+   "note": "DORMANT since 2025-05. Off-grid DC power done for real, at a working farm.",
+   "dormant": true,
+   "longform": true
+  },
+  {
+   "name": "Low-tech Magazine",
+   "lane": "energy",
+   "url": "https://solar.lowtechmagazine.com/feeds/all.rss.xml",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": true,
+   "probe": {
+    "last_seen": "2026-04-22",
+    "per_week": null,
+    "on": "2026-08-19"
+   },
+   "note": "The closest thing to a house journal for this interest. NOTE: expired TLS cert on their solar-powered server \u2014 needs an explicit per-feed insecure flag.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "No Tech Magazine",
+   "lane": "energy",
+   "url": "https://www.notechmagazine.com/feed",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2025-06-28",
     "per_week": 0.3,
     "on": "2026-08-19"
    },
-   "note": "Opinionated; occasionally an important systems argument.",
-   "dormant": false
+   "note": "DORMANT since 2025-06. Sister publication to Low-tech.",
+   "dormant": true,
+   "longform": true
   },
   {
-   "name": "Jeff Geerling",
-   "lane": "linux",
-   "url": "https://www.jeffgeerling.com/blog.xml",
+   "name": "Open Source Ecology",
+   "lane": "energy",
+   "url": "https://www.opensourceecology.org/feed/",
    "tier": "watch",
    "cap": 1,
    "insecure_tls": false,
    "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 1.3,
+    "last_seen": "2025-07-27",
+    "per_week": 0.0,
     "on": "2026-08-19"
    },
-   "note": "Homelab hardware tested by someone who publishes the failures.",
-   "dormant": false
+   "note": "DORMANT since 2025-07.",
+   "dormant": true,
+   "longform": true
   },
   {
-   "name": "Determinate Systems blog",
-   "lane": "linux",
-   "url": "https://determinate.systems/rss.xml",
+   "name": "Practical Engineering",
+   "lane": "energy",
+   "url": "https://practical.engineering/blog?format=rss",
    "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-13",
-    "per_week": 0.4,
-    "on": "2026-08-19"
-   },
-   "note": "Nix tooling from the people shipping most of it.",
-   "dormant": false
-  },
-  {
-   "name": "Tailscale blog",
-   "lane": "linux",
-   "url": "https://tailscale.com/blog/index.xml",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-12",
-    "per_week": 1.4,
-    "on": "2026-08-19"
-   },
-   "note": "He runs it as the perimeter at home and at work.",
-   "dormant": false
-  },
-  {
-   "name": "Servethehome",
-   "lane": "linux",
-   "url": "https://www.servethehome.com/feed/",
-   "tier": "watch",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 10.5,
-    "on": "2026-08-19"
-   },
-   "note": "Server hardware teardowns and used-gear economics.",
-   "dormant": false
-  },
-  {
-   "name": "Krebs on Security",
-   "lane": "linux",
-   "url": "https://krebsonsecurity.com/feed/",
-   "tier": "watch",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-14",
-    "per_week": 1.4,
-    "on": "2026-08-19"
-   },
-   "note": "The security story that actually matters, once or twice a week.",
-   "dormant": false
-  },
-  {
-   "name": "r/selfhosted (top/week)",
-   "lane": "linux",
-   "url": "https://www.reddit.com/r/selfhosted/top/.rss?t=week",
-   "tier": "watch",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 29.2,
-    "on": "2026-08-19"
-   },
-   "note": "Pre-ranked by the sub. Discovery of tools, not analysis. \u26a0\ufe0f OBSERVED: Reddit rate-limits this box (HTTP 429) intermittently \u2014 succeeded on two of three real runs. EDITORIAL: a discovery surface. Publish a tool only if the post explains something about running it, not because it exists.",
-   "dormant": false
-  },
-  {
-   "name": "NixOS Discourse",
-   "lane": "linux",
-   "url": "https://discourse.nixos.org/latest.rss",
-   "tier": "firehose",
-   "cap": 3,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 42.0,
-    "on": "2026-08-19"
-   },
-   "note": "42/wk. Mine for breakage reports on modules he runs. EDITORIAL: reject ordinary support requests and one-person breakage. Publish design discussion, RFC outcomes, and breakage that affects modules he runs.",
-   "dormant": false
-  },
-  {
-   "name": "lobste.rs",
-   "lane": "linux",
-   "url": "https://lobste.rs/rss",
-   "tier": "firehose",
-   "cap": 4,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 175.0,
-    "on": "2026-08-19"
-   },
-   "note": "175/wk, high average quality. The judge earns its keep here. EDITORIAL: aggregator. Judge the linked thing, never the ranking.",
-   "dormant": false
-  },
-  {
-   "name": "Hacker News (best)",
-   "lane": "linux",
-   "url": "https://hnrss.org/best",
-   "tier": "firehose",
-   "cap": 4,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 210.0,
-    "on": "2026-08-19"
-   },
-   "note": "210/wk even filtered to 'best'. Pure discovery surface. EDITORIAL: aggregator. Judge the linked thing, never the ranking.",
-   "dormant": false
-  },
-  {
-   "name": "Phoronix",
-   "lane": "linux",
-   "url": "https://www.phoronix.com/rss.php",
-   "tier": "firehose",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 112.0,
-    "on": "2026-08-19"
-   },
-   "note": "112/wk of benchmarks and kernel commits. Cap hard.",
-   "dormant": false
-  },
-  {
-   "name": "Hackaday",
-   "lane": "linux",
-   "url": "https://hackaday.com/feed/",
-   "tier": "firehose",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-20",
-    "per_week": 49.0,
-    "on": "2026-08-19"
-   },
-   "note": "49/wk. The general feed; Green Hacks is carried separately.",
-   "dormant": false
-  },
-  {
-   "name": "oss-security (openwall)",
-   "lane": "linux",
-   "url": "https://seclists.org/rss/oss-sec.rss",
-   "tier": "firehose",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-20",
-    "per_week": 35.0,
-    "on": "2026-08-19"
-   },
-   "note": "Filter to software he actually runs, else it is 35/wk of other people's CVEs.",
-   "dormant": false
-  },
-  {
-   "name": "Ubuntu Security Notices",
-   "lane": "linux",
-   "url": "https://ubuntu.com/security/notices/rss.xml",
-   "tier": "firehose",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 70.0,
-    "on": "2026-08-19"
-   },
-   "note": "Work-relevant: every Broadlinc backend VM is Ubuntu. Filter to installed packages.",
-   "dormant": false
-  },
-  {
-   "name": "APNIC Blog",
-   "lane": "network",
-   "url": "https://blog.apnic.net/feed/",
-   "tier": "core",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 5.2,
-    "on": "2026-08-19"
-   },
-   "note": "Routing, DNS and measurement, written by operators.",
-   "dormant": false
-  },
-  {
-   "name": "RIPE Labs",
-   "lane": "network",
-   "url": "https://labs.ripe.net/rss.xml",
-   "tier": "core",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-14",
-    "per_week": 2.3,
-    "on": "2026-08-19"
-   },
-   "note": "Same, from the European registry. Esoteric and genuinely useful.",
-   "dormant": false
-  },
-  {
-   "name": "Cloudflare Blog",
-   "lane": "network",
-   "url": "https://blog.cloudflare.com/rss/",
-   "tier": "watch",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 10.8,
-    "on": "2026-08-19"
-   },
-   "note": "Post-mortems and protocol work; skip the product launches.",
-   "dormant": false
-  },
-  {
-   "name": "Telecompetitor (rural broadband)",
-   "lane": "network",
-   "url": "https://www.telecompetitor.com/feed/",
-   "tier": "firehose",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 35.0,
-    "on": "2026-08-19"
-   },
-   "note": "35/wk, press-release heavy \u2014 but it is the BEAD/rural-funding beat, which is his industry. \u26a0\ufe0f OBSERVED: returns HTTP 403 to a scripted user-agent on every attempt. It will decay into dormancy rather than warn forever; needs a browser UA or dropping.",
-   "dormant": false
-  },
-  {
-   "name": "Ars/Broadband? Light Reading",
-   "lane": "network",
-   "url": "https://www.lightreading.com/rss.xml",
-   "tier": "firehose",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 50.0,
-    "on": "2026-08-19"
-   },
-   "note": "Telecom trade press. Cap 1; mostly vendor noise.",
-   "dormant": false
-  },
-  {
-   "name": "Simon Willison",
-   "lane": "ideas",
-   "url": "https://simonwillison.net/atom/everything/",
-   "tier": "core",
-   "cap": 3,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-19",
-    "per_week": 19.1,
-    "on": "2026-08-19"
-   },
-   "note": "The most reliable LLM-practice signal available, 19/wk of it. EDITORIAL: he posts many short release notes. Publish the essays and the worked experiments; reject bare 'library 1.2.3 released' entries.",
-   "dormant": false
-  },
-  {
-   "name": "Ken Shirriff",
-   "lane": "ideas",
-   "url": "https://www.righto.com/feeds/posts/default",
-   "tier": "core",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-07-31",
-    "per_week": 0.4,
-    "on": "2026-08-19"
-   },
-   "note": "Chip and hardware archaeology. Nothing else like it.",
-   "dormant": false
-  },
-  {
-   "name": "Bunnie Huang",
-   "lane": "ideas",
-   "url": "https://www.bunniestudios.com/blog/feed/",
-   "tier": "core",
-   "cap": 1,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-07-30",
-    "per_week": 0.6,
-    "on": "2026-08-19"
-   },
-   "note": "Hardware, supply chains, manufacturing reality.",
-   "dormant": false
-  },
-  {
-   "name": "Works in Progress",
-   "lane": "ideas",
-   "url": "https://worksinprogress.co/rss.xml",
-   "tier": "core",
    "cap": 1,
    "insecure_tls": false,
    "probe": {
     "last_seen": "2026-08-18",
-    "per_week": 0.7,
+    "per_week": 0.5,
     "on": "2026-08-19"
    },
-   "note": "Long-form on why progress stalls. Quarterly-ish.",
-   "dormant": false
+   "note": "Infrastructure explained by an engineer who builds it.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Resilience.org",
+   "lane": "energy",
+   "url": "https://www.resilience.org/feed/",
+   "tier": "firehose",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-14",
+    "per_week": 5.5,
+    "on": "2026-08-19"
+   },
+   "note": "Good material buried in advocacy. Cap and judge hard.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Roots of Progress",
+   "lane": "energy",
+   "url": "https://rootsofprogress.org/feed.xml",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-06-23",
+    "per_week": 0.1,
+    "on": "2026-08-20"
+   },
+   "note": "The history and philosophy of technological progress. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Wood gas: Gasifiers forum (Reddit)",
+   "lane": "energy",
+   "url": "https://www.reddit.com/r/gasification/.rss",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-04-28",
+    "per_week": 0.1,
+    "on": "2026-08-19"
+   },
+   "note": "Tiny volume, perfectly on-topic. Nothing else covers gasification this directly. EDITORIAL: same as Drive On Wood \u2014 ideas and problem-solving only, never build logs or photo dumps.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Aeon",
+   "lane": "ideas",
+   "url": "https://aeon.co/feed.rss",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 8.2,
+    "on": "2026-08-20"
+   },
+   "note": "Essays on philosophy, science and being human. 8/wk, so cap it. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Asterisk Magazine",
+   "lane": "ideas",
+   "url": "https://asteriskmag.com/feed",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-18",
+    "per_week": 0.8,
+    "on": "2026-08-20"
+   },
+   "note": "Careful, numerate essays. Quarterly-ish. LONGFORM: added for the good-reads section.",
+   "longform": true
   },
   {
    "name": "Astral Codex Ten",
@@ -1304,7 +593,296 @@
     "on": "2026-08-19"
    },
    "note": "Long and uneven. Cap 2 and let the judge be ruthless.",
-   "dormant": false
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Bunnie Huang",
+   "lane": "ideas",
+   "url": "https://www.bunniestudios.com/blog/feed/",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-07-30",
+    "per_week": 0.6,
+    "on": "2026-08-19"
+   },
+   "note": "Hardware, supply chains, manufacturing reality.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Craig Mod",
+   "lane": "ideas",
+   "url": "https://craigmod.com/index.xml",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-13",
+    "per_week": 0.6,
+    "on": "2026-08-20"
+   },
+   "note": "Walking, place, books and software. Some of the best prose in tech. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Damn Interesting",
+   "lane": "ideas",
+   "url": "https://www.damninteresting.com/feed/",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-07-08",
+    "per_week": 0.1,
+    "on": "2026-08-20"
+   },
+   "note": "Deeply researched narrative non-fiction. Infrequent. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Experimental History",
+   "lane": "ideas",
+   "url": "https://www.experimental-history.com/feed",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-18",
+    "per_week": 0.5,
+    "on": "2026-08-20"
+   },
+   "note": "Adam Mastroianni on psychology and how science actually works. Funny and serious at once. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Interconnected (Matt Webb)",
+   "lane": "ideas",
+   "url": "https://interconnected.org/home/feed",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-15",
+    "per_week": 1.1,
+    "on": "2026-08-20"
+   },
+   "note": "Short, inventive thinking about computing and physical things. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Ken Shirriff",
+   "lane": "ideas",
+   "url": "https://www.righto.com/feeds/posts/default",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-07-31",
+    "per_week": 0.4,
+    "on": "2026-08-19"
+   },
+   "note": "Chip and hardware archaeology. Nothing else like it.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Longreads",
+   "lane": "ideas",
+   "url": "https://longreads.com/feed/",
+   "tier": "firehose",
+   "cap": 2,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 12.5,
+    "on": "2026-08-20"
+   },
+   "note": "A curated longform digest \u2014 someone else's picks. Judge the linked piece, never the roundup. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Nautilus",
+   "lane": "ideas",
+   "url": "https://nautil.us/feed/",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 70.0,
+    "on": "2026-08-20"
+   },
+   "note": "Science essays, 70/wk. Hard cap; mine, do not read. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Noema Magazine",
+   "lane": "ideas",
+   "url": "https://www.noemamag.com/feed/",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-14",
+    "per_week": 3.3,
+    "on": "2026-08-20"
+   },
+   "note": "Long essays on technology, governance and the long term. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Palladium Magazine",
+   "lane": "ideas",
+   "url": "https://www.palladiummag.com/feed/",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 0.9,
+    "on": "2026-08-20"
+   },
+   "note": "Institutions, states and how societies actually function. Unusual angles. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Quanta Magazine",
+   "lane": "ideas",
+   "url": "https://www.quantamagazine.org/feed/",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 5.0,
+    "on": "2026-08-20"
+   },
+   "note": "Mathematics and physics explained properly. Rare in being both rigorous and readable. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Simon Willison",
+   "lane": "ideas",
+   "url": "https://simonwillison.net/atom/everything/",
+   "tier": "core",
+   "cap": 3,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 19.1,
+    "on": "2026-08-19"
+   },
+   "note": "The most reliable LLM-practice signal available, 19/wk of it. EDITORIAL: he posts many short release notes. Publish the essays and the worked experiments; reject bare 'library 1.2.3 released' entries.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Slime Mold Time Mold",
+   "lane": "ideas",
+   "url": "https://slimemoldtimemold.com/feed",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-05",
+    "per_week": 0.4,
+    "on": "2026-08-20"
+   },
+   "note": "Long, strange, rigorous investigations. Rare but substantial. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "The Convivial Society",
+   "lane": "ideas",
+   "url": "https://theconvivialsociety.substack.com/feed",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-18",
+    "per_week": 0.2,
+    "on": "2026-08-20"
+   },
+   "note": "Michael Sacasas on technology, attention and place. Illich's tradition \u2014 squarely his interests. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "The Intrinsic Perspective",
+   "lane": "ideas",
+   "url": "https://www.theintrinsicperspective.com/feed",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-07-24",
+    "per_week": 0.5,
+    "on": "2026-08-20"
+   },
+   "note": "Erik Hoel on neuroscience, consciousness and culture. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "The New Atlantis",
+   "lane": "ideas",
+   "url": "https://www.thenewatlantis.com/feed",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-06-23",
+    "per_week": 2.5,
+    "on": "2026-08-20"
+   },
+   "note": "Technology and the human person. The best writing anywhere on what tools do to us. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "The Public Domain Review",
+   "lane": "ideas",
+   "url": "https://publicdomainreview.org/rss.xml",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-07-29",
+    "per_week": 1.6,
+    "on": "2026-08-20"
+   },
+   "note": "Essays on the odd corners of the archive. Pure food for thought. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Works in Progress",
+   "lane": "ideas",
+   "url": "https://worksinprogress.co/rss.xml",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-18",
+    "per_week": 0.7,
+    "on": "2026-08-19"
+   },
+   "note": "Long-form on why progress stalls. Quarterly-ish.",
+   "dormant": false,
+   "longform": true
   },
   {
    "name": "fasterthanli.me",
@@ -1319,7 +897,904 @@
     "on": "2026-08-19"
    },
    "note": "Quiet since 2025-12. Deep systems explainers when it moves.",
-   "dormant": true
+   "dormant": true,
+   "longform": true
+  },
+  {
+   "name": "Antirez",
+   "lane": "linux",
+   "url": "http://antirez.com/rss",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-07-28",
+    "per_week": 0.2,
+    "on": "2026-08-20"
+   },
+   "note": "Salvatore Sanfilippo (Redis) on programming and craft. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Brendan Gregg",
+   "lane": "linux",
+   "url": "https://www.brendangregg.com/blog/rss.xml",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": true,
+   "probe": {
+    "last_seen": "2026-02-07",
+    "per_week": 0.1,
+    "on": "2026-08-20"
+   },
+   "note": "Systems performance from the person who defined the field. DORMANT \u2014 no post since Feb 2026. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Dan Luu",
+   "lane": "linux",
+   "url": "https://danluu.com/atom.xml",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-09",
+    "per_week": 0.1,
+    "on": "2026-08-19"
+   },
+   "note": "Rare and long. Every post is a slot well spent.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Determinate Systems blog",
+   "lane": "linux",
+   "url": "https://determinate.systems/rss.xml",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-13",
+    "per_week": 0.4,
+    "on": "2026-08-19"
+   },
+   "note": "Nix tooling from the people shipping most of it.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Drew DeVault",
+   "lane": "linux",
+   "url": "https://drewdevault.com/blog/index.xml",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-07-23",
+    "per_week": 0.3,
+    "on": "2026-08-19"
+   },
+   "note": "Opinionated; occasionally an important systems argument.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Fabien Sanglard",
+   "lane": "linux",
+   "url": "https://fabiensanglard.net/rss.xml",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-17",
+    "per_week": 0.2,
+    "on": "2026-08-20"
+   },
+   "note": "Deep, patient dissections of old software and hardware. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Hackaday",
+   "lane": "linux",
+   "url": "https://hackaday.com/feed/",
+   "tier": "firehose",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 49.0,
+    "on": "2026-08-19"
+   },
+   "note": "49/wk. The general feed; Green Hacks is carried separately.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Hacker News (best)",
+   "lane": "linux",
+   "url": "https://hnrss.org/best",
+   "tier": "firehose",
+   "cap": 4,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 210.0,
+    "on": "2026-08-19"
+   },
+   "note": "210/wk even filtered to 'best'. Pure discovery surface. EDITORIAL: aggregator. Judge the linked thing, never the ranking.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Hillel Wayne",
+   "lane": "linux",
+   "url": "https://buttondown.com/hillelwayne/rss",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-18",
+    "per_week": 0.7,
+    "on": "2026-08-20"
+   },
+   "note": "Formal methods and software engineering, empirically minded. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Jeff Geerling",
+   "lane": "linux",
+   "url": "https://www.jeffgeerling.com/blog.xml",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 1.3,
+    "on": "2026-08-19"
+   },
+   "note": "Homelab hardware tested by someone who publishes the failures.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Julia Evans",
+   "lane": "linux",
+   "url": "https://jvns.ca/atom.xml",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-07-21",
+    "per_week": 0.2,
+    "on": "2026-08-19"
+   },
+   "note": "Explains the thing you thought you understood.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Krebs on Security",
+   "lane": "linux",
+   "url": "https://krebsonsecurity.com/feed/",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-14",
+    "per_week": 1.4,
+    "on": "2026-08-19"
+   },
+   "note": "The security story that actually matters, once or twice a week.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "LWN.net headlines",
+   "lane": "linux",
+   "url": "https://lwn.net/headlines/newrss",
+   "tier": "core",
+   "cap": 3,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 52.5,
+    "on": "2026-08-19"
+   },
+   "note": "The kernel and distro record of account. Some items paywalled for a week.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Michael Stapelberg",
+   "lane": "linux",
+   "url": "https://michael.stapelberg.ch/feed.xml",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-09",
+    "per_week": 0.2,
+    "on": "2026-08-19"
+   },
+   "note": "Distri/Debian internals, home network engineering.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "NixOS Discourse",
+   "lane": "linux",
+   "url": "https://discourse.nixos.org/latest.rss",
+   "tier": "firehose",
+   "cap": 3,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 42.0,
+    "on": "2026-08-19"
+   },
+   "note": "42/wk. Mine for breakage reports on modules he runs. EDITORIAL: reject ordinary support requests and one-person breakage. Publish design discussion, RFC outcomes, and breakage that affects modules he runs.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "NixOS blog",
+   "lane": "linux",
+   "url": "https://nixos.org/blog/announcements-rss.xml",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-07-10",
+    "per_week": 0.1,
+    "on": "2026-08-19"
+   },
+   "note": "Release announcements and RFC outcomes.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Phoronix",
+   "lane": "linux",
+   "url": "https://www.phoronix.com/rss.php",
+   "tier": "firehose",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 112.0,
+    "on": "2026-08-19"
+   },
+   "note": "112/wk of benchmarks and kernel commits. Cap hard.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Rachel by the Bay",
+   "lane": "linux",
+   "url": "https://rachelbythebay.com/w/atom.xml",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2023-10-12",
+    "per_week": null,
+    "on": "2026-08-19"
+   },
+   "note": "Operational war stories, unmatched. WARNING: her server refused/timed out on both probe attempts from gromit \u2014 verify fetchability before trusting this slot. \u26a0\ufe0f OBSERVED 2026-08-19/20: times out from gromit on every attempt. Kept because the writing is worth chasing down, but expect it to sit in the failing list until the cause is found.",
+   "dormant": true,
+   "longform": true
+  },
+  {
+   "name": "Self-Host Weekly (noted.lol)",
+   "lane": "linux",
+   "url": "https://noted.lol/rss/",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-07-04",
+    "per_week": 0.7,
+    "on": "2026-08-19"
+   },
+   "note": "A human already did the self-hosting triage for the week.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Servethehome",
+   "lane": "linux",
+   "url": "https://www.servethehome.com/feed/",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 10.5,
+    "on": "2026-08-19"
+   },
+   "note": "Server hardware teardowns and used-gear economics.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Tailscale blog",
+   "lane": "linux",
+   "url": "https://tailscale.com/blog/index.xml",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-12",
+    "per_week": 1.4,
+    "on": "2026-08-19"
+   },
+   "note": "He runs it as the perimeter at home and at work.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Ubuntu Security Notices",
+   "lane": "linux",
+   "url": "https://ubuntu.com/security/notices/rss.xml",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 70.0,
+    "on": "2026-08-19"
+   },
+   "note": "Work-relevant: every Broadlinc backend VM is Ubuntu. Filter to installed packages.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Vermaden (BSD/UNIX ops)",
+   "lane": "linux",
+   "url": "https://vermaden.wordpress.com/feed/",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-17",
+    "per_week": 1.8,
+    "on": "2026-08-19"
+   },
+   "note": "Deep UNIX ops write-ups, weekly-ish valuable link roundups.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Xe Iaso",
+   "lane": "linux",
+   "url": "https://xeiaso.net/blog.rss",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 1.3,
+    "on": "2026-08-19"
+   },
+   "note": "NixOS-adjacent infrastructure writing.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "lobste.rs",
+   "lane": "linux",
+   "url": "https://lobste.rs/rss",
+   "tier": "firehose",
+   "cap": 4,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 175.0,
+    "on": "2026-08-19"
+   },
+   "note": "175/wk, high average quality. The judge earns its keep here. EDITORIAL: aggregator. Judge the linked thing, never the ranking.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "oss-security (openwall)",
+   "lane": "linux",
+   "url": "https://seclists.org/rss/oss-sec.rss",
+   "tier": "firehose",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 35.0,
+    "on": "2026-08-19"
+   },
+   "note": "Filter to software he actually runs, else it is 35/wk of other people's CVEs.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "r/selfhosted (top/week)",
+   "lane": "linux",
+   "url": "https://www.reddit.com/r/selfhosted/top/.rss?t=week",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 29.2,
+    "on": "2026-08-19"
+   },
+   "note": "Pre-ranked by the sub. Discovery of tools, not analysis. \u26a0\ufe0f OBSERVED: Reddit rate-limits this box (HTTP 429) intermittently \u2014 succeeded on two of three real runs. EDITORIAL: a discovery surface. Publish a tool only if the post explains something about running it, not because it exists.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Adam Tooze \u2014 Chartbook",
+   "lane": "macro",
+   "url": "https://adamtooze.substack.com/feed",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 10.0,
+    "on": "2026-08-19"
+   },
+   "note": "Economic history applied to the present. Verbose; the judge trims.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "American Affairs",
+   "lane": "macro",
+   "url": "https://americanaffairsjournal.org/feed/",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 112.0,
+    "on": "2026-08-20"
+   },
+   "note": "Long-form political economy and industrial policy. Publishes in quarterly bursts. LONGFORM: added for the good-reads section.",
+   "longform": true
+  },
+  {
+   "name": "Apricitas Economics",
+   "lane": "macro",
+   "url": "https://www.apricitas.io/feed",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-05-03",
+    "per_week": 0.3,
+    "on": "2026-08-19"
+   },
+   "note": "Chart-heavy. Quiet since May 2026.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Bank Underground (BoE staff)",
+   "lane": "macro",
+   "url": "https://bankunderground.co.uk/feed/",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-13",
+    "per_week": 0.9,
+    "on": "2026-08-19"
+   },
+   "note": "Bank of England staff writing without a press office. Genuinely esoteric.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Conversable Economist",
+   "lane": "macro",
+   "url": "https://conversableeconomist.com/feed/",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 5.0,
+    "on": "2026-08-19"
+   },
+   "note": "Timothy Taylor surfacing working papers most people never see.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Doomberg",
+   "lane": "macro",
+   "url": "https://doomberg.substack.com/feed",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-18",
+    "per_week": 2.0,
+    "on": "2026-08-19"
+   },
+   "note": "Energy-first macro. PAYWALLED \u2014 expect headline + teaser only.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "FRED Blog",
+   "lane": "macro",
+   "url": "https://fredblog.stlouisfed.org/feed/",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-17",
+    "per_week": 2.2,
+    "on": "2026-08-19"
+   },
+   "note": "Short, data-first, one chart per post.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Klement on Investing",
+   "lane": "macro",
+   "url": "https://klementoninvesting.substack.com/feed",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 3.8,
+    "on": "2026-08-19"
+   },
+   "note": "One research note a day, usually a paper summarised honestly.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Liberty Street Economics (NY Fed)",
+   "lane": "macro",
+   "url": "https://libertystreeteconomics.newyorkfed.org/feed/",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 2.0,
+    "on": "2026-08-19"
+   },
+   "note": "Same idea from the NY Fed: primary research, no punditry layer.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Lyn Alden",
+   "lane": "macro",
+   "url": "https://www.lynalden.com/feed/",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-07-15",
+    "per_week": 0.1,
+    "on": "2026-08-19"
+   },
+   "note": "Rare, long, structural. Publishes ~monthly; every piece is worth the slot.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Marginal Revolution",
+   "lane": "macro",
+   "url": "https://marginalrevolution.com/feed",
+   "tier": "firehose",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 35.0,
+    "on": "2026-08-19"
+   },
+   "note": "35/wk of mostly links. Capped; occasionally the best thing all week.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Mises Wire",
+   "lane": "macro",
+   "url": "https://mises.org/rss.xml",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 35.0,
+    "on": "2026-08-19"
+   },
+   "note": "Heavy ideological load at 35/wk. Cap 1 and let the judge earn it.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Wolf Street",
+   "lane": "macro",
+   "url": "https://wolfstreet.com/feed/",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 14.0,
+    "on": "2026-08-19"
+   },
+   "note": "Credit, housing, freight. Reads the data series, not the narrative.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "APNIC Blog",
+   "lane": "network",
+   "url": "https://blog.apnic.net/feed/",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 5.2,
+    "on": "2026-08-19"
+   },
+   "note": "Routing, DNS and measurement, written by operators.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Ars/Broadband? Light Reading",
+   "lane": "network",
+   "url": "https://www.lightreading.com/rss.xml",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 50.0,
+    "on": "2026-08-19"
+   },
+   "note": "Telecom trade press. Cap 1; mostly vendor noise.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Cloudflare Blog",
+   "lane": "network",
+   "url": "https://blog.cloudflare.com/rss/",
+   "tier": "watch",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 10.8,
+    "on": "2026-08-19"
+   },
+   "note": "Post-mortems and protocol work; skip the product launches.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "RIPE Labs",
+   "lane": "network",
+   "url": "https://labs.ripe.net/rss.xml",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-14",
+    "per_week": 2.3,
+    "on": "2026-08-19"
+   },
+   "note": "Same, from the European registry. Esoteric and genuinely useful.",
+   "dormant": false,
+   "longform": true
+  },
+  {
+   "name": "Telecompetitor (rural broadband)",
+   "lane": "network",
+   "url": "https://www.telecompetitor.com/feed/",
+   "tier": "firehose",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-19",
+    "per_week": 35.0,
+    "on": "2026-08-19"
+   },
+   "note": "35/wk, press-release heavy \u2014 but it is the BEAD/rural-funding beat, which is his industry. \u26a0\ufe0f OBSERVED: returns HTTP 403 to a scripted user-agent on every attempt. It will decay into dormancy rather than warn forever; needs a browser UA or dropping.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "BTCPay Server releases",
+   "lane": "release-radar",
+   "url": "https://github.com/btcpayserver/btcpayserver/releases.atom",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-10",
+    "per_week": 1.5,
+    "on": "2026-08-19"
+   },
+   "note": "",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Bitcoin Core releases",
+   "lane": "release-radar",
+   "url": "https://github.com/bitcoin/bitcoin/releases.atom",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-07-10",
+    "per_week": 0.9,
+    "on": "2026-08-19"
+   },
+   "note": "",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Bitcoin Knots releases",
+   "lane": "release-radar",
+   "url": "https://github.com/bitcoinknots/bitcoin/releases.atom",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-08",
+    "per_week": 0.4,
+    "on": "2026-08-19"
+   },
+   "note": "He runs Knots.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Core Lightning releases",
+   "lane": "release-radar",
+   "url": "https://github.com/ElementsProject/lightning/releases.atom",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-07-22",
+    "per_week": 0.8,
+    "on": "2026-08-19"
+   },
+   "note": "",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Forgejo releases",
+   "lane": "release-radar",
+   "url": "https://codeberg.org/forgejo/forgejo/releases.rss",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-07-30",
+    "per_week": 0.6,
+    "on": "2026-08-19"
+   },
+   "note": "He self-hosts it and it is the source of truth for every repo.",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Fulcrum releases",
+   "lane": "release-radar",
+   "url": "https://github.com/cculianu/Fulcrum/releases.atom",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-05-07",
+    "per_week": 0.1,
+    "on": "2026-08-19"
+   },
+   "note": "",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Lightning: LDK releases",
+   "lane": "release-radar",
+   "url": "https://github.com/lightningdevkit/rust-lightning/releases.atom",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-05",
+    "per_week": 0.9,
+    "on": "2026-08-19"
+   },
+   "note": "",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "NixOS weekly (nixpkgs releases)",
+   "lane": "release-radar",
+   "url": "https://github.com/NixOS/nixpkgs/releases.atom",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-05-30",
+    "per_week": 0.2,
+    "on": "2026-08-19"
+   },
+   "note": "",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "Sparrow Wallet releases",
+   "lane": "release-radar",
+   "url": "https://github.com/sparrowwallet/sparrow/releases.atom",
+   "tier": "watch",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-07-30",
+    "per_week": 0.2,
+    "on": "2026-08-19"
+   },
+   "note": "",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "mempool.space releases",
+   "lane": "release-radar",
+   "url": "https://github.com/mempool/mempool/releases.atom",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-06-18",
+    "per_week": 0.4,
+    "on": "2026-08-19"
+   },
+   "note": "",
+   "dormant": false,
+   "longform": false
+  },
+  {
+   "name": "nix-bitcoin releases",
+   "lane": "release-radar",
+   "url": "https://github.com/fort-nix/nix-bitcoin/releases.atom",
+   "tier": "core",
+   "cap": 1,
+   "insecure_tls": false,
+   "probe": {
+    "last_seen": "2026-08-13",
+    "per_week": 0.2,
+    "on": "2026-08-19"
+   },
+   "note": "",
+   "dormant": false,
+   "longform": false
   }
  ],
  "dropped": [

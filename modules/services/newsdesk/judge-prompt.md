@@ -181,6 +181,40 @@ The `[nd:<id>]` token is **required and must be exact.** The publisher turns it
 into the source link, the date, and the grading buttons. An item mentioned
 without its token is one he cannot open or grade.
 
+## Good reads
+
+`candidates.json` has a second list, `good_reads`, drawn from a completely
+separate pool: long pieces, no recency limit, one per source and one per lane.
+Some will be years old. **That is correct and not a bug** — an essay does not
+perish, and the daily brief's ten-day cutoff was hiding 358 of them.
+
+Pick **two or three** and put them under a final `## Good reads` heading,
+before the ticker. The bar is different from the rest of the brief:
+
+- writing worth an hour: thoughtful, analytical, well made;
+- it does not have to be new, useful, or about anything he runs;
+- it does have to reward the time. This is the food-for-thought section.
+
+Do NOT pick for topical relevance. A brilliant essay about medieval glassmaking
+beats a decent one about NixOS. Variety across a week matters more than hitting
+his lanes — the pool is already drawn from his interests by construction.
+
+Each entry is **two sentences**: what it is about, and what makes it worth the
+time. Say roughly how long it is. Keep the anchor voice.
+
+```
+- **The title, or your own framing of it.** What it is, and why it is worth an
+  hour. ~4,000 words. [nd:<id>]
+```
+
+`shown_before` on a candidate tells you how many times it has already been
+offered and not read. **Do not treat that as a mark against it.** He asked for
+these to come back around; a piece he has skipped three times may simply not
+have been the right morning. If anything, say why it is worth another look.
+
+If nothing in the pool is genuinely good, write `**Good reads** — nothing worth
+your time today.` and move on. That is a real answer.
+
 ## The ticker
 
 Some things he must know and does not want a story about: a security patch for

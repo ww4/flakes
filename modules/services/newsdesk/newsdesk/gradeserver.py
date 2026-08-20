@@ -38,6 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from .db import connect, now
+from .longform import record_click
 
 VALUES = {"up": 1, "down": -1}
 
@@ -58,9 +59,20 @@ class GradeHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
+    def _redirect(self, to: str) -> None:
+        self.send_response(302)
+        self.send_header("Location", to)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     def do_GET(self) -> None:  # noqa: N802 - stdlib signature
         url = urlparse(self.path)
-        if url.path.rstrip("/") not in ("/g", "/news/g"):
+        path = url.path.rstrip("/")
+        if path in ("/r", "/news/r"):
+            self._read_through(parse_qs(url.query))
+            return
+        if path not in ("/g", "/news/g"):
             self._respond(404)
             return
         q = parse_qs(url.query)
@@ -92,6 +104,40 @@ class GradeHandler(BaseHTTPRequestHandler):
         finally:
             con.close()
         self._respond(204)
+
+    def _read_through(self, q: dict) -> None:
+        """Count the click, then send him to the article.
+
+        A click is the read signal: it retires the item from the long-read
+        rotation for good. The redirect must survive any bookkeeping failure —
+        never leave him staring at an error instead of the piece he asked for.
+        """
+        raw_id = (q.get("i") or [""])[0]
+        if not raw_id.isdigit():
+            self._respond(400)
+            return
+        try:
+            con = connect(self.db_path)
+        except sqlite3.Error:
+            self._respond(503)
+            return
+        try:
+            target = _item_url(con, int(raw_id))
+            if not target:
+                self._respond(404)
+                return
+            try:
+                record_click(con, int(raw_id))
+            except sqlite3.Error as e:  # noqa: BLE001
+                sys.stderr.write(f"newsdesk-grade: click not recorded: {e}\n")
+            self._redirect(target)
+        finally:
+            con.close()
+
+
+def _item_url(con, item_id: int):
+    row = con.execute("SELECT url FROM items WHERE id = ?", (item_id,)).fetchone()
+    return row["url"] if row else None
 
 
 def serve(host: str = "127.0.0.1", port: int = 8123, db_path=None) -> int:

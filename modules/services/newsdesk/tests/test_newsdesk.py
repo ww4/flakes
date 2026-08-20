@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from newsdesk import collect as collect_mod  # noqa: E402
 from newsdesk import edition as edition_mod  # noqa: E402
 from newsdesk import feedback, feeds, gradeserver  # noqa: E402
+from newsdesk import longform  # noqa: E402
 from newsdesk import sources as sources_mod  # noqa: E402
 from newsdesk.db import connect, seed_sources  # noqa: E402
 from newsdesk.score import score_text  # noqa: E402
@@ -989,3 +990,180 @@ class TestSourcesPage(Base):
         self._sync()
         self.assertTrue(self.page.exists())
         self.assertIn("```control", self.page.read_text())
+
+
+# ---------------------------------------------------------------------------
+# good reads: rotation, retirement, archive
+# ---------------------------------------------------------------------------
+
+class TestLongform(Base):
+    """The rules Chris specified: an unread piece comes back at a lower weight,
+    a click retires it, and only picks get archived."""
+
+    def setUp(self):
+        super().setUp()
+        self.add_source("Essays", "ideas", cap=2)
+        self.add_source("Other", "energy", cap=2)
+
+    def _long(self, source, lane, title, **kw):
+        return self.add_item(source, lane, title, words=2500, **kw)
+
+    def test_no_recency_filter(self):
+        """THE point of the section: a 2019 essay is as good as today's."""
+        old = self._long("Essays", "ideas", "ancient essay", published=_iso(1500))
+        ids = [c["id"] for c in longform.shortlist(self.con)]
+        self.assertIn(old, ids)
+
+    def test_short_items_are_not_good_reads(self):
+        self.add_item("Essays", "ideas", "a note", words=200)
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_a_click_retires_it_for_good(self):
+        i = self._long("Essays", "ideas", "essay")
+        self.assertTrue(longform.record_click(self.con, i))
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_being_shown_does_not_retire_it(self):
+        """Not clicking is not a no. It comes back around."""
+        i = self._long("Essays", "ideas", "essay")
+        longform.mark_shown(self.con, [i])
+        # inside the cooldown it rests...
+        self.assertEqual(longform.shortlist(self.con), [])
+        # ...and afterwards it returns.
+        self.con.execute("UPDATE items SET last_shown_at=? WHERE id=?", (_iso(30), i))
+        self.con.commit()
+        self.assertEqual([c["id"] for c in longform.shortlist(self.con)], [i])
+
+    def test_it_returns_at_a_lower_weight_but_never_zero(self):
+        i = self._long("Essays", "ideas", "essay")
+        row = self.con.execute("SELECT * FROM items WHERE id=?", (i,)).fetchone()
+        self.assertEqual(longform.weight(row), 1.0)
+        self.con.execute("UPDATE items SET shown_count=3 WHERE id=?", (i,))
+        self.con.commit()
+        row = self.con.execute("SELECT * FROM items WHERE id=?", (i,)).fetchone()
+        self.assertLess(longform.weight(row), 1.0)
+        self.con.execute("UPDATE items SET shown_count=50 WHERE id=?", (i,))
+        self.con.commit()
+        row = self.con.execute("SELECT * FROM items WHERE id=?", (i,)).fetchone()
+        self.assertGreaterEqual(longform.weight(row), longform.MIN_MULTIPLIER,
+                                "a good essay must never decay out of reach")
+
+    def test_thumbs_down_retires_it(self):
+        i = self._long("Essays", "ideas", "essay")
+        self.con.execute("INSERT INTO grades (item_id, via, value, at) VALUES (?,'web',-1,?)",
+                         (i, _iso(0)))
+        self.con.commit()
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_already_published_as_news_is_excluded(self):
+        self._long("Essays", "ideas", "essay", state="published")
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_passed_over_by_the_news_judge_is_still_eligible(self):
+        """Losing a news slot is not a verdict on it as an essay."""
+        i = self._long("Essays", "ideas", "essay", state="passed_over")
+        self.assertIn(i, [c["id"] for c in longform.shortlist(self.con)])
+
+    def test_one_per_source_and_one_per_lane(self):
+        """The backlog is 30% one author. Without this it is his blog."""
+        for n in range(5):
+            self._long("Essays", "ideas", f"essay {n}", score=100 - n)
+        self._long("Other", "energy", "other essay", score=1)
+        picks = longform.shortlist(self.con)
+        self.assertEqual(len(picks), 2)
+        self.assertEqual({p["source"] for p in picks}, {"Essays", "Other"})
+        self.assertEqual({p["lane"] for p in picks}, {"ideas", "energy"})
+
+    def test_a_crowded_lane_does_not_squeeze_out_a_thin_one(self):
+        """The backlog is 40% linux and 2% network. Ordering by score alone
+        gives three systems essays every morning; the lane rule is what puts
+        the thin lanes in front of him. Breaking it left the previous test
+        green, which is why this one exists."""
+        for n in range(10):
+            self.add_source(f"Big{n}", "ideas")
+            self._long(f"Big{n}", "ideas", f"ideas essay {n}", score=500 + n)
+        self.add_source("Thin", "network")
+        self._long("Thin", "network", "the one network essay", score=1)
+        picks = longform.shortlist(self.con, limit=3)
+        self.assertEqual(len(picks), 3)
+        self.assertIn("network", {p["lane"] for p in picks},
+                      "the thin lane was crowded out by higher scores")
+
+    def test_selection_does_not_use_the_news_keyword_score(self):
+        """The profile ranks NEWS about what he runs. Ordering essays by it
+        buries anything not about his stack — which is the opposite of what
+        this section is for."""
+        self.add_source("Essayist", "ideas")
+        self.add_source("Techie", "linux")
+        self._long("Techie", "linux", "nixos nixos nixos", score=900)
+        self._long("Essayist", "ideas", "a beautiful essay about nothing", score=0)
+        # Across many day-seeds the zero-scoring essay must lead sometimes;
+        # under score-ordering it would never lead.
+        led = sum(1 for d in range(40)
+                  if longform.shortlist(self.con, limit=1, seed=f"day-{d}")[0]["source"]
+                  == "Essayist")
+        self.assertGreater(led, 5, "the low-scoring essay never gets a look")
+
+    def test_a_much_shown_piece_still_comes_around(self):
+        self.add_source("A2", "ideas")
+        fresh = self._long("Essays", "ideas", "never shown")
+        old = self._long("A2", "ideas", "shown five times")
+        self.con.execute("UPDATE items SET shown_count=5, last_shown_at=? WHERE id=?",
+                         (_iso(60), old))
+        self.con.commit()
+        led = sum(1 for d in range(60)
+                  if longform.shortlist(self.con, limit=1, seed=f"d{d}")[0]["id"] == old)
+        self.assertGreater(led, 3, "a repeatedly-skipped piece never resurfaces")
+        self.assertLess(led, 40, "a repeatedly-skipped piece is not being demoted at all")
+
+    def test_a_release_note_is_never_a_good_read(self):
+        """Found by running against the live backlog: a 1,296-word Bitcoin
+        Knots release note took a shortlist slot."""
+        self.add_source("Releases", "release-radar")
+        self._long("Releases", "release-radar", "v29.3 release notes", score=999)
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_a_source_can_opt_out_of_being_a_good_read(self):
+        """Newsletters and aggregators are long but are not essays."""
+        self._long("Essays", "ideas", "essay")
+        self.con.execute("UPDATE sources SET longform=0 WHERE name='Essays'")
+        self.con.commit()
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_disabled_source_drops_out(self):
+        i = self._long("Essays", "ideas", "essay")
+        self.con.execute("UPDATE sources SET enabled=0 WHERE name='Essays'")
+        self.con.commit()
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_archive_writes_a_page_and_records_it(self):
+        i = self._long("Essays", "ideas", "essay", body="word " * 900)
+        rel = longform.archive(self.con, i, web_dir=self.dir / "web")
+        self.assertIsNotNone(rel)
+        page = (self.dir / "web" / rel)
+        self.assertTrue(page.exists())
+        text = page.read_text()
+        self.assertIn("original", text)
+        self.assertIn("noindex", text, "the personal archive must not be indexable")
+        self.assertIn("rights remain with the", text)
+        self.assertEqual(
+            self.con.execute("SELECT archived_path FROM items WHERE id=?", (i,)).fetchone()[0],
+            rel)
+
+    def test_archive_is_idempotent(self):
+        i = self._long("Essays", "ideas", "essay", body="word " * 900)
+        a = longform.archive(self.con, i, web_dir=self.dir / "web")
+        b = longform.archive(self.con, i, web_dir=self.dir / "web")
+        self.assertEqual(a, b)
+
+    def test_archive_skips_when_there_is_no_real_text(self):
+        i = self._long("Essays", "ideas", "essay", body="too short")
+        self.assertIsNone(longform.archive(self.con, i, web_dir=self.dir / "web"))
+
+    def test_archive_escapes_html_in_the_text(self):
+        i = self._long("Essays", "ideas", "essay",
+                       body="<script>alert(1)</script> " + "word " * 900)
+        rel = longform.archive(self.con, i, web_dir=self.dir / "web")
+        page = (self.dir / "web" / rel).read_text()
+        self.assertNotIn("<script>alert", page)
+        self.assertIn("&lt;script&gt;", page)
