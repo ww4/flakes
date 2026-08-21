@@ -578,8 +578,14 @@ class TestPublish(Base):
         self.space.parent.mkdir(parents=True, exist_ok=True)
 
     def _publish(self, md):
-        return edition_mod.publish(self.con, "brief", md, web_dir=self.web,
-                                   space_dir=self.space, cmark="/nonexistent")
+        res = edition_mod.publish(self.con, "brief", md, web_dir=self.web,
+                                  space_dir=self.space, cmark="/nonexistent")
+        self._url = res["url"]
+        return res
+
+    def _page(self) -> str:
+        """The edition's own dated page. index.html is the listing now."""
+        return (self.web / self._url).read_text()
 
     def test_mentioned_published_unmentioned_passed_over(self):
         res = self._publish(f"- **kept** [nd:{self.kept}] — worth it\n\nTLDR: one thing.")
@@ -596,13 +602,13 @@ class TestPublish(Base):
         """A blank edition must never be indistinguishable from 'no news'."""
         res = self._publish("")
         self.assertTrue(res["fell_back"])
-        page = (self.web / "index.html").read_text()
+        page = self._page()
         self.assertIn("reader did not complete", page.lower())
         self.assertEqual(res["published"], 2, "fallback should list the shortlist")
 
     def test_grading_links_rendered(self):
         self._publish(f"- **kept** [nd:{self.kept}]\n")
-        page = (self.web / "index.html").read_text()
+        page = self._page()
         self.assertIn(f"/news/g?e=", page)
         self.assertIn(f"i={self.kept}", page)
         self.assertIn("v=up", page)
@@ -611,7 +617,7 @@ class TestPublish(Base):
     def test_unknown_token_does_not_break_the_page(self):
         res = self._publish("- **ghost** [nd:999999]\n")
         self.assertEqual(res["published"], 0)
-        self.assertTrue((self.web / "index.html").exists())
+        self.assertTrue((self.web / self._url).exists())
 
     def test_space_page_written_without_grading_urls(self):
         self._publish(f"- **kept** [nd:{self.kept}]\n")
@@ -625,20 +631,20 @@ class TestPublish(Base):
         self.con.execute("UPDATE sources SET awakened_at=? WHERE name='A'", (_iso(1),))
         self.con.commit()
         self._publish(f"[nd:{self.kept}]")
-        self.assertIn("Back from the dead", (self.web / "index.html").read_text())
+        self.assertIn("Back from the dead", self._page())
 
     def test_item_dates_are_rendered_not_left_to_the_reader(self):
         self.con.execute("UPDATE items SET published=? WHERE id=?",
                          ("2026-08-18T10:00:00+00:00", self.kept))
         self.con.commit()
         self._publish(f"- **kept** [nd:{self.kept}]\n")
-        self.assertIn("18 Aug", (self.web / "index.html").read_text())
+        self.assertIn("18 Aug", self._page())
 
     def test_raw_scores_are_not_shown_to_the_reader(self):
         """They are meaningless to him, and this edition proved they are not
         even correlated with what is worth publishing."""
         self._publish(f"- **kept** [nd:{self.kept}]\n")
-        page = (self.web / "index.html").read_text()
+        page = self._page()
         self.assertIn("Not selected", page)
         self.assertNotIn("score", page.lower())
 
@@ -647,7 +653,7 @@ class TestPublish(Base):
                          " WHERE name='A'")
         self.con.commit()
         self._publish(f"[nd:{self.kept}]")
-        page = (self.web / "index.html").read_text()
+        page = self._page()
         self.assertIn("gone quiet", page)
 
 
@@ -1383,3 +1389,87 @@ class TestEventDetection(Base):
         cl = events.detect(self.con)
         self.assertTrue(cl)
         self.assertIn("Wolf Street", cl[0]["sources"])
+
+
+class TestPermalinks(Base):
+    """Each edition keeps its own dated URL, and the pages cross-link."""
+
+    def setUp(self):
+        super().setUp()
+        self.add_source("A", "linux", cap=5)
+        self.web = self.dir / "web"
+        self.space = self.dir / "space" / "Newsdesk"
+        self.space.parent.mkdir(parents=True, exist_ok=True)
+
+    def _publish_on(self, day, text):
+        """Publish an edition dated `day` (YYYY-MM-DD)."""
+        item = self.add_item("A", "linux", f"item {day}", state="shortlisted")
+        real = edition_mod.edition_id
+        edition_mod.edition_id = lambda kind, when=None: f"{day}-brief"
+        try:
+            return edition_mod.publish(self.con, "brief", text.format(id=item),
+                                       web_dir=self.web, space_dir=self.space,
+                                       cmark="/nonexistent")
+        finally:
+            edition_mod.edition_id = real
+
+    def test_each_edition_keeps_its_own_page(self):
+        self._publish_on("2026-08-19", "- **one** [nd:{id}]\n\nTLDR: first.")
+        self._publish_on("2026-08-20", "- **two** [nd:{id}]\n\nTLDR: second.")
+        self.assertTrue((self.web / "2026-08-19-brief.html").exists())
+        self.assertTrue((self.web / "2026-08-20-brief.html").exists())
+        first = (self.web / "2026-08-19-brief.html").read_text()
+        self.assertIn("one", first)
+        self.assertNotIn("two", first, "a later edition overwrote an earlier one")
+
+    def test_publish_returns_the_dated_url(self):
+        res = self._publish_on("2026-08-19", "- **x** [nd:{id}]\n\nTLDR: t.")
+        self.assertEqual(res["url"], "2026-08-19-brief.html")
+
+    def test_yesterdays_page_gains_a_next_link_when_today_publishes(self):
+        """It was written before today existed, so this can only happen on
+        re-render — which is why the markdown is kept."""
+        self._publish_on("2026-08-19", "- **one** [nd:{id}]\n\nTLDR: first.")
+        page = (self.web / "2026-08-19-brief.html").read_text()
+        self.assertIn("next &rarr;</span>", page)          # no next yet
+        self._publish_on("2026-08-20", "- **two** [nd:{id}]\n\nTLDR: second.")
+        page = (self.web / "2026-08-19-brief.html").read_text()
+        self.assertIn('href="2026-08-20-brief.html">next', page)
+
+    def test_the_first_edition_has_no_previous_link(self):
+        self._publish_on("2026-08-19", "- **one** [nd:{id}]\n\nTLDR: first.")
+        page = (self.web / "2026-08-19-brief.html").read_text()
+        self.assertIn("previous</span>", page)
+        self.assertNotIn('href="2026-08-18', page)
+
+    def test_index_lists_every_edition_newest_first(self):
+        self._publish_on("2026-08-19", "- **one** [nd:{id}]\n\nTLDR: first thing.")
+        self._publish_on("2026-08-20", "- **two** [nd:{id}]\n\nTLDR: second thing.")
+        idx = (self.web / "index.html").read_text()
+        self.assertIn("2026-08-19-brief.html", idx)
+        self.assertIn("2026-08-20-brief.html", idx)
+        self.assertIn("first thing.", idx)
+        self.assertLess(idx.index("2026-08-20"), idx.index("2026-08-19"),
+                        "index must be newest first")
+
+    def test_index_is_not_a_copy_of_the_latest_edition(self):
+        self._publish_on("2026-08-19", "- **a distinctive headline** [nd:{id}]\n\nTLDR: t.")
+        idx = (self.web / "index.html").read_text()
+        self.assertNotIn("a distinctive headline", idx)
+        self.assertIn("all editions", idx)
+
+    def test_every_page_links_to_the_index(self):
+        self._publish_on("2026-08-19", "- **one** [nd:{id}]\n\nTLDR: t.")
+        self.assertIn('href="./"', (self.web / "2026-08-19-brief.html").read_text())
+
+
+class TestGapFormatting(Base):
+    def test_a_bursty_source_does_not_read_as_every_0_0_days(self):
+        self.add_source("Bursty", "ideas")
+        self.con.execute(
+            "UPDATE sources SET last_item_at=?, median_gap_h=0.4 WHERE name='Bursty'",
+            (_iso(60),))
+        self.con.commit()
+        detail = collect_mod.stale_sources(self.con)[0]["detail"]
+        self.assertNotIn("0.0", detail)
+        self.assertIn("h", detail)
