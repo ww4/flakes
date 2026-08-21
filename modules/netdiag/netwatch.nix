@@ -102,7 +102,18 @@ in
     description = "netwatch notification action endpoint (ntfy buttons)";
     wantedBy = [ "multi-user.target" ];
     after = [ "network.target" ];
-    path = with pkgs; [ netwatch nmap curl iproute2 coreutils ];
+    # netdiag MUST be here: do_investigate shells out to `netdiag identify`.
+    # It was missing — the same sibling-PATH class as the #165 scan-unit bug —
+    # so the Investigate button returned 200 while the fingerprint died on
+    # FileNotFoundError, visible only in the phone's HTTP toast (2026-08-21).
+    # netdiag is a writeShellApplication and carries its own toolchain
+    # (gawk/nmap/avahi/...) in its wrapper, so listing it here is sufficient.
+    # Unprivileged caveat: as netwatch-act, the UDP/NetBIOS probes inside
+    # identify degrade to "(none)" — ports/vendor/HTTP identity still work.
+    path = [ netwatch netdiag netdiagPriv ] ++ (with pkgs; [ nmap curl iproute2 coreutils ]);
+    # Unbuffered, or the handler's audit-trail prints sit in a buffer forever
+    # while stderr's access log flushes — half a story in the journal.
+    environment.PYTHONUNBUFFERED = "1";
     serviceConfig = {
       ExecStart = lib.getExe netwatchActions;
       Restart = "on-failure";
