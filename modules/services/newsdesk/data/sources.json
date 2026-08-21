@@ -19,7 +19,9 @@
   "",
   "longform: may this source produce a GOOD READ? Word count is not a quality gate \u2014 tested against the real backlog it admitted release notes, a newsletter and a link roundup, which then crowded the essays out of the shortlist. Newsletters, aggregators, notice feeds and every release feed are false. They still feed the daily lanes normally.",
   "",
-  "kind: 'feed' polls a URL; 'corpus' walks a local directory of markdown on gromit and is never fetched. evergreen: the archive is known-good, so it is not judged on newsworthiness and shares ONE reserved good-reads slot."
+  "kind: 'feed' polls a URL; 'corpus' walks a local directory of markdown on gromit and is never fetched. evergreen: the archive is known-good, so it is not judged on newsworthiness and shares ONE reserved good-reads slot.",
+  "",
+  "role: 'read' sources can be published. 'signal' sources are ingested purely to be COUNTED by the event detector \u2014 never published, never in a lane, never a good read, never in the not-selected list. The catalogue was built from slow essayists and technical newsletters, which made it structurally blind to events: of 525 items published over three days, exactly one source mentioned a major market move. These fix that without putting any of their noise in front of him."
  ],
  "sources": [
   {
@@ -38,7 +40,8 @@
    "dormant": true,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Dark Mountain",
@@ -56,7 +59,8 @@
    "note": "Writing from the far end of the industrial-decline question. Uneven; when it lands it lands. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Dry Creek Chronicles (archive)",
@@ -74,7 +78,8 @@
     "per_week": null,
     "on": "2026-08-20"
    },
-   "note": "Rick's blog, 2000-2024, ingested from the local ww4/drycreek-archive (2,520 posts; 1,443 usable after dropping scrape wreckage; 472 over 800 words). EVERGREEN: not judged on newsworthiness and never graded \u2014 it is all worth revisiting. Gets ONE reserved good-reads slot between all evergreen sources, so it appears occasionally rather than every day."
+   "note": "Rick's blog, 2000-2024, ingested from the local ww4/drycreek-archive (2,520 posts; 1,443 usable after dropping scrape wreckage; 472 over 800 words). EVERGREEN: not judged on newsworthiness and never graded \u2014 it is all worth revisiting. Gets ONE reserved good-reads slot between all evergreen sources, so it appears occasionally rather than every day.",
+   "role": "read"
   },
   {
    "name": "Dry Creek Chronicles (wordpress)",
@@ -92,7 +97,8 @@
    "dormant": true,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Front Porch Republic",
@@ -110,7 +116,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Root Simple",
@@ -128,7 +135,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Small Farmer's Journal",
@@ -146,7 +154,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "The Berry Center",
@@ -164,7 +173,8 @@
     "per_week": 0.1,
     "on": "2026-08-20"
    },
-   "note": "Founded by Wendell Berry's family to carry on his work. Publishes essays in his tradition and occasionally his own."
+   "note": "Founded by Wendell Berry's family to carry on his work. Publishes essays in his tradition and occasionally his own.",
+   "role": "read"
   },
   {
    "name": "The Land Institute",
@@ -182,7 +192,8 @@
     "per_week": 0.7,
     "on": "2026-08-20"
    },
-   "note": "Perennial grain agriculture and the science behind it. Wes Jackson's outfit; Berry's long collaborator."
+   "note": "Perennial grain agriculture and the science behind it. Wes Jackson's outfit; Berry's long collaborator.",
+   "role": "read"
   },
   {
    "name": "The Prairie Homestead",
@@ -200,7 +211,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "0xB10C",
@@ -218,7 +230,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Bitcoin Core PR Review Club",
@@ -236,7 +249,27 @@
    "dormant": true,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
+  },
+  {
+   "name": "Bitcoin Magazine",
+   "lane": "bitcoin",
+   "url": "https://bitcoinmagazine.com/feed",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 70.0,
+    "on": "2026-08-21"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Exists so that many sources saying the same thing at once becomes visible. Its individual items are exactly the noise Chris asked to be spared and must never reach an edition."
   },
   {
    "name": "Bitcoin Optech Newsletter",
@@ -254,7 +287,27 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
+  },
+  {
+   "name": "Bitcoin.com News",
+   "lane": "bitcoin",
+   "url": "https://news.bitcoin.com/feed/",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 70.0,
+    "on": "2026-08-21"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Exists so that many sources saying the same thing at once becomes visible. Its individual items are exactly the noise Chris asked to be spared and must never reach an edition."
   },
   {
    "name": "Blockstream engineering",
@@ -272,7 +325,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Brink (bitcoin dev funding)",
@@ -290,7 +344,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Casa",
@@ -308,7 +363,8 @@
     "per_week": 0.3,
     "on": "2026-08-20"
    },
-   "note": "Self-custody engineering: multisig, key rotation, recovery. Write-ups explain the reasoning."
+   "note": "Self-custody engineering: multisig, key rotation, recovery. Write-ups explain the reasoning.",
+   "role": "read"
   },
   {
    "name": "Checkonchain (James Check)",
@@ -326,7 +382,27 @@
    "note": "On-chain analytics \u2014 flows, cost basis, supply dynamics. Chris asked for this one by name. It exists to fill the deliberate hole in this catalogue: nothing else here explains a MARKET MOVE. EDITORIAL: publish when a move is explained with on-chain evidence. Never publish a price level, a target or a forecast on its own.",
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
+  },
+  {
+   "name": "CoinDesk",
+   "lane": "bitcoin",
+   "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 175.0,
+    "on": "2026-08-21"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Exists so that many sources saying the same thing at once becomes visible. Its individual items are exactly the noise Chris asked to be spared and must never reach an edition."
   },
   {
    "name": "Coinkite / Coldcard",
@@ -344,7 +420,46 @@
     "per_week": 2.0,
     "on": "2026-08-20"
    },
-   "note": "Coldcard internals and security design. He runs their hardware."
+   "note": "Coldcard internals and security design. He runs their hardware.",
+   "role": "read"
+  },
+  {
+   "name": "Cointelegraph",
+   "lane": "bitcoin",
+   "url": "https://cointelegraph.com/rss",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 210.0,
+    "on": "2026-08-21"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Exists so that many sources saying the same thing at once becomes visible. Its individual items are exactly the noise Chris asked to be spared and must never reach an edition."
+  },
+  {
+   "name": "Decrypt",
+   "lane": "bitcoin",
+   "url": "https://decrypt.co/feed",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 126.0,
+    "on": "2026-08-21"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Exists so that many sources saying the same thing at once becomes visible. Its individual items are exactly the noise Chris asked to be spared and must never reach an edition."
   },
   {
    "name": "Delving Bitcoin (forum)",
@@ -362,7 +477,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Fedimint blog",
@@ -380,7 +496,8 @@
    "dormant": true,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Foundation Devices",
@@ -398,7 +515,8 @@
     "per_week": 0.6,
     "on": "2026-08-20"
    },
-   "note": "Passport hardware wallet \u2014 firmware and hardware design write-ups."
+   "note": "Passport hardware wallet \u2014 firmware and hardware design write-ups.",
+   "role": "read"
   },
   {
    "name": "Jameson Lopp",
@@ -416,7 +534,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Stacker News (top)",
@@ -434,7 +553,27 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
+  },
+  {
+   "name": "The Block",
+   "lane": "bitcoin",
+   "url": "https://www.theblock.co/rss.xml",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 140.0,
+    "on": "2026-08-21"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Exists so that many sources saying the same thing at once becomes visible. Its individual items are exactly the noise Chris asked to be spared and must never reach an edition."
   },
   {
    "name": "All Power Labs",
@@ -452,7 +591,8 @@
    "dormant": true,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Austin Vernon",
@@ -470,7 +610,8 @@
    "note": "First-principles engineering economics \u2014 energy, chemicals, manufacturing. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Backwoods/Off-grid: Solar Power World",
@@ -488,7 +629,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Construction Physics",
@@ -506,7 +648,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Do the Math (Tom Murphy)",
@@ -524,7 +667,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Drive On Wood forum",
@@ -542,7 +686,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Energy Institute at Haas",
@@ -560,7 +705,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Hackaday: Green Hacks tag",
@@ -578,7 +724,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Living Energy Farm",
@@ -596,7 +743,8 @@
    "dormant": true,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Low-tech Magazine",
@@ -614,7 +762,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "No Tech Magazine",
@@ -632,7 +781,8 @@
    "dormant": true,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Open Source Ecology",
@@ -650,7 +800,8 @@
    "dormant": true,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Practical Engineering",
@@ -668,7 +819,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Resilience.org",
@@ -686,7 +838,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Roots of Progress",
@@ -704,7 +857,8 @@
    "note": "The history and philosophy of technological progress. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Wood gas: Gasifiers forum (Reddit)",
@@ -722,7 +876,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Aeon",
@@ -740,7 +895,8 @@
    "note": "Essays on philosophy, science and being human. 8/wk, so cap it. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Asterisk Magazine",
@@ -758,7 +914,8 @@
    "note": "Careful, numerate essays. Quarterly-ish. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Astral Codex Ten",
@@ -776,7 +933,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Bunnie Huang",
@@ -794,7 +952,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Craig Mod",
@@ -812,7 +971,8 @@
    "note": "Walking, place, books and software. Some of the best prose in tech. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Damn Interesting",
@@ -830,7 +990,8 @@
    "note": "Deeply researched narrative non-fiction. Infrequent. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Experimental History",
@@ -848,7 +1009,8 @@
    "note": "Adam Mastroianni on psychology and how science actually works. Funny and serious at once. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Interconnected (Matt Webb)",
@@ -866,7 +1028,8 @@
    "note": "Short, inventive thinking about computing and physical things. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Ken Shirriff",
@@ -884,7 +1047,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Longreads",
@@ -902,7 +1066,8 @@
    "note": "A curated longform digest \u2014 someone else's picks. Judge the linked piece, never the roundup. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Nautilus",
@@ -920,7 +1085,8 @@
    "note": "Science essays, 70/wk. Hard cap; mine, do not read. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Noema Magazine",
@@ -938,7 +1104,8 @@
    "note": "Long essays on technology, governance and the long term. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Palladium Magazine",
@@ -956,7 +1123,8 @@
    "note": "Institutions, states and how societies actually function. Unusual angles. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Quanta Magazine",
@@ -974,7 +1142,8 @@
    "note": "Mathematics and physics explained properly. Rare in being both rigorous and readable. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Simon Willison",
@@ -992,7 +1161,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Slime Mold Time Mold",
@@ -1010,7 +1180,8 @@
    "note": "Long, strange, rigorous investigations. Rare but substantial. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "The Convivial Society",
@@ -1028,7 +1199,8 @@
    "note": "Michael Sacasas on technology, attention and place. Illich's tradition \u2014 squarely his interests. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "The Intrinsic Perspective",
@@ -1046,7 +1218,8 @@
    "note": "Erik Hoel on neuroscience, consciousness and culture. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "The New Atlantis",
@@ -1064,7 +1237,8 @@
    "note": "Technology and the human person. The best writing anywhere on what tools do to us. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "The Public Domain Review",
@@ -1082,7 +1256,8 @@
    "note": "Essays on the odd corners of the archive. Pure food for thought. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Works in Progress",
@@ -1100,7 +1275,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "fasterthanli.me",
@@ -1118,7 +1294,8 @@
    "dormant": true,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Antirez",
@@ -1136,7 +1313,8 @@
    "note": "Salvatore Sanfilippo (Redis) on programming and craft. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Backblaze",
@@ -1154,7 +1332,8 @@
     "per_week": 1.5,
     "on": "2026-08-20"
    },
-   "note": "\u2b50 Quarterly hard-drive failure statistics across ~300k drives \u2014 directly useful for the SnapRAID pools \u2014 plus storage-engineering write-ups."
+   "note": "\u2b50 Quarterly hard-drive failure statistics across ~300k drives \u2014 directly useful for the SnapRAID pools \u2014 plus storage-engineering write-ups.",
+   "role": "read"
   },
   {
    "name": "Brendan Gregg",
@@ -1172,7 +1351,8 @@
    "note": "Systems performance from the person who defined the field. DORMANT \u2014 no post since Feb 2026. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "ClickHouse",
@@ -1190,7 +1370,8 @@
     "per_week": 1.6,
     "on": "2026-08-20"
    },
-   "note": "Column-store internals and benchmark methodology."
+   "note": "Column-store internals and benchmark methodology.",
+   "role": "read"
   },
   {
    "name": "Dan Luu",
@@ -1208,7 +1389,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Determinate Systems blog",
@@ -1226,7 +1408,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Discord Engineering",
@@ -1244,7 +1427,8 @@
     "per_week": 1.4,
     "on": "2026-08-20"
    },
-   "note": "Real-time systems and database migrations, told as process."
+   "note": "Real-time systems and database migrations, told as process.",
+   "role": "read"
   },
   {
    "name": "Drew DeVault",
@@ -1262,7 +1446,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Dropbox Tech",
@@ -1280,7 +1465,8 @@
     "per_week": 0.4,
     "on": "2026-08-20"
    },
-   "note": "Storage and sync engineering at scale."
+   "note": "Storage and sync engineering at scale.",
+   "role": "read"
   },
   {
    "name": "Fabien Sanglard",
@@ -1298,7 +1484,8 @@
    "note": "Deep, patient dissections of old software and hardware. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Fly.io",
@@ -1316,7 +1503,8 @@
     "per_week": 0.5,
     "on": "2026-08-20"
    },
-   "note": "Infrastructure engineering written unusually well."
+   "note": "Infrastructure engineering written unusually well.",
+   "role": "read"
   },
   {
    "name": "GitHub Engineering",
@@ -1334,7 +1522,8 @@
     "per_week": 0.5,
     "on": "2026-08-20"
    },
-   "note": "Occasional deep dives on migrations and scaling."
+   "note": "Occasional deep dives on migrations and scaling.",
+   "role": "read"
   },
   {
    "name": "Grafana Labs",
@@ -1352,7 +1541,8 @@
     "per_week": 1.0,
     "on": "2026-08-20"
    },
-   "note": "He runs Grafana. Release engineering and observability write-ups."
+   "note": "He runs Grafana. Release engineering and observability write-ups.",
+   "role": "read"
   },
   {
    "name": "Hackaday",
@@ -1370,7 +1560,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Hacker News (best)",
@@ -1388,7 +1579,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Hillel Wayne",
@@ -1406,7 +1598,8 @@
    "note": "Formal methods and software engineering, empirically minded. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Honeycomb",
@@ -1424,7 +1617,8 @@
     "per_week": 2.6,
     "on": "2026-08-20"
    },
-   "note": "Observability engineering and incident analysis. 2.6/wk, some is marketing."
+   "note": "Observability engineering and incident analysis. 2.6/wk, some is marketing.",
+   "role": "read"
   },
   {
    "name": "Jeff Geerling",
@@ -1442,7 +1636,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Julia Evans",
@@ -1460,7 +1655,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Krebs on Security",
@@ -1478,7 +1674,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "LWN.net headlines",
@@ -1496,7 +1693,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Michael Stapelberg",
@@ -1514,7 +1712,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Netflix Tech Blog",
@@ -1532,7 +1731,8 @@
     "per_week": 1.5,
     "on": "2026-08-20"
    },
-   "note": "Large-scale systems write-ups; skip the ML-recommendation ones unless the method is the point."
+   "note": "Large-scale systems write-ups; skip the ML-recommendation ones unless the method is the point.",
+   "role": "read"
   },
   {
    "name": "NixOS Discourse",
@@ -1550,7 +1750,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "NixOS blog",
@@ -1568,7 +1769,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Oxide Computer",
@@ -1586,7 +1788,8 @@
     "per_week": 0.1,
     "on": "2026-08-20"
    },
-   "note": "Rack-scale hardware and systems software from first principles. Rare and deep."
+   "note": "Rack-scale hardware and systems software from first principles. Rare and deep.",
+   "role": "read"
   },
   {
    "name": "Phoronix",
@@ -1604,7 +1807,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "PlanetScale",
@@ -1622,7 +1826,8 @@
     "per_week": 1.2,
     "on": "2026-08-20"
    },
-   "note": "MySQL/Vitess internals and performance work."
+   "note": "MySQL/Vitess internals and performance work.",
+   "role": "read"
   },
   {
    "name": "Rachel by the Bay",
@@ -1640,7 +1845,8 @@
    "dormant": true,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Self-Host Weekly (noted.lol)",
@@ -1658,7 +1864,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Servethehome",
@@ -1676,7 +1883,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Tailscale blog",
@@ -1694,7 +1902,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Ubuntu Security Notices",
@@ -1712,7 +1921,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Vermaden (BSD/UNIX ops)",
@@ -1730,7 +1940,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Xe Iaso",
@@ -1748,7 +1959,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "lobste.rs",
@@ -1766,7 +1978,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "oss-security (openwall)",
@@ -1784,7 +1997,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "r/selfhosted (top/week)",
@@ -1802,7 +2016,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Adam Tooze \u2014 Chartbook",
@@ -1820,7 +2035,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "American Affairs",
@@ -1838,7 +2054,8 @@
    "note": "Long-form political economy and industrial policy. Publishes in quarterly bursts. LONGFORM: added for the good-reads section.",
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Apricitas Economics",
@@ -1856,7 +2073,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Bank Underground (BoE staff)",
@@ -1874,7 +2092,27 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
+  },
+  {
+   "name": "CNBC Top News",
+   "lane": "macro",
+   "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-08-21",
+    "per_week": 210.0,
+    "on": "2026-08-21"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Exists so that many sources saying the same thing at once becomes visible. Its individual items are exactly the noise Chris asked to be spared and must never reach an edition."
   },
   {
    "name": "Conversable Economist",
@@ -1892,7 +2130,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Doomberg",
@@ -1910,7 +2149,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "FRED Blog",
@@ -1928,7 +2168,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Klement on Investing",
@@ -1946,7 +2187,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Liberty Street Economics (NY Fed)",
@@ -1964,7 +2206,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Lyn Alden",
@@ -1982,7 +2225,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Marginal Revolution",
@@ -2000,7 +2244,27 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
+  },
+  {
+   "name": "MarketWatch",
+   "lane": "macro",
+   "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 70.0,
+    "on": "2026-08-21"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Exists so that many sources saying the same thing at once becomes visible. Its individual items are exactly the noise Chris asked to be spared and must never reach an edition."
   },
   {
    "name": "Mises Wire",
@@ -2018,7 +2282,27 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
+  },
+  {
+   "name": "NPR Business",
+   "lane": "macro",
+   "url": "https://feeds.npr.org/1006/rss.xml",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 70.0,
+    "on": "2026-08-21"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Exists so that many sources saying the same thing at once becomes visible. Its individual items are exactly the noise Chris asked to be spared and must never reach an edition."
   },
   {
    "name": "Wolf Street",
@@ -2036,7 +2320,27 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
+  },
+  {
+   "name": "Yahoo Finance",
+   "lane": "macro",
+   "url": "https://finance.yahoo.com/news/rssindex",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 0.4,
+    "on": "2026-08-21"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Exists so that many sources saying the same thing at once becomes visible. Its individual items are exactly the noise Chris asked to be spared and must never reach an edition."
   },
   {
    "name": "APNIC Blog",
@@ -2054,7 +2358,27 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
+  },
+  {
+   "name": "Al Jazeera",
+   "lane": "network",
+   "url": "https://www.aljazeera.com/xml/rss/all.xml",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-08-21",
+    "per_week": 175.0,
+    "on": "2026-08-21"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Exists so that many sources saying the same thing at once becomes visible. Its individual items are exactly the noise Chris asked to be spared and must never reach an edition."
   },
   {
    "name": "Ars/Broadband? Light Reading",
@@ -2072,7 +2396,27 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
+  },
+  {
+   "name": "BBC World",
+   "lane": "network",
+   "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 168.0,
+    "on": "2026-08-21"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Exists so that many sources saying the same thing at once becomes visible. Its individual items are exactly the noise Chris asked to be spared and must never reach an edition."
   },
   {
    "name": "Cloudflare Blog",
@@ -2090,7 +2434,46 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
+  },
+  {
+   "name": "Guardian World",
+   "lane": "network",
+   "url": "https://www.theguardian.com/world/rss",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-08-21",
+    "per_week": 35.0,
+    "on": "2026-08-21"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Exists so that many sources saying the same thing at once becomes visible. Its individual items are exactly the noise Chris asked to be spared and must never reach an edition."
+  },
+  {
+   "name": "NPR News",
+   "lane": "network",
+   "url": "https://feeds.npr.org/1001/rss.xml",
+   "tier": "firehose",
+   "cap": 1,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-08-20",
+    "per_week": 70.0,
+    "on": "2026-08-21"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Exists so that many sources saying the same thing at once becomes visible. Its individual items are exactly the noise Chris asked to be spared and must never reach an edition."
   },
   {
    "name": "RIPE Labs",
@@ -2108,7 +2491,8 @@
    "dormant": false,
    "longform": true,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Telecompetitor (rural broadband)",
@@ -2126,7 +2510,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "BTCPay Server releases",
@@ -2144,7 +2529,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Bitcoin Core releases",
@@ -2162,7 +2548,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Bitcoin Knots releases",
@@ -2180,7 +2567,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Core Lightning releases",
@@ -2198,7 +2586,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Forgejo releases",
@@ -2216,7 +2605,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Fulcrum releases",
@@ -2234,7 +2624,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Lightning: LDK releases",
@@ -2252,7 +2643,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "NixOS weekly (nixpkgs releases)",
@@ -2270,7 +2662,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "Sparrow Wallet releases",
@@ -2288,7 +2681,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "mempool.space releases",
@@ -2306,7 +2700,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   },
   {
    "name": "nix-bitcoin releases",
@@ -2324,7 +2719,8 @@
    "dormant": false,
    "longform": false,
    "kind": "feed",
-   "evergreen": false
+   "evergreen": false,
+   "role": "read"
   }
  ],
  "dropped": [

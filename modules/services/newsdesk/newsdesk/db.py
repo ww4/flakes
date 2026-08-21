@@ -18,7 +18,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS sources (
     -- whole archive is already known-good. They are sprinkled in, one slot at
     -- a time, rather than competing on merit.
     evergreen     INTEGER NOT NULL DEFAULT 0,
+    -- 'read' can be published. 'signal' is ingested only to be COUNTED by the
+    -- event detector — never published, never in a lane, never a good read,
+    -- never in the not-selected list. See events.py.
+    role          TEXT NOT NULL DEFAULT 'read',
     -- tuned columns: written by the tuner and by hand, never by the seeder
     cap           INTEGER NOT NULL DEFAULT 1,
     weight        REAL    NOT NULL DEFAULT 1.0,
@@ -143,6 +147,7 @@ MIGRATIONS = {
         "longform": "INTEGER NOT NULL DEFAULT 1",
         "kind": "TEXT NOT NULL DEFAULT 'feed'",
         "evergreen": "INTEGER NOT NULL DEFAULT 0",
+        "role": "TEXT NOT NULL DEFAULT 'read'",
     },
 }
 
@@ -200,13 +205,13 @@ def seed_sources(con: sqlite3.Connection, catalogue: Path) -> tuple[int, int]:
         if cur.fetchone() is None:
             con.execute(
                 "INSERT INTO sources (name, lane, url, tier, insecure_tls, note,"
-                " dormant, longform, kind, evergreen, cap)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                " dormant, longform, kind, evergreen, role, cap)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (s["name"], s["lane"], s["url"], s["tier"],
                  int(bool(s.get("insecure_tls"))), s.get("note", ""),
                  int(bool(s.get("dormant"))), int(s.get("longform", True)),
                  s.get("kind", "feed"), int(bool(s.get("evergreen"))),
-                 int(s["cap"])),
+                 s.get("role", "read"), int(s["cap"])),
             )
             added += 1
         else:
@@ -215,10 +220,11 @@ def seed_sources(con: sqlite3.Connection, catalogue: Path) -> tuple[int, int]:
             # it back to sleep.
             con.execute(
                 "UPDATE sources SET lane=?, url=?, tier=?, insecure_tls=?, note=?,"
-                " longform=?, kind=?, evergreen=? WHERE name=?",
+                " longform=?, kind=?, evergreen=?, role=? WHERE name=?",
                 (s["lane"], s["url"], s["tier"], int(bool(s.get("insecure_tls"))),
                  s.get("note", ""), int(s.get("longform", True)),
-                 s.get("kind", "feed"), int(bool(s.get("evergreen"))), s["name"]),
+                 s.get("kind", "feed"), int(bool(s.get("evergreen"))),
+                 s.get("role", "read"), s["name"]),
             )
             updated += 1
     con.commit()
