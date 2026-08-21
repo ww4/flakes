@@ -111,6 +111,7 @@ def eligible(con: sqlite3.Connection, *, min_words: int = MIN_WORDS,
         "   AND i.clicked_at IS NULL"          # read -> retired, never returns
         "   AND i.state != 'published'"        # already ran as news
         "   AND s.enabled = 1"
+        "   AND s.role = 'read'"                # never a signal source
         "   AND s.longform = 1"               # newsletters/aggregators opt out
         "   AND i.lane != 'release-radar'"    # a release note is never an essay
         "   AND (i.last_shown_at IS NULL OR i.last_shown_at < ?)"

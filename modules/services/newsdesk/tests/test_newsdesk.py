@@ -30,6 +30,7 @@ from newsdesk import collect as collect_mod  # noqa: E402
 from newsdesk import edition as edition_mod  # noqa: E402
 from newsdesk import feedback, feeds, gradeserver  # noqa: E402
 from newsdesk import corpus as corpus_mod  # noqa: E402
+from newsdesk import events  # noqa: E402
 from newsdesk import longform  # noqa: E402
 from newsdesk import sources as sources_mod  # noqa: E402
 from newsdesk.db import connect, seed_sources  # noqa: E402
@@ -1282,3 +1283,103 @@ class TestMissedClicks(Base):
         i = self.add_item("Fine", "linux", "was published", state="published")
         longform.record_click(self.con, i)
         self.assertEqual(feedback.missed_clicks(self.con), [])
+
+
+class TestEventDetection(Base):
+    """Corroboration as its own signal: many independent sources saying the
+    same thing at once, where no single item would pass the quality bar."""
+
+    def _src(self, name, role="signal"):
+        self.con.execute(
+            "INSERT INTO sources (name, lane, url, tier, cap, role)"
+            " VALUES (?,'bitcoin',?, 'firehose',1,?)",
+            (name, f"https://{name}.invalid", role))
+        self.con.commit()
+
+    def _head(self, source, title, days_ago=0.2):
+        self.add_item(source, "bitcoin", title, words=120, published=_iso(days_ago))
+
+    def _story(self, n=6, days_ago=0.2):
+        heads = [
+            "Treasury doubles debt buybacks as bitcoin surges",
+            "Bitcoin blasts past highs after Treasury buybacks announcement",
+            "Treasury buybacks send bitcoin higher, shorts liquidated",
+            "Bitcoin rallies on Treasury debt buybacks plan",
+            "Treasury doubles buybacks; bitcoin extends gains",
+            "Bitcoin jumps as Treasury confirms doubled buybacks",
+        ]
+        for i in range(n):
+            self._src(f"wire{i}")
+            self._head(f"wire{i}", heads[i % len(heads)], days_ago)
+
+    def test_many_sources_on_one_story_is_detected(self):
+        self._story()
+        clusters = events.detect(self.con)
+        self.assertTrue(clusters)
+        self.assertGreaterEqual(clusters[0]["n_sources"], 4)
+        self.assertIn("treasury", [clusters[0]["term"]] + clusters[0]["also"])
+
+    def test_one_source_repeating_itself_is_not_corroboration(self):
+        """Otherwise the highest-volume aggregator wins every single day.
+
+        A/B: the SAME twelve headlines, from one source and then from six.
+        Asserting only the negative half passed even with both source gates
+        removed, because each gate covered for the other."""
+        self._src("loud")
+        for i in range(12):
+            self._head("loud", f"Treasury doubles debt buybacks as bitcoin surges {i}")
+        self.assertEqual(events.detect(self.con), [],
+                         "one outlet talking to itself was read as corroboration")
+
+        for n in range(6):
+            self._src(f"other{n}")
+            self._head(f"other{n}", f"Treasury doubles debt buybacks as bitcoin surges {n}")
+        self.assertTrue(events.detect(self.con),
+                        "positive control: six sources on the same story must fire")
+
+    def test_an_everyday_topic_is_not_an_event(self):
+        """'release' fired on the real corpus before the baseline check.
+
+        Asserts NO cluster at all. Checking only the cluster's headline term
+        was blind: the greedy pick could land on 'project' or 'version' and
+        the assertion would pass while the cluster still formed."""
+        for i in range(6):
+            self._src(f"s{i}")
+            for d in range(3, 18):                      # long, boring history
+                self._head(f"s{i}", f"Project release version {d}", days_ago=d)
+            self._head(f"s{i}", "Project release version today")
+        self.assertEqual(events.detect(self.con), [],
+                         "a topic these sources publish every week is not an event")
+
+    def test_numeric_tokens_are_never_terms(self):
+        """'$72,000' tokenises to '000', which clustered a bitcoin rally with
+        '$10,000 teaching aide bonuses' and '70,000 doses of Ervebo'.
+
+        Tested on the tokeniser directly. The end-to-end version passed
+        vacuously — the numeric cluster was discarded for having no shared
+        vocabulary, so the loop it asserted over was empty."""
+        terms = events._terms("Bitcoin tops $72,000 today after 70,000 trades")
+        numeric = [t for t in terms if not any(c.isalpha() for c in t)]
+        self.assertEqual(numeric, [], f"numeric tokens survived: {numeric}")
+        self.assertIn("bitcoin", terms)
+
+    def test_a_signal_source_can_never_be_published(self):
+        self._src("wire", role="signal")
+        self.add_item("wire", "bitcoin", "a wire story", score=999)
+        self.assertEqual(
+            edition_mod.rank(self.con, "brief", fetch_articles=False)["shortlisted"], 0)
+
+    def test_a_signal_source_can_never_be_a_good_read(self):
+        self._src("wire", role="signal")
+        self.add_item("wire", "bitcoin", "a long wire piece", words=3000)
+        self.assertEqual(longform.shortlist(self.con), [])
+
+    def test_read_sources_still_corroborate(self):
+        """A cluster should span both roles — a normal source reporting the
+        same thing is corroboration too."""
+        self._story(n=5)
+        self._src("Wolf Street", role="read")
+        self._head("Wolf Street", "Treasury doubles buybacks, swapping old debt")
+        cl = events.detect(self.con)
+        self.assertTrue(cl)
+        self.assertIn("Wolf Street", cl[0]["sources"])

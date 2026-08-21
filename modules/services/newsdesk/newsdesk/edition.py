@@ -21,7 +21,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import feeds, longform
+from . import events, feeds, longform
 from .collect import awakened_sources, stale_sources
 from .db import now, state_dir, write_atomic
 
@@ -82,6 +82,7 @@ def rank(con: sqlite3.Connection, kind: str, *, fetch_articles: bool = True,
         "SELECT i.*, s.tier, s.cap, s.weight, s.insecure_tls, s.note AS source_note"
         " FROM items i JOIN sources s ON s.name = i.source"
         " WHERE i.state = 'new' AND i.score IS NOT NULL AND s.enabled = 1"
+        "   AND s.role = 'read'"   # signal sources are counted, never published
         " AND i.words >= ?"
         " AND COALESCE(i.published, i.first_seen) >= ?"
         " ORDER BY i.score * s.weight DESC",
@@ -155,6 +156,11 @@ def rank(con: sqlite3.Connection, kind: str, *, fetch_articles: bool = True,
     # pool with no recency filter — see longform.py for why that matters.
     reads = [] if dry_run else longform.shortlist(con)
 
+    # And the corroboration detector, which answers a different question
+    # entirely: not "is this worth reading" but "are many independent sources
+    # suddenly saying the same thing". See events.py.
+    clusters = events.detect(con)
+
     return {
         "kind": kind,
         "edition": edition_id(kind),
@@ -162,6 +168,7 @@ def rank(con: sqlite3.Connection, kind: str, *, fetch_articles: bool = True,
         "shortlisted": len(candidates),
         "candidates": candidates,
         "good_reads": reads,
+        "events": clusters,
     }
 
 

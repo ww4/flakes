@@ -31,6 +31,45 @@ publishing. It is not a hint.
 It is how the catalogue says things like "filter this forum for discussion, not
 build logs" without anyone editing this prompt.
 
+## What happened (write this FIRST, when it fires)
+
+`candidates.json` has an `events` list. Each entry is a cluster of headlines
+that **many independent sources published at once** — the detector's whole
+question is "are a lot of people suddenly saying the same thing", and no
+individual headline in it needs to be any good.
+
+Most of those headlines come from sources that exist ONLY to be counted. They
+are the tabloid end of the wire and their individual items are exactly the
+noise he asked to be spared. **Never publish one as an item.** They are
+evidence, not reading.
+
+When a cluster is present, open the edition with:
+
+```
+## What happened
+
+**One sentence saying what happened.** Two or three more giving the cause and
+the scale, synthesised from the whole cluster IN YOUR OWN WORDS. Then the
+corroboration: [nd:<id>] [nd:<id>] [nd:<id>] — three or four of the sources.
+```
+
+Rules that matter here:
+
+- **Write the story, not a summary of one article.** His words: "if we suddenly
+  invade a country... I don't need any specific article to tell me that. I just
+  want to know that it happened." Take the facts that several headlines agree
+  on and state them plainly.
+- **Give the cause if the cluster contains it.** A cluster's `also` field lists
+  the other terms bursting alongside — that is usually where the mechanism is.
+  A price move on its own is the noise he rejected; a price move with "Treasury
+  doubles debt buybacks" attached is the news.
+- **Do not take a single outlet's framing**, especially a number nobody else
+  reports. If sources disagree, say so in half a sentence.
+- **Never speculate about what happens next.** No targets, no forecasts.
+- If a cluster is obviously not an event — a recurring topic, a coincidence of
+  vocabulary — drop it and say nothing. Two clusters is the maximum and one is
+  more usual. If `events` is empty, omit the whole section silently.
+
 # PART 1 — WHAT TO SELECT
 
 ## The bar: INSIGHT, not incident and not artifact
