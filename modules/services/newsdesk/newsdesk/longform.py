@@ -61,6 +61,7 @@ from datetime import datetime, timedelta, timezone
 import random
 
 from . import feeds
+from . import site
 from .db import now, state_dir, write_atomic
 
 # What counts as long. Deliberately below the 1,500 used for measurement: a
@@ -209,11 +210,6 @@ def record_click(con: sqlite3.Connection, item_id: int) -> bool:
 # the archive
 # --------------------------------------------------------------------------
 
-def _slug(title: str) -> str:
-    s = re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-")
-    return (s or "untitled")[:70]
-
-
 def archive(con: sqlite3.Connection, item_id: int, *, web_dir=None) -> str | None:
     """Store our own copy of a pick. Returns the site-relative path, or None.
 
@@ -241,47 +237,13 @@ def archive(con: sqlite3.Connection, item_id: int, *, web_dir=None) -> str | Non
     if len(text.split()) < 100:
         return None
 
-    rel = f"archive/{row['id']}-{_slug(row['title'])}.html"
-    path = (web_dir or (state_dir() / "web")) / rel
-    write_atomic(path, _archive_page(row, text))
-    path.chmod(0o644)
+    # A Zola page, not loose HTML: pages get a permalink, a template and — the
+    # reason this changed — a place in the search index alongside the editions.
+    rel = site.write_read(row["id"], row["title"], row["source"], row["url"],
+                          row["published"], now(), text)
     con.execute("UPDATE items SET archived_path = ? WHERE id = ?", (rel, row["id"]))
     con.commit()
     return rel
 
 
-ARCHIVE_STYLE = (
-    "body{max-width:42rem;margin:2rem auto;padding:0 1.2rem;"
-    "font:17px/1.7 Georgia,'Iowan Old Style',serif;color:#e6e6e6;background:#181818}"
-    "header{border-bottom:1px solid #444;padding-bottom:1rem;margin-bottom:2rem;"
-    "font-family:system-ui,sans-serif}"
-    "h1{font-size:1.6rem;line-height:1.25;margin:0 0 .5rem}"
-    "a{color:#6cb6ff}.meta{color:#999;font-size:.85rem;font-family:system-ui,sans-serif}"
-    "article{white-space:pre-wrap}"
-    "footer{margin-top:3rem;border-top:1px solid #444;padding-top:1rem;"
-    "color:#888;font-size:.8rem;font-family:system-ui,sans-serif}"
-)
 
-
-def _esc(s: str) -> str:
-    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _archive_page(row: sqlite3.Row, text: str) -> str:
-    when = (row["published"] or "")[:10]
-    return (
-        '<!doctype html><html><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<meta name="robots" content="noindex,nofollow">'
-        f"<title>{_esc(row['title'])}</title><style>{ARCHIVE_STYLE}</style></head><body>"
-        f"<header><h1>{_esc(row['title'])}</h1>"
-        f"<div class=\"meta\">{_esc(row['source'])}"
-        + (f" · {when}" if when else "")
-        + f" · <a href=\"{_esc(row['url'])}\">original</a></div></header>"
-        f"<article>{_esc(text)}</article>"
-        "<footer>Personal reading archive — a copy kept against link rot, on a "
-        "host reachable only over Tailscale. All rights remain with the "
-        f"original author and publication. Retrieved {now()[:10]} from "
-        f"<a href=\"{_esc(row['url'])}\">{_esc(row['url'])}</a>.</footer>"
-        "</body></html>"
-    )

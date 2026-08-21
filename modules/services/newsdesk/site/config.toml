@@ -1,0 +1,47 @@
+# Zola configuration for the newsdesk.
+#
+# This replaced ~110 lines of hand-rolled HTML templating that had accreted one
+# reasonable increment at a time until it was a static site generator. Chris's
+# rule, and it is a good one: notice what CATEGORY of thing you are building,
+# and look at what already exists — Zola was already running lock3.net and
+# docs.broadlinc.com on this very stack.
+#
+# Everything Zola gives us here was previously hand-written or missing:
+# permalinks, previous/next navigation, the index, an Atom feed, a sitemap,
+# and a client-side search index over every past edition.
+base_url = "https://digest.rosemaryacres.com/news"
+title = "Newsdesk"
+description = "A personal digest from 142 sources."
+
+# The feed is a real feature, not decoration: the digest becomes readable in a
+# feed reader without going near the web page.
+generate_feeds = true
+feed_filenames = ["atom.xml"]
+
+# Search over every past edition and every archived article. This is why the
+# reading archive became Zola pages rather than static HTML dropped in beside
+# them — pages are indexed, loose files are not.
+build_search_index = true
+
+minify_html = true
+compile_sass = false
+
+taxonomies = [
+  { name = "lanes", feed = false, paginate_by = 50 },
+  { name = "sources", feed = false, paginate_by = 50 },
+]
+
+[markdown]
+# zola 0.22 renamed highlight_code/highlight_theme to a `highlighting` table.
+highlighting = { enabled = true, theme = "ayu-dark" }
+smart_punctuation = true
+bottom_footnotes = true
+# Our own /news/g and /news/r links must not open a new tab, and external
+# sources should. Zola cannot split the two, so leave everything alone and let
+# the links behave normally.
+external_links_target_blank = false
+
+[search]
+include_title = true
+include_description = true
+include_content = false

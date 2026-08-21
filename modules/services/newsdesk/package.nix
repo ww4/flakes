@@ -10,7 +10,7 @@
 # Stdlib only — no third-party runtime dependencies at all. The tests run in
 # checkPhase, so a broken pipeline fails the BUILD, which means a bad merge
 # cannot deploy.
-{ python3, lib, makeWrapper, cmark-gfm }:
+{ python3, lib, makeWrapper, zola }:
 
 python3.pkgs.buildPythonApplication {
   pname = "newsdesk";
@@ -37,11 +37,14 @@ python3.pkgs.buildPythonApplication {
     cp -r newsdesk $out/${python3.sitePackages}/
     cp -r data/. $out/share/newsdesk/
     cp judge-prompt.md $out/share/newsdesk/judge-prompt.md
+    # The Zola site: config, templates and CSS. Content is state; the look is
+    # declarative and comes from here.
+    cp -r site $out/share/newsdesk/site
 
     makeWrapper ${python3.interpreter} $out/bin/newsdesk \
       --add-flags "-m newsdesk.cli" \
       --prefix PYTHONPATH : "$out/${python3.sitePackages}" \
-      --prefix PATH : "${lib.makeBinPath [ cmark-gfm ]}"
+      --prefix PATH : "${lib.makeBinPath [ zola ]}"
     runHook postInstall
   '';
 

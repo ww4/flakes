@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} — {{ config.title }}{% endblock %}
+{% block content %}
+<article class="edition">
+  <h1>{{ page.title }}</h1>
+  <p class="dateline"><time datetime="{{ page.date }}">{{ page.date | date(format="%A %-d %B %Y") }}</time></p>
+  {% if page.extra.tldr %}<p class="lede">{{ page.extra.tldr }}</p>{% endif %}
+  {{ page.content | safe }}
+</article>
+<nav class="prevnext">
+  {# Zola orders a date-sorted section newest-first: `higher` is the older page. #}
+  {% if page.higher %}
+    <a class="prev" href="{{ page.higher.permalink }}"><span>&larr; Previous</span><b>{{ page.higher.date }}</b></a>
+  {% else %}<span class="prev off"><span>&larr; Previous</span><b>none</b></span>{% endif %}
+  {% if page.lower %}
+    <a class="next" href="{{ page.lower.permalink }}"><span>Next &rarr;</span><b>{{ page.lower.date }}</b></a>
+  {% else %}<span class="next off"><span>Next &rarr;</span><b>none</b></span>{% endif %}
+</nav>
+{% endblock %}
