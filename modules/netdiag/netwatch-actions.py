@@ -87,7 +87,13 @@ def do_investigate(state: dict, mac: str) -> str:
         out = subprocess.run(["netdiag", "identify", ip], capture_output=True,
                              text=True, timeout=300).stdout
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return f"Fingerprint of {ip} failed: {exc!r}"
+        # The return value becomes the HTTP response body — a toast the phone
+        # shows for two seconds, if at all. A failed investigation must also
+        # arrive as a real notification, or the button fails silently (which
+        # is exactly how the missing-netdiag bug stayed invisible).
+        msg = f"Fingerprint of {ip} failed: {exc!r}"
+        notify("netwatch: investigate FAILED", msg)
+        return msg"
     path = os.path.join(STATE_DIR, f"investigate-{mac.replace(':', '')}.txt")
     with open(path, "w") as fh:
         fh.write(out)
