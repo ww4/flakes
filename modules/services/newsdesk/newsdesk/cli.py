@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -16,8 +17,9 @@ from . import collect as collect_mod
 from . import corpus as corpus_mod
 from . import edition as edition_mod
 from . import feedback, gradeserver
+from . import site as site_mod
 from . import sources as sources_mod
-from .db import connect, load_profile, seed_sources, state_dir, write_atomic
+from .db import connect, load_profile, now, seed_sources, state_dir, write_atomic
 
 
 def _con(args):
@@ -140,6 +142,71 @@ def cmd_sources(args) -> int:
     return 0
 
 
+def cmd_render(args) -> int:
+    """Build the site with Zola. A failed build keeps the last good one."""
+    ok, out = site_mod.build(Path(args.site_src), Path(args.out), zola=args.zola)
+    print(out)
+    if not ok:
+        print("newsdesk: zola build FAILED — the previously published site is "
+              "untouched", file=sys.stderr)
+        return 1
+    print(f"newsdesk: site built -> {args.out}", file=sys.stderr)
+    return 0
+
+
+def cmd_migrate_site(args) -> int:
+    """One-time: turn everything already published into markdown pages.
+
+    Editions were rendered straight to HTML before the move to Zola, and saved
+    articles were standalone HTML files. Both are recoverable: the edition text
+    lives on its SilverBullet page, and an archived article's text is the body
+    of its own <article> element.
+    """
+    con = _con(args)
+    n_ed = n_read = 0
+
+    for row in con.execute("SELECT id, kind, tldr, n_published FROM editions"
+                           " ORDER BY id"):
+        md = Path(args.space or "/var/lib/silverbullet/Areas/Newsdesk") / f"{row['id']}.md"
+        if not md.exists():
+            print(f"  no space page for {row['id']} — skipped", file=sys.stderr)
+            continue
+        body = md.read_text(errors="replace")
+        body = re.sub(r"\A#[^\n]*\n+", "", body)          # drop the H1; the template has it
+        tldr = row["tldr"] or ""
+        if not tldr:
+            m = re.search(r"^TLDR:\s*(.+)$", body, re.M | re.I)
+            tldr = m.group(1).strip() if m else ""
+        kind_title = edition_mod.KINDS.get(row["kind"], {}).get("title", "Edition")
+        site_mod.write_edition(row["id"], kind_title, row["id"].rsplit("-", 1)[0],
+                               tldr, body, n_published=row["n_published"] or 0)
+        con.execute("UPDATE editions SET tldr=? WHERE id=?", (tldr, row["id"]))
+        n_ed += 1
+
+    web = Path(args.out)
+    for row in con.execute("SELECT id, title, source, url, published, archived_path"
+                           " FROM items WHERE archived_path IS NOT NULL"):
+        old = web / row["archived_path"]
+        if not str(row["archived_path"]).endswith(".html") or not old.exists():
+            continue
+        html = old.read_text(errors="replace")
+        m = re.search(r"<article>(.*?)</article>", html, re.S)
+        if not m:
+            print(f"  could not recover text for item {row['id']}", file=sys.stderr)
+            continue
+        text = (m.group(1).replace("&lt;", "<").replace("&gt;", ">")
+                .replace("&amp;", "&"))
+        rel = site_mod.write_read(row["id"], row["title"], row["source"], row["url"],
+                                  row["published"], now(), text)
+        con.execute("UPDATE items SET archived_path=? WHERE id=?", (rel, row["id"]))
+        n_read += 1
+
+    con.commit()
+    print(f"newsdesk: converted {n_ed} edition(s) and {n_read} archived article(s) "
+          f"to markdown")
+    return 0
+
+
 def cmd_stats(args) -> int:
     print(json.dumps(feedback.stats(_con(args)), indent=1))
     return 0
@@ -203,6 +270,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--page", required=True,
                    help="path to Areas/Newsdesk/Sources.md in the space")
     p.set_defaults(func=cmd_sources)
+
+    p = sub.add_parser("render", help="build the site with zola")
+    p.add_argument("--site-src", required=True, help="templates/config from the store")
+    p.add_argument("--out", required=True)
+    p.add_argument("--zola", default="zola")
+    p.set_defaults(func=cmd_render)
+
+    p = sub.add_parser("migrate-site",
+                       help="one-time: convert already-published HTML to markdown")
+    p.add_argument("--space", help="SilverBullet Areas/Newsdesk directory")
+    p.add_argument("--out", required=True, help="the existing web directory")
+    p.set_defaults(func=cmd_migrate_site)
 
     sub.add_parser("stats", help="counts").set_defaults(func=cmd_stats)
     sub.add_parser("stale", help="sources that are failing or gone quiet").set_defaults(func=cmd_stale)

@@ -18,7 +18,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -111,7 +111,13 @@ CREATE TABLE IF NOT EXISTS editions (
     created  TEXT NOT NULL,
     n_short  INTEGER NOT NULL DEFAULT 0,
     n_published INTEGER NOT NULL DEFAULT 0,
-    judged   INTEGER NOT NULL DEFAULT 0
+    judged   INTEGER NOT NULL DEFAULT 0,
+    -- Shown on the index page. NOTE: there is deliberately no `markdown`
+    -- column — an earlier design stored the rendered text so pages could be
+    -- re-rendered when a later edition arrived and yesterday's "next" link
+    -- needed filling in. Zola rebuilds every page from content on every run,
+    -- so the problem that column existed to solve no longer exists.
+    tldr     TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS tuning_log (
@@ -140,6 +146,9 @@ MIGRATIONS = {
         "last_shown_at": "TEXT",
         "clicked_at": "TEXT",
         "archived_path": "TEXT",
+    },
+    "editions": {
+        "tldr": "TEXT NOT NULL DEFAULT ''",
     },
     "sources": {
         "dormant": "INTEGER NOT NULL DEFAULT 0",

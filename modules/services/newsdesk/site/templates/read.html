@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} — archive{% endblock %}
+{% block content %}
+<article class="read">
+  <h1>{{ page.title }}</h1>
+  <p class="dateline">
+    {{ page.extra.source }}{% if page.extra.published %} · {{ page.extra.published }}{% endif %}
+    · <a href="{{ page.extra.url }}">original</a>
+  </p>
+  {{ page.content | safe }}
+  <hr>
+  <p class="provenance">Retrieved {{ page.extra.retrieved | default(value="") }} from
+  <a href="{{ page.extra.url }}">{{ page.extra.url }}</a>. Kept as a personal
+  copy against link rot; all rights remain with the original author and
+  publication.</p>
+</article>
+{% endblock %}

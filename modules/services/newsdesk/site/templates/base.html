@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="robots" content="noindex, nofollow">
+<title>{% block title %}{{ config.title }}{% endblock %}</title>
+{% if config.generate_feeds %}
+<link rel="alternate" type="application/atom+xml" title="{{ config.title }}" href="{{ get_url(path='atom.xml', trailing_slash=false) }}">
+{% endif %}
+<link rel="stylesheet" href="{{ get_url(path='style.css', trailing_slash=false) }}">
+</head>
+<body>
+<header class="masthead">
+  <a class="wordmark" href="{{ get_url(path='@/_index.md') }}">Newsdesk</a>
+  <nav class="top">
+    <a href="{{ get_url(path='@/_index.md') }}">Editions</a>
+    <a href="{{ get_url(path='@/archive/_index.md') }}">Reading archive</a>
+    <a href="{{ get_url(path='atom.xml', trailing_slash=false) }}">Feed</a>
+  </nav>
+</header>
+<main>{% block content %}{% endblock %}</main>
+<footer>
+  <p>Assembled on gromit from {{ config.extra.source_count | default(value="") }} sources.
+  Reachable over Tailscale only. Grading is optional.</p>
+</footer>
+</body>
+</html>

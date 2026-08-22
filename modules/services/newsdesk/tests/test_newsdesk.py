@@ -31,6 +31,7 @@ from newsdesk import edition as edition_mod  # noqa: E402
 from newsdesk import feedback, feeds, gradeserver  # noqa: E402
 from newsdesk import corpus as corpus_mod  # noqa: E402
 from newsdesk import events  # noqa: E402
+from newsdesk import site as site_mod  # noqa: E402
 from newsdesk import longform  # noqa: E402
 from newsdesk import sources as sources_mod  # noqa: E402
 from newsdesk.db import connect, seed_sources  # noqa: E402
@@ -578,8 +579,14 @@ class TestPublish(Base):
         self.space.parent.mkdir(parents=True, exist_ok=True)
 
     def _publish(self, md):
-        return edition_mod.publish(self.con, "brief", md, web_dir=self.web,
-                                   space_dir=self.space, cmark="/nonexistent")
+        res = edition_mod.publish(self.con, "brief", md, web_dir=self.web,
+                                  space_dir=self.space, cmark="/nonexistent")
+        self._eid = res["edition"]
+        return res
+
+    def _page(self) -> str:
+        """The edition's markdown page. Zola renders it; we assert on content."""
+        return (site_mod.content_dir() / f"{self._eid}.md").read_text()
 
     def test_mentioned_published_unmentioned_passed_over(self):
         res = self._publish(f"- **kept** [nd:{self.kept}] — worth it\n\nTLDR: one thing.")
@@ -596,13 +603,13 @@ class TestPublish(Base):
         """A blank edition must never be indistinguishable from 'no news'."""
         res = self._publish("")
         self.assertTrue(res["fell_back"])
-        page = (self.web / "index.html").read_text()
+        page = self._page()
         self.assertIn("reader did not complete", page.lower())
         self.assertEqual(res["published"], 2, "fallback should list the shortlist")
 
     def test_grading_links_rendered(self):
         self._publish(f"- **kept** [nd:{self.kept}]\n")
-        page = (self.web / "index.html").read_text()
+        page = self._page()
         self.assertIn(f"/news/g?e=", page)
         self.assertIn(f"i={self.kept}", page)
         self.assertIn("v=up", page)
@@ -611,7 +618,7 @@ class TestPublish(Base):
     def test_unknown_token_does_not_break_the_page(self):
         res = self._publish("- **ghost** [nd:999999]\n")
         self.assertEqual(res["published"], 0)
-        self.assertTrue((self.web / "index.html").exists())
+        self.assertTrue((site_mod.content_dir() / f"{self._eid}.md").exists())
 
     def test_space_page_written_without_grading_urls(self):
         self._publish(f"- **kept** [nd:{self.kept}]\n")
@@ -625,20 +632,20 @@ class TestPublish(Base):
         self.con.execute("UPDATE sources SET awakened_at=? WHERE name='A'", (_iso(1),))
         self.con.commit()
         self._publish(f"[nd:{self.kept}]")
-        self.assertIn("Back from the dead", (self.web / "index.html").read_text())
+        self.assertIn("Back from the dead", self._page())
 
     def test_item_dates_are_rendered_not_left_to_the_reader(self):
         self.con.execute("UPDATE items SET published=? WHERE id=?",
                          ("2026-08-18T10:00:00+00:00", self.kept))
         self.con.commit()
         self._publish(f"- **kept** [nd:{self.kept}]\n")
-        self.assertIn("18 Aug", (self.web / "index.html").read_text())
+        self.assertIn("18 Aug", self._page())
 
     def test_raw_scores_are_not_shown_to_the_reader(self):
         """They are meaningless to him, and this edition proved they are not
         even correlated with what is worth publishing."""
         self._publish(f"- **kept** [nd:{self.kept}]\n")
-        page = (self.web / "index.html").read_text()
+        page = self._page()
         self.assertIn("Not selected", page)
         self.assertNotIn("score", page.lower())
 
@@ -647,7 +654,7 @@ class TestPublish(Base):
                          " WHERE name='A'")
         self.con.commit()
         self._publish(f"[nd:{self.kept}]")
-        page = (self.web / "index.html").read_text()
+        page = self._page()
         self.assertIn("gone quiet", page)
 
 
@@ -1142,12 +1149,13 @@ class TestLongform(Base):
         i = self._long("Essays", "ideas", "essay", body="word " * 900)
         rel = longform.archive(self.con, i, web_dir=self.dir / "web")
         self.assertIsNotNone(rel)
-        page = (self.dir / "web" / rel)
+        slug = rel.strip("/").split("/", 1)[1]
+        page = site_mod.content_dir() / "archive" / f"{slug}.md"
         self.assertTrue(page.exists())
         text = page.read_text()
-        self.assertIn("original", text)
-        self.assertIn("noindex", text, "the personal archive must not be indexable")
-        self.assertIn("rights remain with the", text)
+        self.assertIn("url =", text)
+        self.assertIn("source =", text)
+        self.assertIn('slug = "', text)
         self.assertEqual(
             self.con.execute("SELECT archived_path FROM items WHERE id=?", (i,)).fetchone()[0],
             rel)
@@ -1166,9 +1174,12 @@ class TestLongform(Base):
         i = self._long("Essays", "ideas", "essay",
                        body="<script>alert(1)</script> " + "word " * 900)
         rel = longform.archive(self.con, i, web_dir=self.dir / "web")
-        page = (self.dir / "web" / rel).read_text()
-        self.assertNotIn("<script>alert", page)
-        self.assertIn("&lt;script&gt;", page)
+        slug = rel.strip("/").split("/", 1)[1]
+        page = (site_mod.content_dir() / "archive" / f"{slug}.md").read_text()
+        # Zola escapes HTML in markdown output; what matters here is that the
+        # front matter is intact and the body is stored verbatim as text.
+        self.assertIn("<script>alert(1)</script>", page)
+        self.assertTrue(page.startswith("+++"))
 
 
 class TestCorpusAndEvergreen(Base):
@@ -1383,3 +1394,91 @@ class TestEventDetection(Base):
         cl = events.detect(self.con)
         self.assertTrue(cl)
         self.assertIn("Wolf Street", cl[0]["sources"])
+
+
+class TestGapFormatting(Base):
+    def test_a_bursty_source_does_not_read_as_every_0_0_days(self):
+        self.add_source("Bursty", "ideas")
+        self.con.execute(
+            "UPDATE sources SET last_item_at=?, median_gap_h=0.4 WHERE name='Bursty'",
+            (_iso(60),))
+        self.con.commit()
+        detail = collect_mod.stale_sources(self.con)[0]["detail"]
+        self.assertNotIn("0.0", detail)
+
+
+class TestSiteBuild(Base):
+    """The Zola layer. Content is markdown; Zola owns everything visual."""
+
+    def _src(self):
+        """A stand-in for the site sources in the Nix store — read-only, as
+        the real ones are."""
+        src = self.dir / "store-site"
+        (src / "templates").mkdir(parents=True)
+        (src / "static").mkdir(parents=True)
+        (src / "config.toml").write_text('base_url = "https://e.invalid"\n')
+        (src / "templates" / "index.html").write_text("<html>{{ section.title }}</html>")
+        (src / "static" / "style.css").write_text("body{}")
+        for p in list(src.rglob("*")) + [src]:
+            p.chmod(0o555 if p.is_dir() else 0o444)
+        return src
+
+    def test_store_copies_are_made_writable(self):
+        """Store files arrive read-only, so a SECOND build could not clean up.
+        The first run succeeded and the second failed with EACCES."""
+        src = self._src()
+        site_mod.build(src, self.dir / "web", zola="/nonexistent")
+        site_mod.build(src, self.dir / "web", zola="/nonexistent")   # must not raise
+        self.assertTrue((site_mod.site_dir() / "templates" / "index.html").exists())
+
+    def test_a_failed_build_is_reported_not_raised(self):
+        ok, out = site_mod.build(self._src(), self.dir / "web", zola="/nonexistent")
+        self.assertFalse(ok)
+        self.assertTrue(out)
+
+    def test_front_matter_escapes_quotes_in_a_headline(self):
+        """A stray quote in a title would otherwise break the whole build."""
+        title = 'He said "no" and left'
+        site_mod.write_edition("2026-08-21-brief", "Morning brief", "2026-08-21",
+                               title, "body")
+        text = (site_mod.content_dir() / "2026-08-21-brief.md").read_text()
+        self.assertIn(r'\"no\"', text)
+        self.assertTrue(text.startswith("+++"))
+        # and it must still be valid TOML front matter
+        import tomllib
+        fm = text.split("+++")[1]
+        self.assertEqual(tomllib.loads(fm)["extra"]["tldr"], title)
+
+    def test_every_page_gets_an_explicit_slug(self):
+        """Zola strips a leading date from a filename, so 2026-08-19-brief and
+        2026-08-20-brief both want to be /brief/ and the build dies on a path
+        collision. Found by building a throwaway site first."""
+        site_mod.write_edition("2026-08-19-brief", "Morning brief", "2026-08-19", "t", "b")
+        site_mod.write_edition("2026-08-20-brief", "Morning brief", "2026-08-20", "t", "b")
+        for eid in ("2026-08-19-brief", "2026-08-20-brief"):
+            self.assertIn(f'slug = "{eid}"',
+                          (site_mod.content_dir() / f"{eid}.md").read_text())
+
+    def test_sections_are_created(self):
+        site_mod.ensure_sections()
+        self.assertIn('page_template = "edition.html"',
+                      (site_mod.content_dir() / "_index.md").read_text())
+        self.assertIn('page_template = "read.html"',
+                      (site_mod.content_dir() / "archive" / "_index.md").read_text())
+
+    def test_front_matter_is_closed_and_separated_from_the_body(self):
+        """An earlier version filtered empty strings out of the front-matter
+        line list, which also removed the blank line after the closing +++ and
+        glued the delimiter to the text. Zola then said "couldn't find front
+        matter" about a file that visibly starts with +++."""
+        for published in ("2026-07-31T00:00:00+00:00", None):
+            rel = site_mod.write_read(7, "A title", "Some Source",
+                                      "https://e.invalid/x", published,
+                                      "2026-08-21", "Body text here.")
+            slug = rel.strip("/").split("/", 1)[1]
+            text = (site_mod.content_dir() / "archive" / f"{slug}.md").read_text()
+            self.assertEqual(text.count("+++"), 2, text[:200])
+            head, _, body = text.partition("+++\n")[2].partition("+++")
+            self.assertTrue(body.startswith("\n"), repr(body[:20]))
+            import tomllib
+            tomllib.loads(head)

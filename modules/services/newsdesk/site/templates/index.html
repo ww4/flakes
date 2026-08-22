@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}All editions — {{ config.title }}{% endblock %}
+{% block content %}
+<h1>All editions</h1>
+{% if paginator %}{% set pages = paginator.pages %}{% else %}{% set pages = section.pages %}{% endif %}
+{% if pages | length == 0 %}
+  <p class="empty">No editions yet.</p>
+{% endif %}
+<ol class="editions">
+{% for page in pages %}
+  <li>
+    <a class="edition-link" href="{{ page.permalink }}">
+      <time datetime="{{ page.date }}">{{ page.date | date(format="%A %-d %B %Y") }}</time>
+      <span class="kind">{{ page.extra.kind_title | default(value="Brief") }}</span>
+    </a>
+    {% if page.extra.tldr %}<p class="tldr">{{ page.extra.tldr }}</p>{% endif %}
+    <p class="meta">
+      {{ page.extra.n_published | default(value=0) }} item{{ page.extra.n_published | default(value=0) | pluralize }}
+      {%- if page.extra.n_reads %} · {{ page.extra.n_reads }} good read{{ page.extra.n_reads | pluralize }}{% endif %}
+      {%- if page.extra.had_event %} · <span class="flag">event</span>{% endif %}
+    </p>
+  </li>
+{% endfor %}
+</ol>
+{% if paginator and paginator.number_pagers > 1 %}
+<nav class="pager">
+  {% if paginator.previous %}<a href="{{ paginator.previous }}">&larr; newer</a>{% endif %}
+  <span>{{ paginator.current_index }} / {{ paginator.number_pagers }}</span>
+  {% if paginator.next %}<a href="{{ paginator.next }}">older &rarr;</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

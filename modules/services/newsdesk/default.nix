@@ -92,11 +92,17 @@ let
     fi
 
     out=${cfg.stateDir}/last-publish.json
-    ${nd} publish --kind "$kind" --input "$raw" \
-      --space ${cfg.spaceDir} --cmark ${pkgs.cmark-gfm}/bin/cmark-gfm > "$out" || {
-        echo "newsdesk: publish failed"
-        exit 1
-      }
+    ${nd} publish --kind "$kind" --input "$raw" --space ${cfg.spaceDir} > "$out" || {
+      echo "newsdesk: publish failed"
+      exit 1
+    }
+
+    # Zola turns the markdown into the site: permalinks, previous/next, the
+    # index, the feed and the search index. A failed build leaves the last
+    # good site in place rather than taking the page down.
+    ${nd} render --site-src ${newsdesk}/share/newsdesk/site \
+      --out ${cfg.stateDir}/web --zola ${pkgs.zola}/bin/zola || \
+      echo "newsdesk: zola build failed — the previous site is still served"
 
     published="$(${pkgs.jq}/bin/jq -r '.published // 0' "$out")"
     tldr="$(${pkgs.jq}/bin/jq -r '.tldr // ""' "$out")"

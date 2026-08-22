@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Reading archive — {{ config.title }}{% endblock %}
+{% block content %}
+<h1>Reading archive</h1>
+<p class="note">A copy of every piece that made an edition, kept against link
+rot. Personal archive — all rights remain with the original authors.</p>
+{% if paginator %}{% set pages = paginator.pages %}{% else %}{% set pages = section.pages %}{% endif %}
+<ol class="reads">
+{% for page in pages %}
+  <li>
+    <a href="{{ page.permalink }}">{{ page.title }}</a>
+    <p class="meta">{{ page.extra.source }}{% if page.extra.published %} · {{ page.extra.published }}{% endif %}
+    {%- if page.extra.words %} · ~{{ page.extra.words }} words{% endif %}</p>
+  </li>
+{% endfor %}
+</ol>
+{% if paginator and paginator.number_pagers > 1 %}
+<nav class="pager">
+  {% if paginator.previous %}<a href="{{ paginator.previous }}">&larr; newer</a>{% endif %}
+  <span>{{ paginator.current_index }} / {{ paginator.number_pagers }}</span>
+  {% if paginator.next %}<a href="{{ paginator.next }}">older &rarr;</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

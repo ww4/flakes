@@ -21,7 +21,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import events, feeds, longform
+from . import events, feeds, longform, site
 from .collect import awakened_sources, stale_sources
 from .db import now, state_dir, write_atomic
 
@@ -230,6 +230,11 @@ def _grade_links(item_id: int, edition: str, url: str, published: str | None,
 def publish(con: sqlite3.Connection, kind: str, judged_md: str, *,
             web_dir: Path | None = None, space_dir: Path | None = None,
             cmark: str | None = None) -> dict:
+    """Write the edition as markdown. `newsdesk render` turns it into a site.
+
+    cmark is accepted and ignored — kept so the systemd unit and any caller
+    from before the Zola migration keep working.
+    """
     eid = edition_id(kind)
     spec = KINDS[kind]
     web = web_dir or (state_dir() / "web")
@@ -301,13 +306,24 @@ def publish(con: sqlite3.Connection, kind: str, judged_md: str, *,
                                _archived_of(con, int(m.group(1))))
         if int(m.group(1)) in by_id else "",
         judged_md)
-    html_body = _render_html(f"{html_md}\n\n{footer_md}", cmark)
-    page = _html_page(f"{spec['title']} — {eid}", html_body)
+    # --- the TLDR, needed before the page is written -----------------------
+    tldr = ""
+    m = re.search(r"^TLDR:\s*(.+)$", judged_md, re.MULTILINE | re.IGNORECASE)
+    if m:
+        tldr = m.group(1).strip()
+    if not tldr:
+        tldr = (f"{len(published_ids)} item(s) from {len(short)} shortlisted."
+                if published_ids else "Nothing worth your time today.")
 
-    write_atomic(web / f"{eid}.html", page)
-    write_atomic(web / "index.html", page)
-    for p in (web / f"{eid}.html", web / "index.html"):
-        p.chmod(0o644)
+    # --- content, not presentation ----------------------------------------
+    # Zola owns permalinks, previous/next, the index, pagination, the feed and
+    # the search index. This used to be ~110 lines of hand-rolled HTML that had
+    # accreted one reasonable increment at a time; see site.py.
+    site.write_edition(
+        eid, spec["title"], eid.rsplit("-", 1)[0], tldr,
+        f"{html_md}\n\n{footer_md}",
+        n_published=len(published_ids), n_reads=len(read_ids),
+        had_event="what happened" in judged_md.lower())
 
     if space.parent.exists():
         try:
@@ -322,22 +338,17 @@ def publish(con: sqlite3.Connection, kind: str, judged_md: str, *,
     con.executemany("UPDATE items SET state='passed_over', edition=? WHERE id=?",
                     [(eid, r["id"]) for r in passed])
     con.execute(
-        "INSERT OR REPLACE INTO editions (id, kind, created, n_short, n_published, judged)"
-        " VALUES (?,?,?,?,?,?)",
-        (eid, kind, now(), len(short), len(published_ids), 0 if fell_back else 1))
+        "INSERT OR REPLACE INTO editions"
+        " (id, kind, created, n_short, n_published, judged, tldr)"
+        " VALUES (?,?,?,?,?,?,?)",
+        (eid, kind, now(), len(short), len(published_ids),
+         0 if fell_back else 1, tldr))
     con.commit()
-
-    tldr = ""
-    m = re.search(r"^TLDR:\s*(.+)$", judged_md, re.MULTILINE | re.IGNORECASE)
-    if m:
-        tldr = m.group(1).strip()
-    if not tldr:
-        tldr = (f"{len(published_ids)} item(s) from {len(short)} shortlisted."
-                if published_ids else "Nothing worth your time today.")
 
     return {"edition": eid, "published": len(published_ids),
             "shortlisted": len(short), "stale": len(stale),
-            "fell_back": fell_back, "tldr": tldr}
+            "fell_back": fell_back, "tldr": tldr,
+            "url": f"{eid}/"}
 
 
 def _archived_of(con: sqlite3.Connection, item_id: int) -> str | None:
@@ -389,42 +400,4 @@ def _footer_markdown(stale: list[dict], awake: list[dict], passed,
     return "\n".join(out)
 
 
-def _render_html(md: str, cmark: str | None) -> str:
-    exe = cmark or shutil.which("cmark-gfm")
-    if not exe:
-        return "<pre>" + md.replace("&", "&amp;").replace("<", "&lt;") + "</pre>"
-    try:
-        r = subprocess.run(
-            [exe, "--unsafe", "--extension", "table", "--extension", "strikethrough"],
-            input=md, capture_output=True, text=True, timeout=60, check=True)
-        return r.stdout
-    except (subprocess.SubprocessError, OSError):
-        return "<pre>" + md.replace("&", "&amp;").replace("<", "&lt;") + "</pre>"
 
-
-STYLE = (
-    "body{max-width:46rem;margin:2rem auto;padding:0 1rem;"
-    "font:16px/1.6 system-ui,-apple-system,sans-serif;color:#e6e6e6;background:#181818}"
-    ".when{color:#888;font-size:.85em}"
-    "h1,h2,h3{line-height:1.25;margin-top:1.4em}"
-    "code{background:#2c2c2c;padding:.1em .35em;border-radius:3px;font-size:.9em}"
-    "pre{background:#2c2c2c;padding:.8em;border-radius:6px;overflow:auto}"
-    "a{color:#6cb6ff}blockquote{border-left:3px solid #555;margin:1em 0;padding:.2em 1em;color:#bbb}"
-    "table{border-collapse:collapse;width:100%}td,th{border:1px solid #444;padding:.35em .6em;text-align:left}"
-    "hr{border:0;border-top:1px solid #444}"
-    "details{margin:1em 0;color:#aaa}summary{cursor:pointer}"
-    "li{margin:.35em 0}"
-)
-
-
-def _html_page(title: str, body: str) -> str:
-    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    return (
-        '<!doctype html><html><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f"<title>{title}</title><style>{STYLE}</style></head><body>"
-        f"<h1>{title}</h1>{body}"
-        '<hr><p style="color:#888;font-size:.85em">Generated '
-        f"{stamp} by the newsdesk. Grading is optional — an ungraded edition is "
-        "a normal edition.</p></body></html>"
-    )
