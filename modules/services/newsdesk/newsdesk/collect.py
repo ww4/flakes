@@ -196,14 +196,6 @@ def collect(con: sqlite3.Connection, profile: dict, *, only: str | None = None) 
     return stats
 
 
-def _human_gap(hours: float) -> str:
-    if hours < 1:
-        return "few minutes"
-    if hours < 36:
-        return f"{hours:.0f}h"
-    return f"{hours / 24:.1f} days"
-
-
 def stale_sources(con: sqlite3.Connection) -> list[dict]:
     """Sources that are failing, or silent well past their own rhythm.
 
@@ -232,10 +224,8 @@ def stale_sources(con: sqlite3.Connection) -> list[dict]:
         if gap and silent_h > gap * STALE_GAP_MULTIPLE:
             out.append({
                 "name": row["name"], "lane": row["lane"], "kind": "silent",
-                # Sources that publish in bursts have a median gap well under
-                # a day, which rendered as "usually every 0.0" in the edition.
                 "detail": f"nothing for {silent_h / 24:.0f} days"
-                          f" (usually every {_human_gap(gap)})",
+                          f" (usually every {gap / 24:.1f})",
             })
     return sorted(out, key=lambda s: s["name"])
 
