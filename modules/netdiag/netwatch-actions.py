@@ -93,7 +93,7 @@ def do_investigate(state: dict, mac: str) -> str:
         # is exactly how the missing-netdiag bug stayed invisible).
         msg = f"Fingerprint of {ip} failed: {exc!r}"
         notify("netwatch: investigate FAILED", msg)
-        return msg"
+        return msg
     path = os.path.join(STATE_DIR, f"investigate-{mac.replace(':', '')}.txt")
     with open(path, "w") as fh:
         fh.write(out)
