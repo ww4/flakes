@@ -18,7 +18,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -111,7 +111,12 @@ CREATE TABLE IF NOT EXISTS editions (
     created  TEXT NOT NULL,
     n_short  INTEGER NOT NULL DEFAULT 0,
     n_published INTEGER NOT NULL DEFAULT 0,
-    judged   INTEGER NOT NULL DEFAULT 0
+    judged   INTEGER NOT NULL DEFAULT 0,
+    -- The edition's own text, kept so every page can be re-rendered. Without
+    -- it a published page is frozen, and the "next edition" link on yesterday's
+    -- page could never be filled in once today's exists.
+    tldr     TEXT NOT NULL DEFAULT '',
+    markdown TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS tuning_log (
@@ -140,6 +145,10 @@ MIGRATIONS = {
         "last_shown_at": "TEXT",
         "clicked_at": "TEXT",
         "archived_path": "TEXT",
+    },
+    "editions": {
+        "tldr": "TEXT NOT NULL DEFAULT ''",
+        "markdown": "TEXT NOT NULL DEFAULT ''",
     },
     "sources": {
         "dormant": "INTEGER NOT NULL DEFAULT 0",

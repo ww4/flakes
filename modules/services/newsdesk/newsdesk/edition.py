@@ -304,10 +304,12 @@ def publish(con: sqlite3.Connection, kind: str, judged_md: str, *,
     html_body = _render_html(f"{html_md}\n\n{footer_md}", cmark)
     page = _html_page(f"{spec['title']} — {eid}", html_body)
 
+    # The dated page is the permalink and is never overwritten by a later
+    # edition. index.html is now an INDEX of every edition, not a copy of the
+    # newest one — the notification links to the dated URL so an edition he
+    # opens in a week is still the edition he was told about.
     write_atomic(web / f"{eid}.html", page)
-    write_atomic(web / "index.html", page)
-    for p in (web / f"{eid}.html", web / "index.html"):
-        p.chmod(0o644)
+    (web / f"{eid}.html").chmod(0o644)
 
     if space.parent.exists():
         try:
@@ -322,9 +324,15 @@ def publish(con: sqlite3.Connection, kind: str, judged_md: str, *,
     con.executemany("UPDATE items SET state='passed_over', edition=? WHERE id=?",
                     [(eid, r["id"]) for r in passed])
     con.execute(
-        "INSERT OR REPLACE INTO editions (id, kind, created, n_short, n_published, judged)"
-        " VALUES (?,?,?,?,?,?)",
-        (eid, kind, now(), len(short), len(published_ids), 0 if fell_back else 1))
+        "INSERT OR REPLACE INTO editions"
+        " (id, kind, created, n_short, n_published, judged, tldr, markdown)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        (eid, kind, now(), len(short), len(published_ids), 0 if fell_back else 1,
+         # The token-SUBSTITUTED text, not the raw judged markdown. Storing
+         # the raw version meant render_all re-rendered the page from it and
+         # clobbered every grading link, date and archive link with a literal
+         # "[nd:12]". Caught by the tests, not by reading.
+         "", html_md + "\n" + footer_md))
     con.commit()
 
     tldr = ""
@@ -335,9 +343,18 @@ def publish(con: sqlite3.Connection, kind: str, judged_md: str, *,
         tldr = (f"{len(published_ids)} item(s) from {len(short)} shortlisted."
                 if published_ids else "Nothing worth your time today.")
 
+    con.execute("UPDATE editions SET tldr = ? WHERE id = ?", (tldr, eid))
+    con.commit()
+
+    # Re-render everything. Yesterday's page was written before today's
+    # existed, so its "next" link can only be filled in now. There are a
+    # handful of pages; correctness is worth more than the milliseconds.
+    render_all(con, web_dir=web, cmark=cmark)
+
     return {"edition": eid, "published": len(published_ids),
             "shortlisted": len(short), "stale": len(stale),
-            "fell_back": fell_back, "tldr": tldr}
+            "fell_back": fell_back, "tldr": tldr,
+            "url": f"{eid}.html"}
 
 
 def _archived_of(con: sqlite3.Connection, item_id: int) -> str | None:
@@ -406,6 +423,12 @@ STYLE = (
     "body{max-width:46rem;margin:2rem auto;padding:0 1rem;"
     "font:16px/1.6 system-ui,-apple-system,sans-serif;color:#e6e6e6;background:#181818}"
     ".when{color:#888;font-size:.85em}"
+    "nav{margin:1.2em 0;padding:.5em 0;border-top:1px solid #333;"
+    "border-bottom:1px solid #333;font-size:.9em;color:#888}"
+    "nav .off{color:#555}"
+    "ul.index{list-style:none;padding:0}"
+    "ul.index li{margin:0 0 1.1em;padding-bottom:.9em;border-bottom:1px solid #2a2a2a}"
+    "ul.index .tldr{color:#ccc;margin:.2em 0}"
     "h1,h2,h3{line-height:1.25;margin-top:1.4em}"
     "code{background:#2c2c2c;padding:.1em .35em;border-radius:3px;font-size:.9em}"
     "pre{background:#2c2c2c;padding:.8em;border-radius:6px;overflow:auto}"
@@ -417,13 +440,63 @@ STYLE = (
 )
 
 
-def _html_page(title: str, body: str) -> str:
+def _nav(prev_id: str | None, next_id: str | None) -> str:
+    """Previous / index / next, on every edition page."""
+    left = (f'<a href="{prev_id}.html">&larr; previous</a>' if prev_id
+            else '<span class="off">&larr; previous</span>')
+    right = (f'<a href="{next_id}.html">next &rarr;</a>' if next_id
+             else '<span class="off">next &rarr;</span>')
+    return (f'<nav>{left} · <a href="./">all editions</a> · {right}</nav>')
+
+
+def render_all(con: sqlite3.Connection, *, web_dir=None, cmark: str | None = None) -> int:
+    """Re-render every edition page and rebuild the index."""
+    web = web_dir or (state_dir() / "web")
+    rows = con.execute(
+        "SELECT id, kind, created, tldr, markdown, n_published FROM editions"
+        " ORDER BY id").fetchall()
+    ids = [r["id"] for r in rows]
+
+    for i, r in enumerate(rows):
+        if not r["markdown"]:
+            continue  # published before the text was kept; leave its page alone
+        spec = KINDS.get(r["kind"], {"title": "Edition"})
+        nav = _nav(ids[i - 1] if i > 0 else None,
+                   ids[i + 1] if i + 1 < len(ids) else None)
+        body = _render_html(r["markdown"], cmark)
+        page = _html_page(f"{spec['title']} — {r['id']}", body, nav=nav)
+        write_atomic(web / f"{r['id']}.html", page)
+        (web / f"{r['id']}.html").chmod(0o644)
+
+    write_atomic(web / "index.html", _index_page(rows))
+    (web / "index.html").chmod(0o644)
+    return len(rows)
+
+
+def _index_page(rows) -> str:
+    """Every edition, newest first — the front door at /news/."""
+    items = []
+    for r in sorted(rows, key=lambda r: r["id"], reverse=True):
+        spec = KINDS.get(r["kind"], {"title": "Edition"})
+        date = r["id"].rsplit("-", 1)[0]
+        tldr = (r["tldr"] or "").replace("&", "&amp;").replace("<", "&lt;")
+        items.append(
+            f'<li><a href="{r["id"]}.html"><b>{date}</b> — {spec["title"]}</a>'
+            f'<div class="tldr">{tldr}</div>'
+            f'<div class="when">{r["n_published"]} item(s)</div></li>')
+    body = ("<ul class=\"index\">" + "".join(items) + "</ul>") if items else (
+        "<p>No editions yet.</p>")
+    return _html_page("Newsdesk — all editions", body,
+                      nav='<nav><a href="archive/">reading archive</a></nav>')
+
+
+def _html_page(title: str, body: str, nav: str = "") -> str:
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     return (
         '<!doctype html><html><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"<title>{title}</title><style>{STYLE}</style></head><body>"
-        f"<h1>{title}</h1>{body}"
+        f"<h1>{title}</h1>{nav}{body}{nav}"
         '<hr><p style="color:#888;font-size:.85em">Generated '
         f"{stamp} by the newsdesk. Grading is optional — an ungraded edition is "
         "a normal edition.</p></body></html>"
