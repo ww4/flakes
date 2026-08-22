@@ -100,11 +100,6 @@ let
 
     published="$(${pkgs.jq}/bin/jq -r '.published // 0' "$out")"
     tldr="$(${pkgs.jq}/bin/jq -r '.tldr // ""' "$out")"
-    # The DATED permalink, not ${cfg.editionUrl} itself — that is now an index
-    # of every edition, and a notification should still open the edition it was
-    # actually about when he taps it a week later.
-    page="$(${pkgs.jq}/bin/jq -r '.url // ""' "$out")"
-    link="${cfg.editionUrl}''${page}"
 
     # Quiet-hours guard. OnCalendar puts these at civil hours, but Persistent=
     # replays a missed run at boot — which can be 03:00 after an outage. No
@@ -113,7 +108,7 @@ let
     if [ "$published" -gt 0 ] && [ "$hour" -ge ${toString cfg.notifyAfterHour} ] \
        && [ "$hour" -lt ${toString cfg.notifyBeforeHour} ]; then
       gromit-notify "Newsdesk — $kind" "$tldr
-$link" default "newspaper" "$link"
+${cfg.editionUrl}" default "newspaper" "${cfg.editionUrl}"
     else
       echo "newsdesk: not notifying (published=$published hour=$hour)"
     fi
