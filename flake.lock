@@ -167,6 +167,22 @@
         "type": "github"
       }
     },
+    "nixpkgs-silverbullet": {
+      "locked": {
+        "lastModified": 1787135253,
+        "narHash": "sha256-RD2kNWCG+Bjo6h+JVjWVNntZs2GtRoeY2xHjts/FNkA=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "ffb3c9b700e759be2ef13237c9d8f953b32a1e46",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "nixpkgs_2": {
       "locked": {
         "lastModified": 1770107345,
@@ -208,6 +224,7 @@
         "nixos-06cb-009a-fingerprint-sensor": "nixos-06cb-009a-fingerprint-sensor",
         "nixpkgs": "nixpkgs_3",
         "nixpkgs-2505": "nixpkgs-2505",
+        "nixpkgs-silverbullet": "nixpkgs-silverbullet",
         "sops-nix": "sops-nix",
         "vscode-server": "vscode-server"
       }

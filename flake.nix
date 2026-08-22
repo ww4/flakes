@@ -50,6 +50,14 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # nixos-unstable — ONLY for the silverbullet package (imported as plain
+    # pkgs in modules/services/silverbullet.nix, no module eval, so the
+    # 26.11-dropped-darwin eval problem that pushed this flake to 26.05 stable
+    # does not apply). Stable is frozen at silverbullet 2.6.1 (April 2026);
+    # 2.7–2.9 carry the mobile sync/offline/indexing fixes Chris needs on his
+    # phone. Bump with `nix flake update nixpkgs-silverbullet`.
+    nixpkgs-silverbullet.url = "github:nixos/nixpkgs/nixos-unstable";
+
     # Pinned 25.05 nixpkgs — ONLY for the T480 fingerprint flake below. Its
     # python-validity daemon predates the nixpkgs Python "pyproject" change and
     # won't build against unstable's stricter Python builder. Building that one
@@ -67,7 +75,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-2505, vscode-server, home-manager, comin, agent-modules, sops-nix, disko, nixos-06cb-009a-fingerprint-sensor }:
+  outputs = { self, nixpkgs, nixpkgs-2505, nixpkgs-silverbullet, vscode-server, home-manager, comin, agent-modules, sops-nix, disko, nixos-06cb-009a-fingerprint-sensor }:
     let
       system = "x86_64-linux";
       lib = nixpkgs.lib;
@@ -77,6 +85,8 @@
         # mergerfs media/backup pools and all data-resident services.
         gromit = lib.nixosSystem {
           inherit system;
+          # nixpkgs-silverbullet: consumed only by modules/services/silverbullet.nix.
+          specialArgs = { inherit nixpkgs-silverbullet; };
           modules = [
             ./configuration.nix
             vscode-server.nixosModules.default
