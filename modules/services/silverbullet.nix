@@ -78,6 +78,13 @@ in
     spaceDir = spaceDir;
   };
 
+  # Open the app on the Keep-style capture dashboard (space page `Home`:
+  # quick-capture buttons + pinned + recent notes), not the space map at
+  # `index` (Chris, 2026-08-23 — "the index page being the homepage is not
+  # good for quick capture"). Once this deploys, the temporary editor:init
+  # redirect in the space's CONFIG.md can be removed.
+  systemd.services.silverbullet.environment.SB_INDEX_PAGE = "Home";
+
   # Agent joins the service's group; ACLs below do the heavy lifting.
   users.users.claude.extraGroups = [ "silverbullet" ];
 
