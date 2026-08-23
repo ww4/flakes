@@ -17,43 +17,73 @@
 # History/undo for max-agency collaboration: an hourly autosave git commit of
 # the space (local repo only — content stays on the box; restic backs up
 # /var/lib/silverbullet via the backup module's criticalPaths if added there).
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, nixpkgs-silverbullet, ... }:
 
 let
   domain = "rosemaryacres.com";
   spaceDir = "/var/lib/silverbullet";
 
+  # silverbullet from nixos-unstable: the flake's nixos-26.05 pin is frozen at
+  # 2.6.1 (April 2026), and 2.7–2.9 carry the mobile fixes that matter here —
+  # sync-snapshot persistence, offline handling that stops endless re-upload
+  # loops, the IndexedDB reindex deadlock that leaves a space permanently
+  # un-indexed, and the typing slowdown on link-heavy pages in large spaces.
+  # Plain package import (no module eval), so unstable's darwin eval problem
+  # (see flake.nix) is not in play.
+  pkgsSilverbullet = import nixpkgs-silverbullet {
+    inherit (pkgs.stdenv.hostPlatform) system;
+  };
+
   # Adds one `preventDefault` on the action buttons' pointerdown so tapping an
-  # arrow doesn't blur the editor (which closes the phone keyboard). Refuses to
-  # patch — and copies the original through untouched — if upstream's handler
-  # doesn't match exactly once.
+  # arrow doesn't blur the editor (which closes the phone keyboard). The
+  # minified identifiers change every release (2.6.1: `a.callback()`, 2.9.0:
+  # `r.callback()`), so match them by regex, not by literal string. Refuses to
+  # patch — and copies the original through untouched — if the handler doesn't
+  # match exactly once.
   patchClientJs = pkgs.writeText "patch-client-js.py" ''
+    import re
     import sys
 
-    NEEDLE = "onClick:i=>{i.preventDefault(),i.stopPropagation(),a.callback()}"
-    PATCH = "onPointerDown:i=>i.preventDefault()," + NEEDLE
+    PAT = re.compile(
+        r"onClick:([A-Za-z_$][\w$]*)=>\{"
+        r"\1\.preventDefault\(\),\1\.stopPropagation\(\),"
+        r"[A-Za-z_$][\w$]*\.callback\(\)\}")
 
     src_path, out_path = sys.argv[1], sys.argv[2]
     src = open(src_path).read()
-    n = src.count(NEEDLE)
-    if n == 1:
-        open(out_path, "w").write(src.replace(NEEDLE, PATCH))
+    matches = list(PAT.finditer(src))
+    if len(matches) == 1:
+        m = matches[0]
+        ev = m.group(1)
+        patched = (src[:m.start()]
+                   + "onPointerDown:%s=>%s.preventDefault()," % (ev, ev)
+                   + m.group(0)
+                   + src[m.end():])
+        open(out_path, "w").write(patched)
         print("client.js patched: arrow taps no longer steal editor focus")
     else:
         open(out_path, "w").write(src)
         sys.stderr.write(
             "WARNING: SilverBullet's action-button handler matched %d times, "
             "expected 1. Serving the ORIGINAL client.js. The arrows still work; "
-            "the phone keyboard will flicker on each tap.\n" % n)
+            "the phone keyboard will flicker on each tap.\n" % len(matches))
   '';
 in
 {
   services.silverbullet = {
     enable = true;
+    package = pkgsSilverbullet.silverbullet;
     listenAddress = "127.0.0.1";
     listenPort = 3336;
     spaceDir = spaceDir;
   };
+
+  # Open the app on the Keep-style capture dashboard (space page `Home`:
+  # quick-capture buttons + pinned + recent notes), not the space map at
+  # `index` (Chris, 2026-08-23 — "the index page being the homepage is not
+  # good for quick capture"). Once this deploys, the temporary editor:init
+  # redirect in the space's CONFIG.md can be removed.
+  systemd.services.silverbullet.environment.SB_INDEX_PAGE = "Home";
 
   # Agent joins the service's group; ACLs below do the heavy lifting.
   users.users.claude.extraGroups = [ "silverbullet" ];
@@ -64,6 +94,17 @@ in
   # the service covers web-UI creations; daybook.nix does the same for agent
   # runs; the autosave heal below catches interactive agent sessions.
   systemd.services.silverbullet.serviceConfig.UMask = "0002";
+
+  # SilverBullet sets each file's mtime to the client-supplied timestamp after
+  # a sync write (that timestamp is what the sync protocol compares). chtimes
+  # needs OWNERSHIP, not write permission, so on agent-created files (owned by
+  # claude) it fails — the journal shows retry storms of "Failed to set the
+  # mtime for …/Inbox.md: operation not permitted" every time the phone syncs,
+  # and the space's git history has conflicted-copy artifacts for exactly the
+  # phone-capture pages (Inbox ×2, Grocery List). CAP_FOWNER lets the service
+  # set mtimes on files it can already write but doesn't own. The ACL story
+  # (below) is unchanged — this only stops sync timestamps from lying.
+  systemd.services.silverbullet.serviceConfig.AmbientCapabilities = [ "CAP_FOWNER" ];
 
   # systemd reapplies the StateDirectory mode on EVERY service start, and the
   # group bits double as the ACL mask — the default 0755 kept resetting the

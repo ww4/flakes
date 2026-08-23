@@ -46,6 +46,12 @@ let
   spaceDir = "/var/lib/silverbullet";
   notesUrl = "https://notes.rosemaryacres.com";
 
+  # Grocery automation PAUSED 2026-08-23 (Chris: "not useful like I had
+  # hoped... just disable it for now"). Flip to true to restore the prompts'
+  # grocery sections; the space-side half of the switch is GROCERY_ENABLED in
+  # the space's CONFIG.md (map button, /sort, auto-checkboxes).
+  groceryEnabled = false;
+
   commonRules = ''
     Ground rules:
     - The SilverBullet space at ${spaceDir} is the shared task/notes source of
@@ -99,6 +105,19 @@ let
     Morning specifics:
     1. Triage ${spaceDir}/Inbox.md: file new captures onto the right pages
        (create pages if needed), leaving Inbox empty or near-empty.
+       - THE CAPTURE LOG (Chris, 2026-08-23 — "it gets emptied often so I
+         can't refer to it later"): before filing, APPEND every capture
+         VERBATIM to ${spaceDir}/Inbox/Log/<YYYY-MM>.md as
+         `- HH:MM — <capture as written> → filed to [[<page>]]`. Nothing
+         Chris wrote may ever become unfindable.
+       - Quick notes: pages under ${spaceDir}/Inbox/ (from the ➕ button) are
+         NEVER swept, moved, or emptied — they are Chris's persistent notes
+         (Keep-style). The ONLY thing you may do: if one still has a bare
+         timestamp name (Inbox/2026-08-23/10-15-42), RENAME it to a short
+         title drawn from its content, keeping it under Inbox/ (e.g.
+         "Inbox/waterline fitting sizes"). Rename only — never edit content;
+         SilverBullet rewrites [[links]] on rename.
+    ${if groceryEnabled then ''
     2. Grocery upkeep: ${spaceDir}/"Grocery List.md" is the SHARED store list (fixed
        page — Chris and Mary use it at the store), organized STORE-FIRST:
        Walmart / Kroger / Frankfort house (storage at dad's) / Other stores /
@@ -137,6 +156,14 @@ let
          sections, no commentary. It gets read one-handed in a store. (The
          TOC and Linked-Mentions widgets are suppressed for this page in the
          space's CONFIG.md, keyed on the page name.)
+    '' else ''
+    2. Grocery: automation is PAUSED (Chris, 2026-08-23). Do NOT archive,
+       sort, dedupe, regroup, or otherwise manage "Grocery List.md",
+       System/Grocery Log/, Store Preferences, or the Walmart route. A
+       capture that looks like a grocery item is filed like any other
+       capture: log it, then append it to the END of "Grocery List.md"
+       without reorganizing anything else there.
+    ''}
     3. Sweep open tasks across the space (`- [ ]`, due dates, overdue items)
        and yesterday's Journal/Day page for carryover.
     4. Write/overwrite today's ${spaceDir}/Journal/Day/<YYYY-MM-DD>.md (page
@@ -205,20 +232,34 @@ let
       verbatim and edit only the body below it.
 
     Do exactly this:
-    1. Read ${spaceDir}/Inbox.md. For each capture, move it onto the RIGHT
-       page (create the page if needed), editing the task where it will live
-       and keeping [[wiki-links]] coherent. Prefer editing a task where it
-       lives over duplicating it.
+    1. Read ${spaceDir}/Inbox.md. FIRST, append every capture VERBATIM to the
+       capture log ${spaceDir}/Inbox/Log/<YYYY-MM>.md (create from the sibling
+       months' format if needed) as
+       `- HH:MM — <capture as written> → filed to [[<page>]]` — Chris refers
+       back to what he wrote, so nothing may ever become unfindable
+       (2026-08-23). THEN file each capture onto the RIGHT page (create the
+       page if needed), editing the task where it will live and keeping
+       [[wiki-links]] coherent. Prefer editing a task where it lives over
+       duplicating it.
+       - NEVER touch pages under ${spaceDir}/Inbox/ other than the Log —
+         quick notes (the ➕ button) are Chris's persistent notes; sweeping,
+         moving, or editing them is the daybook's rename-only job, not yours.
+    ${if groceryEnabled then ''
        - A capture that is clearly a grocery item: APPEND it to
          ${spaceDir}/"Grocery List.md" under the best-guess store section
          (or "Unsorted" if unsure). Keep that page PLAIN (no frontmatter,
          no headings beyond the store sections, no commentary) and do NOT
          reorder the Walmart route or archive bought items — the 09:00
          daybook owns full grocery upkeep. NEVER drop an unchecked item.
+    '' else ''
+       - Grocery automation is PAUSED (2026-08-23): a grocery-looking capture
+         is filed like any other — log it, append it to the END of
+         "Grocery List.md", reorganize nothing there.
+    ''}
     2. When done, leave Inbox.md empty except this single placeholder line
        (keep it on ONE line, and keep the quotes — the trigger only fires when
        the phrase is alone on a line, so the placeholder can never self-trigger):
-       *(empty — brain-dump anything here; it's filed automatically when you save. Type "run the daybook" alone on a line to force a full daybook run.)*
+       *(empty — brain-dump anything here; it's filed automatically when you save and kept verbatim in [[Inbox/Log]]. Type "run the daybook" alone on a line to force a full daybook run.)*
     3. If, on reading, the Inbox has no real captures (only the placeholder
        or blank lines), make NO changes at all.
 
