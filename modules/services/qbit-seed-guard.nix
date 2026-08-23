@@ -139,6 +139,40 @@ let
       # at 50+ concurrent H&R for 5+ consecutive days. So TL forgives a blip
       # but not a long silence — which is what not_seeding_seconds measures.
     }
+    {
+      id = "seedpool";
+      label = "Seedpool";
+      # ⚠️ Announce host UNCONFIRMED — Chris registered 2026-08-23 and has no
+      # Seedpool torrents yet, so this was never matched against a real URL.
+      # The pattern is unanchored, so it catches seedpool.org and any
+      # tracker.seedpool.org form; a wholly different announce domain would
+      # NOT match, and an unmatched rule reports total=0, which looks exactly
+      # like "healthy". Re-check this the first time a Seedpool torrent lands.
+      match = "seedpool\\.org";
+      seedSeconds = 10 * 24 * 3600;  # 10 days, "for all releases, freeleech or not"
+
+      # ⚠️⚠️ ratioAlt MUST stay 0. Seedpool advertises a 1:1 minimum, which
+      # looks like DarkPeers/DigitalCore — but it is an ACCOUNT-WIDE ratio, and
+      # the FAQ is explicit: "There is no required ratio for individual
+      # torrents." Seed time is required "for all releases, freeleech or not".
+      # Setting ratioAlt = 1.0 here by analogy would mark any torrent with a
+      # good ratio as satisfied while it still owed 10 days of seeding — a
+      # silent false NEGATIVE, the worst direction for this module to be wrong
+      # in. The account-wide 1:1 is deliberately not modelled at all; see below.
+      ratioAlt = 0;
+
+      withinDays = 0;
+      minProgress = 0.10;            # "Torrents where you have downloaded less than 10% are exempt"
+      graceSeconds = 72 * 3600;      # "marked unsatisfied after 3 days (72h) offline"
+      cureDays = 0;                  # no fixed cure window: finish the seed time, or pay the fine
+
+      # Account level, NOT visible from qBittorrent and deliberately not
+      # approximated: the overall 1:1 ratio, and "Unsatisfieds lower your
+      # download slots — get enough and be limited to one slot". A client-side
+      # ratio sum would be worse than nothing here: torrents removed from the
+      # client still count against the account on the tracker, so the local
+      # figure can only ever look BETTER than reality. Check the site.
+    }
   ];
 
   hnrJq = ./qbit-hnr.jq;
