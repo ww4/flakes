@@ -142,12 +142,11 @@ let
     {
       id = "seedpool";
       label = "Seedpool";
-      # ⚠️ Announce host UNCONFIRMED — Chris registered 2026-08-23 and has no
-      # Seedpool torrents yet, so this was never matched against a real URL.
-      # The pattern is unanchored, so it catches seedpool.org and any
-      # tracker.seedpool.org form; a wholly different announce domain would
-      # NOT match, and an unmatched rule reports total=0, which looks exactly
-      # like "healthy". Re-check this the first time a Seedpool torrent lands.
+      # Announce host CONFIRMED 2026-08-23: a .torrent pulled through Prowlarr
+      # bencode-decodes to `announce = https://seedpool.org/announce/<passkey>`,
+      # so this pattern binds. Worth having checked rather than assumed — an
+      # unmatched rule reports total=0, which is indistinguishable from healthy,
+      # and no torrent existed yet to reveal it.
       match = "seedpool\\.org";
       seedSeconds = 10 * 24 * 3600;  # 10 days, "for all releases, freeleech or not"
 
