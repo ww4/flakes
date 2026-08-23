@@ -199,8 +199,12 @@ in
 
     briefSchedule = lib.mkOption {
       type = lib.types.str;
-      default = "Mon..Fri 07:00";
-      description = "Weekday brief. Never earlier than the end of quiet hours.";
+      # Mon/Wed/Fri (Chris, 2026-08-23): each brief collects the gap since the
+      # last one — the candidate query takes everything still state='new'
+      # inside max_age_days, so a 2-3 day gap just means a richer shortlist,
+      # not dropped items. Was Mon..Fri.
+      default = "Mon,Wed,Fri 07:00";
+      description = "The brief. Never earlier than the end of quiet hours.";
     };
 
     longreadSchedule = lib.mkOption {
@@ -303,7 +307,7 @@ in
     };
 
     systemd.services.newsdesk-brief = {
-      description = "Newsdesk — weekday brief";
+      description = "Newsdesk — Mon/Wed/Fri brief";
       after = [ "network-online.target" "newsdesk-collect.service" ];
       wants = [ "network-online.target" ];
       serviceConfig = editionServiceConfig;
@@ -312,7 +316,7 @@ in
     };
 
     systemd.timers.newsdesk-brief = {
-      description = "Newsdesk weekday brief";
+      description = "Newsdesk Mon/Wed/Fri brief";
       wantedBy = [ "timers.target" ];
       timerConfig = {
         OnCalendar = cfg.briefSchedule;
