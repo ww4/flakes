@@ -126,6 +126,16 @@
     backupFileExtension = "hm-backup";
     users.chris = {
       imports = [ ../../home ./hyprland.nix ];
+
+      # ~/bin on PATH. Chris keeps hand-written scripts there (record-meeting);
+      # they were only callable by full path. Note this is NOT the same
+      # directory as the NixOS `environment.localBinInPath` option, which adds
+      # ~/.local/bin and nothing else.
+      #
+      # The scripts themselves stay imperative and unmanaged — HM is only
+      # putting the directory on PATH, not adopting its contents, so a rebuilt
+      # marcus would come up with the PATH entry and an empty ~/bin.
+      home.sessionPath = [ "$HOME/bin" ];
     };
   };
 
