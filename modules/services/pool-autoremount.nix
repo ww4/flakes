@@ -51,6 +51,29 @@
 # the reconciler now probes with real I/O, clears zombies, publishes its own
 # health metric, and escalates when it cannot fix something itself.
 #
+# ⚠️ The 2026-08-24 incident: the zombie handling above never ran.
+# After gromit was physically relocated, fusion D6's USB cable faulted and a
+# reseat left the same zombie shape as 2026-08-17. The reconciler logged
+# "D6: /mnt/primary/D6 is NOT mounted" — never "ZOMBIE MOUNT" — then failed the
+# plain `systemctl start` three times and hit the flap cap. Two distinct bugs,
+# both fixed here:
+#
+#   1. The zombie branch was gated behind `mountpoint -q`, which STATS the path.
+#      On a shut-down XFS that stat returns EIO, so `mountpoint -q` said "not
+#      mounted" and the zombie branch was skipped entirely. The detector was
+#      defeated by the very fault it was written to catch. Now `findmnt` reads
+#      the kernel mount table instead, which cannot fail on dead I/O.
+#
+#   2. Recovery needs a `-o nouuid` fallback. `umount -l` is lazy: it detaches
+#      the mountpoint but defers releasing the superblock until the last
+#      reference drops, and mergerfs holding the branch keeps it alive. XFS then
+#      rejects the remount with "Filesystem has duplicate UUID … - can't mount".
+#      Manual recovery on 2026-08-24 needed exactly that flag.
+#
+# The old failure string, "device not ready / unreadable", was actively
+# misleading in both cases — the device was healthy and enumerated the whole
+# time. It now points at the kernel log instead of blaming the hardware.
+#
 # Note: mergerfs picks up a branch mounted underneath it live — `mnt-backup-all`
 # was never restarted on 2026-08-16 and went from 448G to the full 22T the
 # moment the four branch mounts came up. So remounting the member is sufficient;
@@ -70,6 +93,9 @@
 #  - Health is probed with `ls -A` (readdir), not `mountpoint`/statfs. That
 #    choice is the whole point: the 2026-08-17 zombie satisfied both of the
 #    cheap checks while every actual read returned EIO.
+#  - "Is it mounted?" is answered by `findmnt` (/proc/self/mountinfo), never by
+#    `mountpoint`. See the 2026-08-24 note below: `mountpoint` stats the path,
+#    and that stat itself can return EIO, so it reports a zombie as absent.
 #  - Write-test gate: success is only declared after recreating the
 #    `.pool-member` sentinel succeeds, proving the remount is writable (not a
 #    read-only / erroring remount).
@@ -186,6 +212,42 @@ let
       }
       trap publish_health EXIT
 
+      # `mountpoint -q` STATS the path, and a shut-down XFS returns EIO from
+      # that stat — so the zombie the module exists to catch read as "not
+      # mounted" and skipped the zombie branch entirely (2026-08-24, below).
+      # findmnt parses /proc/self/mountinfo, a pure kernel table, and never
+      # touches the filesystem, so it stays truthful when every I/O is failing.
+      is_mounted() {  # is_mounted <path>
+        findmnt -rno TARGET "$1" > /dev/null 2>&1
+      }
+
+      # After `umount -l` the kernel may still hold the shut-down superblock:
+      # the unmount is LAZY — it detaches the mountpoint but defers releasing
+      # the superblock until the last reference drops, and mount.fuse.mergerfs
+      # holding the branch is enough to keep it alive. XFS then refuses to mount
+      # the very same filesystem again:
+      #     XFS (sdm1): Filesystem has duplicate UUID <uuid> - can't mount
+      # That is neither corruption nor a real collision, and `-o nouuid` is the
+      # documented remedy. Gated on having cleared the zombie OURSELVES in this
+      # run, so the check can only ever be skipped against a corpse we created —
+      # never against a genuinely duplicated filesystem.
+      # Source and type come from FSTAB (`findmnt -s`), not from
+      # `systemctl show -p What`: for an active unit the latter reports the
+      # RESOLVED device (/dev/sdm1) rather than the stable by-label/by-uuid path,
+      # and after a re-enumeration that letter is exactly what went stale. The
+      # fstab entry always names the persistent symlink, which points at whatever
+      # device the drive came back as.
+      try_nouuid_mount() {  # try_nouuid_mount <pool> <member> <mp>
+        local src fstype
+        src=$(findmnt -sn -o SOURCE "$3" 2>/dev/null || true)
+        fstype=$(findmnt -sn -o FSTYPE "$3" 2>/dev/null || true)
+        [ -n "$src" ] || return 1
+        [ "$fstype" = "xfs" ] || return 1
+        [ -e "$src" ] || return 1
+        echo "$1/$2: remount rejected after clearing the zombie — the lazily-unmounted superblock is still pinned; retrying with '-o nouuid'"
+        mount -t xfs -o nouuid "$src" "$3"
+      }
+
       # Count a failed recovery and escalate exactly once per episode. The
       # counter is cleared whenever the member is healthy again, so a new
       # outage gets a new notification.
@@ -232,7 +294,11 @@ let
         #   healthy — mounted and answers   -> nothing to do
         #   zombie  — mounted, definite I/O error -> clear it, then remount
         #   slow    — mounted, no answer in time  -> AMBIGUOUS, leave it alone
-        if mountpoint -q "$mp"; then
+        # Tracks whether WE cleared a zombie for this member in this run; gates
+        # the `-o nouuid` fallback below.
+        cleared_zombie=0
+
+        if is_mounted "$mp"; then
           # Capture the probe status explicitly: `rc=$?` after a bare `if` would
           # read 0, because an `if` whose branch is not taken exits zero.
           rc=0
@@ -256,6 +322,7 @@ let
               "zombie mount detected but 'umount -l' failed — cannot recover automatically"
             continue
           fi
+          cleared_zombie=1
           echo "$pool/$d: zombie mount cleared — proceeding to remount"
         fi
 
@@ -289,13 +356,23 @@ let
         fi
 
         echo "$pool/$d: attempting 'systemctl start $unit'"
+        nouuid_used=0
         if ! timeout ${toString mountTimeout} systemctl start "$unit"; then
-          note_failure "$pool" "$d" "$fails" \
-            "'systemctl start $unit' failed (device not ready / unreadable)"
-          continue
+          # Only a zombie we just cleared can leave a pinned superblock behind,
+          # so that is the single case worth a second attempt.
+          if [ "$cleared_zombie" -eq 1 ] && try_nouuid_mount "$pool" "$d" "$mp"; then
+            nouuid_used=1
+          else
+            # Deliberately does NOT claim the device is unreadable: on
+            # 2026-08-24 this string sent the on-call reader after a healthy
+            # drive when the real blocker was a mount the kernel had refused.
+            note_failure "$pool" "$d" "$fails" \
+              "'systemctl start $unit' failed — the device may be absent, or the kernel refused the mount; check 'journalctl -k' for its reason before assuming bad hardware"
+            continue
+          fi
         fi
 
-        if ! mountpoint -q "$mp"; then
+        if ! is_mounted "$mp"; then
           note_failure "$pool" "$d" "$fails" \
             "start returned 0 but $mp is still not a mountpoint"
           continue
@@ -313,9 +390,19 @@ let
         record_health "$pool" "$d" 1
         echo "$now" >> "$log"
         count=$(( recent + 1 ))
+        # A `-o nouuid` recovery is NOT equivalent to a normal one: it is a
+        # manual mount outside the unit, and the pinned corpse survives until
+        # reboot, so any further drop of this member will fail the plain fstab
+        # mount the same way. Say so rather than reporting a clean heal.
+        nouuid_note=""
+        if [ "$nouuid_used" -eq 1 ]; then
+          nouuid_note=" NOTE: recovered with '-o nouuid' because the previous superblock was still pinned — this is a manual mount and the stale superblock persists until a REBOOT, so another drop before then will not self-heal."
+          echo "$pool/$d: recovered via '-o nouuid' — a reboot is needed to clear the stale superblock"
+        fi
+
         echo "$pool/$d: auto-remounted OK (occurrence $count of ${toString maxPerDay} in 24 h)"
         gromit-notify "Pool drive auto-remounted" \
-          "$pool/$d ($mp) dropped off the bus and was automatically remounted — occurrence $count of ${toString maxPerDay} allowed in 24 h. $poolMount is whole again." \
+          "$pool/$d ($mp) dropped off the bus and was automatically remounted — occurrence $count of ${toString maxPerDay} allowed in 24 h. $poolMount is whole again.$nouuid_note" \
           low "floppy_disk,white_check_mark" || true
       done
     '';
