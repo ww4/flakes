@@ -96,5 +96,17 @@ in
     allowedUDPPorts = [ 53 ];
   };
 
+  # Same opening on enp6s0u1, the standby USB NIC (see networking.nix). This is
+  # the rule that matters most in a NIC swap: DNS here serves the whole LAN via
+  # the router's forwarder, so losing :53 does not merely degrade gromit — it
+  # takes name resolution away from every device in the house, which presents as
+  # "the internet is down" rather than as a gromit fault. Still interface-scoped
+  # rather than global, preserving the deliberate split-horizon above:
+  # tailscale0 must NOT get the LAN-IP answer.
+  networking.firewall.interfaces."enp6s0u1" = {
+    allowedTCPPorts = [ 53 ];
+    allowedUDPPorts = [ 53 ];
+  };
+
   environment.systemPackages = [ dhcpProbe ];
 }
