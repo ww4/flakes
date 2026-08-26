@@ -63,6 +63,29 @@ let
       calendar = "*-*-01 09:00:00";
       tags = "floppy_disk,key";
     }
+    {
+      name = "nic-cable-test";
+      title = "Test: is it the cable or the motherboard port?";
+      message = ''
+        gromit's enp3s0 has been stuck at 100Mbps/Full since 2026-08-25 and a new cable did not fix it.
+        Move that same cable to the ASIX USB adapter (enp6s0u1) and read the speed:
+          cat /sys/class/net/enp6s0u1/speed
+        1000 -> cable and wall run are fine, the ONBOARD PORT is bad.
+        100  -> the port is fine, it is the CABLE or the in-wall run.
+        Firewall already mirrors enp3s0 onto enp6s0u1, so SSH, LAN DNS and Jellyfin-direct keep working on it.
+        DELETE THIS REMINDER once the answer is known.'';
+      url = "https://glances.rosemaryacres.com";
+      # ⚠️ ONE-SHOT BY INTENT, unlike every other entry here. The others guard
+      # recurring habits; this guards a single diagnostic that is blocked on a
+      # physical event (the box reaching its permanent home), which no calendar
+      # can express. Weekly rather than daily so it stays a nudge and not a nag,
+      # Saturday morning because that is when there is time to move a machine.
+      # It carries its own instructions so it is actionable without going back
+      # through the diagnosis, and it says to delete itself — if this is still
+      # firing in a month, the reminder is the thing that failed, not Chris.
+      calendar = "Sat *-*-* 10:00:00";
+      tags = "electric_plug,mag";
+    }
   ];
 
   mkService = r: lib.nameValuePair "reminder-${r.name}" {
