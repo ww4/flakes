@@ -178,7 +178,9 @@ def cmd_migrate_site(args) -> int:
             m = re.search(r"^TLDR:\s*(.+)$", body, re.M | re.I)
             tldr = m.group(1).strip() if m else ""
         kind_title = edition_mod.KINDS.get(row["kind"], {}).get("title", "Edition")
-        site_mod.write_edition(row["id"], kind_title, row["id"].rsplit("-", 1)[0],
+        # [:10] = the id's YYYY-MM-DD prefix; rsplit broke on two-segment
+        # kinds like brief-monday (see edition.py publish()).
+        site_mod.write_edition(row["id"], kind_title, row["id"][:10],
                                tldr, body, n_published=row["n_published"] or 0)
         con.execute("UPDATE editions SET tldr=? WHERE id=?", (tldr, row["id"]))
         n_ed += 1

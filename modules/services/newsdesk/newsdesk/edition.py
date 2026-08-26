@@ -320,7 +320,11 @@ def publish(con: sqlite3.Connection, kind: str, judged_md: str, *,
     # the search index. This used to be ~110 lines of hand-rolled HTML that had
     # accreted one reasonable increment at a time; see site.py.
     site.write_edition(
-        eid, spec["title"], eid.rsplit("-", 1)[0], tldr,
+        # Date = the id's fixed YYYY-MM-DD prefix. rsplit("-", 1) broke on the
+        # first two-segment kind (2026-08-24-brief-monday -> "2026-08-24-brief",
+        # invalid TOML date) and one bad front matter fails the ENTIRE zola
+        # build — the site silently kept serving the previous edition.
+        eid, spec["title"], eid[:10], tldr,
         f"{html_md}\n\n{footer_md}",
         n_published=len(published_ids), n_reads=len(read_ids),
         had_event="what happened" in judged_md.lower())
