@@ -17,14 +17,30 @@
 # Every notification carries: tracker name, content focus, signup type, whether
 # Prowlarr can even index it, and the one-line reason for the verdict.
 #
-# ⚠️ THERE IS NO TORRENT COUNT, and that is deliberate — Chris asked for one and
-# no honest source exists. opentrackers.org posts carry no stats (checked across
-# a full 20-item feed) and the tracker sites are login-gated (seedcore.net
-# answers 302/403 anonymously). Rather than fabricate a number or scrape behind
-# a login, fit is judged on evidence that is real and local: Prowlarr's catalog
-# of 625 supported indexers, which states each tracker's content focus, language
-# and type. "Is it in Prowlarr at all" is the honest available size proxy — a
-# tracker too small or obscure to have a definition is reported as such.
+# ⚠️ SIZE COMES FROM THE POST, VIA AN LLM — corrected 2026-08-25. An earlier
+# revision of this module claimed no honest source for torrent counts existed.
+# That was wrong: r/OpenSignups posts carry a stats block (18 of 19 real
+# announcements), and it was sitting in the Atom <content> this module already
+# fetched. Only opentrackers.org lacks stats; that finding was over-generalised
+# onto Reddit after inspecting titles and never bodies.
+#
+# The counts are extracted by `claude -p` (Sonnet), not a regex, because these
+# blocks are free-form and emoji-laden. A proximity regex over them is not just
+# imprecise, it is confidently wrong: measured against the live feed it read
+# Seedpool as "4.19 torrents / 230,050 users" — the first being its 4.19 PiB
+# size and the second a per-category TV-show count — and read minimum-ratio
+# requirements as tracker sizes. Sonnet got all of those right, converted
+# PiB→TiB correctly, and invented nothing on a post with no stats.
+#
+# EVERY EXTRACTED NUMBER IS VALIDATED before use — type, physical range,
+# integrality for counts, and a mean-torrent-size cross-check that catches a
+# confidently-paired hallucination. A field that fails is dropped and reported
+# as "not stated", which is always safe. See tracker-signup-extract.py.
+#
+# The LLM also answers the one question no tag lookup gets right: a tracker run
+# by a Romanian team whose content and site are English is an ENGLISH tracker.
+# Prowlarr's `language: ro-RO` describes the operators, and trusting it is what
+# made this module skip SeedCore for a reason that was not true.
 #
 # ⚠️ Use the Prowlarr /api/v1/indexer/schema API, NOT /var/lib/prowlarr/
 # Definitions. The directory holds only the YAML (Cardigann) indexers; the API
@@ -67,6 +83,14 @@ let
 
   watchJson = pkgs.writeText "tracker-watch.json" (builtins.toJSON watchlist);
   classifier = ./tracker-signup-classify.py;
+  extractor = ./tracker-signup-extract.py;
+
+  # Size gates in torrents, used only for trackers in a category already
+  # covered. A tracker that fills the books/audiobooks gap is taken at any
+  # size. These are judgement calls, deliberately surfaced here so they can be
+  # argued about — which is the whole point of extracting real numbers.
+  minTorrents = 5000;       # below this, not worth an account at all
+  notableTorrents = 50000;  # below this, not worth ANOTHER general tracker
 
   watcher = pkgs.writeShellApplication {
     name = "tracker-signup-watch";
@@ -148,19 +172,24 @@ let
         printf '%s' "$body" \
           | CATALOG_FILE="$CATALOG" LINEUP_JSON="$LINEUP_JSON" \
             WATCHLIST_JSON="$(cat ${watchJson})" \
+            SEEN_FILE="$SEEN" EXTRACTOR=${extractor} \
+            MIN_TORRENTS=${toString minTorrents} \
+            NOTABLE_TORRENTS=${toString notableTorrents} \
             python3 ${classifier} "$1" > "$WORK/out.tsv" || true
 
-        while IFS="$(printf '\t')" read -r k verdict reason name focus signup prowlarr; do
+        while IFS="$(printf '\t')" read -r k verdict reason name focus signup prowlarr stats hnr; do
           [ -n "$k" ] || continue
           if [ "$verdict" = "SKIP" ]; then
             echo "SKIP  $name — $reason"
             continue
           fi
           prio=default; [ "$verdict" = "UNKNOWN" ] && prio=low
-          echo "$verdict  $name — $reason"
+          echo "$verdict  $name — $reason  [$stats]"
           alert "$k" "$prio" "$verdict: $name signups OPEN" \
             "$name — $reason.
+Size: $stats
 Focus: $focus
+Seeding rules: $hnr
 Signup: $signup
 Prowlarr: $prowlarr
 Source: $2$PROWLARR_NOTE"
@@ -188,14 +217,28 @@ in
     description = "Notify when a WORTHWHILE private tracker opens public signup";
     serviceConfig = {
       Type = "oneshot";
-      DynamicUser = true;
+      # NOT DynamicUser: `claude -p` authenticates with the claude user's
+      # subscription OAuth credentials under /home/claude, exactly as the
+      # newsdesk reader and the sentinel diagnosis stage do. A dynamic user has
+      # no such profile and every extraction would fail.
+      User = "claude";
       StateDirectory = "tracker-signup-watch";
-      Environment = "STATE_DIR=/var/lib/tracker-signup-watch";
+      Environment = [
+        "STATE_DIR=/var/lib/tracker-signup-watch"
+        "HOME=/home/claude"
+        # PATH is set wholesale because `claude` lives in the per-user profile
+        # and is not on the default unit PATH. Setting Environment=PATH defeats
+        # the systemd `path` option, so everything the script needs is listed.
+        "PATH=/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin"
+      ];
       # systemd reads this as root and drops a copy into $CREDENTIALS_DIRECTORY
-      # readable only by this unit — so the watcher gets the Prowlarr API key
-      # without granting it access to /var/lib/prowlarr (0750 chris:users) and
-      # without a group membership or a bind mount.
+      # readable only by this unit — so the Prowlarr API key arrives without
+      # depending on the claude user's group membership on /var/lib/prowlarr.
       LoadCredential = "prowlarr-config:/var/lib/prowlarr/config.xml";
+      # An LLM extraction is minutes, not seconds, when several candidates are
+      # new at once; the default has no timeout but a stuck run should not sit
+      # forever holding the timer's slot.
+      TimeoutStartSec = "30min";
       ExecStart = "${watcher}/bin/tracker-signup-watch";
     };
   };
