@@ -193,18 +193,46 @@ let
       # the torrent." So ratioAlt is correct at 1.0 — do NOT copy Seedpool's 0.
       ratioAlt = 1.0;
 
-      withinDays = 0;
-      # "no exceptions" — no published <10% exemption of the kind DigitalCore
-      # and Seedpool grant, so every torrent owes from the first byte.
-      minProgress = 0;
+      # ⚠️ CORRECTED 2026-08-26 from SeedCore's own H&R settings page, which
+      # Chris read off the site after the first cut of this entry was written
+      # from the signup announcement alone. The announcement's "no exceptions"
+      # qualifies the seedtime/ratio rule; it does NOT mean there are no
+      # thresholds. Two values were wrong, in opposite directions.
+      #
+      # SeedCore runs UNIT3D (the Prowlarr definition targets UNIT3D's
+      # torrent_api / TorrentController), so its H&R fields map to this module:
+      #   "Grace Period: 20 days"              -> withinDays  (deadline to BANK)
+      #   "Download buffer tolerance: 90%"     -> minProgress (obligation gate)
+      #   "Minimum Ratio (Bypass): 1.0"        -> ratioAlt    (confirms 1.0)
+      #   "Minimum required Seedtime: 3 days"  -> seedSeconds (confirms 3d)
+      withinDays = 20;
 
-      # ⚠️ UNKNOWN, not measured: SeedCore publishes no offline/disconnect grace
-      # window. 0 is the conservative reading — it alerts at the earliest
-      # possible point rather than inventing a tolerance the site never granted.
-      # If this proves noisy in practice, raise it from OBSERVED behaviour, not
-      # by analogy with another tracker.
+      # "Below this threshold H&R does not apply" — the obligation attaches only
+      # at >=90% downloaded. Far higher than DigitalCore's and Seedpool's 10%.
+      # Was 0, which attached an obligation from the first byte: a FALSE
+      # POSITIVE (noisy, safe direction) but still wrong.
+      minProgress = 0.90;
+
+      # Still 0, but now for a stated reason rather than as a guess: SeedCore's
+      # H&R page publishes no offline/announce tolerance at all. Its 20-day
+      # grace is a window to SATISFY the requirement (withinDays above), not a
+      # licence to be disconnected — those are different clocks, and conflating
+      # them would tolerate 20 days offline. Raise this only from OBSERVED
+      # behaviour.
       graceSeconds = 0;
+
+      # "Maximum warnings allowed: 3", "Warning expiration: 9999 days" — i.e.
+      # warnings are effectively permanent and there is no cure window of the
+      # DigitalCore kind, so 0 is correct rather than merely a default.
       cureDays = 0;
+
+      # Account level, NOT visible from qBittorrent and deliberately not
+      # modelled: "Site Minimum Ratio 0.40 (required to be able to download
+      # torrents)" is an account-wide gate, the same shape as Seedpool's
+      # account-wide 1:1. A client-side ratio sum would be worse than nothing —
+      # torrents removed from the client still count on the tracker, so the
+      # local figure can only ever look BETTER than reality. Check the site.
+      # Also account level: a pre-warning notification lands 7 days out.
 
       # Account added 2026-08-26 and deliberately wired into Prowlarr at
       # priority 30 — BELOW every public tracker — so grabs (and therefore new
