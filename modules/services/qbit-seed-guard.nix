@@ -172,6 +172,45 @@ let
       # client still count against the account on the tracker, so the local
       # figure can only ever look BETTER than reality. Check the site.
     }
+    {
+      id = "seedcore";
+      label = "SeedCore";
+      # Announce host CONFIRMED 2026-08-26, not assumed: a .torrent pulled
+      # through Prowlarr bencode-decodes to
+      #   announce = http://seedcore.net/announce/<passkey>
+      # single tier, no alternates in announce-list. Checked because of the
+      # Seedpool precedent — an unmatched rule reports total=0, which is
+      # indistinguishable from "healthy, nothing owed", so a wrong pattern here
+      # fails silently in the dangerous direction. (Note the announce is plain
+      # http://, unlike Seedpool's https:// — irrelevant to the match, but worth
+      # not being surprised by.)
+      match = "seedcore\\.net";
+      seedSeconds = 3 * 24 * 3600;   # 3 days
+
+      # Unlike Seedpool, the 1.0 ratio here IS a genuine per-torrent route. The
+      # site states it as a disjunction: "Minimum seed time is 3 days or with a
+      # ratio of 1.0, no exceptions, as one of them is achieved, you can delete
+      # the torrent." So ratioAlt is correct at 1.0 — do NOT copy Seedpool's 0.
+      ratioAlt = 1.0;
+
+      withinDays = 0;
+      # "no exceptions" — no published <10% exemption of the kind DigitalCore
+      # and Seedpool grant, so every torrent owes from the first byte.
+      minProgress = 0;
+
+      # ⚠️ UNKNOWN, not measured: SeedCore publishes no offline/disconnect grace
+      # window. 0 is the conservative reading — it alerts at the earliest
+      # possible point rather than inventing a tolerance the site never granted.
+      # If this proves noisy in practice, raise it from OBSERVED behaviour, not
+      # by analogy with another tracker.
+      graceSeconds = 0;
+      cureDays = 0;
+
+      # Account added 2026-08-26 and deliberately wired into Prowlarr at
+      # priority 30 — BELOW every public tracker — so grabs (and therefore new
+      # 3-day obligations) stay rare while D6's USB cable and the 100Mbps
+      # ethernet link are unresolved. That is a Prowlarr-DB setting, not nix.
+    }
   ];
 
   hnrJq = ./qbit-hnr.jq;
