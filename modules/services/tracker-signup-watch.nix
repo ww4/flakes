@@ -213,6 +213,20 @@ Source: $2$PROWLARR_NOTE"
 
 in
 {
+  # ⚠️ Left over from the DynamicUser era. When the unit moved to User=claude,
+  # systemd migrated /var/lib/private/tracker-signup-watch out to
+  # /var/lib/tracker-signup-watch but kept the OLD dynamic UID on the directory
+  # and its contents (65534), so the very next run died on
+  # `touch /var/lib/tracker-signup-watch/seen: Permission denied`. systemd only
+  # chowns a StateDirectory it creates itself, not one it inherits — so state
+  # ownership has to be asserted here. `Z` is recursive and the `-` mode leaves
+  # each file's existing permissions alone; it only fixes the owner. Keeping the
+  # existing `seen` file matters: losing it re-alerts on every candidate already
+  # reported.
+  systemd.tmpfiles.rules = [
+    "Z /var/lib/tracker-signup-watch - claude users -"
+  ];
+
   systemd.services.tracker-signup-watch = {
     description = "Notify when a WORTHWHILE private tracker opens public signup";
     serviceConfig = {
