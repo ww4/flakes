@@ -31,7 +31,18 @@ import html
 import json
 import os
 import re
+import subprocess
 import sys
+
+# Size gates, in torrents. A tracker in a category we already cover has to be
+# big enough to be worth another account and another set of H&R obligations;
+# one that fills the books/audiobooks gap is worth taking at any size. Both are
+# tunable from the module -- the right bar is a judgement call, and the point
+# of extracting real numbers is that it can now be argued about with evidence.
+MIN_TORRENTS = int(os.environ.get("MIN_TORRENTS", "5000"))
+NOTABLE_TORRENTS = int(os.environ.get("NOTABLE_TORRENTS", "50000"))
+
+EXTRACTOR = os.environ.get("EXTRACTOR", "")
 
 # --- fit policy -----------------------------------------------------------
 # Categories that are simply not what Chris collects. Hard reject: these are
@@ -237,16 +248,16 @@ def classify(name, cats, defn, lineup, watchlist, kind, prowlarr_ok):
     if catset & GAP:
         return "RECOMMEND", "books/audiobooks - the one gap in the lineup"
 
-    desc, lang = (defn[1], defn[2]) if defn else ("", "")
+    desc = defn[1] if defn else ""
     if re.search(r"audiobook|e-?book|e-?learning|comics|magazines",
                  desc, re.I):
-        return "RECOMMEND", "definition says books/audiobooks - fills the gap"
+        return "WANTED", "definition says books/audiobooks - fills the gap"
 
-    if lang and not lang.lower().startswith("en"):
-        return "SKIP", "non-English tracker (%s) - little English movie/TV" % lang
-    if catset & FOREIGN_TAGS:
-        tag = sorted(catset & FOREIGN_TAGS)[0]
-        return "SKIP", "region-skewed (%s) - little English movie/TV" % tag
+    # NOTE: deliberately no language decision here. Prowlarr's `language` field
+    # and the feed's region tags describe who RUNS a tracker, not what is on
+    # it -- SeedCore is tagged ro-RO while its content and site are English,
+    # and skipping on that tag was wrong twice. Content language is decided
+    # after extraction, from what the announcement itself says.
 
     # Requires a REAL saturated category, not merely the absence of anything
     # else: a post tagged only "open signup" carries no content information at
@@ -259,13 +270,93 @@ def classify(name, cats, defn, lineup, watchlist, kind, prowlarr_ok):
     if not is_saturated and desc_tokens:
         is_saturated = (desc_tokens & SATURATED) and desc_tokens <= (SATURATED | noise)
     if is_saturated:
-        if not prowlarr_ok:
-            return "UNKNOWN", "general/movie/TV, but Prowlarr was unreachable - cannot confirm we already have it"
-        return "SKIP", ("general/movie/TV tracker - already covered by %d private "
-                        "tracker(s)") % len(lineup)
+        return "CANDIDATE", "general/movie/TV - size and language decide it"
 
-    # Nothing matched with confidence. Notify rather than swallow a live window.
-    return "UNKNOWN", "could not classify confidently - reporting rather than dropping"
+    # Nothing matched from the feed alone. Worth a look, and worth the numbers.
+    return "CANDIDATE", "could not classify from the feed alone"
+
+
+def final_verdict(stage, reason, stats, lineup, prowlarr_ok):
+    """Decide using the extracted stats. Never silently drops a live window.
+
+    `stage` is the prescreen outcome: WANTED (watchlisted, or fills the
+    books/audiobooks gap -- taken at any size) or CANDIDATE (needs numbers).
+    """
+    lang = (stats.get("language") or "").strip()
+    torrents = stats.get("torrents")
+
+    # Language as the announcement states it, not as a tag describes the staff.
+    if lang and not re.match(r"(?i)english|en$|en[-_]", lang):
+        return "SKIP", "content language is %s - little English movie/TV" % lang
+
+    if stage == "WANTED":
+        return "RECOMMEND", reason
+
+    if torrents is None:
+        # Distinguish "the post states no size" from "we could not ask".
+        # Reporting the former when the latter is true sends the reader after
+        # the wrong fault -- the same misattribution that cost real debugging
+        # time in pool-autoremount's "device not ready" message.
+        why = ("could not extract stats (extractor unavailable)"
+               if stats.get("_extractor_failed")
+               else "no size stated in the post")
+        if not prowlarr_ok:
+            why += "; Prowlarr also unreachable"
+        return "UNKNOWN", why + " - reporting rather than dropping"
+
+    if torrents < MIN_TORRENTS:
+        return "SKIP", ("only %s torrents - too small to be worth an account"
+                        % format(torrents, ","))
+    if torrents < NOTABLE_TORRENTS:
+        return "SKIP", ("%s torrents - below the %s bar for another general "
+                        "tracker (already have %d private)"
+                        % (format(torrents, ","), format(NOTABLE_TORRENTS, ","),
+                           len(lineup)))
+    return "RECOMMEND", ("%s torrents, English - large enough to add on top of "
+                         "%d private tracker(s)"
+                         % (format(torrents, ","), len(lineup)))
+
+
+def extract_stats(body):
+    """Run the LLM extractor. Returns {} on any failure -- never raises.
+
+    Called only for candidates that survived the cheap deterministic screen,
+    so adult/sports/paid/already-held trackers cost nothing at all.
+    """
+    if not EXTRACTOR or not body:
+        return {"_extractor_failed": True}
+    try:
+        proc = subprocess.run([sys.executable, EXTRACTOR], input=body,
+                              capture_output=True, text=True, timeout=300)
+        if proc.stderr:
+            sys.stderr.write(proc.stderr)
+        if proc.returncode != 0 or not proc.stdout.strip():
+            sys.stderr.write("classify: extractor exited %d with no result\n"
+                             % proc.returncode)
+            return {"_extractor_failed": True}
+        return json.loads(proc.stdout)
+    except (subprocess.TimeoutExpired, OSError, ValueError) as e:
+        sys.stderr.write("classify: extractor unavailable (%s)\n" % e)
+        return {"_extractor_failed": True}
+
+
+def render_stats(stats):
+    """One-line human summary. Says 'not stated' rather than implying zero."""
+    if not stats:
+        return "not stated in the post"
+    bits = []
+    if stats.get("torrents") is not None:
+        bits.append("%s torrents" % format(stats["torrents"], ","))
+    if stats.get("users") is not None:
+        bits.append("%s users" % format(stats["users"], ","))
+    if stats.get("size_tib") is not None:
+        bits.append("%.5g TiB" % stats["size_tib"])
+    if stats.get("seeders") is not None:
+        s = "%s seeders" % format(stats["seeders"], ",")
+        if stats.get("leechers") is not None:
+            s += "/%s leechers" % format(stats["leechers"], ",")
+        bits.append(s)
+    return " | ".join(bits) if bits else "not stated in the post"
 
 
 def main():
@@ -284,6 +375,16 @@ def main():
     except ValueError:
         watchlist = []
 
+    # Read the caller's dedup list so an already-alerted candidate never costs
+    # a second LLM call. The caller still owns notification dedup; this is
+    # purely a cost gate, and a missing file simply means "nothing seen yet".
+    already_seen = set()
+    try:
+        with open(os.environ.get("SEEN_FILE", ""), "r", encoding="utf-8") as fh:
+            already_seen = {ln.strip() for ln in fh if ln.strip()}
+    except OSError:
+        pass
+
     for title, body, cats, link in parse_items(sys.stdin.read()):
         if not title or not is_announcement(title, body, cats):
             continue
@@ -294,6 +395,21 @@ def main():
         kind = signup_kind(title, cats)
         verdict, reason = classify(name, cats, defn, lineup, watchlist, kind,
                                    prowlarr_ok)
+
+        # Two-phase by design. The cheap deterministic screen above rejects
+        # adult/sports/paid/already-held trackers for free; only what survives
+        # is worth an LLM call. Measured on the live feeds that is 2 of 22, so
+        # the extractor runs on the handful that could actually matter.
+        stats = {}
+        if verdict in ("WANTED", "CANDIDATE"):
+            seen_key = "%s:%s" % (source, norm(title))
+            if seen_key in already_seen:
+                # Already alerted on; re-extracting would spend tokens to
+                # re-derive a decision nobody will be shown again.
+                continue
+            stats = extract_stats(body)
+            verdict, reason = final_verdict(verdict, reason, stats, lineup,
+                                            prowlarr_ok)
 
         # Focus: prefer Prowlarr's curated description, fall back to the post's
         # own "is a Private Torrent Tracker for X" line, then to categories.
@@ -307,6 +423,11 @@ def main():
             focus = m.group(1).strip() if m else (", ".join(cats[:4]) or "unstated")
             focus = re.sub(r"\s+[A-Z]$", "", focus)
 
+        # Prefer the announcement's own content description over Prowlarr's
+        # curated one: the post says what is on the tracker today.
+        if stats.get("content"):
+            focus = stats["content"]
+
         row = [
             "%s:%s" % (source, norm(title)),
             verdict,
@@ -317,6 +438,8 @@ def main():
             ("supported" if defn else
              ("unknown - Prowlarr unreachable" if not prowlarr_ok
               else "NOT in Prowlarr - manual wiring only")),
+            render_stats(stats),
+            stats.get("hit_and_run") or "not stated",
         ]
         sys.stdout.write("\t".join(c.replace("\t", " ") for c in row) + "\n")
 
