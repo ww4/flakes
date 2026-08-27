@@ -19,6 +19,30 @@ def met($r):
   (.seeding_time >= $r.seedSeconds)
   or ($r.ratioAlt > 0 and .ratio >= $r.ratioAlt);
 
+# Does an H&R obligation attach to this torrent at all?
+#
+# An H&R is recorded against a SNATCH, not against a registration. A cross-seed
+# — the same data announced to a second tracker, added against files already on
+# disk and verified by recheck — pulls zero bytes off the wire, so the tracker
+# records no snatch and no obligation exists.
+#
+# This gate used to read `.progress >= minProgress`, but .progress is COMPLETION,
+# which is 1.0 for a cross-seed the moment its recheck passes — so every
+# cross-seed was counted as owing the full seed requirement it does not owe. The
+# rules table describes downloaded VOLUME ("torrents where you have downloaded
+# less than 10% are exempt"), so measure that instead.
+#
+# The `tags` clause is the conservative half. downloaded==0 alone would also
+# exempt a genuine snatch whose counter was lost (re-add, discarded resume data),
+# which would UNDER-report a real obligation — the failure that actually costs
+# ratio. So only a torrent we ourselves tagged `cross-seed` AND that has pulled
+# nothing is treated as obligation-free; if it ever does download bytes, it
+# starts counting again on its own.
+def has_obligation($r):
+  ((.size // 0) > 0)
+  and (((.tags // "") | test("(^|,) *cross-seed *(,|$)")) and ((.downloaded // 0) == 0) | not)
+  and (((.downloaded // 0) / .size) >= $r.minProgress);
+
 # Hours left to bank the requirement, for trackers that impose a deadline
 # window measured from download completion (RetroToon's "within 10 days").
 # null when the tracker has no such window.
@@ -47,13 +71,14 @@ def deadline_hours($r):
                | .hash ],
 
     per_tracker: [ $rules[] as $r
-      # minProgress gates whether an obligation attaches at all. DigitalCore's
+      # has_obligation gates whether an obligation attaches at all. DigitalCore's
       # rule reads "a torrent that you have started to download 10% or more",
       # so a barely-started torrent carries NO obligation and must not be
-      # reported at risk. 0 means "every torrent on this tracker counts".
+      # reported at risk. minProgress 0 means "every torrent you snatched on
+      # this tracker counts" — it does not sweep in cross-seeds.
       | ([ $all[]
            | select((.tracker // "") != "" and (.tracker | test($r.match)))
-           | select(.progress >= $r.minProgress) ]) as $ts
+           | select(has_obligation($r)) ]) as $ts
       | ([ $ts[] | select(met($r) | not) ]) as $unmet
       | {
           id:    $r.id,
