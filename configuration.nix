@@ -78,6 +78,7 @@
     ./modules/services/tracker-signup-watch.nix # low-freq: ntfy when a watched private tracker opens signup
     ./modules/services/snapraid.nix         # inert until parity drive arrives (enable = false)
     ./modules/services/pool-autoremount.nix # self-heals fusion members that drop off the USB bus
+    ./modules/services/disk-io-watch.nix    # counts kernel I/O errors + USB resets per device — the QUIET fault shape
     ./modules/services/arr.nix              # Prowlarr + Sonarr + Radarr + Jellyseerr + Gluetun + qBittorrent
     ./modules/services/qbit-vpn-watchdog.nix # self-heal the gluetun-IP-change qBit netns wedge (no more manual restarts)
     ./modules/services/qbit-seed-guard.nix  # recover missingFiles torrents after a pool outage + watch tracker H&R rules
