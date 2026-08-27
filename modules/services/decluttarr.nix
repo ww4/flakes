@@ -92,5 +92,29 @@ in
   systemd.services.docker-decluttarr = {
     after = [ "docker-network-arr.service" ];
     requires = [ "docker-network-arr.service" ];
+
+    # Bound the retries so a genuinely broken config (bad API key, missing
+    # secret) fails loudly as a failed unit instead of hot-looping forever.
+    # 5 tries in 10 min comfortably outlasts a gluetun restart while still
+    # converging on a real fault. StartLimit* live in [Unit], not [Service].
+    unitConfig = {
+      StartLimitIntervalSec = 600;
+      StartLimitBurst = 5;
+    };
+
+    serviceConfig = {
+      # ⚠️ decluttarr EXITS 0 when it cannot reach qBittorrent. With the default
+      # Restart=on-failure that clean exit is read as "finished successfully", so
+      # systemd never restarts it — and there is no timer to pick it back up. On
+      # 2026-08-25 a gluetun/qBit blip stopped it at 22:13 and it stayed down for
+      # ~41 h, silently: the unit was `inactive (dead)` with Result=success, which
+      # is indistinguishable from a healthy oneshot at a glance. It only came back
+      # because an unrelated comin deploy happened to restart the unit.
+      #
+      # This is a long-running daemon that should never exit for any reason, so
+      # the exit CODE must not gate the restart. Same idiom as drive-spindown.
+      Restart = lib.mkForce "always";
+      RestartSec = 30;
+    };
   };
 }
