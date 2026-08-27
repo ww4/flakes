@@ -2,24 +2,39 @@
 
 Reads a feed on stdin, writes one TAB-separated record per candidate to stdout:
 
-    key <TAB> verdict <TAB> reason <TAB> name <TAB> focus <TAB> signup <TAB> prowlarr
+    key  verdict  reason  name  focus  signup  prowlarr  stats  hnr  link
 
 The caller (tracker-signup-watch) dedups on `key` and notifies only for
 RECOMMEND and UNKNOWN. SKIP rows are journalled, never pushed.
+
+`link` is deliberately LAST: the caller parses rows with a shell `read`, where
+the final variable absorbs any trailing fields. Append new columns there, and
+keep a URL in that slot rather than free text.
 
 WHY THIS EXISTS: the bare watcher pinged for every open signup with nothing but
 a title, so most alerts were for adult/sports/regional trackers, paid "donation"
 signups, or trackers already in the lineup. Chris asked for the name, the size,
 a fit judgement, and a ping only when it is actually worth taking.
 
-ON TORRENT COUNTS -- deliberately absent, not forgotten. There is no honest
-source. opentrackers.org posts carry no stats (verified across a full 20-item
-feed), and the tracker sites themselves are login-gated (seedcore.net answers
-302/403 to anonymous fetches). Rather than fabricate a number or scrape behind
-a login, fit is judged on evidence that IS real and local: Prowlarr's 582
-bundled definitions, which state each tracker's content focus, language and
-type. A tracker too small or too obscure to have a Prowlarr definition is
-reported as such, which is the honest available proxy for "is this worth it".
+ON TORRENT COUNTS -- they come from the POST, extracted by an LLM.
+
+⚠️ This docstring used to assert the opposite: "deliberately absent... there is
+no honest source." That was WRONG, and Chris corrected it -- r/OpenSignups posts
+carry a stats block (18 of 19 real announcements), and it was sitting in the
+Atom <content> this script already fetched. The claim came from checking
+opentrackers.org, finding no stats there, and generalising onto Reddit after
+reading titles but never bodies. Only opentrackers genuinely lacks stats.
+
+Extraction is `claude -p` (Sonnet), not a regex, because the blocks are
+free-form and emoji-laden -- see tracker-signup-extract.py, which VALIDATES
+every number (type, physical range, integrality, and a mean-torrent-size
+cross-check) and drops anything that fails rather than guessing.
+
+Prowlarr's bundled definitions (via /api/v1/indexer/schema) still supply focus
+and support, but NOT language -- `language: ro-RO` describes the operators, and
+an English-content tracker run by a Romanian team is an English tracker. The
+LLM answers that, because trusting the tag is what made this script skip
+SeedCore for a reason that was not true.
 
 FAIL-OPEN BY DESIGN: anything that cannot be classified confidently emits
 UNKNOWN, which still notifies. A signup window is ~3 days; silently swallowing
