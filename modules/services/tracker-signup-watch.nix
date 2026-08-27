@@ -136,12 +136,18 @@ let
       # dedup + notify. Sends only the FIRST time a candidate is seen. On a
       # source's FIRST-EVER run (PRIME=1) it seeds the seen-list SILENTLY, so
       # Chris never gets a backfill dump of posts already in the feed.
-      alert() {  # $1=dedup-key $2=priority $3=title $4=body
+      alert() {  # $1=dedup-key $2=priority $3=title $4=body $5=click-url
         grep -qxF "$1" "$SEEN" && return 0
         echo "$1" >> "$SEEN"
         [ "''${PRIME:-0}" = "1" ] && return 0
-        curl -s --max-time 10 -H "Title: $3" -H "Tags: tada,inbox_tray" \
-          -H "Priority: $2" -d "$4" "$NTFY" >/dev/null || true
+        # Click: makes the whole notification tap through to the announcement
+        # thread. Sent ONLY when a url is present — an empty Click header is
+        # malformed rather than absent, so it must not be emitted blank.
+        hdrs=( -H "Title: $3" -H "Tags: tada,inbox_tray" -H "Priority: $2" )
+        if [ -n "''${5:-}" ]; then
+          hdrs+=( -H "Click: $5" )
+        fi
+        curl -s --max-time 10 "''${hdrs[@]}" -d "$4" "$NTFY" >/dev/null || true
       }
 
       # per-source failure counter → one health notice after 4 straight misses
@@ -177,7 +183,7 @@ let
             NOTABLE_TORRENTS=${toString notableTorrents} \
             python3 ${classifier} "$1" > "$WORK/out.tsv" || true
 
-        while IFS="$(printf '\t')" read -r k verdict reason name focus signup prowlarr stats hnr; do
+        while IFS="$(printf '\t')" read -r k verdict reason name focus signup prowlarr stats hnr link; do
           [ -n "$k" ] || continue
           if [ "$verdict" = "SKIP" ]; then
             echo "SKIP  $name — $reason"
@@ -192,7 +198,9 @@ Focus: $focus
 Seeding rules: $hnr
 Signup: $signup
 Prowlarr: $prowlarr
-Source: $2$PROWLARR_NOTE"
+Source: $2$PROWLARR_NOTE
+Post: ''${link:-no link in feed}" \
+            "$link"
         done < "$WORK/out.tsv"
 
         touch "$STATE/$4"

@@ -147,7 +147,41 @@ def parse_items(xml):
         body = re.sub(r"\s+", " ", body).strip()
         cats = [html.unescape(c).strip().lower() for c in re.findall(
             r"<category[^>]*>(?:<!\[CDATA\[)?([^<\]]+)", raw)]
-        yield title, body, cats, field("link").strip()
+        yield title, body, cats, entry_link(raw)
+
+
+def entry_link(raw):
+    """The permalink for one feed entry, from EITHER feed shape.
+
+    RSS puts the URL in element TEXT -- <link>https://...</link>. Atom puts it
+    in a self-closing ATTRIBUTE -- <link href="https://..." />. A text-only
+    regex returns "" for every Atom entry, which is exactly what happened: all
+    25 Reddit entries yielded an empty link, so the notification lost its "go
+    read the thread" tap target. An empty string is the nasty failure mode here
+    because it reads as "this post has no link" rather than "the parser cannot
+    see it".
+    """
+    m = re.search(r"<link(?:\s[^>]*)?>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</link>",
+                  raw, re.S)
+    if m and m.group(1).strip():
+        return html.unescape(m.group(1)).strip()
+
+    # Atom. rel="self" points back at the FEED, never at the post, so it must be
+    # excluded or every entry would link to the same subreddit listing.
+    fallback = ""
+    for tag in re.findall(r"<link\s[^>]*?/?>", raw):
+        href = re.search(r'href=["\']([^"\']+)["\']', tag)
+        if not href:
+            continue
+        rel = re.search(r'rel=["\']([^"\']+)["\']', tag)
+        rel = rel.group(1) if rel else ""
+        if rel == "self":
+            continue
+        url = html.unescape(href.group(1)).strip()
+        if rel in ("", "alternate"):
+            return url
+        fallback = fallback or url
+    return fallback
 
 
 def tracker_name(title):
@@ -440,6 +474,10 @@ def main():
               else "NOT in Prowlarr - manual wiring only")),
             render_stats(stats),
             stats.get("hit_and_run") or "not stated",
+            # LAST column on purpose: the consumer reads these with a shell
+            # `read`, where the final variable soaks up any trailing fields. A
+            # URL is the safest thing to put in that position.
+            link or "",
         ]
         sys.stdout.write("\t".join(c.replace("\t", " ") for c in row) + "\n")
 
