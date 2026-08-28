@@ -29,11 +29,22 @@
 #   2. An unguessable 128-bit path prefix, generated on the box (see below).
 #
 # The chain is:
-#   internet :443 → tailscaled (terminates TLS, prepends PROXY v2)
-#                 → nginx 127.0.0.1:8788 (real-IP + allowlist)
-#                 → homelab-mcp 127.0.0.1:8787
+#   internet :8443 → tailscaled (terminates TLS, prepends PROXY v2)
+#                  → nginx 127.0.0.1:8788 (real-IP + allowlist)
+#                  → homelab-mcp 127.0.0.1:8787
 #
-# Endpoint: https://gromit.<tailnet>.ts.net/<prefix>/mcp
+# Endpoint: https://gromit.<tailnet>.ts.net:8443/<prefix>/mcp
+#
+# ⚠️ THE FUNNEL PORT MUST NOT BE 443. Funnel offers 443/8443/10000, 443 is the
+# obvious pick, and it took nginx down across the whole box on first deploy.
+# `tailscale funnel --tls-terminated-tcp=<port>` makes tailscaled BIND
+# <tailnet-ip>:<port>; nginx binds the wildcard 0.0.0.0:443. A wildcard bind and
+# a specific-address bind of the same port collide, so nginx died with
+#   [emerg] bind() to 0.0.0.0:443 failed (98: Address already in use)
+# and, having Restart=always, sat in a restart loop taking EVERY vhost with it —
+# Forgejo included, which is the route config changes reach this box by.
+# Nothing about the symptom points here: the funnel reports healthy, and it is
+# nginx that looks broken.
 #
 # Why it exists: a chat in the Claude app has no filesystem and no route into
 # this network, so an insight from a phone conversation never reaches the
@@ -52,6 +63,10 @@ let
 
   port = 8787;        # the MCP server itself — loopback, never published
   proxyPort = 8788;   # nginx's PROXY-protocol listener, fed only by tailscaled
+
+  # The public Funnel port. 8443, NOT 443 — see the collision note in the header.
+  # Funnel permits 443/8443/10000 only, and 443 is nginx's.
+  funnelPort = 8443;
   spaceDir = "/var/lib/silverbullet";
 
   stateDir = "/var/lib/homelab-mcp";
@@ -223,9 +238,12 @@ in
         # $host, not $http_host: nginx strips the port from $host, so the
         # backend sees a bare "gromit.<tailnet>.ts.net". That is the form the
         # SDK's host allowlist has to match, and the reason server.py lists the
-        # bare hostname and not only the "host:*" wildcard — the wildcard alone
-        # matches nothing when the port is absent, which is every request that
-        # arrives on 443.
+        # bare hostname and not only the "host:*" wildcard.
+        #
+        # This is what makes the non-default funnel port survivable: a client
+        # hitting :8443 sends "Host: gromit.<tailnet>.ts.net:8443", $host drops
+        # the ":8443", and the bare entry matches. Switching this to $http_host
+        # would break the connector.
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -270,7 +288,7 @@ in
 
       ExecStart = ''
         ${pkgs.tailscale}/bin/tailscale funnel --yes --bg \
-          --proxy-protocol=2 --tls-terminated-tcp=443 \
+          --proxy-protocol=2 --tls-terminated-tcp=${toString funnelPort} \
           tcp://127.0.0.1:${toString proxyPort}
       '';
 
