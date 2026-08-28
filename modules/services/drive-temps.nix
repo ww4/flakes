@@ -28,12 +28,27 @@ let
     runtimeInputs = with pkgs; [ smartmontools jq gawk coreutils util-linux ];
     text = ''
       out="${textfileDir}/drive_temps.prom"
-      tmp="$out.$$"
+      # Dot-prefixed temp name so a leftover can never be mistaken for a real
+      # metric file, and so it sorts out of the way. The old name was
+      # "$out.$$" — see the cleanup below for why that mattered.
+      tmp="$(mktemp "${textfileDir}/.drive_temps.prom.XXXXXX")"
       # Per-device cumulative-I/O snapshot — used to tell whether a backup drive
       # is actively spinning before we risk waking it with a SMART read.
       state="${textfileDir}/.drive-iostat"
       newstate="$state.$$"
       : > "$newstate"
+
+      # ⚠️ Always remove the temp file. Without this, every failed run left one
+      # behind: 2,932 orphaned drive_temps.prom.<pid> files had accumulated by
+      # 2026-08-27, one per run since 2026-08-11.
+      cleanup() { rm -f "$tmp" "$newstate"; }
+      trap cleanup EXIT
+
+      # Sweep up the orphans left by the old "$out.$$" naming. Anchored to the
+      # exact legacy shape (digits only) so it can never match drive_temps.prom
+      # itself or any other module's file.
+      find "${textfileDir}" -maxdepth 1 -type f \
+        -regex '.*/drive_temps\.prom\.[0-9]+' -delete 2>/dev/null || true
 
       # Resolve the backup-pool by-ids to their current /dev names.
       backup_devs=""
@@ -95,8 +110,19 @@ let
           j=""
           for dt in "sat,auto" "sat" "usbjmicron" "usbjmicron,x" "usbsunplus" "usbprolific" "scsi" ""; do
             darg=""; [ -n "$dt" ] && darg="-d $dt"
+            # ⚠️ BOUNDED. A drive that has stopped answering (D1 on 2026-08-27:
+            # "Not Ready / Logical unit is in process of becoming ready",
+            # commands ageing out at 361s) makes smartctl block for minutes, and
+            # this loop tries EIGHT device-type candidates per drive. Runs were
+            # already taking 3.5 min against a 5-minute timer, so one sick drive
+            # is enough to make runs overlap and stack.
+            #
+            # `timeout` cannot kill a process wedged in uninterruptible D state,
+            # and is not meant to here — it releases the SCRIPT, which is what
+            # keeps the exporter's runtime bounded. A leftover D-state smartctl
+            # clears when the kernel gives up on the device.
             # shellcheck disable=SC2086
-            cand=$(smartctl $nflag -j -H -A -i $darg "$dev" 2>/dev/null) || true
+            cand=$(timeout 20 smartctl $nflag -j -H -A -i $darg "$dev" 2>/dev/null) || true
             if printf '%s' "''${cand:-}" | jq -e '(.temperature.current!=null) or ((.ata_smart_attributes.table // [] | length)>0) or (.smart_status.passed!=null)' >/dev/null 2>&1; then
               j="$cand"; break
             fi
@@ -120,8 +146,52 @@ let
             [ -n "$raw" ] && printf 'gromit_drive_%s{device="%s",model="%s"} %s\n' "$mname" "$name" "''${model:-unknown}" "$raw"
           done
         done
-      } > "$tmp" && mv "$tmp" "$out"
-      mv "$newstate" "$state"
+        # ⚠️ THE BUG THIS REPLACES. The block used to end on whatever the last
+        # drive's last attribute test happened to be, and publishing was gated
+        # on it:
+        #
+        #     } > "$tmp" && mv "$tmp" "$out"
+        #
+        # A compound block exits with the status of its LAST command. That was
+        # `[ -n "$raw" ] && printf ...` for attribute 199 (crc_errors) of the
+        # last device the glob iterates. USB bridges expose no ATA attribute
+        # table, so for a USB drive $raw is empty, the test is false, the block
+        # exits 1, and `&& mv` silently never runs.
+        #
+        # /dev/sd[a-z] ends at sdm — a USB drive. Only sda-sde (SATA) ever emit
+        # crc_errors. So the publish had become permanently gated on a test that
+        # could no longer be true, and drive_temps.prom froze at 2026-08-17
+        # 05:23 while the unit kept reporting "Finished / Deactivated
+        # successfully" every 5 minutes for TEN DAYS.
+        #
+        # Worse than no data: node_exporter kept serving the stale file, so
+        # Grafana saw plausible, unchanging temperatures. A frozen sensor reads
+        # as "steady and fine", so no threshold alert could ever fire.
+        #
+        # Two defences now. First, this `true` makes the block's exit status
+        # deterministic instead of an accident of the last drive's firmware.
+        true
+      } > "$tmp"
+
+      # Second, publish UNCONDITIONALLY and stamp the run. Never keep the last
+      # good file on failure: a stale metric that looks live is exactly what
+      # hid this for ten days. If a run collects nothing, the series must go
+      # empty and the timestamp must stop advancing, so the failure is loud.
+      # Count BEFORE reopening $tmp for append — reading and writing the same
+      # file in one block is SC2094 and genuinely racy.
+      reported=$(grep -c '^gromit_drive_temp_celsius' "$tmp" || true)
+      {
+        echo "# HELP gromit_drive_temps_last_run_seconds Unix time of the last completed drive-temps run. If this stops advancing the exporter is broken, even while temperatures still appear."
+        echo "# TYPE gromit_drive_temps_last_run_seconds gauge"
+        echo "gromit_drive_temps_last_run_seconds $(date +%s)"
+        echo "# HELP gromit_drive_temps_devices_reported Drives that returned a temperature this run. 0 means the read failed, not that the drives are cool."
+        echo "# TYPE gromit_drive_temps_devices_reported gauge"
+        echo "gromit_drive_temps_devices_reported ''${reported:-0}"
+      } >> "$tmp"
+
+      chmod 0644 "$tmp"
+      mv -f "$tmp" "$out"
+      mv -f "$newstate" "$state"
     '';
   };
 in
@@ -139,6 +209,12 @@ in
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${driveTemps}/bin/drive-temps-export";
+      # Backstop below the 5-minute timer interval, so a run that wedges anyway
+      # fails LOUDLY as a failed unit instead of silently overlapping the next
+      # one. The per-smartctl `timeout 20` should make this unreachable; it
+      # exists because "should" is what let this exporter publish nothing for
+      # ten days while reporting success.
+      TimeoutStartSec = "4min";
     };
   };
   systemd.timers.drive-temps = {
