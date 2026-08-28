@@ -174,6 +174,25 @@
           echo "bitcoind-guard: blocks dir empty — first run, allowing"
           exit 0
         fi
+        # Blocks present but the BLOCK INDEX is missing/absurdly small => the
+        # index was destroyed (2026-08-27: LevelDB GC'd it after a fresh manifest
+        # took over). A real index is 150-250 MB; what was left was ~67 KB.
+        # Starting here cannot succeed and only writes more junk.
+        if [ ! -s "$DD/blocks/index/CURRENT" ]; then
+          echo "bitcoind-guard: REFUSING — $DD/blocks exists but" >&2
+          echo "  blocks/index/CURRENT is missing. The block index is gone;" >&2
+          echo "  bitcoind cannot start without a -reindex." >&2
+          echo "  To authorise that reindex: sudo touch /var/lib/bitcoind-allow-fresh" >&2
+          exit 1
+        fi
+        idxsz=$(du -s --block-size=1M "$DD/blocks/index" 2>/dev/null | cut -f1)
+        if [ -n "''${idxsz:-}" ] && [ "$idxsz" -lt 20 ]; then
+          echo "bitcoind-guard: REFUSING — $DD/blocks/index is only ''${idxsz} MB." >&2
+          echo "  A real block index is 150-250 MB. This is a stub left by a" >&2
+          echo "  failed start, not a usable index. A -reindex is required." >&2
+          echo "  To authorise it: sudo touch /var/lib/bitcoind-allow-fresh" >&2
+          exit 1
+        fi
         # Blocks present but chainstate pointer missing => incomplete datadir.
         if [ ! -s "$DD/chainstate/CURRENT" ]; then
           echo "bitcoind-guard: REFUSING TO START — $DD/blocks exists but" >&2
