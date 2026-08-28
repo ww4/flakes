@@ -107,6 +107,89 @@
   systemd.services.bitcoind-bitcoin.after = [ "bitcoind-datadir-owner.service" ];
   systemd.services.bitcoind-bitcoin.requires = [ "bitcoind-datadir-owner.service" ];
 
+  # ─── Restart policy + a fail-closed datadir guard ────────────────────────
+  #
+  # ⚠️ WHY: on 2026-08-27 this cost the entire block index and forced a reindex.
+  #
+  # D6 dropped off USB at 19:24:49. mergerfs STAYS MOUNTED when a branch
+  # disappears (so RequiresMountsFor above cannot help), and D6 held the real
+  # chainstate — so bitcoind saw a datadir with blocks but no `chainstate/CURRENT`.
+  # It did what LevelDB does with a missing CURRENT: created a fresh, empty
+  # database. Then systemd restarted it, with `RestartSec` at the 100ms default
+  # and `StartLimitBurst=5` in 10s — all retries burned in **783 ms**.
+  #
+  # pool-autoremount had D6 back at 19:26:28, **54 seconds after bitcoind had
+  # already given up**. Later rounds (triggered by comin deploys) repeated it:
+  # 54 start attempts total, and LevelDB garbage-collected the real
+  # `blocks/index` as obsolete against the fresh manifest. The blocks survived;
+  # the index did not.
+  #
+  # So the restart policy did not merely fail to recover — it converted a
+  # 90-second storage blip into a multi-day rebuild. Two changes:
+  #
+  # 1. RestartSec=180s. pool-autoremount runs every 2 min and took ~99 s here,
+  #    so 3 min guarantees at least one full recovery cycle between attempts.
+  #    StartLimitIntervalSec widened to 30 min so five attempts can actually
+  #    space out instead of collapsing into one second.
+  systemd.services.bitcoind-bitcoin.serviceConfig.RestartSec = 180;
+  systemd.services.bitcoind-bitcoin.unitConfig.StartLimitIntervalSec = 1800;
+  systemd.services.bitcoind-bitcoin.unitConfig.StartLimitBurst = 5;
+
+  # 2. Fail CLOSED before bitcoind can touch a half-present datadir. The
+  #    discriminating signal is exactly the one that was missing that night:
+  #    `chainstate/CURRENT`. If blocks exist but that pointer does not, the
+  #    datadir is incomplete — refuse to start rather than let LevelDB
+  #    initialise a fresh database over it.
+  #
+  #    ⚠️ A legitimate `-reindex` also starts without chainstate/CURRENT, so the
+  #    guard is bypassable by an explicit, deliberate marker file. It must be a
+  #    conscious act, never a default.
+  systemd.services.bitcoind-bitcoin.serviceConfig.ExecStartPre =
+    let
+      # Read from config, NOT hardcoded — the datadir is moving to SSD, and a
+      # guard pointed at a stale path would silently pass on every start.
+      dataDir = config.services.bitcoind.bitcoin.dataDir;
+      guard = pkgs.writeShellScript "bitcoind-datadir-guard" ''
+        set -euo pipefail
+        DD="${dataDir}"
+        if [ -e /var/lib/bitcoind-allow-fresh ]; then
+          echo "bitcoind-guard: override marker present — allowing a fresh/reindex start"
+          exit 0
+        fi
+        # A datadir with no blocks at all is a legitimate first run.
+        if [ ! -d "$DD/blocks" ]; then
+          echo "bitcoind-guard: no blocks dir — first run, allowing"
+          exit 0
+        fi
+        # ⚠️ FAIL CLOSED on unreadable. "cannot read" and "is empty" produce the
+        # same empty string, and treating the first as the second is precisely
+        # how this class of fault hides — it is the mistake that ran through the
+        # whole 2026-08-27 investigation.
+        if ! ls -A "$DD/blocks" >/dev/null 2>&1; then
+          echo "bitcoind-guard: REFUSING — cannot read $DD/blocks (permissions or" >&2
+          echo "  a dead mount). That is NOT the same as an empty datadir." >&2
+          exit 1
+        fi
+        if [ -z "$(ls -A "$DD/blocks")" ]; then
+          echo "bitcoind-guard: blocks dir empty — first run, allowing"
+          exit 0
+        fi
+        # Blocks present but chainstate pointer missing => incomplete datadir.
+        if [ ! -s "$DD/chainstate/CURRENT" ]; then
+          echo "bitcoind-guard: REFUSING TO START — $DD/blocks exists but" >&2
+          echo "  chainstate/CURRENT is missing or empty. The datadir is incomplete" >&2
+          echo "  (a pool branch is probably absent). Starting now would let LevelDB" >&2
+          echo "  create a fresh database and garbage-collect the real one — this is" >&2
+          echo "  exactly what destroyed the block index on 2026-08-27." >&2
+          echo "  Fix the storage first. To force a genuine reindex:" >&2
+          echo "    sudo touch /var/lib/bitcoind-allow-fresh" >&2
+          exit 1
+        fi
+        echo "bitcoind-guard: datadir looks complete"
+      '';
+    in
+    lib.mkBefore [ "${guard}" ];
+
   # The mempool backend container (on a docker bridge, e.g. mempool-net) reaches
   # bitcoind RPC via the host gateway 172.17.0.1:8332. rpcbind=0.0.0.0 + the
   # rpcallowip above are necessary but NOT sufficient: nixos-fw default-drops the
