@@ -108,15 +108,32 @@ in
       RemainAfterExit = true;
     };
 
+    # Written to a temp file and moved into place, so ${prefixEnv} only ever
+    # exists fully-written and correctly-permissioned.
+    #
+    # The first version chmod'd in place after the redirect, and a failure
+    # between the two left a 0600 file that the NEXT run skipped, because the
+    # guard is `! -s` — non-empty means "already done". So the unit failed once,
+    # succeeded on retry, and the retry's success hid the fault. (What failed was
+    # `chown root:claude`: there is no `claude` GROUP on this box — that user's
+    # primary group is `users`. `set -e` then aborted before the chmod.)
+    #
+    # Root-only by design. systemd reads EnvironmentFile as PID 1, so the service
+    # gets it while running as claude, and nothing else needs it. Read it with
+    # `sudo cat`, as the header says.
     script = ''
       set -euo pipefail
       install -d -m 0755 -o root -g root ${stateDir}
       if [ ! -s ${prefixEnv} ]; then
         umask 077
+        tmp="$(${pkgs.coreutils}/bin/mktemp ${stateDir}/.path-prefix.XXXXXX)"
+        trap 'rm -f "$tmp"' EXIT
         printf 'HOMELAB_MCP_PATH_PREFIX=%s\n' \
-          "$(${pkgs.openssl}/bin/openssl rand -hex 16)" > ${prefixEnv}
-        chown root:claude ${prefixEnv}
-        chmod 0640 ${prefixEnv}
+          "$(${pkgs.openssl}/bin/openssl rand -hex 16)" > "$tmp"
+        chown root:root "$tmp"
+        chmod 0600 "$tmp"
+        mv "$tmp" ${prefixEnv}
+        trap - EXIT
         echo "generated a new path prefix"
       fi
     '';
