@@ -101,7 +101,7 @@
     ./modules/services/litestream.nix       # continuous SQLite replication of the vault to B2
     ./modules/services/silverbullet.nix     # markdown notes/tasks space — scheduling-assistant SoT
     ./modules/services/pim.nix              # plain-text calendar vdir + vdirsyncer (Nextcloud two-way, Google RO)
-    ./modules/services/homelab-mcp.nix      # MCP connector for Claude-in-the-app — LOOPBACK ONLY until Phase C
+    ./modules/services/homelab-mcp.nix      # MCP connector for Claude-in-the-app — public via Tailscale Funnel
     ./modules/agent/daybook.nix             # 09:00/20:00 claude -p bookends: plan the day / review + tomorrow
   ];
 

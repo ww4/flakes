@@ -16,6 +16,7 @@ import logging
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from . import audit
 from .config import Settings
@@ -29,6 +30,51 @@ from .space import append_note as space_append
 from .space import read_note as space_read
 from .space import save_note as space_save
 from .space import search_notes as space_search
+
+
+def build_transport_security(settings: Settings) -> TransportSecuritySettings | None:
+    """DNS-rebinding protection that knows the public hostname.
+
+    The SDK turns this protection on by itself whenever the bind address is
+    loopback, with `allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*"]`.
+    That default is right for a server nothing proxies, and wrong the moment one
+    sits behind a reverse proxy: the Host header then carries the public name,
+    matches nothing, and every request is refused with 421 Misdirected Request.
+
+    That failure is worth spelling out because of how it presents. It is a bare
+    transport-layer refusal with no MCP-level error, so the connector reports a
+    generic failure to connect and the obvious suspects are DNS, TLS, the
+    firewall and the tunnel — none of which are at fault. Found by probing the
+    proxy with a forged PROXY-protocol header before deploying, not after.
+
+    Returning None keeps the SDK's own default, which is the correct behaviour
+    for the loopback-only case.
+
+    Note the bare `public_host` alongside `public_host:*`: the SDK's wildcard
+    form only matches a Host that actually carries a port, and a browser or
+    server hitting https:// on 443 sends the bare name.
+    """
+    if not settings.public_host:
+        return None
+
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[
+            settings.public_host,
+            f"{settings.public_host}:*",
+            # Kept so a loopback probe on the box still works — that is how the
+            # service is checked after a deploy.
+            "127.0.0.1:*",
+            "localhost:*",
+            "[::1]:*",
+        ],
+        allowed_origins=[
+            f"https://{settings.public_host}",
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            "http://[::1]:*",
+        ],
+    )
 
 
 def build_server(settings: Settings) -> FastMCP:
@@ -51,6 +97,7 @@ def build_server(settings: Settings) -> FastMCP:
         streamable_http_path=settings.mcp_path,
         host=settings.host,
         port=settings.port,
+        transport_security=build_transport_security(settings),
     )
 
     # ------------------------------------------------------------------ reads
