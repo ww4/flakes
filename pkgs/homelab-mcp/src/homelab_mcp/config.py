@@ -40,6 +40,18 @@ class Settings(BaseSettings):
             "The endpoint becomes /<prefix>/mcp. Empty means /mcp (local testing only)."
         ),
     )
+    public_host: str = Field(
+        default="",
+        description=(
+            "The public hostname this server is reached at, e.g. gromit.<tailnet>.ts.net. "
+            "Empty means loopback-only. This is NOT cosmetic: the MCP SDK auto-enables "
+            "DNS-rebinding protection whenever the bind address is loopback, and its "
+            "allowlist is then 127.0.0.1/localhost only — so a request arriving through a "
+            "proxy with the real public Host header is rejected 421 Misdirected Request. "
+            "Naming the public host here is what makes the server answerable through the "
+            "funnel. See build_transport_security()."
+        ),
+    )
 
     # --- auth ------------------------------------------------------------
     mcp_token: str | None = Field(
