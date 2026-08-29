@@ -149,9 +149,56 @@
       # Read from config, NOT hardcoded — the datadir is moving to SSD, and a
       # guard pointed at a stale path would silently pass on every start.
       dataDir = config.services.bitcoind.bitcoin.dataDir;
+      # Every fusion branch that must be mounted before ANY verdict about the
+      # datadir means anything. Derived from fileSystems, not hardcoded, so a
+      # branch added later cannot be silently forgotten here.
+      poolBranches = lib.filter (m: lib.hasPrefix "/mnt/primary/D" m)
+        (lib.attrNames config.fileSystems);
       guard = pkgs.writeShellScript "bitcoind-datadir-guard" ''
         set -euo pipefail
         DD="${dataDir}"
+        # ─── Pool integrity FIRST — before the marker, before every size test ──
+        # $DD lives on a mergerfs union whose branches are GLOBBED
+        # (device = "/mnt/primary/D*"). When a branch drive is unmounted,
+        # mergerfs does not drop the branch — it unions the bare mountpoint
+        # directory left behind on the root filesystem. The datadir therefore
+        # still "exists" and is still readable, but is a partial view of
+        # itself, and every size/completeness test below reads that partial
+        # view as destroyed data.
+        #
+        # 2026-08-28: the D6 drive (WD My Book, USB) dropped and did not
+        # remount. blocks/index measured 1 MB through the degraded union, so
+        # the index check added the day before concluded "stub — a reindex is
+        # required" and told the operator to touch the override marker. The
+        # index was fine; it was on the unmounted drive. Acting on that advice
+        # would have reindexed over an incomplete block set — the very
+        # destruction the guard exists to prevent.
+        #
+        # This runs BEFORE the override marker deliberately. The marker
+        # authorises a conscious -reindex; it must never authorise a start
+        # against an incomplete pool, because a reindex from a partial block
+        # set is itself destructive.
+        case "$DD" in
+          /mnt/fusion/*)
+            missing=""
+            for br in ${lib.concatStringsSep " " poolBranches}; do
+              if ! ${pkgs.util-linux}/bin/mountpoint -q "$br"; then
+                missing="$missing $br"
+              fi
+            done
+            if [ -n "$missing" ]; then
+              echo "bitcoind-guard: REFUSING — fusion pool branch(es) NOT mounted:$missing" >&2
+              echo "  $DD is a mergerfs union. An unmounted branch is silently" >&2
+              echo "  replaced by its bare mountpoint on the root fs, so the datadir" >&2
+              echo "  reads as a partial copy of itself. Any 'index is a stub' or" >&2
+              echo "  'chainstate is missing' verdict right now would be an artefact" >&2
+              echo "  of the missing drive, NOT real data loss." >&2
+              echo "  Do NOT touch /var/lib/bitcoind-allow-fresh for this." >&2
+              echo "  Remount the drive, confirm the pool is whole, then start." >&2
+              exit 1
+            fi
+            ;;
+        esac
         if [ -e /var/lib/bitcoind-allow-fresh ]; then
           echo "bitcoind-guard: override marker present — allowing a fresh/reindex start"
           exit 0
