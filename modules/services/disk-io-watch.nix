@@ -15,27 +15,27 @@
 # module does exactly that and nothing else. See [[gromit-d6-drive]].
 #
 # METRICS (node_exporter textfile collector):
-#   disk_io_errors_total{device}      block-layer "I/O error, dev sdX, sector N"
-#   disk_scsi_errors_total{device}    SCSI "hostbyte=DID_ERROR" / "Result: ..."
+#   disk_io_errors_total{serial}      block-layer "I/O error, dev sdX, sector N"
+#   disk_scsi_errors_total{serial}    SCSI "hostbyte=DID_ERROR" / "Result: ..."
 #   usb_device_resets_total{port}     "usb 6-2: reset SuperSpeed USB device"
+#   disk_device_info{device,serial}   current letter<->serial map (informational)
 #   disk_io_watch_last_run_seconds    liveness — a stalled watcher is not silence
 #
-# All three are true counters, reset to 0 on reboot, which is what Prometheus
+# The counters are true counters, reset to 0 on reboot, which is what Prometheus
 # expects. They are accumulated from the journal with a CURSOR, not by
 # re-scanning `-b` every run: a full-boot scan costs more every hour the box
 # stays up, and this runs every 5 minutes.
 #
-# ⚠️ KERNEL DEVICE NAMES ARE NOT STABLE. A USB drive that drops and re-enumerates
-# comes back as a different `sdX`, so a device that failed and was then reseated
-# leaves an ORPHANED series behind — the label names something that no longer
-# exists. Verified on the first run: `sdf` showed 111 errors in a 47-minute
-# window right after the 2026-08-24 22:08 boot and then vanished; that was D1
-# before it was reseated, which came back under another letter. The counts are
-# still honest (they are per-boot totals of things that really happened), but
-# DO NOT read a device label here as "this disk, right now" — cross-check
-# against `lsblk` before acting. Labelling by serial would fix it and is the
-# obvious follow-up; it needs a udev/`lsblk` lookup per device and the journal
-# only gives the kernel name, so it is deliberately out of scope here.
+# ⚠️ COUNTERS ARE KEYED BY SERIAL, NOT BY KERNEL DEVICE NAME — and that is not a
+# nicety. Kernel names are not stable: a USB drive that drops and re-enumerates
+# comes back as a different `sdX`, and it can inherit a letter another drive just
+# vacated. On 2026-08-28 D6 went sdi -> sdm -> sdl and picked up the letter a
+# neighbour had released; the device-keyed counters then credited one drive's 66
+# errors to another, and that wrong number was read back and acted on. A metric
+# that silently changes which physical object it describes is worse than no
+# metric. The kernel only ever says "sdm", so the mapping happens at parse time
+# and `disk_device_info` publishes the current correspondence for humans
+# correlating against journal lines.
 #
 # ⚠️ A counter that only ever goes up is not the same as a working watcher. If
 # the journal read fails, the run leaves the previous totals in place and does
@@ -70,7 +70,7 @@ let
 
   disk-io-watch = pkgs.writeShellApplication {
     name = "disk-io-watch";
-    runtimeInputs = [ pkgs.systemd pkgs.coreutils pkgs.gnugrep pkgs.gawk gromit-notify ];
+    runtimeInputs = [ pkgs.systemd pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.util-linux gromit-notify ];
     text = ''
       mkdir -p "${stateDir}"
       CURSOR="${stateDir}/cursor"
@@ -123,16 +123,71 @@ let
       delta=$(mktemp)
       # shellcheck disable=SC2064
       trap "rm -f '$chunk' '$delta'" EXIT
+      # ⚠️ KEY BY SERIAL, NOT BY KERNEL DEVICE NAME (2026-08-28).
+      #
+      # The caveat at the top of this file stopped being theoretical. In one
+      # evening D6 was sdi -> sdm -> sdl, and on the last hop it took the letter
+      # a DIFFERENT drive had just vacated. The counters then attributed one
+      # drive's 66 errors to another, and I read those numbers back and drew the
+      # wrong conclusion from them. A metric that silently swaps which physical
+      # object it describes is worse than no metric.
+      #
+      # The kernel only ever says "sdm", so map sdX -> serial at parse time and
+      # accumulate under the serial. Letters may churn between runs; the serial
+      # does not. (Residual edge case: a letter change WITHIN one 5-minute chunk
+      # is still mis-mapped. Rare, and vastly better than the status quo.)
+      declare -A SERIAL_OF=()
+      while read -r kname serial; do
+        [ -n "''${serial:-}" ] && SERIAL_OF["$kname"]="$serial"
+      done < <(lsblk -dno KNAME,SERIAL 2>/dev/null || true)
+
+      # ⚠️ The live map is only valid for RECENT lines. On the first run of a boot
+      # there is no cursor, so we backfill the entire boot — and letters may have
+      # changed many times inside that window. Mapping historical lines through
+      # today's table reproduces the very misattribution this change exists to
+      # stop, one level up: on 2026-08-28 a backfill credited 195 of backup D2's
+      # errors to D6, purely because D6 later inherited D2's letter `sdl`.
+      #
+      # So: attribute only when the mapping can be trusted. On a backfill run,
+      # every letter is recorded as "unresolved-<dev>" — honest, visibly
+      # unattributed, and impossible to confuse with a real drive. Incremental
+      # runs cover at most 5 minutes and DO use the live map.
+      BACKFILL=0
+      [ -s "$CURSOR" ] || BACKFILL=1
+
+      # Unknown letters fall back rather than being dropped — losing an error
+      # because a disk vanished before we could name it would be the same class
+      # of silent-undercount this module exists to prevent.
+      serial_of() {
+        if [ "$BACKFILL" = "1" ]; then printf 'unresolved-%s' "$1"; return; fi
+        printf '%s' "''${SERIAL_OF[$1]:-unknown-$1}"
+      }
+
       {
-        grep -oP 'I/O error, dev \K[a-z0-9]+' "$chunk" \
-          | awk '{print "disk_io_errors_total|device|" $1}' || true
-        grep -oP '\[\K[a-z0-9]+(?=\].*DID_ERROR)' "$chunk" \
-          | awk '{print "disk_scsi_errors_total|device|" $1}' || true
+        while read -r d; do
+          [ -n "$d" ] && printf 'disk_io_errors_total|serial|%s\n' "$(serial_of "$d")"
+        done < <(grep -oP 'I/O error, dev \K[a-z0-9]+' "$chunk" || true)
+        while read -r d; do
+          [ -n "$d" ] && printf 'disk_scsi_errors_total|serial|%s\n' "$(serial_of "$d")"
+        done < <(grep -oP '\[\K[a-z0-9]+(?=\].*DID_ERROR)' "$chunk" || true)
+        # USB ports are physical sockets and DO stay put, so they keep their own
+        # stable identifier and need no translation.
         grep -oP 'usb \K[0-9]+-[0-9.]+(?=: reset )' "$chunk" \
           | awk '{print "usb_device_resets_total|port|" $1}' || true
       } | sort | uniq -c | awk '{print $2, $1}' > "$delta"
 
       # --- accumulate into persisted totals ---------------------------------
+      # ⚠️ ONE-TIME MIGRATION: this module used to key counters by kernel device
+      # name. Leaving those rows beside the new serial-keyed ones would keep
+      # publishing a frozen series under a label that now describes a DIFFERENT
+      # disk — precisely the confusion this change exists to end. Drop them; the
+      # counters are per-boot anyway, so nothing durable is lost.
+      if [ -s "$TOTALS" ] && grep -q '|device|' "$TOTALS"; then
+        echo "migrating totals off device-name keys onto serials"
+        grep -v '|device|' "$TOTALS" > "$TOTALS.mig" || true
+        mv -f "$TOTALS.mig" "$TOTALS"
+      fi
+
       touch "$TOTALS"
       merged=$(mktemp)
       # shellcheck disable=SC2064
@@ -164,7 +219,14 @@ let
           echo "# TYPE usb_device_resets_total counter"
           # TOTALS lines are "<metric>|<label>|<value> <count>".
           awk '{ split($1, p, "|"); printf "%s{%s=\"%s\"} %s\n", p[1], p[2], p[3], $2 }' "$TOTALS"
-          echo "# HELP disk_io_watch_last_run_seconds Unix time of the last successful run. Staleness here means the watcher stopped, not that errors stopped."
+          # The CURRENT letter<->serial mapping, so a human reading a journal line
+        # that says "sdm" can find which counter it belongs to. Informational and
+        # allowed to churn — the counters above deliberately do not.
+        echo "# HELP disk_device_info Current kernel-name to serial mapping. The NAME churns; the serial does not."
+        echo "# TYPE disk_device_info gauge"
+        lsblk -dno KNAME,SERIAL 2>/dev/null \
+          | awk 'NF==2 {printf "disk_device_info{device=\"%s\",serial=\"%s\"} 1\n",$1,$2}' || true
+        echo "# HELP disk_io_watch_last_run_seconds Unix time of the last successful run. Staleness here means the watcher stopped, not that errors stopped."
           echo "# TYPE disk_io_watch_last_run_seconds gauge"
           echo "disk_io_watch_last_run_seconds $(date +%s)"
         } > "$mtmp"
