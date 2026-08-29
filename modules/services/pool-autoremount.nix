@@ -237,6 +237,43 @@ let
       # and after a re-enumeration that letter is exactly what went stale. The
       # fstab entry always names the persistent symlink, which points at whatever
       # device the drive came back as.
+      # ⚠️ 2026-08-28: the zombie gate was too narrow, twice in one evening.
+      #
+      # A member can leave a pinned superblock behind WITHOUT ever becoming a
+      # zombie. D6 dropped cleanly off USB (0 mountinfo entries — no zombie to
+      # clear), re-enumerated under a new letter, and the kernel STILL held the
+      # old superblock:
+      #     XFS (sdm1): Filesystem has duplicate UUID <uuid> - can't mount
+      # `cleared_zombie` was 0, so this fallback never ran and the module retried
+      # a plain mount every 2 minutes forever. Both times a human had to run the
+      # exact command the module already knows.
+      #
+      # The original gate existed for a real reason — never `-o nouuid` against a
+      # GENUINELY duplicated filesystem, because that can mount the wrong device.
+      # So widen the gate with a check that actually discriminates instead of
+      # dropping the safety: ask whether that UUID appears on more than one block
+      # device. If it appears exactly ONCE, the "duplicate" the kernel is
+      # complaining about is its own stale in-memory superblock — which is the
+      # case `-o nouuid` is for. If it appears twice, this is a real collision and
+      # we must NOT touch it.
+      uuid_is_unique() {  # uuid_is_unique <device>  -> 0 if exactly one holder
+        local u n
+        u=$(blkid -s UUID -o value "$1" 2>/dev/null || true)
+        [ -n "$u" ] || return 1          # no UUID readable -> fail closed
+        n=$(blkid -t "UUID=$u" -o device 2>/dev/null | wc -l)
+        [ "$n" -eq 1 ]
+      }
+
+      # Did the kernel actually refuse THIS device for duplicate UUID just now?
+      # Belt and braces: without this we could nouuid-mount after some unrelated
+      # mount failure. Scoped to this boot and the last few minutes.
+      kernel_said_duplicate_uuid() {  # kernel_said_duplicate_uuid <device>
+        local base
+        base=$(basename "$(readlink -f "$1" 2>/dev/null || echo "$1")")
+        journalctl -k -b --since "-5min" --no-pager 2>/dev/null \
+          | grep -q "XFS ($base): Filesystem has duplicate UUID"
+      }
+
       try_nouuid_mount() {  # try_nouuid_mount <pool> <member> <mp>
         local src fstype
         src=$(findmnt -sn -o SOURCE "$3" 2>/dev/null || true)
@@ -244,7 +281,11 @@ let
         [ -n "$src" ] || return 1
         [ "$fstype" = "xfs" ] || return 1
         [ -e "$src" ] || return 1
-        echo "$1/$2: remount rejected after clearing the zombie — the lazily-unmounted superblock is still pinned; retrying with '-o nouuid'"
+        if ! uuid_is_unique "$src"; then
+          echo "$1/$2: REFUSING '-o nouuid' — that UUID is present on MORE THAN ONE block device, so this is a genuine collision, not a stale kernel superblock. Mounting could attach the wrong filesystem." >&2
+          return 1
+        fi
+        echo "$1/$2: the kernel is holding a stale superblock for $src (UUID unique to this device); retrying with '-o nouuid'"
         mount -t xfs -o nouuid "$src" "$3"
       }
 
@@ -358,9 +399,16 @@ let
         echo "$pool/$d: attempting 'systemctl start $unit'"
         nouuid_used=0
         if ! timeout ${toString mountTimeout} systemctl start "$unit"; then
-          # Only a zombie we just cleared can leave a pinned superblock behind,
-          # so that is the single case worth a second attempt.
-          if [ "$cleared_zombie" -eq 1 ] && try_nouuid_mount "$pool" "$d" "$mp"; then
+          # A pinned superblock arises in TWO ways, not one:
+          #   (a) a zombie we just cleared with `umount -l`  (cleared_zombie=1)
+          #   (b) a clean drop + re-enumeration, where the kernel kept the old
+          #       superblock anyway — no zombie ever existed (2026-08-28, D6)
+          # Case (b) is detected from the kernel's own refusal. try_nouuid_mount
+          # still refuses if the UUID is on more than one device.
+          src_now=$(findmnt -sn -o SOURCE "$mp" 2>/dev/null || true)
+          if { [ "$cleared_zombie" -eq 1 ] \
+               || { [ -n "$src_now" ] && kernel_said_duplicate_uuid "$src_now"; }; } \
+             && try_nouuid_mount "$pool" "$d" "$mp"; then
             nouuid_used=1
           else
             # Deliberately does NOT claim the device is unreadable: on
