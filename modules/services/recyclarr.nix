@@ -100,10 +100,32 @@ let
           - trash_id: 72dae194fc92bf828f32cde7744e51a1  # WEB-1080p
             reset_unmatched_scores:
               enabled: true
+            # ⚠️ NO UPGRADES (Chris, 2026-08-29). Grab MISSING content, never
+            # replace a file we already have.
+            #
+            # On 2026-08-29 the stock profiles upgraded six Seinfeld seasons plus
+            # Avatar in one afternoon — 219 GB — swapping BluRay x265 for NF
+            # WEB-DL HDR. Chris: "I don't want to upgrade content, especially if
+            # it will take more disk space."
+            #
+            # The disk cost is worse than a swap: the OLD torrent must keep
+            # seeding to satisfy H&R, so BOTH copies sit on the pool for the full
+            # seed term (10 days on Seedpool and TorrentLeech). An upgrade is
+            # therefore ~2x the season's size for over a week, plus a fresh H&R
+            # obligation on a private tracker that never needed to exist.
+            #
+            # ⚠️ TRADE-OFF, accepted deliberately: with upgrades off the FIRST
+            # acceptable release wins permanently. TRaSH profiles normally rely on
+            # upgrades to converge on a good release, so a mediocre grab becomes
+            # sticky and needs a manual delete+search to replace. Propers/repacks
+            # are already `doNotPrefer` in arr-settings.nix for the same reason.
+            upgrade:
+              allowed: false
 
           - name: Retro Animation
+            # No upgrades here either — same reasoning as above.
             upgrade:
-              allowed: true
+              allowed: false
               until_quality: HD
               until_score: 10000
             min_format_score: 0
@@ -154,6 +176,9 @@ let
           - trash_id: d1d67249d3890e49bc12e275d989a7e9  # HD Bluray + WEB
             reset_unmatched_scores:
               enabled: true
+            # See the no-upgrades note on the Sonarr WEB-1080p profile above.
+            upgrade:
+              allowed: false
 
           # Movie-side twin of the Sonarr profile of the same name, so animated
           # FILMS get the same "prefer RetroToon even one notch down" behaviour
@@ -166,8 +191,9 @@ let
           # Assign it per-movie in Radarr; the stock HD Bluray + WEB profile is
           # untouched and stays the default for everything else.
           - name: Retro Animation
+            # No upgrades here either — same reasoning as above.
             upgrade:
-              allowed: true
+              allowed: false
               until_quality: HD
               until_score: 10000
             min_format_score: 0
