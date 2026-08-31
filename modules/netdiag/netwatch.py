@@ -368,10 +368,28 @@ def cmd_scan() -> int:
     state["counts"] = counts
     if len(counts) >= 5:
         median = sorted(counts[:-1])[len(counts[:-1]) // 2]
-        if len(rows) < median * SANITY_FRACTION:
+        # ⚠️ The half-median floor is a PROXY for "the sweep broke", and on this
+        # segment the proxy does not discriminate. gromit sees 4-5 hosts and
+        # 2-3 of them are phones on randomised MACs, so everyone leaving for
+        # work halves the count and trips a floor of median*0.5 with nothing
+        # wrong. That is exactly what happened on 2026-08-31: counts ran 4,3,4
+        # through 07:45 and then 2 from 08:00, failing the unit every 15 min on
+        # a Monday-morning departure.
+        #
+        # The direct test is whether the SWEEP worked, and the gateway answers
+        # it: wired, always on, always replies to ARP. If it is in `rows` the
+        # sweep demonstrably ran, and a low count is real (devices left) rather
+        # than a fault. Requiring BOTH conditions keeps the broken-sweep
+        # detection — a sweep that truly breaks loses the gateway too — while
+        # dropping the empty-house false positive. Defence 1 (zero rows =
+        # ERROR) is untouched and still catches total failure.
+        gw = gateway_ip()
+        gw_answered = bool(gw) and any(ip == gw for ip, _m, _v in rows)
+        if len(rows) < median * SANITY_FRACTION and not gw_answered:
             alert_once(state, "scan-degraded", "netwatch: scan DEGRADED",
                        f"Found {len(rows)} hosts; the running median is "
-                       f"{median}. Treating this as a failed sweep rather than "
+                       f"{median}, and the gateway {gw or '(unknown)'} did not "
+                       f"answer. Treating this as a failed sweep rather than "
                        f"reporting {median - len(rows)} devices as newly "
                        f"missing.",
                        "high", "warning")
