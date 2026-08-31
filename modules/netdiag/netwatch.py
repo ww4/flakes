@@ -177,14 +177,66 @@ def save_state(state: dict) -> None:
     os.replace(tmp, STATE_FILE)
 
 
+# Why the most recent subprocess failed, for whoever asks next. A module-level
+# dict rather than a changed return type: run() has many callers that only want
+# stdout, and threading a status through all of them would be a large change for
+# a small need. Cleared at the top of every run().
+LAST_RUN: dict[str, object] = {}
+
+
 def run(cmd: list[str], timeout: int = 120) -> str:
+    """Run a command, return its stdout. Failure details land in LAST_RUN.
+
+    ⚠️ THIS USED TO DISCARD `returncode` AND `stderr` ENTIRELY (`check=False`
+    then `return res.stdout`), which made two very different outcomes produce
+    the identical empty string:
+
+        - the command FAILED and wrote its reason to stderr
+        - the command SUCCEEDED and legitimately found nothing
+
+    So `arp_census` returning [] could mean "the network is empty" or
+    "netdiag-priv exited 1", and nothing downstream could tell. The scan-empty
+    alert correctly refuses to call either one all-clear — but it could not say
+    which, and captured no evidence. None of the 41 failures across 1,182 runs
+    (2026-08-19 to 2026-08-31) is explainable after the fact as a result. The
+    2026-08-31 08:00 failure took 3.2 s, the same as a healthy run, and logged
+    nothing whatsoever.
+
+    Control flow is unchanged: the return value is still stdout, and an
+    exception still yields "". This only stops throwing the evidence away.
+    """
+    LAST_RUN.clear()
+    LAST_RUN["cmd"] = " ".join(cmd)
     try:
         res = subprocess.run(cmd, capture_output=True, text=True,
                              timeout=timeout, check=False)
+        LAST_RUN["rc"] = res.returncode
+        LAST_RUN["stderr"] = (res.stderr or "").strip()[:500]
+        LAST_RUN["stdout_bytes"] = len(res.stdout or "")
+        if res.returncode != 0:
+            # Loud in the journal even when this caller shrugs at empty output.
+            # A non-zero exit is a fact worth recording regardless of whether
+            # the immediate caller happens to care.
+            print(f"netwatch: {cmd[0]} exited {res.returncode}: "
+                  f"{LAST_RUN['stderr'] or '(no stderr)'}", file=sys.stderr)
         return res.stdout
     except (OSError, subprocess.TimeoutExpired) as exc:
+        LAST_RUN["rc"] = None
+        LAST_RUN["stderr"] = repr(exc)[:500]
+        LAST_RUN["stdout_bytes"] = 0
         print(f"netwatch: {cmd[0]} failed: {exc!r}", file=sys.stderr)
         return ""
+
+
+def last_run_detail() -> str:
+    """One-line description of the most recent run(), for alert bodies."""
+    if not LAST_RUN:
+        return "no subprocess recorded"
+    rc = LAST_RUN.get("rc")
+    rc_s = "exec failed" if rc is None else f"exit {rc}"
+    return (f"{LAST_RUN.get('cmd')} -> {rc_s}, "
+            f"{LAST_RUN.get('stdout_bytes')} bytes stdout\n"
+            f"stderr: {LAST_RUN.get('stderr') or '(none)'}")
 
 
 def default_iface() -> str:
@@ -201,6 +253,9 @@ def gateway_ip() -> str:
         return json.loads(out)[0]["gateway"]
     except (json.JSONDecodeError, IndexError, KeyError):
         return ""
+
+
+ARPSCAN_DETAIL = "no arp-scan recorded"
 
 
 def arp_census(iface: str) -> list[tuple[str, str, str]]:
@@ -222,6 +277,12 @@ def arp_census(iface: str) -> list[tuple[str, str, str]]:
     the signal.
     """
     out = run(["netdiag-priv", "arpscan", iface], timeout=180)
+    # Pin the outcome NOW. LAST_RUN is overwritten by the next run() anywhere in
+    # the process, so reading it later would silently describe a different
+    # command — the same class of mistake as attaching a count to the wrong
+    # window. The scan-empty alert reads ARPSCAN_DETAIL, never LAST_RUN.
+    global ARPSCAN_DETAIL
+    ARPSCAN_DETAIL = last_run_detail()
     seen: dict[tuple[str, str], str] = {}
     for line in out.splitlines():
         parts = line.split("\t") if "\t" in line else line.split(None, 2)
@@ -284,9 +345,19 @@ def cmd_scan() -> int:
 
     # --- the two failure modes that must never read as "all clear" ---
     if not rows:
+        # ⚠️ SAY WHICH. "arp-scan failed" and "arp-scan found nothing" are
+        # different faults with different fixes, and until 2026-08-31 this alert
+        # could not tell them apart because run() discarded the exit code. 41
+        # such failures in 1,182 runs went unexplained. ARPSCAN_DETAIL carries
+        # the exit code, stdout size and stderr from the scan itself.
+        print(f"netwatch: arp-scan on {iface} yielded no rows — {ARPSCAN_DETAIL}",
+              file=sys.stderr)
         alert_once(state, "scan-empty", "netwatch: scan found no hosts",
                    f"arp-scan on {iface} produced zero hosts. This is a broken "
                    f"check, not a quiet network — netwatch is not watching.\n"
+                   f"{ARPSCAN_DETAIL}\n"
+                   f"A non-zero exit means the SCAN broke; exit 0 with no rows "
+                   f"means it ran and genuinely saw nothing (check the link).\n"
                    f"Check: netdiag-priv arpscan {iface}",
                    "high", "warning")
         save_state(state)
