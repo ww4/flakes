@@ -115,6 +115,27 @@ in
         { command = "${sw}/netdiag-priv";                    options = nopw; }
         { command = "${sw}/netdiag-priv *";                  options = nopw; }
 
+        # Read the FULL SMART table for every drive (added 2026-08-30). Evidence:
+        # the two-week D6 fault hunt. The agent could see only the five values
+        # drive-temps happens to export, so power-on hours, spin-retry count,
+        # command timeouts, Load_Cycle_Count (the WD Green wear-out mode — gromit
+        # runs several Greens), the SMART error log and the self-test log were all
+        # invisible, and every SMART question had to be answered by Chris pasting
+        # smartctl output into chat by hand.
+        #
+        # ⚠️ NOT `smartctl *`. smartctl is not a read-only tool: `-t` starts a
+        # self-test, `-s on|off` PERSISTENTLY enables/disables SMART on the drive,
+        # `--set=` writes drive configuration (APM, write-cache, SCT), and `-X`
+        # aborts a running test. A bare wildcard entry would grant all of it.
+        # `smart-dump` accepts NO arguments that reach smartctl — it enumerates
+        # devices itself and issues only `-x` and `-l selftest`, both pure reads.
+        # Closed vocabulary, same pattern as netdiag-priv and agent-restic-ro.sh.
+        # Output goes to /var/tmp/agent-smart/<SERIAL>.txt — named by serial, never
+        # by /dev/sdX, because kernel letters drift across re-enumerations (on
+        # 2026-08-28 a letter-based read attributed a healthy backup drive's 66
+        # errors to the failing pool member). See services/smart-dump.nix.
+        { command = "${sw}/smart-dump";                      options = nopw; }
+
         # Label a device in the netwatch baseline (added 2026-08-19). Scoped to
         # the `accept` verb ONLY — not bare `netwatch`, which would also allow
         # triggering scans/reports as root. Pure curation: it sets a label and
