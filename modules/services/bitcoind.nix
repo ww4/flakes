@@ -256,7 +256,50 @@
     in
     lib.mkBefore [ "${guard}" ];
 
+  # ─── 3. Do not AUTO-start while the datadir is knowingly awaiting a reindex ──
+  #
+  # The guard above is correct and must stay. What it cannot do is stop systemd
+  # from *trying*. Since the 2026-08-27 index loss the datadir has been in a
+  # known-bad state that only a Chris-authorised `-reindex` clears, so every
+  # boot and every comin deploy walks the same dead end:
+  #
+  #   - activation runs `systemctl start bitcoind-bitcoin` -> guard refuses ->
+  #     `switching to system configuration ... failed (status 4)`, so comin
+  #     latches `comin_last_deployment_failed` even though the switch itself
+  #     succeeded. That is the real damage: a **genuine** future deploy failure
+  #     is now indistinguishable from this one. (2026-08-30 23:47 deploy;
+  #     sentinel comin-deploy incident 1788148197.)
+  #   - the 5 retries then land the unit in `failed`, which re-pages the
+  #     failed-units check on every sentinel run — three pages on the night of
+  #     2026-08-30 alone (22:57, 23:47, 00:02), all for one unchanged fault.
+  #
+  # So: stop offering to start it. This changes NOTHING about whether bitcoind
+  # can run — the guard already refuses — it only stops the pointless attempt
+  # and the two false alarms it manufactures.
+  #
+  # ⚠️ The dependents must be included. fulcrum and mempool-cookie-sync both
+  # carry `Requires=bitcoind-bitcoin.service` and are themselves wantedBy
+  # multi-user.target, so clearing bitcoind's own wantedBy alone would achieve
+  # nothing — activation would start fulcrum, fulcrum would pull bitcoind back
+  # in, and the deploy would fail exactly as before. They are forced here, in
+  # this file, deliberately: the reason is bitcoind's, and the revert is one
+  # flag rather than three scattered edits.
+  #
+  # TO RE-ENABLE, after the reindex has been authorised and has finished:
+  # delete this one block and deploy. Nothing else in the file depends on it.
+  # To run the reindex itself, unchanged from the guard's own instructions:
+  #   sudo touch /var/lib/bitcoind-allow-fresh
+  #   sudo systemctl start bitcoind-bitcoin      # expect a multi-day rebuild
+  #   sudo systemctl start fulcrum mempool-cookie-sync   # once it is synced
+  # `systemctl start` still works while this is in place — a manual start is a
+  # conscious act and is exactly what should remain possible. Only the
+  # *automatic* attempt goes away.
+  systemd.services.bitcoind-bitcoin.wantedBy = lib.mkForce [ ];
+  systemd.services.fulcrum.wantedBy = lib.mkForce [ ];
+  systemd.services.mempool-cookie-sync.wantedBy = lib.mkForce [ ];
+
   # The mempool backend container (on a docker bridge, e.g. mempool-net) reaches
+
   # bitcoind RPC via the host gateway 172.17.0.1:8332. rpcbind=0.0.0.0 + the
   # rpcallowip above are necessary but NOT sufficient: nixos-fw default-drops the
   # container's packets at the INPUT layer before rpcallowip is ever consulted,
