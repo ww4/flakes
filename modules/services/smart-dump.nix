@@ -167,7 +167,23 @@ let
   };
 in
 {
-  environment.systemPackages = [ smart-dump ];
+  # smartmontools itself, so `smartctl` is on the PATH for a human at the
+  # keyboard. It was NOT installed system-wide before — it existed only inside
+  # the closures of this wrapper and drive-temps.nix, so on 2026-08-30 Chris ran
+  #
+  #   sudo smartctl -t long /dev/disk/by-id/ata-WDC_WD40EZRX-...
+  #   sudo: smartctl: command not found
+  #
+  # and the only way to start D6's post-shuck surface test was a bare /nix/store
+  # path. `smart-dump` deliberately cannot do this: a self-test CHANGES DEVICE
+  # STATE and runs for hours, so it is excluded from the agent's read-only
+  # wrapper by design. That makes an interactive smartctl the right answer for a
+  # human, not a wider sudo grant for the agent.
+  #
+  # This adds no agent capability whatsoever — the agent's sudo entry names
+  # `smart-dump` explicitly, not smartctl, so the agent still cannot run
+  # `-t`, `-s`, `--set` or `-X`.
+  environment.systemPackages = [ smart-dump pkgs.smartmontools ];
 
   # Keep the dump directory out of systemd-tmpfiles' default /var/tmp sweep so a
   # dump taken during a long investigation is still there a month later.
