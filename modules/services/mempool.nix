@@ -13,6 +13,14 @@
 { config, lib, pkgs, ... }:
 
 let
+  # ⚠️ DERIVED, never hardcoded. This said /mnt/fusion/bitcoind/.cookie until
+  # 2026-08-31, when the datadir moved to /mnt/scratch (flakes #214) and these
+  # two modules were missed. The failure mode is the dangerous kind: the OLD
+  # datadir still exists and still holds a stale .cookie, so this would have
+  # read a plausible-looking credential that bitcoind no longer accepts, and
+  # 401'd silently. That exact fault ran for 17 days in August 2026 before
+  # anyone noticed. Reading it from config means the path cannot drift again.
+  bitcoindCookie = "${config.services.bitcoind.bitcoin.dataDir}/.cookie";
   mempoolNet = "mempool-net";
 in
 {
@@ -112,16 +120,16 @@ in
       # meaning "wrong cookie"; 503 ("Loading block index") / 500 prove auth
       # already succeeded and the node is just warming up.
       for _ in $(seq 1 150); do
-        if [ -f /mnt/fusion/bitcoind/.cookie ]; then
+        if [ -f ${bitcoindCookie} ]; then
           code=$(${pkgs.curl}/bin/curl -sS -o /dev/null -w '%{http_code}' \
-            --max-time 5 --user "$(cat /mnt/fusion/bitcoind/.cookie)" \
+            --max-time 5 --user "$(cat ${bitcoindCookie})" \
             --data-binary '{"jsonrpc":"1.0","id":"probe","method":"uptime","params":[]}' \
             -H 'content-type: text/plain;' http://127.0.0.1:8332/ 2>/dev/null || echo 000)
           case "$code" in
             401|000) ;;
             *)
               # Cookie format: __cookie__:<password>. Strip the prefix; emit as env.
-              pw=$(cut -d: -f2 /mnt/fusion/bitcoind/.cookie)
+              pw=$(cut -d: -f2 ${bitcoindCookie})
               umask 077
               printf 'CORE_RPC_PASSWORD=%s\n' "$pw" > /var/lib/mempool/rpc.env
               exit 0
