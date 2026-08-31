@@ -74,6 +74,28 @@
     group = "bitcoind";
     dataDir = "/mnt/scratch/bitcoind";  # off the mergerfs pool — see header
     prune = 0;                          # full chain
+
+    # ⚠️ TEMPORARY — REMOVE THIS ONCE THE REINDEX HAS COMPLETED (see below).
+    #
+    # 2026-08-31: the datadir guard's message reads
+    #     "To authorise it: sudo touch /var/lib/bitcoind-allow-fresh"
+    # and that is NOT sufficient on its own. The marker only stops the GUARD
+    # refusing; bitcoind's command line still had no -reindex, so it started,
+    # hit the broken index, printed "Please restart with -reindex", and exited
+    # 1 — after a 3-hour datadir copy had been done on the strength of that
+    # instruction. Nothing was damaged; the instruction was simply incomplete.
+    #
+    # The block index on this node is a 1 MB stub (LevelDB garbage-collected
+    # the real one on 2026-08-27 after a pool member vanished mid-write), so a
+    # full -reindex is required. -reindex-chainstate cannot help: it rebuilds
+    # chainstate FROM the block index, which is the thing that is gone.
+    #
+    # ⚠️ LEAVING THIS IN AFTER THE REINDEX WOULD REINDEX AGAIN on the next
+    # restart — a comin deploy or a reboot — silently discarding 18-30 h of
+    # work. The guard below now REFUSES to start if this flag is present
+    # without the marker, so forgetting it produces a loud, immediate failure
+    # naming this line, rather than a silent multi-day rebuild.
+    extraCmdlineOptions = [ "-reindex" ];
     dbCache = 8000;                     # 8 GB chainstate cache — drops to ~450 MB after IBD
     extraConfig = ''
       server=1
@@ -240,6 +262,23 @@
             fi
             ;;
         esac
+        # ⚠️ A CONFIGURED -reindex WITHOUT THE MARKER IS A MISTAKE, and an
+        # expensive one: it would silently rebuild the index for 18-30 h on
+        # every restart, discarding a completed reindex. The flag is meant to be
+        # removed once the rebuild succeeds — this makes forgetting it LOUD
+        # instead of silent, which is the whole point of a fail-closed guard.
+        # The marker is the operator saying "yes, I mean it, right now".
+        if [ "${if lib.elem "-reindex" config.services.bitcoind.bitcoin.extraCmdlineOptions
+                then "1" else "0"}" = 1 ] \
+           && [ ! -e /var/lib/bitcoind-allow-fresh ]; then
+          echo "bitcoind-guard: REFUSING — '-reindex' is still in extraCmdlineOptions" >&2
+          echo "  (modules/services/bitcoind.nix) but the marker is gone, which is how" >&2
+          echo "  a finished reindex looks. Starting now would rebuild the whole index" >&2
+          echo "  again — 18-30 hours — and throw away the one that just completed." >&2
+          echo "  Remove the '-reindex' line from extraCmdlineOptions and redeploy." >&2
+          echo "  (If you genuinely want ANOTHER reindex: touch the marker.)" >&2
+          exit 1
+        fi
         if [ -e /var/lib/bitcoind-allow-fresh ]; then
           echo "bitcoind-guard: override marker present — allowing a fresh/reindex start"
           exit 0
