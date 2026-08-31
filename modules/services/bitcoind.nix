@@ -1,11 +1,20 @@
 # Bitcoin Core full node.
 #
 # Hosting Fulcrum + mempool.space requires the full (non-pruned) chain
-# with txindex=1. Migrated to /mnt/fusion/bitcoind (8+ TB free; nvme root
-# is only 449 GB which is too small for ~700 GB chain). On first switch,
-# the new datadir is empty so bitcoind starts a fresh IBD — expect ~1-3
-# days to fully sync depending on network + disk I/O. Existing Test Wallet
-# is preserved by a one-time copy before flipping prune off.
+# with txindex=1.
+#
+# ⚠️ THE DATADIR LIVES ON /mnt/scratch, NOT ON THE MEDIA POOL — deliberately.
+# It was on /mnt/fusion until 2026-08-31. mergerfs does not drop a branch when
+# its drive vanishes; it unions the bare mountpoint directory left on the root
+# filesystem, so the datadir stays "present" as a partial view of itself. On
+# 2026-08-27 D6 dropped, bitcoind saw blocks with no chainstate/CURRENT, LevelDB
+# created a fresh database, and the real blocks/index was garbage-collected as
+# obsolete. The blocks survived; the index did not, at a cost of 18-30 h of
+# reindexing. D1 and D2 are still USB drives, so the exposure was ongoing.
+#
+# /mnt/scratch is a single direct-SATA disk (WD30EZRX, 2.7 TB free) — no union,
+# no USB, and RequiresMountsFor can actually gate on it, which it never could on
+# mergerfs. It also takes bitcoind's random I/O off the media pool.
 { config, lib, pkgs, ... }:
 
 {
@@ -14,11 +23,11 @@
   # doubled as a chris-owned credential. The cookie consumers (fulcrum's
   # ExecStartPre and mempool-cookie-sync) both read it as root and are
   # unaffected. For manual bitcoin-cli use:
-  #   sudo -u bitcoind bitcoin-cli -datadir=/mnt/fusion/bitcoind ...
+  #   sudo -u bitcoind bitcoin-cli -datadir=/mnt/scratch/bitcoind ...
   users.users.bitcoind = {
     isSystemUser = true;
     group = "bitcoind";
-    home = "/mnt/fusion/bitcoind";
+    home = "/mnt/scratch/bitcoind";
   };
   users.groups.bitcoind = { };
 
@@ -27,17 +36,17 @@
   # crash-looping. Idempotent — a chown to the current owner is a no-op run.
   # Metadata-only, but the chainstate holds ~100k files; give it room.
   systemd.services.bitcoind-datadir-owner = {
-    description = "one-time: hand /mnt/fusion/bitcoind to the bitcoind user";
+    description = "one-time: hand the bitcoind datadir to the bitcoind user";
     before = [ "bitcoind-bitcoin.service" ];
     requiredBy = [ "bitcoind-bitcoin.service" ];
-    unitConfig.RequiresMountsFor = "/mnt/fusion";
+    unitConfig.RequiresMountsFor = config.services.bitcoind.bitcoin.dataDir;
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
       TimeoutStartSec = "30min";
     };
     script = ''
-      d=/mnt/fusion/bitcoind
+      d=${config.services.bitcoind.bitcoin.dataDir}
       if [ ! -d "$d" ]; then
         echo "datadir $d missing — refusing to invent one" >&2
         exit 1
@@ -63,7 +72,7 @@
     enable = true;
     user = "bitcoind";
     group = "bitcoind";
-    dataDir = "/mnt/fusion/bitcoind";   # moved off nvme root
+    dataDir = "/mnt/scratch/bitcoind";  # off the mergerfs pool — see header
     prune = 0;                          # full chain
     dbCache = 8000;                     # 8 GB chainstate cache — drops to ~450 MB after IBD
     extraConfig = ''
@@ -102,8 +111,12 @@
     '';
   };
 
+  # Now a REAL gate. On /mnt/fusion this was decorative: mergerfs stays mounted
+  # when a branch dies, so RequiresMountsFor was satisfied by a union serving a
+  # partial datadir. /mnt/scratch is a single filesystem, so if it is absent the
+  # unit simply does not start.
   systemd.services.bitcoind-bitcoin.unitConfig.RequiresMountsFor =
-    "/mnt/fusion";
+    config.services.bitcoind.bitcoin.dataDir;
   systemd.services.bitcoind-bitcoin.after = [ "bitcoind-datadir-owner.service" ];
   systemd.services.bitcoind-bitcoin.requires = [ "bitcoind-datadir-owner.service" ];
 
@@ -198,10 +211,59 @@
               exit 1
             fi
             ;;
+          /mnt/*)
+            # ⚠️ THE MIRROR HAZARD, and the move to /mnt/scratch is what creates
+            # it. A single-filesystem datadir has the opposite failure mode to
+            # the union above: if the disk is NOT mounted, "$DD" is simply an
+            # empty directory on the ROOT filesystem. Then `[ ! -d "$DD/blocks" ]`
+            # below is true, the guard reports "no blocks dir — first run,
+            # allowing", and bitcoind begins a fresh IBD over nothing while ~700
+            # GB of real chain sits unreachable on the unmounted disk.
+            #
+            # Same shape as the mergerfs case, opposite cause: there a union hid
+            # an absent branch, here an absent mount hides behind an empty dir.
+            # Both make "the data is gone" and "I cannot see the data" produce
+            # identical evidence.
+            #
+            # RequiresMountsFor already gates the unit. This check does not
+            # depend on that: it is the fail-closed layer, and a fail-closed
+            # layer that trusts another layer is not one.
+            mp="/mnt/$(echo "''${DD#/mnt/}" | cut -d/ -f1)"
+            if ! ${pkgs.util-linux}/bin/mountpoint -q "$mp"; then
+              echo "bitcoind-guard: REFUSING — $mp is NOT MOUNTED." >&2
+              echo "  $DD would be an empty directory on the root filesystem," >&2
+              echo "  which is indistinguishable from a genuine first run. The" >&2
+              echo "  chain is on the unmounted disk, not missing." >&2
+              echo "  Do NOT touch /var/lib/bitcoind-allow-fresh for this." >&2
+              echo "  Mount $mp, then start." >&2
+              exit 1
+            fi
+            ;;
         esac
         if [ -e /var/lib/bitcoind-allow-fresh ]; then
           echo "bitcoind-guard: override marker present — allowing a fresh/reindex start"
           exit 0
+        fi
+        # ⚠️ MIGRATION SAFETY. "No blocks here" is a legitimate first run ONLY if
+        # there is no chain anywhere. During the 2026-08-31 move off the media
+        # pool there is a window where this config is deployed but the copy has
+        # not been made — and in that window the branch below would report
+        # "first run, allowing" and bitcoind would begin a FRESH IBD FROM GENESIS
+        # while ~700 GB of real chain sat at the old path. Not destructive, but
+        # it burns days and produces a second, confusing datadir.
+        #
+        # So: if this datadir is empty and the PREVIOUS one still holds blocks,
+        # the migration is incomplete. Refuse and say so. Remove the old datadir
+        # once the move is done and this check retires itself.
+        OLD_DD=/mnt/fusion/bitcoind
+        if [ ! -d "$DD/blocks" ] && [ "$DD" != "$OLD_DD" ] && [ -d "$OLD_DD/blocks" ]; then
+          echo "bitcoind-guard: REFUSING — $DD has no blocks, but $OLD_DD does." >&2
+          echo "  The datadir move is INCOMPLETE. Starting now would begin a" >&2
+          echo "  fresh initial block download from genesis and ignore the" >&2
+          echo "  existing chain entirely." >&2
+          echo "  Copy the datadir first:  sudo bitcoind-relocate --apply" >&2
+          echo "  Then start. Remove $OLD_DD only after the reindex succeeds." >&2
+          exit 1
         fi
         # A datadir with no blocks at all is a legitimate first run.
         if [ ! -d "$DD/blocks" ]; then
