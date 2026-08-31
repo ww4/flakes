@@ -55,7 +55,7 @@ let
 
       echo "  output: $OUT"
       echo
-      printf "  %-20s %-30s %-6s %s\n" SERIAL MODEL BUS RESULT
+      printf "  %-20s %-28s %-5s %-9s %s\n" SERIAL MODEL BUS DEV-TYPE RESULT
 
       for dev in /dev/sd[a-z] /dev/nvme[0-9]n[0-9]; do
         [ -b "$dev" ] || continue
@@ -65,17 +65,42 @@ let
         [ -n "$ser" ] || ser="unknown-$(basename "$dev")"
         f="$OUT/$ser.txt"
 
+        # ── Pick a device type ────────────────────────────────────────────
+        # smartctl auto-detects most bridges, but not all. The Seagate
+        # Expansion Desk on gromit fails auto-detection outright:
+        #   "Read Device Identity failed: scsi error unsupported field in
+        #    scsi command ... look at the various --device=TYPE variants"
+        # and then EXITS, so the whole dump is lost for that drive. Auto-detect
+        # first (it is right for every other drive here, including all four WD
+        # Elements), and only walk the candidate list when it fails.
+        #
+        # ⚠️ This loop must NEVER treat "the bridge refused" as "the drive is
+        # fine". If every candidate fails, we say NOT MEASURED — an unmeasured
+        # drive reading as healthy is precisely how D6 ran for its entire
+        # service life with nobody able to see it.
+        dtype=""
+        probe() { smartctl "$@" -i "$dev" 2>&1 | grep -qiE "Device Model|Model Number|Model Family"; }
+        if probe; then
+          dtype=""            # auto-detect works
+        else
+          for cand in sat "sat,12" usbjmicron usbsunplus usbcypress scsi; do
+            if probe -d "$cand"; then dtype="$cand"; break; fi
+          done
+        fi
+        if [ -n "$dtype" ]; then dargs=(-d "$dtype"); else dargs=(); fi
+
         {
           echo "### smart-dump $(date '+%F %I:%M:%S %p %Z')"
           echo "### device-at-dump-time: $dev  (letters are NOT stable identities)"
           echo "### serial: $ser  model: $mod  bus: $tran"
+          echo "### device-type: ''${dtype:-auto}"
           echo
           # -x is the everything view: attributes, error log, self-test log and
           # the SCT / device-statistics pages that -a omits.
-          smartctl -x "$dev" 2>&1 || true
+          smartctl "''${dargs[@]}" -x "$dev" 2>&1 || true
           echo
           echo "### --- self-test log (explicit, in case -x truncated it) ---"
-          smartctl -l selftest "$dev" 2>&1 || true
+          smartctl "''${dargs[@]}" -l selftest "$dev" 2>&1 || true
         } > "$f"
         chmod 644 "$f"
 
@@ -92,7 +117,7 @@ let
         else
           res="no verdict line — read the file"
         fi
-        printf "  %-20s %-30s %-6s %s\n" "$ser" "''${mod:0:30}" "''${tran:-?}" "$res"
+        printf "  %-20s %-28s %-5s %-9s %s\n" "$ser" "''${mod:0:28}" "''${tran:-?}" "''${dtype:-auto}" "$res"
       done
 
       echo
