@@ -37,7 +37,9 @@ let
 
   smart-dump = pkgs.writeShellApplication {
     name = "smart-dump";
-    runtimeInputs = with pkgs; [ smartmontools util-linux coreutils gnugrep gnused ];
+    # jq parses smartctl's -j output for the device-type probe; findutils for
+    # the stale-dump sweep. Both were implicit before and must not be.
+    runtimeInputs = with pkgs; [ smartmontools util-linux coreutils gnugrep gnused jq findutils ];
     text = ''
       OUT=${outDir}
 
@@ -66,65 +68,101 @@ let
         f="$OUT/$ser.txt"
 
         # ── Pick a device type ────────────────────────────────────────────
-        # smartctl auto-detects most bridges, but not all. The Seagate
-        # Expansion Desk on gromit fails auto-detection outright:
-        #   "Read Device Identity failed: scsi error unsupported field in
-        #    scsi command ... look at the various --device=TYPE variants"
-        # and then EXITS, so the whole dump is lost for that drive. Auto-detect
-        # first (it is right for every other drive here, including all four WD
-        # Elements), and only walk the candidate list when it fails.
+        # ⚠️ THE ACCEPTANCE TEST IS THE WHOLE TRICK, and the first version of
+        # this got it wrong. It probed for a MODEL STRING ("Device Model" /
+        # "Model Number"), which a SCSI-addressed bridge never emits — it says
+        # Vendor:/Product: instead. So a bridge that answers health-only was
+        # scored the same as one that answers nothing, every candidate "failed",
+        # and the code fell back to auto-detect having learned nothing.
         #
-        # ⚠️ This loop must NEVER treat "the bridge refused" as "the drive is
-        # fine". If every candidate fails, we say NOT MEASURED — an unmeasured
-        # drive reading as healthy is precisely how D6 ran for its entire
-        # service life with nobody able to see it.
-        dtype=""
-        probe() { smartctl "$@" -i "$dev" 2>&1 | grep -qiE "Device Model|Model Number|Model Family"; }
-        if probe; then
-          dtype=""            # auto-detect works
-        else
-          for cand in sat "sat,12" usbjmicron usbsunplus usbcypress scsi; do
-            if probe -d "$cand"; then dtype="$cand"; break; fi
-          done
-        fi
+        # drive-temps.nix already had this right and is the model here: accept a
+        # candidate when it returns REAL DATA — an ATA attribute table, or a
+        # health verdict — not when it returns a recognisable name.
+        #
+        # Prefer a candidate that yields the ATA ATTRIBUTE TABLE. Only if none
+        # does, settle for one that yields a health verdict. A bridge answering
+        # as a SCSI enclosure must never outrank one reaching the ATA drive,
+        # which is why the plain/auto read is not automatically preferred.
+        #
+        # ⚠️ BOUNDED (timeout 20). A drive that has stopped answering makes
+        # smartctl block for minutes — D1 on 2026-08-27 aged commands out at
+        # 361 s — and this loop tries several candidates per drive.
+        probe_json() {
+          if [ -n "$1" ]; then timeout 20 smartctl -d "$1" -j -H -A -i "$dev" 2>/dev/null || true
+          else                 timeout 20 smartctl        -j -H -A -i "$dev" 2>/dev/null || true; fi
+        }
+        # ⚠️ Keep the WINNING candidate's JSON in `bestjs`, not whatever the loop
+        # last looked at. When a health-only candidate matches we deliberately
+        # keep searching for a full one, so by the end `js` holds some later,
+        # failed probe — classifying from that would report on the wrong read.
+        dtype=""; quality=none; bestjs=""
+        for cand in "" "sat,auto" sat "sat,16" "sat,12" usbjmicron "usbjmicron,x" usbsunplus usbprolific usbcypress scsi; do
+          js=$(probe_json "$cand")
+          [ -n "$js" ] || continue
+          if printf '%s' "$js" | jq -e '((.ata_smart_attributes.table // []) | length) > 0' >/dev/null 2>&1; then
+            dtype="$cand"; quality=full; bestjs="$js"; break
+          fi
+          if [ "$quality" = none ] \
+             && printf '%s' "$js" | jq -e '.smart_status.passed != null' >/dev/null 2>&1; then
+            dtype="$cand"; quality=health; bestjs="$js"   # keep looking for a full one
+          fi
+        done
         if [ -n "$dtype" ]; then dargs=(-d "$dtype"); else dargs=(); fi
+
+        # Say which of the three outcomes this was — never print "auto" for a
+        # total failure, which is what the previous version did and which made a
+        # measured drive and an unmeasurable one look identical on screen.
+        case "$quality" in
+          full)   shown="''${dtype:-auto}" ;;
+          health) shown="''${dtype:-auto}(H)" ;;
+          none)   shown="NONE" ;;
+        esac
 
         {
           echo "### smart-dump $(date '+%F %I:%M:%S %p %Z')"
           echo "### device-at-dump-time: $dev  (letters are NOT stable identities)"
           echo "### serial: $ser  model: $mod  bus: $tran"
-          echo "### device-type: ''${dtype:-auto}"
+          echo "### device-type: ''${dtype:-auto}   data-quality: $quality"
+          [ "$quality" = health ] && echo "### ⚠️ HEALTH VERDICT ONLY — this bridge does not pass the ATA attribute table."
+          [ "$quality" = none ]   && echo "### ⚠️ NOTHING READABLE — no device-type candidate returned data."
           echo
           # -x is the everything view: attributes, error log, self-test log and
           # the SCT / device-statistics pages that -a omits.
-          smartctl "''${dargs[@]}" -x "$dev" 2>&1 || true
+          timeout 60 smartctl "''${dargs[@]}" -x "$dev" 2>&1 || true
           echo
           echo "### --- self-test log (explicit, in case -x truncated it) ---"
-          smartctl "''${dargs[@]}" -l selftest "$dev" 2>&1 || true
+          timeout 30 smartctl "''${dargs[@]}" -l selftest "$dev" 2>&1 || true
         } > "$f"
         chmod 644 "$f"
 
-        # ⚠️ Classify carefully. "The bridge refused to pass SMART through" is a
-        # DIFFERENT outcome from "the drive answered and reported healthy", and
-        # conflating them is how a USB drive reads as fine for three months
-        # while nothing is actually being measured.
-        if grep -qiE "Unknown USB bridge|Read Device Identity failed|please specify device type" "$f"; then
-          res="BRIDGE BLOCKS SMART — NOT MEASURED"
-        elif grep -qi "self-assessment test result: PASSED" "$f"; then
-          res="PASSED"
-        elif grep -qi "self-assessment test result: FAILED" "$f"; then
-          res="*** FAILED ***"
-        else
-          res="no verdict line — read the file"
-        fi
-        printf "  %-20s %-28s %-5s %-9s %s\n" "$ser" "''${mod:0:28}" "''${tran:-?}" "''${dtype:-auto}" "$res"
+        # ⚠️ Classify from the PROBE's data-quality, not by grepping the -x text.
+        # "The bridge refused" and "the drive answered and is healthy" are
+        # different outcomes, and so is "the bridge gave a verdict but no
+        # attributes" — that third case is the dangerous one, because a bare
+        # PASSED is threshold-based and stays PASSED until very late. Fusion D1
+        # reported PASSED in 626 of 626 samples, the last of them 8 minutes
+        # before it stopped answering entirely.
+        case "$quality" in
+          none)   res="NOT MEASURED — no candidate returned data" ;;
+          health) if printf '%s' "$bestjs" | jq -e '.smart_status.passed == true' >/dev/null 2>&1
+                  then res="health-only PASSED — NO ATTRIBUTES (weak signal)"
+                  else res="*** health-only FAILED ***"; fi ;;
+          full)   if   grep -qi "self-assessment test result: PASSED" "$f"; then res="PASSED"
+                  elif grep -qi "self-assessment test result: FAILED" "$f"; then res="*** FAILED ***"
+                  else res="attributes present, no verdict line — read the file"; fi ;;
+        esac
+        printf "  %-20s %-28s %-5s %-9s %s\n" "$ser" "''${mod:0:28}" "''${tran:-?}" "$shown" "$res"
       done
 
       echo
       echo "  Done. Readable at $OUT/<serial>.txt"
-      echo "  NOTE: 'BRIDGE BLOCKS SMART' means NOT MEASURED. It is not a clean"
-      echo "        bill of health — WD USB bridges deny ATA passthrough, so"
-      echo "        those drives have no failure data at all until shucked."
+      echo "  DEV-TYPE column: a bare type means the ATA attribute table was read;"
+      echo "                   '(H)' means health verdict ONLY, no attributes;"
+      echo "                   'NONE' means nothing was readable at all."
+      echo "  ⚠️ 'health-only' and 'NOT MEASURED' are NOT clean bills of health."
+      echo "     A bare PASSED is threshold-based and stays PASSED until very"
+      echo "     late — fusion D1 reported it 8 minutes before it stopped"
+      echo "     answering. Only a full attribute table predicts failure."
     '';
   };
 in
