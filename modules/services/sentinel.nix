@@ -298,7 +298,12 @@ let
     text = ''
       FORUM="https://forum.driveonwood.com"
       SECRET=/run/secrets/discourse-api
-      STATE=/var/lib/sentinel/discourse.json
+      # -v2: the filename is deliberately bumped. The v1 run on 2026-09-01
+      # recorded last_upstream=v2026.9.0-latest but never escalated (the
+      # minConsecutive bug above), so leaving that state in place would suppress
+      # the version arm forever — the standing 4-release gap would never be
+      # reported even once. A fresh filename gives one clean first run.
+      STATE=/var/lib/sentinel/discourse-v2.json
       CHECK_INTERVAL=21600      # 6 h between network probes
       BACKUP_MAX_AGE=129600     # 36 h — daily at ~08:35, so this tolerates one miss + margin
 
@@ -483,7 +488,18 @@ let
       # act = false and stays that way: the remedies are a forum upgrade and a
       # backup investigation on a host the agent has no shell on. Diagnose and
       # say so; never touch it.
+      #
+      # ⚠️ minConsecutive = 1 IS LOad-BEARING, NOT A TUNING CHOICE. The global
+      # debounce = 2 requires a check to fire on two CONSECUTIVE ticks. This
+      # check self-throttles to one network probe per 6 h and exits "no
+      # incident" on every intervening 2-min tick — so `consecutive` resets to 0
+      # between probes and can never reach 2. With the default debounce this
+      # monitor fires internally and escalates NEVER, while looking perfectly
+      # healthy. Caught 2026-09-01 on the first live run (state file proved the
+      # check had run and read both versions, yet no incident existed).
+      # Any self-throttled check added here needs the same treatment.
       { id = "dow-forum"; type = "command"; severity = "warning"; agent = true; act = false;
+        minConsecutive = 1;
         cmd = "${discourseCheck}/bin/sentinel-check-discourse"; timeout = 90; }
 
       # Built-in self-test (notify path only — no agent): fires when the marker
