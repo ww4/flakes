@@ -119,6 +119,7 @@ def build_server(settings: Settings) -> FastMCP:
             flake_root=settings.flake_root,
             include_service_inventory=settings.include_service_inventory,
             context_page=settings.context_page,
+            task_sources=settings.task_sources,
         )
 
     @mcp.tool(name="search_notes")

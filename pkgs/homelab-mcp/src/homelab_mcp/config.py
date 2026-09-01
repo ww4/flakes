@@ -77,6 +77,19 @@ class Settings(BaseSettings):
         default=Path("/home/claude/flakes"),
         description="Read-only source for the service inventory.",
     )
+    task_sources: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Folders or pages whose open checkboxes appear in get_context(). "
+            "DEFAULT-DENY: empty means no task list at all. This used to walk the "
+            "whole space with a denylist, and on 2026-09-01 a live connector test "
+            "surfaced tasks from a root-level personal page carrying a start code, "
+            "plus security review items. A denylist cannot anticipate a page nobody "
+            "thought to exclude, and every new page defaults to exposed. Set this to "
+            "the folders that are safe to read aloud to a chat, e.g. "
+            "HOMELAB_MCP_TASK_SOURCES='[\"Projects\"]' (JSON, per pydantic-settings)."
+        ),
+    )
     context_page: str = Field(
         default="Areas/Agent Context.md",
         description=(

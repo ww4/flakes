@@ -10,6 +10,7 @@ Everything here is read-only.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 from .paths import PathRejected, resolve_read
@@ -18,6 +19,13 @@ from .space import SKIP_DIRS, MARKDOWN_SUFFIX
 MAX_OPEN_TASKS = 40
 MAX_PAGE_CHARS = 4000
 MAX_SUMMARY_PAGES = 40
+
+# CONVENTIONS.md and the curated context page are OPERATOR-owned: Chris decides
+# what is in them, so there is no reason to clip them at the generic page cap.
+# CONVENTIONS.md was 4437 bytes against MAX_PAGE_CHARS=4000 and lost its last
+# 437 — the tail of the style rules — while still looking like a complete
+# section apart from one "…(truncated)…" marker.
+MAX_CURATED_CHARS = 20000
 
 TASK_RE = re.compile(r"^\s*[-*]\s+\[ \]\s+(.*)$")
 
@@ -57,14 +65,50 @@ def _folder_summary(space_root: Path, folder: str) -> list[str]:
     return out
 
 
-def _open_tasks(space_root: Path) -> list[str]:
+def _open_tasks(space_root: Path, sources: Sequence[str] | None = None) -> list[str]:
+    """Open checkboxes, from an EXPLICIT allowlist of folders and pages.
+
+    ⚠️ DEFAULT-DENY. `sources=None` or an empty list returns nothing at all.
+
+    This used to walk the whole space with a denylist (`Journal`, `Keep`), which
+    is the wrong way round for a surface exposed to a chat endpoint. On
+    2026-09-01 a live connector test surfaced tasks from `MaM Interview Prep.md`
+    — a root-level personal page carrying a start code — plus a set of security
+    review items. Nothing was misconfigured; a denylist simply cannot anticipate
+    a page nobody thought to exclude, and every new page in the space defaults
+    to exposed.
+
+    This is the same conclusion the design already reached once and then lost.
+    `get_context` deliberately does NOT expose the agent's open-loops board,
+    because a list of unremediated work is exactly the wrong artifact to hand a
+    chat — and then this function reintroduced that class of exposure from the
+    whole space. An allowlist fails safe: a new page is invisible until someone
+    decides otherwise.
+
+    Sources are folder names or page paths relative to the space root.
+    """
+    if not sources:
+        return []
+
+    candidates: list[Path] = []
+    for source in sources:
+        try:
+            target = resolve_read(space_root, source)
+        except PathRejected:
+            continue
+        if target.is_dir():
+            candidates.extend(sorted(target.rglob(f"*{MARKDOWN_SUFFIX}")))
+        elif target.is_file():
+            candidates.append(target)
+
     out: list[str] = []
-    for path in sorted(space_root.rglob(f"*{MARKDOWN_SUFFIX}")):
+    seen: set[Path] = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
         rel_parts = path.relative_to(space_root).parts
         if any(part in SKIP_DIRS for part in rel_parts):
-            continue
-        # Journal pages restate tasks that live elsewhere; skip to avoid dupes.
-        if rel_parts and rel_parts[0] in {"Journal", "Keep"}:
             continue
         text = _read(path, limit=20000)
         if text is None:
@@ -90,7 +134,16 @@ def _service_inventory(flake_root: Path) -> list[str]:
     for path in modules.glob("*.nix"):
         try:
             for match in vhost_re.finditer(path.read_text(encoding="utf-8", errors="replace")):
-                vhosts.add(match.group(1).replace("${domain}", "rosemaryacres.com"))
+                name = match.group(1).replace("${domain}", "rosemaryacres.com")
+                # This is a regex over Nix source, not an evaluation, so any
+                # other interpolation stays literal. Entries like
+                # "${authHost}.rosemaryacres.com" were being reported as if they
+                # were real hostnames. Drop what we cannot resolve rather than
+                # emit a name that does not exist — a wrong inventory is worse
+                # than a short one, because a chat will repeat it as fact.
+                if "${" in name:
+                    continue
+                vhosts.add(name)
         except OSError:
             continue
     lines = [f"Service modules ({len(services)}): " + ", ".join(services)]
@@ -105,11 +158,12 @@ def build_context(
     flake_root: Path | None = None,
     include_service_inventory: bool = True,
     context_page: str | None = None,
+    task_sources: Sequence[str] | None = None,
 ) -> str:
     """Assemble the briefing as one markdown document."""
     sections: list[str] = ["# Homelab & knowledgebase context"]
 
-    conventions = _read(space_root / "CONVENTIONS.md")
+    conventions = _read(space_root / "CONVENTIONS.md", limit=MAX_CURATED_CHARS)
     if conventions:
         sections += ["", "## How this space works (the shared contract)", "", conventions]
 
@@ -125,7 +179,7 @@ def build_context(
     if areas:
         sections += ["", "## Areas of responsibility", ""] + areas
 
-    tasks = _open_tasks(space_root)
+    tasks = _open_tasks(space_root, task_sources)
     if tasks:
         sections += ["", f"## Open tasks (first {len(tasks)})", ""] + tasks
 
@@ -145,7 +199,7 @@ def build_context(
         except PathRejected:
             curated_path = None
         if curated_path is not None:
-            curated = _read(curated_path, limit=20000)
+            curated = _read(curated_path, limit=MAX_CURATED_CHARS)
             if curated:
                 sections += ["", "## Current focus (curated)", "", curated]
 

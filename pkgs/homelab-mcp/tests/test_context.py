@@ -47,7 +47,9 @@ def test_omits_curated_section_when_page_absent(space):
 
 
 def test_includes_conventions_projects_areas_and_tasks(space):
-    out = build_context(space, context_page=None)
+    # task_sources is now explicit: open tasks are allowlisted, never scraped
+    # from the whole space. See tests/test_context_task_scope.py.
+    out = build_context(space, context_page=None, task_sources=["Areas"])
     assert "No hard-wrapping" in out
     assert "Areas/Homelab.md" in out
     assert "Projects/Lock3.md" in out
