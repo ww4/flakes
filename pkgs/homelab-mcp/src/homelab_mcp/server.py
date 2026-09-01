@@ -15,6 +15,7 @@ import hmac
 import logging
 from typing import Any
 
+import uvicorn
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -30,6 +31,8 @@ from .space import append_note as space_append
 from .space import read_note as space_read
 from .space import save_note as space_save
 from .space import search_notes as space_search
+
+logger = logging.getLogger(__name__)
 
 
 def build_transport_security(settings: Settings) -> TransportSecuritySettings | None:
@@ -219,12 +222,16 @@ def build_server(settings: Settings) -> FastMCP:
 
 
 def check_bearer(settings: Settings, header_value: str | None) -> bool:
-    """Constant-time bearer check. Dormant until a connector can send a header.
+    """Constant-time check of an `Authorization: Bearer <token>` header.
 
     Compared with `hmac.compare_digest`, not `!=` — the prior art uses a plain
     comparison, which leaks the token a character at a time under timing
     analysis. Never read from a query parameter: the MCP authorization spec
-    prohibits access tokens in the query string.
+    prohibits access tokens in the query string, for exactly the reason this
+    whole change exists.
+
+    No token configured means no check, so a local development run needs no
+    ceremony. The deployment always sets one.
     """
     if not settings.mcp_token:
         return True
@@ -234,11 +241,103 @@ def check_bearer(settings: Settings, header_value: str | None) -> bool:
     return hmac.compare_digest(presented, settings.mcp_token)
 
 
+def check_api_key(settings: Settings, header_value: str | None) -> bool:
+    """Constant-time check of an `X-API-Key: <token>` header.
+
+    Accepted alongside the bearer form because the connector UI decides which
+    of the two standard header names it sends, and this end cannot control
+    that. Both carry the same secret, so supporting both removes a round trip
+    of "which one did it pick".
+    """
+    if not settings.mcp_token:
+        return True
+    if not header_value:
+        return False
+    return hmac.compare_digest(header_value, settings.mcp_token)
+
+
+class TokenAuthMiddleware:
+    """Reject requests that do not carry the shared secret.
+
+    PURE ASGI, deliberately NOT starlette's BaseHTTPMiddleware: that one
+    buffers the response body and breaks server-sent events, and MCP's
+    streamable-HTTP transport IS an SSE stream. Using it here would produce a
+    connector that hangs rather than one that fails — the worse of the two to
+    diagnose, and the exact shape of bug this project has already lost days to.
+
+    Sits in front of everything, so an unauthenticated caller cannot reach the
+    MCP endpoint, cannot enumerate tools, and cannot probe which paths exist.
+
+    This is what makes the secret path prefix stop being load-bearing. A prefix
+    is a credential in a URL, and URLs are recorded in request logs at every hop
+    — here and on the jump host. With a header credential in front, the prefix
+    becomes defence in depth, and a prefix visible in a log stops being an
+    incident.
+    """
+
+    def __init__(self, app: Any, settings: Settings) -> None:
+        self.app = app
+        self.settings = settings
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http" or not self.settings.mcp_token:
+            await self.app(scope, receive, send)
+            return
+
+        headers = {
+            k.decode("latin-1").lower(): v.decode("latin-1")
+            for k, v in scope.get("headers", [])
+        }
+        authorized = check_bearer(
+            self.settings, headers.get("authorization")
+        ) or check_api_key(self.settings, headers.get("x-api-key"))
+
+        if authorized:
+            await self.app(scope, receive, send)
+            return
+
+        # 401 + WWW-Authenticate is what the MCP authorization spec expects, and
+        # it tells a client the credential was the problem rather than the URL.
+        # The body carries no detail: a 401 that distinguishes "wrong token"
+        # from "no token" is a probing oracle.
+        logger.warning("rejected unauthenticated request to %s", scope.get("path"))
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 401,
+                "headers": [
+                    (b"content-type", b"text/plain; charset=utf-8"),
+                    (b"www-authenticate", b'Bearer realm="homelab-mcp"'),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": b"Unauthorized"})
+
+
+def build_app(settings: Settings) -> Any:
+    """The ASGI app for the streamable-HTTP transport, with auth wrapped round it."""
+    server = build_server(settings)
+    return TokenAuthMiddleware(server.streamable_http_app(), settings)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = Settings()
-    server = build_server(settings)
-    server.run(transport="streamable-http")
+
+    if not settings.mcp_token:
+        logger.warning(
+            "HOMELAB_MCP_MCP_TOKEN is unset — serving WITHOUT header authentication"
+        )
+
+    # uvicorn is driven directly rather than through FastMCP.run(), because that
+    # builds the app and runs it in a single call with no hook to get between
+    # the two — and the auth middleware has to wrap the app.
+    uvicorn.run(
+        build_app(settings),
+        host=settings.host,
+        port=settings.port,
+        log_level="info",
+    )
 
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ python3Packages.buildPythonApplication {
 
   dependencies = with python3Packages; [
     mcp
+    uvicorn
     pydantic
     pydantic-settings
   ];
