@@ -261,6 +261,128 @@ let
     '';
   };
 
+  # forum.driveonwood.com — the one production service in Chris's world that
+  # nothing watched. Two questions, both previously answerable only by hand:
+  # is it behind upstream, and did last night's backup finish.
+  #
+  # WHY IT WENT UNNOTICED FOR FOUR MONTHS (measured 2026-09-01, not guessed):
+  # Discourse's OWN update checker is not reporting on this forum.
+  # /admin/version_check returns installed_version, installed_sha,
+  # installed_describe and git_branch — but NO latest_version, and
+  # `updated_at: null`. The admin UI therefore has nothing to raise an update
+  # banner from. So this check does NOT ask Discourse whether it is current; it
+  # asks GitHub what the newest tag is and compares itself.
+  #
+  # TWO RATE/POLITENESS CONSTRAINTS shape the design:
+  #   1. The sentinel ticks every 2 min. Hitting a PUBLIC forum and the GitHub
+  #      API 720x/day is rude and would blow GitHub's 60/hr unauthenticated
+  #      limit outright. So the network work is throttled to once per
+  #      CHECK_INTERVAL (6 h) behind a state file; between runs this exits
+  #      immediately and costs nothing.
+  #   2. The forum is ALREADY ~4 releases behind, so a naive "is it behind?"
+  #      would fire every cooldown forever. Per the polite-polling ethos, the
+  #      version arm fires on STATE CHANGE — when the newest upstream tag
+  #      differs from the one last reported — not on the standing gap. Being
+  #      persistently behind is a digest fact, not a page.
+  #
+  # The backup arm has no such damping: a missed backup is a real, actionable,
+  # time-sensitive fault and should re-fire.
+  #
+  # ⚠️ A MISSING SECRET FIRES. It does not silently pass. An unreadable
+  # credential means the check cannot answer its question, and "cannot check"
+  # must never render as "fine" — that is exactly how the temperature monitor
+  # published nothing for 10 days while looking green.
+  discourseCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-discourse";
+    runtimeInputs = [ pkgs.curl pkgs.jq pkgs.coreutils pkgs.gnugrep ];
+    text = ''
+      FORUM="https://forum.driveonwood.com"
+      SECRET=/run/secrets/discourse-api
+      STATE=/var/lib/sentinel/discourse.json
+      CHECK_INTERVAL=21600      # 6 h between network probes
+      BACKUP_MAX_AGE=129600     # 36 h — daily at ~08:35, so this tolerates one miss + margin
+
+      now=$(date +%s)
+
+      # --- throttle: only do network work every CHECK_INTERVAL ---
+      if [ -r "$STATE" ]; then
+        last=$(jq -r '.last_run // 0' "$STATE" 2>/dev/null || echo 0)
+        case "$last" in ""|null|*[!0-9]*) last=0 ;; esac
+        [ $(( now - last )) -lt "$CHECK_INTERVAL" ] && exit 1
+      fi
+
+      if [ ! -r "$SECRET" ]; then
+        echo "Discourse monitor cannot run: $SECRET is missing or unreadable — DOW forum is UNMONITORED (this is not 'fine')"
+        exit 0   # fire
+      fi
+      set -a
+      # shellcheck source=/dev/null
+      . "$SECRET"
+      set +a
+
+      auth=(-H "Api-Key: $DISCOURSE_API_KEY" -H "Api-Username: $DISCOURSE_API_USERNAME"
+            -H "User-Agent: gromit-sentinel")
+      found=0
+      msg=""
+
+      # ---------- arm 1: backup freshness ----------
+      bk=$(curl -sS --max-time 20 -w $'\n%{http_code}' "''${auth[@]}" "$FORUM/admin/backups.json" 2>/dev/null || true)
+      code=$(printf '%s' "$bk" | tail -n1)
+      body=$(printf '%s' "$bk" | sed '$d')
+      if [ "$code" != "200" ]; then
+        msg="$msg; backups endpoint -> HTTP ''${code:-no-response}"
+        found=1
+      else
+        newest=$(printf '%s' "$body" | jq -r 'map(.last_modified) | max // empty' 2>/dev/null || true)
+        if [ -z "$newest" ] || [ "$newest" = "null" ]; then
+          msg="$msg; backups endpoint returned 200 but NO backups listed (auth ok, data empty)"
+          found=1
+        else
+          bts=$(date -d "$newest" +%s 2>/dev/null || echo 0)
+          age=$(( now - bts ))
+          if [ "$bts" -eq 0 ]; then
+            msg="$msg; could not parse newest backup timestamp '$newest'"
+            found=1
+          elif [ "$age" -gt "$BACKUP_MAX_AGE" ]; then
+            msg="$msg; NEWEST BACKUP IS $(( age / 3600 ))h OLD (limit $(( BACKUP_MAX_AGE / 3600 ))h) — newest=$newest"
+            found=1
+          fi
+        fi
+      fi
+
+      # ---------- arm 2: version drift, fires on CHANGE only ----------
+      installed=$(curl -sS --max-time 20 "''${auth[@]}" "$FORUM/admin/version_check.json" 2>/dev/null \
+                    | jq -r '.installed_version // empty' 2>/dev/null || true)
+      upstream=$(curl -sS --max-time 20 -H "User-Agent: gromit-sentinel" \
+                   "https://api.github.com/repos/discourse/discourse/tags?per_page=20" 2>/dev/null \
+                   | jq -r '[.[].name] | map(select(test("^v[0-9]{4}\\.[0-9]+\\.[0-9]+-latest$"))) | .[0] // empty' 2>/dev/null || true)
+
+      prev=""
+      [ -r "$STATE" ] && prev=$(jq -r '.last_upstream // ""' "$STATE" 2>/dev/null || echo "")
+
+      if [ -n "$installed" ] && [ -n "$upstream" ]; then
+        if [ "v$installed" != "$upstream" ] && [ "$upstream" != "$prev" ]; then
+          msg="$msg; NEW DISCOURSE RELEASE — forum runs $installed, upstream is $upstream"
+          found=1
+        fi
+      elif [ -z "$installed" ]; then
+        msg="$msg; could not read installed_version (auth or route changed)"
+        found=1
+      fi
+
+      # persist state even when nothing fired, so the throttle and the
+      # fire-on-change comparison both advance
+      printf '{"last_run":%s,"last_upstream":"%s","installed":"%s"}\n' \
+        "$now" "''${upstream:-}" "''${installed:-}" > "$STATE" 2>/dev/null || true
+
+      if [ "$found" -eq 1 ]; then
+        echo "DOW forum: ''${msg#; }"
+        exit 0   # fire
+      fi
+      exit 1     # all good
+    '';
+  };
+
   sentinelConfig = {
     enabled = true;
     pollSec = 120;          # informational; the systemd timer drives the cadence
@@ -351,6 +473,18 @@ let
       # scoped sudo, but it should say what it found before touching anything.
       { id = "api-content"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "${apiCheck}/bin/sentinel-check-apis"; timeout = 60; }
+
+      # DOW forum health — backup freshness + Discourse version drift (see
+      # discourseCheck above). New 2026-09-01: forum.driveonwood.com is a
+      # PRODUCTION service with ~12 years of irreplaceable content and nothing
+      # watched it; it drifted 4 releases behind unnoticed because Discourse's
+      # own update checker is not reporting. Self-throttles to one network probe
+      # per 6 h, so the 2-min tick costs nothing in between.
+      # act = false and stays that way: the remedies are a forum upgrade and a
+      # backup investigation on a host the agent has no shell on. Diagnose and
+      # say so; never touch it.
+      { id = "dow-forum"; type = "command"; severity = "warning"; agent = true; act = false;
+        cmd = "${discourseCheck}/bin/sentinel-check-discourse"; timeout = 90; }
 
       # Built-in self-test (notify path only — no agent): fires when the marker
       # exists, then clears it. The "trigger on demand" hook for the pipeline.
