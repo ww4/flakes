@@ -32,6 +32,7 @@
     ./modules/agent/arr-api-secret.nix      # gromit-only: agent's Sonarr/Radarr/Prowlarr API keys (sops)
     ./modules/agent/jellyfin-api-secret.nix # gromit-only: agent's Jellyfin API key (sops)
     ./modules/agent/cloudflare-lock3-secret.nix # gromit-only: agent's lock3.net Cloudflare token (sops)
+    ./modules/agent/discourse-api-secret.nix # gromit-only: agent's DOW Discourse API key (sops)
     ./modules/agent/sudo.nix
     ./modules/agent/comin.nix               # GitOps applier — rebuilds on merge to main
     ./modules/agent/claude-agent-profile.nix # harness profile (shared agent-modules flake)
