@@ -1,50 +1,48 @@
 # homelab-mcp — a Model Context Protocol server giving Claude in the app
 # (phone, web, desktop) a seat at the SilverBullet space.
 #
-# PHASE C: published to the public internet via Tailscale Funnel.
+# PHASE C: published via a jump host on the lock3 VPS. gromit itself stays
+# entirely private — this module opens ONE port, on the tailnet interface only,
+# to ONE peer.
 #
-# It has to be public. Anthropic's cloud connects to the connector outbound from
-# 160.79.104.0/21 — it is NOT the phone or the browser that connects, even for
-# Desktop and Cowork, because remote connectors are brokered through the account:
+# It has to be public somewhere. Anthropic's cloud connects to the connector
+# outbound from 160.79.104.0/21 — it is NOT the phone or the browser that
+# connects, even for Desktop and Cowork, because remote connectors are brokered
+# through the account:
 #   "Claude connects to your remote MCP server from Anthropic's cloud
 #    infrastructure, rather than from your local device."
 #   "Servers hosted on a private corporate network, behind a VPN, or blocked by
 #    a firewall won't connect."
-# So a tailnet-only address can never serve this, and gromit has no existing
-# public ingress to reuse — the rosemaryacres.com names resolve *publicly* to
-# 100.82.117.116, this box's Tailscale CGNAT address (see nginx-access.nix).
+# gromit has no public ingress and is not getting one: the rosemaryacres.com
+# names resolve *publicly* to 100.82.117.116, this box's Tailscale CGNAT
+# address (see nginx-access.nix). So the public face lives on a VPS we already
+# run, and reaches back over WireGuard.
 #
-# Funnel rather than the originally-planned Cloudflare tunnel, for two reasons
-# beyond it being fewer moving parts: TLS terminates HERE (Cloudflare would
-# terminate at their edge and see note plaintext), and it needs no port-forward,
-# no DNS record and no WAF rule. What it costs is that *.ts.net names are
-# published to public Certificate Transparency logs, so the hostname is
-# enumerable and cannot be treated as a secret — hence the two gates below.
+# The chain:
+#   Anthropic → https://mcp.rosemaryacres.com (lock3 VPS, real LE cert)
+#             → GATE 1 there: allow 160.79.104.0/21; deny all
+#             → Tailscale → gromit 100.82.117.116:8789
+#             → GATE 3 here: allow the VPS's tailnet IP; deny all
+#             → homelab-mcp 127.0.0.1:8787
+#             → GATE 2 in the app: the 128-bit secret path prefix
 #
-# THE TWO GATES, in order:
-#   1. Source IP — nginx allows only 160.79.104.0/21. This is the equivalent of
-#      the Cloudflare WAF rule in the original plan, and it is the reason Funnel
-#      runs in TLS-terminated-TCP mode with PROXY protocol rather than plain
-#      --https: --https gives the backend no way to see the real client address.
-#   2. An unguessable 128-bit path prefix, generated on the box (see below).
+# Gate 1 lives on the VPS because that is the only place the true client address
+# is visible. Nothing proxies in front of it, so plain $remote_addr is the real
+# source — no PROXY protocol, no realip, none of the machinery the funnel needed.
 #
-# The chain is:
-#   internet :8443 → tailscaled (terminates TLS, prepends PROXY v2)
-#                  → nginx 127.0.0.1:8788 (real-IP + allowlist)
-#                  → homelab-mcp 127.0.0.1:8787
-#
-# Endpoint: https://gromit.<tailnet>.ts.net:8443/<prefix>/mcp
-#
-# ⚠️ THE FUNNEL PORT MUST NOT BE 443. Funnel offers 443/8443/10000, 443 is the
-# obvious pick, and it took nginx down across the whole box on first deploy.
-# `tailscale funnel --tls-terminated-tcp=<port>` makes tailscaled BIND
-# <tailnet-ip>:<port>; nginx binds the wildcard 0.0.0.0:443. A wildcard bind and
-# a specific-address bind of the same port collide, so nginx died with
-#   [emerg] bind() to 0.0.0.0:443 failed (98: Address already in use)
-# and, having Restart=always, sat in a restart loop taking EVERY vhost with it —
-# Forgejo included, which is the route config changes reach this box by.
-# Nothing about the symptom points here: the funnel reports healthy, and it is
-# nginx that looks broken.
+# WHY NOT TAILSCALE FUNNEL, which this module used to do. Two failures:
+#   1. Funnel on 443 made tailscaled BIND <tailnet-ip>:443, colliding with
+#      nginx's wildcard 0.0.0.0:443. nginx died with "bind() ... Address already
+#      in use" and, having Restart=always, looped — taking EVERY vhost on this
+#      box down for two hours, Forgejo included, which is how config changes get
+#      here. Moved to 8443 and that was fixed.
+#   2. Then Anthropic never connected at all. Four days of nginx and app logs
+#      show not one request from their range and not one request carrying the
+#      path prefix — so it was the *.ts.net name or the non-standard port, and
+#      neither is fixable from this side. Meanwhile the endpoint was found and
+#      probed by vulnerability scanners within twelve seconds of going public.
+# The VPS route has none of that: a name we control, port 443, an ordinary
+# Let's Encrypt certificate.
 #
 # Why it exists: a chat in the Claude app has no filesystem and no route into
 # this network, so an insight from a phone conversation never reaches the
@@ -61,33 +59,37 @@
 let
   package = pkgs.callPackage ../../pkgs/homelab-mcp { };
 
-  port = 8787;        # the MCP server itself — loopback, never published
-  proxyPort = 8788;   # nginx's PROXY-protocol listener, fed only by tailscaled
+  port = 8787;      # the MCP server itself — loopback, never published
+  jumpPort = 8789;  # nginx's tailnet listener, reachable ONLY by the jump host
 
-  # The public Funnel port. 8443, NOT 443 — see the collision note in the header.
-  # Funnel permits 443/8443/10000 only, and 443 is nginx's.
-  funnelPort = 8443;
   spaceDir = "/var/lib/silverbullet";
 
   stateDir = "/var/lib/homelab-mcp";
   prefixEnv = "${stateDir}/path-prefix.env";
 
-  # The Funnel hostname. Not a secret — Tailscale publishes every *.ts.net name
-  # it issues a certificate for to the public Certificate Transparency logs, so
-  # this is discoverable whatever we do. Treat it as a public address and let the
-  # two gates do the work.
-  #
-  # The server has to be TOLD this. The MCP SDK auto-enables DNS-rebinding
-  # protection whenever the bind address is loopback and then only accepts
-  # 127.0.0.1/localhost Host headers, so without it every proxied request comes
-  # back 421 Misdirected Request. See build_transport_security() in server.py.
-  publicHost = "gromit.sheep-trout.ts.net";
+  # This box's Tailscale address. The listener below binds it specifically
+  # rather than the wildcard, so the port cannot appear on the LAN or the WAN
+  # even if the firewall rule below were ever loosened.
+  tailnetIP = "100.82.117.116";
 
-  # Anthropic's published OUTBOUND range — the addresses their cloud makes MCP
-  # tool calls from. Deliberately not the 2607:6bc0::/48 on the same docs page:
-  # that one is INBOUND (where Anthropic receives connections) and allowing it
-  # here would widen the gate for no reason.
-  anthropicEgress = "160.79.104.0/21";
+  # The jump host: lock3.sheep-trout.ts.net, the VPS at 104.207.80.108 that
+  # terminates TLS for mcp.rosemaryacres.com. It carries tag:jumphost, and the
+  # tailnet policy grants that tag exactly one destination — gromit:8789 — so a
+  # compromise of that internet-facing box reaches this port and nothing else.
+  #
+  # A tailnet IP, not a hostname: nginx resolves names once at startup, so a
+  # name here would bake in whatever it resolved to at boot. If the VPS is ever
+  # rebuilt and rejoins with a different address, THIS LINE must change or the
+  # endpoint 403s with no other symptom.
+  jumpHostIP = "100.125.31.125";
+
+  # The public hostname clients reach. Not served by this box — it belongs to
+  # the VPS — but the app still has to be TOLD it. The MCP SDK auto-enables
+  # DNS-rebinding protection whenever the bind address is loopback and then only
+  # accepts 127.0.0.1/localhost Host headers, so without this every proxied
+  # request comes back 421 Misdirected Request, with no MCP-level error to
+  # explain it. See build_transport_security() in server.py.
+  publicHost = "mcp.rosemaryacres.com";
 in
 {
   # --- the path prefix ---------------------------------------------------
@@ -219,48 +221,42 @@ in
     };
   };
 
-  # --- gate 1: the source-IP allowlist -----------------------------------
-  # A dedicated listener on loopback, reached ONLY by tailscaled. It speaks
-  # plain HTTP because tailscaled has already terminated TLS.
+  # --- gate 3: only the jump host may reach this ---------------------------
+  # A listener bound to the TAILNET address only. The VPS proxies here over
+  # WireGuard; nothing else can, and there is no TLS to terminate because the
+  # traffic already crossed an encrypted tunnel.
   #
-  # The allow/deny here REPLACES the inherited set from nginx-access.nix rather
-  # than adding to it — ngx_http_access_module directives at an inner level
-  # override the outer level, they do not merge. That is the intent: this vhost
-  # is the one thing on the box that must answer a WAN address, and it must
-  # answer nothing else. The house rule (Tailscale/LAN only) is still correct
-  # for every other vhost and is untouched.
+  # The allow/deny REPLACES the inherited set from nginx-access.nix rather than
+  # adding to it — ngx_http_access_module directives at an inner level override
+  # the outer level, they do not merge. That is the intent. The house rule
+  # (Tailscale + LAN) would let ANY tailnet device reach this port; this vhost
+  # narrows that to a single peer, because the whole point of the jump host is
+  # that one internet-facing box is the only thing that talks to the connector.
   #
-  # set_real_ip_from must stay 127.0.0.1: it names who is trusted to assert a
-  # client address via PROXY protocol. Widening it would let anyone who can
-  # reach this port forge an Anthropic source address and walk through gate 1.
-  services.nginx.virtualHosts."homelab-mcp-funnel" = {
+  # No realip and no PROXY protocol here, deliberately. Gate 1 is enforced on
+  # the VPS, where $remote_addr is the true client. Trusting a forwarded address
+  # at this hop would mean anyone who could reach the port could assert an
+  # Anthropic source, so the address that matters here is the peer's own.
+  services.nginx.virtualHosts."homelab-mcp-jump" = {
     serverName = "_";
     listen = [{
-      addr = "127.0.0.1";
-      port = proxyPort;
-      extraParameters = [ "proxy_protocol" ];
+      addr = tailnetIP;
+      port = jumpPort;
     }];
 
     extraConfig = ''
-      set_real_ip_from 127.0.0.1;
-      real_ip_header proxy_protocol;
-
-      allow ${anthropicEgress};
+      allow ${jumpHostIP};
       deny all;
     '';
 
     locations."/" = {
       proxyPass = "http://127.0.0.1:${toString port}";
       extraConfig = ''
-        # $host, not $http_host: nginx strips the port from $host, so the
-        # backend sees a bare "gromit.<tailnet>.ts.net". That is the form the
-        # SDK's host allowlist has to match, and the reason server.py lists the
-        # bare hostname and not only the "host:*" wildcard.
-        #
-        # This is what makes the non-default funnel port survivable: a client
-        # hitting :8443 sends "Host: gromit.<tailnet>.ts.net:8443", $host drops
-        # the ":8443", and the bare entry matches. Switching this to $http_host
-        # would break the connector.
+        # $host, not $http_host: nginx strips the port from $host. The VPS sends
+        # "Host: mcp.rosemaryacres.com" (443 is implicit, so no port to strip),
+        # and that bare form is what the SDK's host allowlist matches. Changing
+        # this to $http_host would break the connector the moment anything
+        # reached it on a non-default port.
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -279,42 +275,9 @@ in
     };
   };
 
-  # --- the funnel itself --------------------------------------------------
-  # Declarative rather than a one-off `tailscale funnel` at a shell, so the
-  # published state lives in the repo and a rebuild re-asserts it.
-  #
-  # --tls-terminated-tcp + --proxy-protocol=2 is the combination that carries the
-  # real client address to the backend; plain --https mode does not, and without
-  # it gate 1 above is impossible and the path prefix would be the only defence.
-  #
-  # This unit FAILS until the `funnel` nodeAttr is granted in the tailnet policy
-  # file — that grant is a Tailscale control-plane setting, and there is no API
-  # key on this box to do it with. It retries once a minute rather than giving up,
-  # so the endpoint comes up on its own when the ACL lands, with no second deploy:
-  #
-  #   "nodeAttrs": [ { "target": ["autogroup:member"], "attr": ["funnel"] } ]
-  systemd.services.homelab-mcp-funnel = {
-    description = "Publish homelab-mcp to the internet via Tailscale Funnel";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "tailscaled.service" "nginx.service" ];
-    requires = [ "tailscaled.service" ];
-
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-
-      ExecStart = ''
-        ${pkgs.tailscale}/bin/tailscale funnel --yes --bg \
-          --proxy-protocol=2 --tls-terminated-tcp=${toString funnelPort} \
-          tcp://127.0.0.1:${toString proxyPort}
-      '';
-
-      # Fail closed: stopping or disabling this unit must actually close the
-      # door, not leave a published endpoint behind in tailscaled's state.
-      ExecStop = "${pkgs.tailscale}/bin/tailscale funnel reset";
-
-      Restart = "on-failure";
-      RestartSec = "60s";
-    };
-  };
+  # The tailnet interface otherwise permits only 22 and 8096 (see
+  # modules/networking.nix). Without this the VPS's connections are dropped by
+  # the firewall before nginx ever sees them, which looks identical to the
+  # allowlist rejecting them.
+  networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ jumpPort ];
 }
