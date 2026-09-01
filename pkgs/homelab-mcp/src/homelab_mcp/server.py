@@ -119,7 +119,7 @@ def build_server(settings: Settings) -> FastMCP:
             flake_root=settings.flake_root,
             include_service_inventory=settings.include_service_inventory,
             context_page=settings.context_page,
-            task_sources=settings.task_sources,
+            readable_sources=settings.readable_sources,
         )
 
     @mcp.tool(name="search_notes")
@@ -130,14 +130,14 @@ def build_server(settings: Settings) -> FastMCP:
         path; matching is case-insensitive. Regular expressions are not
         supported. Returns path, title and a short excerpt per hit.
         """
-        hits = space_search(settings.space_root, query, limit)
+        hits = space_search(settings.space_root, query, limit, settings.readable_sources)
         return [{"path": h.path, "title": h.title, "excerpt": h.excerpt} for h in hits]
 
     @mcp.tool(name="read_note")
     def read_note_tool(path: str) -> str:
         """Read one page in full, by the path returned from search_notes."""
         try:
-            return space_read(settings.space_root, path)
+            return space_read(settings.space_root, path, settings.readable_sources)
         except PathRejected as exc:
             audit.record_rejection("read_note", str(exc))
             raise

@@ -77,17 +77,22 @@ class Settings(BaseSettings):
         default=Path("/home/claude/flakes"),
         description="Read-only source for the service inventory.",
     )
-    task_sources: list[str] = Field(
-        default_factory=list,
+    readable_sources: list[str] = Field(
+        default_factory=lambda: ["Inbox"],
         description=(
-            "Folders or pages whose open checkboxes appear in get_context(). "
-            "DEFAULT-DENY: empty means no task list at all. This used to walk the "
-            "whole space with a denylist, and on 2026-09-01 a live connector test "
-            "surfaced tasks from a root-level personal page carrying a start code, "
-            "plus security review items. A denylist cannot anticipate a page nobody "
-            "thought to exclude, and every new page defaults to exposed. Set this to "
-            "the folders that are safe to read aloud to a chat, e.g. "
-            "HOMELAB_MCP_TASK_SOURCES='[\"Projects\"]' (JSON, per pydantic-settings)."
+            "The ONLY parts of the space this connector may read: governs "
+            "search_notes, read_note, and the open-task list in get_context. "
+            "Folders or page paths relative to the space root. "
+            "ALLOWLIST, NOT DENYLIST, and deliberately narrow by default. "
+            "A red-team pass on 2026-09-01 pulled a root-level page containing an "
+            "email address, the current VPN exit IP and a forwarded port — it "
+            "carried no tag any denylist would have keyed on, which is the whole "
+            "argument. Defaults to Inbox alone: the connector can always read what "
+            "it wrote, and everything else is a deliberate decision. Widen with "
+            "HOMELAB_MCP_READABLE_SOURCES='[\"Projects\",\"Areas\"]' (JSON, per "
+            "pydantic-settings). Pages named explicitly by get_context — "
+            "CONVENTIONS.md, index.md, the curated context page — are operator "
+            "configuration and are read regardless."
         ),
     )
     context_page: str = Field(

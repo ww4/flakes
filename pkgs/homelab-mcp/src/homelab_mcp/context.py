@@ -123,12 +123,31 @@ def _open_tasks(space_root: Path, sources: Sequence[str] | None = None) -> list[
     return out
 
 
+_UNSAFE_NAME_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _clean_name(name: str) -> str:
+    """Flatten a filename-derived value before it goes into the briefing.
+
+    Module names come from FILENAMES, and a filename can contain a newline. A
+    file called "x\nInjected: line.nix" put a whole extra line into the
+    inventory section of get_context — text that then reads to a model as part
+    of the briefing rather than as a filename. Narrow (it needs a file landed in
+    the flakes repo, which is PR-gated) but the GitHub mirror is public, so a
+    crafted filename in a pull request is a real path to it.
+
+    Control characters out, length capped. Not validation — this value is
+    display text, and display text should not be able to add structure.
+    """
+    return _UNSAFE_NAME_RE.sub(" ", name).strip()[:80]
+
+
 def _service_inventory(flake_root: Path) -> list[str]:
     """Service names and vhosts, derived from the flake. Names only, no config."""
     modules = flake_root / "modules" / "services"
     if not modules.is_dir():
         return []
-    services = sorted(p.stem for p in modules.glob("*.nix"))
+    services = sorted(_clean_name(p.stem) for p in modules.glob("*.nix"))
     vhosts: set[str] = set()
     vhost_re = re.compile(r'virtualHosts\."([^"]+)"')
     for path in modules.glob("*.nix"):
@@ -158,10 +177,31 @@ def build_context(
     flake_root: Path | None = None,
     include_service_inventory: bool = True,
     context_page: str | None = None,
-    task_sources: Sequence[str] | None = None,
+    readable_sources: Sequence[str] | None = None,
 ) -> str:
     """Assemble the briefing as one markdown document."""
     sections: list[str] = ["# Homelab & knowledgebase context"]
+
+    # The curated page goes FIRST, not last. It carries the framing — what to
+    # treat as sensitive, what to ask about rather than assume — and that is
+    # worth nothing if it can be pushed out of the payload. It used to be
+    # appended last, which made the whole briefing order-dependent: a long
+    # enough earlier page (CONVENTIONS.md is already over the generic cap and
+    # growing) would silently truncate the rules a reader most needs.
+    if context_page:
+        # Scoped through resolve_read, not just joined. This value is operator
+        # configuration rather than caller input, so it is not an attack path —
+        # but a typo like "../secret.md" would otherwise read a file outside
+        # the space, and a config typo should not be able to leak anything.
+        # (Caught by test_never_escapes_the_space, which a plain join failed.)
+        try:
+            curated_path = resolve_read(space_root, context_page)
+        except PathRejected:
+            curated_path = None
+        if curated_path is not None:
+            curated = _read(curated_path, limit=MAX_CURATED_CHARS)
+            if curated:
+                sections += ["", "## Current focus (curated)", "", curated]
 
     conventions = _read(space_root / "CONVENTIONS.md", limit=MAX_CURATED_CHARS)
     if conventions:
@@ -179,7 +219,7 @@ def build_context(
     if areas:
         sections += ["", "## Areas of responsibility", ""] + areas
 
-    tasks = _open_tasks(space_root, task_sources)
+    tasks = _open_tasks(space_root, readable_sources)
     if tasks:
         sections += ["", f"## Open tasks (first {len(tasks)})", ""] + tasks
 
@@ -188,19 +228,5 @@ def build_context(
         if inventory:
             sections += ["", "## Deployed services (from the NixOS flake)", ""] + inventory
 
-    if context_page:
-        # Scoped through resolve_read, not just joined. This value is operator
-        # configuration rather than caller input, so it is not an attack path —
-        # but a typo like "../secret.md" would otherwise read a file outside
-        # the space, and a config typo should not be able to leak anything.
-        # (Caught by test_never_escapes_the_space, which a plain join failed.)
-        try:
-            curated_path = resolve_read(space_root, context_page)
-        except PathRejected:
-            curated_path = None
-        if curated_path is not None:
-            curated = _read(curated_path, limit=MAX_CURATED_CHARS)
-            if curated:
-                sections += ["", "## Current focus (curated)", "", curated]
 
     return "\n".join(sections).rstrip() + "\n"

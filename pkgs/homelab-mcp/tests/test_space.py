@@ -20,6 +20,12 @@ INBOX = "Inbox"
 NOW = datetime(2026, 7, 27, 10, 30)
 
 
+# search/read are allowlist-scoped now (see test_context_task_scope.py for why).
+# These tests assert about the whole fixture space, so they name its contents
+# explicitly — there is deliberately no way to say "everything".
+FIXTURE_SOURCES = ["Inbox", "Areas", "CONFIG.md"]
+
+
 @pytest.fixture()
 def space(tmp_path):
     root = tmp_path / "space"
@@ -54,16 +60,16 @@ DOLLAR_CORPUS = [
 @pytest.mark.parametrize("payload", DOLLAR_CORPUS)
 def test_save_note_preserves_dollar_sequences(space, payload):
     saved = save_note(space, INBOX, "Dollar test", payload, now=NOW)
-    text = read_note(space, saved.path)
+    text = read_note(space, saved.path, sources=FIXTURE_SOURCES)
     assert payload in text
 
 
 @pytest.mark.parametrize("payload", DOLLAR_CORPUS)
 def test_append_note_preserves_dollar_sequences(space, payload):
     saved = save_note(space, INBOX, "Append target", "original body", now=NOW)
-    before = read_note(space, saved.path)
+    before = read_note(space, saved.path, sources=FIXTURE_SOURCES)
     append_note(space, INBOX, saved.path, payload)
-    after = read_note(space, saved.path)
+    after = read_note(space, saved.path, sources=FIXTURE_SOURCES)
 
     # The original content is untouched and the payload survives verbatim.
     assert after.startswith(before.rstrip("\n"))
@@ -94,8 +100,8 @@ def test_save_note_never_overwrites_and_suffixes(space):
     assert third.path == "Inbox/2026-07-27-same-title-3.md"
 
     # The first note still holds its original body — nothing clobbered it.
-    assert "body one" in read_note(space, first.path)
-    assert "body two" in read_note(space, second.path)
+    assert "body one" in read_note(space, first.path, sources=FIXTURE_SOURCES)
+    assert "body two" in read_note(space, second.path, sources=FIXTURE_SOURCES)
 
 
 def test_save_note_does_not_clobber_a_preexisting_file(space):
@@ -158,7 +164,7 @@ def test_slugify(title, expected):
 # --------------------------------------------------------------------------
 
 def test_search_finds_content(space):
-    hits = search_notes(space, "mergerfs")
+    hits = search_notes(space, "mergerfs", sources=FIXTURE_SOURCES)
     assert len(hits) == 1
     assert hits[0].path == "Areas/Homelab.md"
     assert hits[0].title == "Homelab"
@@ -166,26 +172,55 @@ def test_search_finds_content(space):
 
 
 def test_search_requires_all_tokens(space):
-    assert search_notes(space, "mergerfs snapraid")
-    assert not search_notes(space, "mergerfs kubernetes")
+    assert search_notes(space, "mergerfs snapraid", sources=FIXTURE_SOURCES)
+    assert not search_notes(space, "mergerfs kubernetes", sources=FIXTURE_SOURCES)
 
 
 def test_search_skips_git_internals(space):
-    assert not search_notes(space, "should never be searched")
+    assert not search_notes(space, "should never be searched", sources=FIXTURE_SOURCES)
 
 
 def test_search_matches_on_path(space):
-    hits = search_notes(space, "Homelab")
+    hits = search_notes(space, "Homelab", sources=FIXTURE_SOURCES)
     assert any(h.path == "Areas/Homelab.md" for h in hits)
 
 
 def test_search_caps_limit(space):
     for i in range(10):
         save_note(space, INBOX, f"Note {i}", "shared-token body", now=NOW)
-    assert len(search_notes(space, "shared-token", limit=3)) == 3
-    assert len(search_notes(space, "shared-token", limit=9999)) <= 50
+    assert len(search_notes(space, "shared-token", limit=3, sources=FIXTURE_SOURCES)) == 3
+    assert len(search_notes(space, "shared-token", limit=9999, sources=FIXTURE_SOURCES)) <= 50
 
 
 def test_search_rejects_empty_query(space):
     with pytest.raises(ValueError):
-        search_notes(space, "   ")
+        search_notes(space, "   ", sources=FIXTURE_SOURCES)
+
+
+# --------------------------------------------------------------------------
+# Space conventions: no hard-wrapping anywhere we generate prose.
+# --------------------------------------------------------------------------
+
+def test_queue_header_is_not_hard_wrapped():
+    """SilverBullet renders every newline as a real line break.
+
+    A wrapped paragraph therefore displays as several broken lines. Caught on
+    the first live deploy — the header had been wrapped at 78 columns.
+    """
+    from homelab_mcp.queue import HEADER
+
+    prose = [
+        line for line in HEADER.splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert prose, "header should contain a prose line"
+    assert len(prose) == 1, f"header prose must be one line, got {len(prose)}"
+
+
+def test_rendered_note_does_not_rewrap_multiline_bodies():
+    """A body the caller wrote as several paragraphs keeps exactly those breaks."""
+    from homelab_mcp.space import render_note
+
+    body = "First paragraph on one long line.\n\nSecond paragraph on one long line."
+    out = render_note("T", body)
+    assert body in out
