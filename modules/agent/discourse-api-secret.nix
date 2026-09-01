@@ -26,16 +26,28 @@
 #        https://forum.driveonwood.com/admin/dashboard.json \
 #     | jq '.version_check'
 #
-# CHRIS ADDS THE VALUE (the agent has no decryption key — see modules/sops.nix).
-# The encrypted file already exists with a PLACEHOLDER, so this is an edit, not a
-# create:
+# THE VALUE IS LIVE as of 2026-09-01 — key bound to the Discourse user
+# `claude-agent` (id 6862), verified before first use (see below). To ROTATE it,
+# use the secrets-inbox rather than sops: Chris drops the new key in
+# `~/secrets-inbox/discourse-api.env`, the agent verifies + encrypts + PRs it +
+# deletes the cleartext. He needs no age key and no repo checkout.
 #
-#   sops secrets/discourse-api.yaml
+# (The original version of this comment told him to run `sops` himself. That was
+# worse, and it missed the hand-off mechanism he had already built — noted here
+# so the next secret does not repeat it.)
 #
-# and replace PLACEHOLDER on the DISCOURSE_API_KEY line. Leave the shape alone:
-#   discourse-api: |
-#     DISCOURSE_API_KEY=<the key>
-#     DISCOURSE_API_USERNAME=<the username the key acts as>
+# VERIFIED BEFORE USE — a 200 is not proof of authentication on this host, so the
+# check was made to discriminate:
+#   /admin/backups.json     anon → 404 HTML (23 KB)  ·  auth → 200 JSON (7.8 KB)
+#   /session/current.json   auth → current_user.username = claude-agent
+#
+# ⚠️ DISCOURSE'S OWN UPDATE CHECKER IS NOT REPORTING on this forum, which is
+# very likely how four months of version drift went unseen. /admin/version_check
+# returns installed_version / installed_sha / git_branch but **no
+# latest_version, and `updated_at: null`** — so the admin UI has nothing to
+# raise a banner from. The monitor therefore compares installed_version against
+# upstream discourse/discourse tags directly and does NOT trust this endpoint's
+# opinion of what is current.
 #
 # WHERE THE KEY COMES FROM — Discourse admin, not the droplet:
 #   forum.driveonwood.com/admin/api/keys → "+ New API Key"
