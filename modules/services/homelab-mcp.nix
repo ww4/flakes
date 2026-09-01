@@ -22,9 +22,18 @@
 #   Anthropic → https://mcp.rosemaryacres.com (lock3 VPS, real LE cert)
 #             → GATE 1 there: allow 160.79.104.0/21; deny all
 #             → Tailscale → gromit 100.82.117.116:8789
-#             → GATE 3 here: allow the VPS's tailnet IP; deny all
+#             → GATE 2 here: allow the VPS's tailnet IP; deny all
 #             → homelab-mcp 127.0.0.1:8787
-#             → GATE 2 in the app: the 128-bit secret path prefix
+#             → GATE 3 in the app: a 256-bit shared secret, required on every
+#               request as Authorization: Bearer (or X-API-Key)
+#             → GATE 4, defence in depth: the 128-bit secret path prefix
+#
+# Gate 3 is new as of 2026-09-01 and is the one that matters. Until then the
+# path prefix was the ONLY thing authenticating a caller who got past the IP
+# allowlists — a credential in a URL, which every hop writes to its request log.
+# Anthropic's own guidance says not to do that. The connector UI gained static
+# request headers (beta), so there is now a real credential in a real header,
+# and a path prefix appearing in a log is no longer an incident.
 #
 # Gate 1 lives on the VPS because that is the only place the true client address
 # is visible. Nothing proxies in front of it, so plain $remote_addr is the real
@@ -65,7 +74,7 @@ let
   spaceDir = "/var/lib/silverbullet";
 
   stateDir = "/var/lib/homelab-mcp";
-  prefixEnv = "${stateDir}/path-prefix.env";
+  credsEnv = "${stateDir}/credentials.env";
 
   # This box's Tailscale address. The listener below binds it specifically
   # rather than the wildcard, so the port cannot appear on the LAN or the WAN
@@ -92,16 +101,27 @@ let
   publicHost = "mcp.rosemaryacres.com";
 in
 {
-  # --- the path prefix ---------------------------------------------------
-  # Generated on the box rather than carried in sops. It is a rotatable URL
-  # token, not a shared credential: nothing else needs to know it, it never has
-  # to survive a restore, and rotating it is `rm` + restart. Keeping it out of
-  # the repo also means the endpoint URL is not recoverable from git history.
+  # --- the connector credentials -----------------------------------------
+  # TWO secrets, generated on the box rather than carried in sops. Neither has
+  # to survive a restore, nothing else needs to know them, and keeping them out
+  # of the repo means the endpoint is not recoverable from git history.
   #
-  # To read it: sudo cat /var/lib/homelab-mcp/path-prefix.env
-  # To rotate:  sudo rm /var/lib/homelab-mcp/path-prefix.env && sudo systemctl restart homelab-mcp
-  systemd.services.homelab-mcp-path-prefix = {
-    description = "Generate the homelab-mcp secret path prefix if absent";
+  #   HOMELAB_MCP_MCP_TOKEN     the real authenticator. Sent by the connector as
+  #                             `Authorization: Bearer <token>` (or X-API-Key).
+  #   HOMELAB_MCP_PATH_PREFIX   defence in depth. Was the ONLY protection until
+  #                             2026-09-01; now it just means an unauthenticated
+  #                             prober cannot even find the endpoint.
+  #
+  # Both live in one file because they rotate together: replacing the endpoint
+  # means re-entering the connector anyway, so splitting them would only create
+  # a state where half the credential changed.
+  #
+  # To read them: sudo cat /var/lib/homelab-mcp/credentials.env
+  # To rotate:    sudo rm /var/lib/homelab-mcp/credentials.env \
+  #                 && sudo systemctl restart homelab-mcp-credentials homelab-mcp
+  #               ...then update the URL *and* the header in the connector.
+  systemd.services.homelab-mcp-credentials = {
+    description = "Generate the homelab-mcp connector credentials if absent";
     wantedBy = [ "multi-user.target" ];
     before = [ "homelab-mcp.service" ];
 
@@ -110,7 +130,7 @@ in
       RemainAfterExit = true;
     };
 
-    # Written to a temp file and moved into place, so ${prefixEnv} only ever
+    # Written to a temp file and moved into place, so ${credsEnv} only ever
     # exists fully-written and correctly-permissioned.
     #
     # The first version chmod'd in place after the redirect, and a failure
@@ -126,17 +146,21 @@ in
     script = ''
       set -euo pipefail
       install -d -m 0755 -o root -g root ${stateDir}
-      if [ ! -s ${prefixEnv} ]; then
+      if [ ! -s ${credsEnv} ]; then
         umask 077
-        tmp="$(${pkgs.coreutils}/bin/mktemp ${stateDir}/.path-prefix.XXXXXX)"
+        tmp="$(${pkgs.coreutils}/bin/mktemp ${stateDir}/.credentials.XXXXXX)"
         trap 'rm -f "$tmp"' EXIT
-        printf 'HOMELAB_MCP_PATH_PREFIX=%s\n' \
-          "$(${pkgs.openssl}/bin/openssl rand -hex 16)" > "$tmp"
+        {
+          printf 'HOMELAB_MCP_PATH_PREFIX=%s\n' \
+            "$(${pkgs.openssl}/bin/openssl rand -hex 16)"
+          printf 'HOMELAB_MCP_MCP_TOKEN=%s\n' \
+            "$(${pkgs.openssl}/bin/openssl rand -hex 32)"
+        } > "$tmp"
         chown root:root "$tmp"
         chmod 0600 "$tmp"
-        mv "$tmp" ${prefixEnv}
+        mv "$tmp" ${credsEnv}
         trap - EXIT
-        echo "generated a new path prefix"
+        echo "generated new connector credentials"
       fi
     '';
   };
@@ -144,8 +168,8 @@ in
   systemd.services.homelab-mcp = {
     description = "MCP server bridging Claude chats to the SilverBullet space";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network.target" "silverbullet.service" "homelab-mcp-path-prefix.service" ];
-    requires = [ "homelab-mcp-path-prefix.service" ];
+    after = [ "network.target" "silverbullet.service" "homelab-mcp-credentials.service" ];
+    requires = [ "homelab-mcp-credentials.service" ];
 
     environment = {
       HOMELAB_MCP_SPACE_ROOT = spaceDir;
@@ -170,9 +194,11 @@ in
     serviceConfig = {
       ExecStart = lib.getExe package;
 
-      # No leading "-": if the prefix file is missing the service must fail to
-      # start, not quietly fall back to serving at /mcp.
-      EnvironmentFile = prefixEnv;
+      # No leading "-": if the credentials file is missing the service must FAIL
+      # to start. With a "-" it would come up serving at a guessable /mcp with no
+      # token check either — an unauthenticated endpoint reachable through the
+      # jump host, presented as a healthy unit. Fail loudly instead.
+      EnvironmentFile = credsEnv;
 
       # Runs as claude: that user already holds the space ACLs, so no new
       # access is granted to anything by adding this service.

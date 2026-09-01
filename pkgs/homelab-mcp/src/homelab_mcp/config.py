@@ -57,10 +57,14 @@ class Settings(BaseSettings):
     mcp_token: str | None = Field(
         default=None,
         description=(
-            "Optional bearer token. DORMANT: as of 2026-07-27 the Claude custom-connector "
-            "UI offers only a URL plus OAuth client id/secret — there is no custom-header "
-            "field, so nothing can send this. Kept wired so it can be switched on the day "
-            "one appears, without a code change."
+            "Shared secret required on every request, as either "
+            "`Authorization: Bearer <token>` or `X-API-Key: <token>`. LIVE since "
+            "2026-09-01: Anthropic's connector UI gained static request headers (beta), "
+            "which is what this was waiting for — before that the dialog offered only a "
+            "URL plus OAuth client id/secret and nothing could send a header at all. "
+            "Enforced by TokenAuthMiddleware in server.py. Unset means no check, which "
+            "is fine for a local run; the deployment always sets it. This is the "
+            "credential that demotes path_prefix to defence in depth."
         ),
     )
 
