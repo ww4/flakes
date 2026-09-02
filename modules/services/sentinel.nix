@@ -304,8 +304,10 @@ let
       # the version arm forever — the standing 4-release gap would never be
       # reported even once. A fresh filename gives one clean first run.
       STATE=/var/lib/sentinel/discourse-v2.json
-      CHECK_INTERVAL=21600      # 6 h between network probes
-      BACKUP_MAX_AGE=129600     # 36 h — daily at ~08:35, so this tolerates one miss + margin
+      CHECK_INTERVAL=21600          # 6 h between network probes
+      BACKUP_MAX_AGE=129600         # 36 h — daily at ~08:35, so this tolerates one miss + margin
+      UPSTREAM_RETRY=1800           # 30 min — retry cadence when the GitHub tag fetch fails
+      UPSTREAM_FAIL_ESCALATE=21600  # 6 h of consecutive fetch failures before we page about it
 
       now=$(date +%s)
 
@@ -363,22 +365,51 @@ let
                    | jq -r '[.[].name] | map(select(test("^v[0-9]{4}\\.[0-9]+\\.[0-9]+-latest$"))) | .[0] // empty' 2>/dev/null || true)
 
       prev=""
-      [ -r "$STATE" ] && prev=$(jq -r '.last_upstream // ""' "$STATE" 2>/dev/null || echo "")
+      failsince=0
+      if [ -r "$STATE" ]; then
+        prev=$(jq -r '.last_upstream // ""' "$STATE" 2>/dev/null || echo "")
+        failsince=$(jq -r '.upstream_fail_since // 0' "$STATE" 2>/dev/null || echo 0)
+        case "$failsince" in ""|null|*[!0-9]*) failsince=0 ;; esac
+      fi
 
-      if [ -n "$installed" ] && [ -n "$upstream" ]; then
-        if [ "v$installed" != "$upstream" ] && [ "$upstream" != "$prev" ]; then
-          msg="$msg; NEW DISCOURSE RELEASE — forum runs $installed, upstream is $upstream"
-          found=1
-        fi
-      elif [ -z "$installed" ]; then
+      if [ -z "$installed" ]; then
         msg="$msg; could not read installed_version (auth or route changed)"
         found=1
       fi
 
+      if [ -z "$upstream" ]; then
+        # ⚠️ THE COMPARISON SOURCE IS UNREACHABLE. This branch exists because
+        # its absence was a real fail-open bug: the original code was
+        # `if installed && upstream; ... elif [ -z "$installed" ]`, so an empty
+        # upstream with a good installed matched NEITHER branch and the check
+        # passed in silence. Observed live 2026-09-01 17:22 — the first probe
+        # after deploy wrote last_upstream:"" and raised nothing.
+        # "Cannot check" must never render as "fine".
+        [ "$failsince" -eq 0 ] && failsince="$now"
+        failed_for=$(( now - failsince ))
+        if [ "$failed_for" -ge "$UPSTREAM_FAIL_ESCALATE" ]; then
+          msg="$msg; CANNOT DETERMINE UPSTREAM VERSION — GitHub tag fetch failing for $(( failed_for / 3600 ))h (rate-limited or unreachable). Version drift is NOT being watched"
+          found=1
+        fi
+        # Retry sooner than the full interval, but NOT every 2-min tick —
+        # hammering a rate-limited endpoint only prolongs the limit.
+        next_probe=$(( now - CHECK_INTERVAL + UPSTREAM_RETRY ))
+      else
+        failsince=0
+        next_probe="$now"
+        if [ -n "$installed" ] && [ "v$installed" != "$upstream" ] && [ "$upstream" != "$prev" ]; then
+          msg="$msg; NEW DISCOURSE RELEASE — forum runs $installed, upstream is $upstream"
+          found=1
+        fi
+      fi
+
       # persist state even when nothing fired, so the throttle and the
-      # fire-on-change comparison both advance
-      printf '{"last_run":%s,"last_upstream":"%s","installed":"%s"}\n' \
-        "$now" "''${upstream:-}" "''${installed:-}" > "$STATE" 2>/dev/null || true
+      # fire-on-change comparison both advance.
+      # NOTE last_upstream falls back to $prev, never to "" — blanking it on a
+      # transient fetch failure would make the next successful run report a
+      # spurious "NEW DISCOURSE RELEASE" for a version we already knew about.
+      printf '{"last_run":%s,"last_upstream":"%s","installed":"%s","upstream_fail_since":%s}\n' \
+        "$next_probe" "''${upstream:-$prev}" "''${installed:-}" "$failsince" > "$STATE" 2>/dev/null || true
 
       if [ "$found" -eq 1 ]; then
         echo "DOW forum: ''${msg#; }"
