@@ -61,6 +61,7 @@
     ./modules/services/vscode-server.nix
     ./modules/services/nextcloud.nix
     ./modules/services/backup.nix
+    ./modules/services/dow-uploads-backup.nix # DOW uploads bucket -> fusion pool (into restic)
     ./modules/services/notifications.nix
     ./modules/services/daily-reminders.nix   # tappable ntfy nudges (reminder only — claims nothing)
     ./modules/services/media-mirror.nix
