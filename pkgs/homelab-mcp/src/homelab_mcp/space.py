@@ -17,9 +17,10 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime
+from collections.abc import Sequence
 from pathlib import Path
 
-from .paths import MARKDOWN_SUFFIX, resolve_read, resolve_write, slug_to_filename
+from .paths import MARKDOWN_SUFFIX, PathRejected, resolve_read, resolve_write, slug_to_filename
 
 __all__ = [
     "SearchHit",
@@ -68,14 +69,73 @@ def slugify(title: str, max_len: int = 60) -> str:
     return slug or "note"
 
 
-def _iter_pages(space_root: Path):
-    """Yield every markdown page in the space, skipping internals."""
+def resolve_sources(space_root: Path, sources: Sequence[str] | None) -> list[Path]:
+    """Turn the configured allowlist into concrete, in-space roots.
+
+    Each entry is resolved through resolve_read rather than joined, so a config
+    typo like "../" cannot widen the allowlist beyond the space. Entries that do
+    not resolve are dropped silently — the caller gets a narrower list, never a
+    wider one.
+    """
+    if not sources:
+        return []
+    out: list[Path] = []
+    for source in sources:
+        try:
+            target = resolve_read(space_root, source)
+        except PathRejected:
+            continue
+        if target.exists():
+            out.append(target)
+    return out
+
+
+def _is_readable(path: Path, roots: Sequence[Path]) -> bool:
+    """Is `path` inside one of the allowed roots?
+
+    Compares resolved paths, so a symlink cannot be used to satisfy the check
+    while pointing somewhere else.
+    """
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    for root in roots:
+        try:
+            root_resolved = root.resolve()
+        except OSError:
+            continue
+        if resolved == root_resolved or root_resolved in resolved.parents:
+            return True
+    return False
+
+
+def _iter_pages(space_root: Path, sources: Sequence[str] | None = None):
+    """Yield the markdown pages the connector is allowed to see.
+
+    ⚠️ ALLOWLIST, NOT DENYLIST, and it governs the READ PATH — not just the
+    aggregation in get_context.
+
+    A red-team pass on 2026-09-01 made the distinction concrete: scoping only
+    get_context would have closed the front door while leaving search_notes and
+    read_note as an unrestricted read of every page in the space. `read_note`
+    used to say "space-wide reads are permitted" in its own docstring. That was
+    defensible while this bound loopback; it is not, now that the endpoint is
+    reachable from the internet. A root-level page carrying an email address,
+    the current VPN exit IP and a forwarded port was pulled in full — and it
+    carried no tag that any denylist would have keyed on.
+    """
+    roots = resolve_sources(space_root, sources)
+    if not roots:
+        return
     for path in space_root.rglob(f"*{MARKDOWN_SUFFIX}"):
         if any(part in SKIP_DIRS for part in path.relative_to(space_root).parts):
             continue
         if path.is_symlink() or not path.is_file():
             # Symlinks are skipped rather than followed: a link could point
             # outside the space, and listing is not worth the escape risk.
+            continue
+        if not _is_readable(path, roots):
             continue
         yield path
 
@@ -97,7 +157,12 @@ def _excerpt(text: str, at: int) -> str:
     return f"{prefix}{snippet}{suffix}"
 
 
-def search_notes(space_root: Path, query: str, limit: int | None = None) -> list[SearchHit]:
+def search_notes(
+    space_root: Path,
+    query: str,
+    limit: int | None = None,
+    sources: Sequence[str] | None = None,
+) -> list[SearchHit]:
     """Literal, case-insensitive, all-tokens-must-match search across the space.
 
     No caller-supplied regex, ever. The prior art accepted one and had an
@@ -113,7 +178,7 @@ def search_notes(space_root: Path, query: str, limit: int | None = None) -> list
     tokens = [t.lower() for t in query.split() if t]
     hits: list[SearchHit] = []
 
-    for path in _iter_pages(space_root):
+    for path in _iter_pages(space_root, sources):
         try:
             if path.stat().st_size > MAX_SEARCH_FILE_BYTES:
                 continue
@@ -140,11 +205,36 @@ def search_notes(space_root: Path, query: str, limit: int | None = None) -> list
     return hits
 
 
-def read_note(space_root: Path, rel: str) -> str:
-    """Return the full text of one page. Space-wide reads are permitted."""
+def read_note(space_root: Path, rel: str, sources: Sequence[str] | None = None) -> str:
+    """Return the full text of one page, if it is inside the allowlist.
+
+    This used to permit space-wide reads, which made search+read an unrestricted
+    read primitive over every page. See _iter_pages for why that changed.
+
+    The allowlist check happens BEFORE the existence check, on purpose: a
+    "not readable" that only fires for files that exist is an oracle for what
+    exists. Out-of-scope and absent are the same answer.
+    """
     path = resolve_read(space_root, rel)
+
+    roots = resolve_sources(space_root, sources)
+    if not _is_readable(path, roots):
+        raise PathRejected(f"no such page: {rel}")
+
     if not path.is_file():
-        raise FileNotFoundError(f"no such page: {rel}")
+        # A convenience, not access control: the SilverBullet UI shows page
+        # names without the extension, so "CONVENTIONS" is what a person reads
+        # off the screen. Retrying with the suffix stops that looking like a
+        # permission error when it is only a spelling one.
+        if path.suffix != MARKDOWN_SUFFIX:
+            with_suffix = resolve_read(space_root, rel + MARKDOWN_SUFFIX)
+            if _is_readable(with_suffix, roots) and with_suffix.is_file():
+                path = with_suffix
+            else:
+                raise FileNotFoundError(f"no such page: {rel}")
+        else:
+            raise FileNotFoundError(f"no such page: {rel}")
+
     if path.suffix != MARKDOWN_SUFFIX:
         raise ValueError("only markdown pages can be read")
     return path.read_text(encoding="utf-8", errors="replace")

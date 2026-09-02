@@ -18,11 +18,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+# One line per paragraph, deliberately. CONVENTIONS.md forbids hard-wrapping
+# because SilverBullet renders every newline as a real line break — a wrapped
+# paragraph shows up as three broken lines in the editor. (Caught on the first
+# live deploy: this header was originally wrapped at 78 columns out of habit.)
 HEADER = """# Agent work queue
 
-Requests filed from Claude chats via the `homelab-mcp` connector. The agent
-picks these up on its scheduled runs. Check one off (`- [x]`) to close it, or
-delete the line to drop it — this page is ordinary markdown and yours to edit.
+Requests filed from Claude chats via the `homelab-mcp` connector. The agent picks these up on its scheduled runs. Check one off (`- [x]`) to close it, or delete the line to drop it — this page is ordinary markdown and yours to edit.
 """
 
 VALID_URGENCY = ("whenever", "soon", "today")
