@@ -51,7 +51,30 @@ in
     # bitcoind regenerates its .cookie on every restart, so restart fulcrum
     # with it — the cookie-stage ExecStartPre then picks up the fresh cookie.
     partOf = [ "bitcoind-bitcoin.service" ];
-    unitConfig.RequiresMountsFor = "/mnt/fusion";
+
+    # ⚠️ partOf ALONE LEAVES FULCRUM DOWN, and it did exactly that on
+    # 2026-09-02. partOf propagates a STOP; nothing propagates the START back.
+    # When comin deployed #227 at 07:43 it stopped fulcrum as a dependent,
+    # restarted bitcoind, and never brought fulcrum back — so the Electrum
+    # server sat inactive with mempool logging ECONNREFUSED until a human
+    # noticed. `systemctl --failed` stayed clean the whole time, because
+    # STOPPED is not FAILED: the quiet failure mode, not the loud one.
+    #
+    # wantedBy is NOT the fix and was already present — it only covers boot,
+    # and at the 2026-08-30 reboot fulcrum did try to start and failed on the
+    # bitcoind dependency, then stayed down. Upholds= (systemd 249+, we run
+    # 260) is the one that means what we actually want: while bitcoind is
+    # active, systemd continuously ensures fulcrum is started, including after
+    # a partOf-induced stop. Safe against spinning — fulcrum already has
+    # Restart=on-failure with RestartSec=30.
+    upheldBy = [ "bitcoind-bitcoin.service" ];
+
+    # ⚠️ Was "/mnt/fusion" — a stranded reference from the 2026-08-31 datadir
+    # move (#214). Fulcrum's own data is /var/lib/fulcrum and the only thing it
+    # needs from a mount is bitcoind's cookie, which now lives on /mnt/scratch.
+    # Gating on /mnt/fusion meant a media-pool problem could block the Electrum
+    # server for no reason. Derived from config so it cannot drift again.
+    unitConfig.RequiresMountsFor = config.services.bitcoind.bitcoin.dataDir;
     serviceConfig = {
       User = "fulcrum";
       Group = "fulcrum";
