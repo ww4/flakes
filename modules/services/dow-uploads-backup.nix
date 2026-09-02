@@ -143,10 +143,116 @@ in
     };
   };
 
-  # THIRD LEG, NOT YET WIRED: a direct DO Spaces → Backblaze B2 sync, so one
-  # copy exists that depends on neither DigitalOcean nor this house. It needs
-  # its own B2 application key — the existing `restic-b2` secret is root-only
-  # and probably scoped to the `gromit-restic` bucket, so it cannot write a new
-  # one. Template is at ~/secrets-inbox/backblaze-dow.env; wire it once Chris
-  # fills it in.
+  # ── LEG 3: direct DO Spaces → Backblaze B2 ────────────────────────────────
+  #
+  # The copy that depends on neither DigitalOcean nor this house. If gromit
+  # burns and the Spaces account is closed, this is what survives.
+  #
+  # ⚠️ `rclone COPY`, NOT `sync` — and this is the whole design, not a detail.
+  # copy never deletes at the destination, so the mirror is APPEND-ONLY: a
+  # wipe of the source bucket cannot propagate here, with or without guards.
+  # Files deleted upstream persist forever. At 46 GB that is wanted behaviour
+  # — leg 2 (fusion + restic) is what tracks current state with history; this
+  # leg exists to survive catastrophe.
+  #
+  # This deliberately pulls from DO rather than from the local mirror, so it
+  # verifies against the source of truth instead of inheriting any corruption
+  # in leg 2. Costs a second 46 GB egress on the first run only; DO Spaces
+  # includes 1 TB/month outbound and later runs transfer only new objects.
+  #
+  # BUCKET VERIFIED 2026-09-02 before wiring: private, SSE-B2/AES256 default
+  # encryption ON, object lock OFF, lifecycle `daysFromHidingToDeleting: 30`
+  # (so overwritten versions are recoverable for 30 days), key restricted to
+  # the `dow-backup` bucket alone — `rclone lsd` sees that bucket and no other.
+  #
+  # ⚠️ The key DOES carry `deleteFiles`. Backblaze's web UI "Read and Write"
+  # preset grants a fixed bundle with no per-capability checkboxes, so the
+  # append-only property here comes from using `copy` rather than from the
+  # key's permissions. Chris accepted that (2026-09-02). If it should ever be
+  # tightened, `b2 key create --bucket dow-backup <name> listBuckets,listFiles,
+  # readFiles,writeFiles,readBucketEncryption,readBucketLifecycleRules` builds
+  # a genuinely append-only key; it needs the master key to run.
+  sops.secrets."backblaze-dow" = {
+    sopsFile = ../../secrets/backblaze-dow.yaml;
+    key = "backblaze-dow";
+    owner = "claude";
+    mode = "0400";
+  };
+
+  systemd.services.dow-uploads-offsite = {
+    description = "Append-only mirror of the DOW uploads bucket to Backblaze B2";
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      User = "claude";
+      Group = "media";
+      RuntimeDirectory = "dow-uploads-offsite";
+      RuntimeDirectoryMode = "0700";
+      TimeoutStartSec = "8h";
+    };
+
+    script = ''
+      set -euo pipefail
+      PATH=${pkgs.rclone}/bin:${pkgs.coreutils}/bin:${pkgs.findutils}/bin:$PATH
+
+      set -a
+      . /run/secrets/digitalocean
+      . /run/secrets/backblaze-dow
+      set +a
+
+      CONF="$RUNTIME_DIRECTORY/rclone.conf"
+      umask 077
+      cat > "$CONF" <<EOF
+      [dospaces]
+      type = s3
+      provider = DigitalOcean
+      access_key_id = $DO_SPACES_KEY_ID
+      secret_access_key = $DO_SPACES_SECRET
+      endpoint = ''${DO_SPACES_ENDPOINT#https://}
+      acl = private
+
+      [b2dow]
+      type = b2
+      account = $B2_DOW_KEY_ID
+      key = $B2_DOW_APPLICATION_KEY
+      hard_delete = false
+      EOF
+      umask 022
+
+      echo "=== dow-uploads offsite copy $(date +%F) ==="
+
+      # copy, never sync. No --max-delete needed: copy cannot delete.
+      rclone copy dospaces:dow "b2dow:$B2_DOW_BUCKET/dow-uploads" \
+        --config "$CONF" \
+        --fast-list \
+        --transfers 8 \
+        --checkers 16 \
+        --retries 3 \
+        --stats 10m \
+        --stats-one-line \
+        --log-level INFO
+
+      # Report both sides. A destination smaller than the source is expected
+      # only on the first run; afterwards it should equal or EXCEED it (the
+      # mirror keeps things the source has since deleted).
+      src=$(rclone size dospaces:dow --config "$CONF" --json 2>/dev/null || echo '{}')
+      dst=$(rclone size "b2dow:$B2_DOW_BUCKET/dow-uploads" --config "$CONF" --json 2>/dev/null || echo '{}')
+      echo "SOURCE: $src"
+      echo "MIRROR: $dst"
+    '';
+  };
+
+  systemd.timers.dow-uploads-offsite = {
+    description = "Daily append-only offsite copy of the DOW uploads bucket";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      # 05:30 — staggered well clear of the 04:15 local sync so the two legs
+      # do not contend for bandwidth or hammer DO Spaces simultaneously.
+      OnCalendar = "05:30";
+      Persistent = true;
+      RandomizedDelaySec = "15m";
+    };
+  };
 }
