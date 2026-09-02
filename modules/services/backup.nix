@@ -37,6 +37,12 @@ let
     # cover cache + known-missing.txt: re-fetchable from Open Library in
     # theory, but 2,100+ covers took real time to accumulate.
     "/var/lib/stacks"
+    # DOW forum uploads mirrored from DO Spaces (modules/services/dow-uploads-backup.nix).
+    # ~46 GB / 194k objects: 12 years of user photos whose ONLY other copy is the
+    # Spaces bucket itself — the nightly Discourse backup is database-only, and
+    # that bucket has no versioning. Including it here is what gives the images
+    # version history and an offsite copy. The archive/ subdir (rclone's
+    # --backup-dir) is deliberately included: it holds anything deleted upstream.
     # Authelia — without these, restic restores every app but not the SSO in
     # front of them: TOTP/webauthn enrollments + OIDC consents (SQLite in
     # authelia-main) and the on-box-generated storage-encryption key, OIDC
