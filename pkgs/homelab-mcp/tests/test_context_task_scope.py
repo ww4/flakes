@@ -235,3 +235,23 @@ def test_curated_context_comes_before_conventions(read_space):
         read_space, include_service_inventory=False, context_page="Areas/Agent Context.md"
     )
     assert out.index("CURATED-MARKER") < out.index("## How this space works")
+
+
+def test_readable_sources_parses_from_the_environment(monkeypatch, tmp_path):
+    """The module passes this as a JSON env var; prove pydantic reads it.
+
+    The NixOS unit renders `Environment="HOMELAB_MCP_READABLE_SOURCES=[\\"Inbox\\"]"`,
+    which systemd unescapes to ["Inbox"] before exec. pydantic-settings parses
+    list fields as JSON, so a bare `Inbox` would raise at startup rather than
+    quietly mean something. Worth a test because that fails at boot, not in
+    review — and the opposite mistake, a value that parses but means
+    "everything", is an open endpoint.
+    """
+    from homelab_mcp.config import Settings
+
+    monkeypatch.setenv("HOMELAB_MCP_SPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("HOMELAB_MCP_READABLE_SOURCES", '["Inbox","Projects"]')
+    assert Settings().readable_sources == ["Inbox", "Projects"]
+
+    monkeypatch.delenv("HOMELAB_MCP_READABLE_SOURCES")
+    assert Settings().readable_sources == ["Inbox"], "default must stay narrow"

@@ -179,6 +179,19 @@ in
       HOMELAB_MCP_PORT = toString port;
       HOMELAB_MCP_PUBLIC_HOST = publicHost;
 
+      # The ONLY parts of the space the connector may read — governs
+      # search_notes, read_note and the open-task list in get_context.
+      # ALLOWLIST: anything not named here is invisible, including every page
+      # added later. A red-team pass on 2026-09-01 read a root-level page
+      # holding an email address, the current VPN exit IP and a forwarded port;
+      # it carried no tag any denylist would have keyed on.
+      #
+      # Inbox alone to start: the connector can always read what it wrote.
+      # Widen deliberately, page by page or folder by folder — and remember the
+      # audience is a chat window, not this box. JSON, because pydantic-settings
+      # parses list fields as JSON.
+      HOMELAB_MCP_READABLE_SOURCES = builtins.toJSON [ "Inbox" ];
+
       # HOMELAB_MCP_PATH_PREFIX is deliberately NOT set here — it comes from
       # EnvironmentFile below. Setting it in both places would make which one
       # wins a systemd-ordering question, and the failure mode of losing that
