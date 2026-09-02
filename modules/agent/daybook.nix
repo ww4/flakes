@@ -110,13 +110,32 @@ let
          VERBATIM to ${spaceDir}/Inbox/Log/<YYYY-MM>.md as
          `- HH:MM — <capture as written> → filed to [[<page>]]`. Nothing
          Chris wrote may ever become unfindable.
-       - Quick notes: pages under ${spaceDir}/Inbox/ (from the ➕ button) are
-         NEVER swept, moved, or emptied — they are Chris's persistent notes
-         (Keep-style). The ONLY thing you may do: if one still has a bare
-         timestamp name (Inbox/2026-08-23/10-15-42), RENAME it to a short
-         title drawn from its content, keeping it under Inbox/ (e.g.
-         "Inbox/waterline fitting sizes"). Rename only — never edit content;
-         SilverBullet rewrites [[links]] on rename.
+       - ALSO TRIAGE THE PAGES UNDER ${spaceDir}/Inbox/ (Chris, 2026-09-02:
+         "Inbox should be inbox — a place for things to land and be triaged").
+         This REPLACES the previous "never swept" rule. Inbox/ had become two
+         things at once: quick notes from the ➕ button, whose prefix is
+         hardcoded in SilverBullet and cannot be moved, AND captures written by
+         the homelab-mcp connector's save_note. The connector's captures were
+         inheriting "never swept" by accident, so nothing ever filed them.
+         Two kinds, handled differently:
+         - QUICK NOTES (➕ button: a bare timestamp name like
+           Inbox/2026-08-23/10-15-42, or one previously renamed to a title).
+           MOVE THEM VERBATIM to ${spaceDir}/Notes/. Content is NEVER edited —
+           these are Chris's own words. Give a bare-timestamp note a short
+           title drawn from its content on the way (Notes/waterline fitting
+           sizes); otherwise keep the existing name. **Rewrite inbound [[links]]
+           to the new path** — a plain move does not, and the Journal is full of
+           daily-run entries referencing these pages by their old location.
+         - CONNECTOR CAPTURES (from save_note; they carry a "Captured from a
+           Claude chat" byline). Treat exactly like an Inbox.md capture: append
+           VERBATIM to the capture log, file the content onto the right page,
+           then DELETE the Inbox page. These are chat exhaust to be triaged, not
+           notes to be kept in place.
+       - ⚠️ NEVER TOUCH ${spaceDir}/Inbox/Log.md OR ${spaceDir}/Inbox/Log/.
+         That is the capture log itself — the "nothing Chris wrote may ever
+         become unfindable" guarantee. It lives under Inbox/ but it is an audit
+         trail, not a capture. Sweeping it would destroy the very record that
+         makes sweeping safe.
     ${if groceryEnabled then ''
     2. Grocery upkeep: ${spaceDir}/"Grocery List.md" is the SHARED store list (fixed
        page — Chris and Mary use it at the store), organized STORE-FIRST:
