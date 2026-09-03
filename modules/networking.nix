@@ -14,6 +14,29 @@
   services.tailscale.enable = true;
   networking.firewall.checkReversePath = "loose";
 
+  # Do NOT accept the tailnet's DNS config. gromit owns its own resolution --
+  # Blocky provides split-horizon so *.rosemaryacres.com keeps working with the
+  # WAN down (see services/blocky.nix and the offline-DNS design).
+  #
+  # MagicDNS was enabled tailnet-wide on 2026-08-27 for one reason: Tailscale
+  # Funnel needs a Tailscale HTTPS cert, and Tailscale will not issue one unless
+  # MagicDNS is on. That was the last blocker on the homelab-mcp Funnel attempt.
+  # Funnel was then abandoned -- on 443 it bound the tailnet address and collided
+  # with nginx (every vhost down for two hours); on 8443 Anthropic never
+  # connected at all. The connector now goes through the lock3 VPS jump host with
+  # an ordinary Let's Encrypt cert, so nothing here needs MagicDNS.
+  #
+  # But accepting it rewrote /etc/resolv.conf to the tailnet resolvers
+  # (100.100.100.100 / fd7a:115c:a1e0::53). Docker containers inherit that file
+  # and CANNOT reach either address from their own netns, so every container lost
+  # outbound DNS while looking healthy -- docker's embedded resolver still
+  # answers container-to-container names, so only external lookups failed
+  # (jellyseerr: 782 EAI_AGAIN on api.themoviedb.org in a single boot).
+  #
+  # Per-node on purpose: turning MagicDNS off tailnet-wide in the admin console
+  # would also hit marcus, wallace, lock3 and agent-vm, none of which run Blocky.
+  services.tailscale.extraSetFlags = [ "--accept-dns=false" ];
+
   # Firewall.
   # Security review 2026-06-04: trimmed world-open ports. Web (80/443) stays on
   # all interfaces but is source-gated to Tailscale + LAN at the HTTP layer
