@@ -50,11 +50,29 @@ let
   textfileDir = "/var/lib/node-exporter-textfile";
   qbitUrl = "http://127.0.0.1:8085";
 
-  # qBittorrent runs in a container; its /data is the host's /mnt/fusion/arr.
-  # Both categories live under it (`/data/downloads` and `/data/manual`),
-  # verified 2026-08-18.
-  containerRoot = "/data";
-  hostRoot = "/mnt/fusion/arr";
+  # qBittorrent runs in a container with MORE THAN ONE data mount (see arr.nix).
+  # Mapping only `/data` was a real bug: a torrent that dropped while its
+  # content still lived on the incomplete volume has a content_path under
+  # `/scratch/incomplete`, which does not start with `/data`, so the old
+  # prefix-strip was a no-op and produced the impossible path
+  # `/mnt/fusion/arr/scratch/incomplete/...`. That path can never exist, so the
+  # guard reported "content not present on host" and SKIPPED — declining to
+  # recover exactly the torrents it exists to recover, while printing a message
+  # asserting the data was gone. Found 2026-09-03 with 4 live torrents sitting
+  # under the incomplete mount.
+  #
+  # Longest prefix FIRST — `/scratch/incomplete` must be tested before any
+  # shorter mount that could also match.
+  mounts = [
+    { container = "/scratch/incomplete"; host = "/mnt/scratch/qbittorrent-incomplete"; }
+    { container = "/data";               host = "/mnt/fusion/arr"; }
+  ];
+
+  # Generated `case` arms mapping a container path to its host path, so the
+  # table above stays the single source of truth.
+  pathMapCases = lib.concatMapStrings (m: ''
+            ${m.container}/*|${m.container}) hostpath="${m.host}''${cpath#${m.container}}" ;;
+  '') mounts;
 
   maxAttempts = 3;    # rechecks per torrent per rolling 24 h
   maxPerRun = 8;      # rechecks started per run, to bound pool I/O
@@ -371,8 +389,19 @@ let
           name=$(jq -r '.name' <<<"$line")
           cpath=$(jq -r '.content_path' <<<"$line")
 
-          # Container path -> host path.
-          hostpath="${hostRoot}''${cpath#${containerRoot}}"
+          # Container path -> host path, across every qBittorrent mount.
+          hostpath=""
+          case "$cpath" in
+${pathMapCases}          esac
+
+          # An unmappable path is a CONFIG GAP, not evidence the data is gone.
+          # These must never share a message with "content not present": the
+          # old code conflated them, so a mount this script did not know about
+          # read as a missing file and the skip looked justified.
+          if [ -z "$hostpath" ]; then
+            echo "SKIP $name — content_path '$cpath' is under no known qBittorrent mount, so it cannot be resolved to a host path. This is a CONFIG GAP in qbit-seed-guard's mount table, NOT proof the data is missing — add the mount and re-run before concluding anything about this torrent."
+            continue
+          fi
           if [ ! -e "$hostpath" ]; then
             echo "SKIP $name — content not present on host ($hostpath); a recheck cannot recover missing data"
             continue
