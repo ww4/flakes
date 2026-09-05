@@ -276,6 +276,69 @@ in
   # the VPS, where $remote_addr is the true client. Trusting a forwarded address
   # at this hop would mean anyone who could reach the port could assert an
   # Anthropic source, so the address that matters here is the peer's own.
+  # ── The cold-boot bind race, and why it takes EVERY vhost down ─────────────
+  #
+  # The vhost below binds `tailnetIP` explicitly. That is deliberate: the kernel
+  # then refuses to answer this port on any other interface, which is a real
+  # layer under the firewall rule and the allow/deny below. Keep it.
+  #
+  # The cost is that the address does not exist until tailscaled has configured
+  # tailscale0, and on a cold boot nginx routinely wins the race to start and
+  # loses the race to the address:
+  #
+  #   nginx-pre-start: [emerg] bind() to 100.82.117.116:8789 failed
+  #                    (99: Cannot assign requested address)
+  #
+  # nginx's own config test does the bind, so the service never even starts —
+  # and because ONE listener cannot bind, EVERY vhost on the box stays down.
+  #
+  # Upstream defaults make that permanent rather than transient:
+  # Restart=always, RestartSec=10s, StartLimitBurst=5, StartLimitIntervalSec=60.
+  # Five attempts inside ~50 s, then start-limit-hit and nginx stays dead until
+  # someone intervenes. That is exactly what happened after the 2026-09-05 power
+  # cut: the box came back at 11:09:27, nginx failed at :49, :10:01, :10:13 …
+  # and every service stayed unreachable for 57 minutes until a second reboot.
+  # (It had already happened on the 2026-09-02 boot and self-healed on the third
+  # try, which is why it read as a one-off and was left alone. It is not.)
+  #
+  # Fix has three parts, because ordering alone is not enough — `tailscaled` being
+  # "started" does not mean the address is assigned yet:
+  #   1. order after tailscaled so we are not racing from scratch;
+  #   2. WAIT for the address itself, bounded, before the config test. mkBefore
+  #      puts this ahead of the upstream preStart that performs the failing bind;
+  #   3. raise the start limit so a slow tailnet cannot latch nginx off for good.
+  #
+  # NB: `tailscaled-autoconnect.service` does NOT exist on this host (verified:
+  # systemctl reports not-found), so ordering on it — the obvious suggestion —
+  # would be a silent no-op.
+  systemd.services.nginx = {
+    after = [ "tailscaled.service" ];
+    wants = [ "tailscaled.service" ];
+
+    preStart = lib.mkBefore ''
+      # Bounded wait for the tailnet address. Never fail the unit here: if the
+      # address never turns up, fall through and let the config test produce the
+      # real diagnostic rather than a timeout that hides it.
+      # Every binary fully pathed on purpose: this script runs under `set -e`,
+      # so a single unresolved command would fail the pre-start and take EVERY
+      # vhost down — a worse outage than the race being fixed here.
+      for _ in $(${pkgs.coreutils}/bin/seq 1 90); do
+        if ${pkgs.iproute2}/bin/ip -4 -o addr show dev tailscale0 2>/dev/null \
+             | ${pkgs.gnugrep}/bin/grep -q '${tailnetIP}'; then
+          break
+        fi
+        ${pkgs.coreutils}/bin/sleep 1
+      done
+    '';
+
+    # mkForce: the generic systemd module already sets StartLimitIntervalSec=60
+    # for every service, so a plain value here is a conflict, not an override.
+    unitConfig = {
+      StartLimitIntervalSec = lib.mkForce 600;
+      StartLimitBurst = lib.mkForce 20;
+    };
+  };
+
   services.nginx.virtualHosts."homelab-mcp-jump" = {
     serverName = "_";
     listen = [{
