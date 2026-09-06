@@ -301,12 +301,32 @@ in
   # (It had already happened on the 2026-09-02 boot and self-healed on the third
   # try, which is why it read as a one-off and was left alone. It is not.)
   #
-  # Fix has three parts, because ordering alone is not enough — `tailscaled` being
-  # "started" does not mean the address is assigned yet:
-  #   1. order after tailscaled so we are not racing from scratch;
-  #   2. WAIT for the address itself, bounded, before the config test. mkBefore
-  #      puts this ahead of the upstream preStart that performs the failing bind;
-  #   3. raise the start limit so a slow tailnet cannot latch nginx off for good.
+  # Fix is ordering plus a bigger retry budget, and deliberately NOTHING ELSE.
+  #
+  # ⚠️ A pre-start "wait for the tailnet address" loop was tried here and CAUSED
+  # A WORSE OUTAGE (2026-09-05, 13:14 → 16:00, every vhost down for 2h46m). Do
+  # not reintroduce it. It ran `ip -4 -o addr show dev tailscale0` inside nginx's
+  # own unit, which sets:
+  #
+  #     RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+  #
+  # `ip` queries the kernel over AF_NETLINK, which is not in that list, so every
+  # invocation died with "Cannot open netlink socket: Address family not
+  # supported by protocol". Its stderr was sent to /dev/null, so a hard failure
+  # became a silent empty result: the loop matched nothing, ran all 90
+  # iterations, blew through TimeoutStartSec, and systemd killed and restarted it
+  # forever (restart counter reached 99). The old failure at least failed FAST
+  # with a truthful error; the "fix" replaced it with an infinite hang.
+  #
+  # The loop was never the part doing the work. Raising the start limit is:
+  # 20 attempts at RestartSec=10s spans ~200 s, against an address that appears
+  # within seconds of boot. Ordering after tailscaled removes most of the gap;
+  # the retry budget absorbs whatever is left. No probe required — and no probe
+  # means no probe that can be wrong.
+  #
+  # If a future change genuinely needs to inspect interfaces from a unit, check
+  # RestrictAddressFamilies first, never redirect the probe's stderr away, and
+  # test it INSIDE the sandbox (`systemd-run --property=...`), not from a shell.
   #
   # NB: `tailscaled-autoconnect.service` does NOT exist on this host (verified:
   # systemctl reports not-found), so ordering on it — the obvious suggestion —
@@ -314,22 +334,6 @@ in
   systemd.services.nginx = {
     after = [ "tailscaled.service" ];
     wants = [ "tailscaled.service" ];
-
-    preStart = lib.mkBefore ''
-      # Bounded wait for the tailnet address. Never fail the unit here: if the
-      # address never turns up, fall through and let the config test produce the
-      # real diagnostic rather than a timeout that hides it.
-      # Every binary fully pathed on purpose: this script runs under `set -e`,
-      # so a single unresolved command would fail the pre-start and take EVERY
-      # vhost down — a worse outage than the race being fixed here.
-      for _ in $(${pkgs.coreutils}/bin/seq 1 90); do
-        if ${pkgs.iproute2}/bin/ip -4 -o addr show dev tailscale0 2>/dev/null \
-             | ${pkgs.gnugrep}/bin/grep -q '${tailnetIP}'; then
-          break
-        fi
-        ${pkgs.coreutils}/bin/sleep 1
-      done
-    '';
 
     # mkForce: the generic systemd module already sets StartLimitIntervalSec=60
     # for every service, so a plain value here is a conflict, not an override.
