@@ -14,10 +14,10 @@
   services.desktopManager.plasma6.enable = true;
   services.displayManager.defaultSession = "plasmax11";  # X11 session (MeshCentral needs X11, not Wayland)
 
-  # Do NOT hand systemd-coredump events to DrKonqi. On 2026-09-05 this turned
-  # ONE tidy crash into 3082 coredumps and 3.5 GB in about an hour.
+  # DrKonqi crash-looped on 2026-09-05: ONE tidy process abort became 3082
+  # coredumps and 3.5 GB in about an hour, still accelerating when caught.
   #
-  # The plasma6 module wires it unconditionally:
+  # The plasma6 module wires the handover unconditionally:
   #   systemd.packages = [ kdePackages.drkonqi ];
   #   systemd.services."drkonqi-coredump-processor@".wantedBy =
   #     [ "systemd-coredump@.service" ];
@@ -34,15 +34,32 @@
   # is filling the disk. The trigger was incidental — herdr's client aborts on
   # teardown instead of exiting cleanly — and any crashing process would do.
   #
-  # Cutting the wantedBy is the minimal fix: drkonqi stays installed and a
-  # logged-in Plasma session is otherwise untouched. `environment.plasma6.
-  # excludePackages` would be WRONG here — it only filters systemPackages, so
-  # the systemd wiring above would survive and point at a missing store path.
+  # The launcher declares `PartOf=graphical-session.target`, which LOOKS like it
+  # should confine it to a graphical login. It does not: PartOf only propagates
+  # stop/restart, it does not gate starting. A headless user gets it started all
+  # the same. That is the actual defect.
   #
-  # Trade-off, deliberate: no crash dialog for GUI apps in Chris's desktop
-  # session either. Crashes are still captured — `coredumpctl` keeps working,
-  # which is the part worth having on this box.
-  systemd.services."drkonqi-coredump-processor@".wantedBy = lib.mkForce [ ];
+  # SCOPE (narrowed 2026-09-05, second pass). The first fix cut the handover
+  # system-wide. That worked, but it also removed the crash dialog from Chris's
+  # Plasma session — and gromit IS still used as a workstation, deliberately.
+  # Only the `claude` agent user is headless, and only its launcher looped.
+  # So mask the launcher for that ONE user instead, and leave the handover
+  # intact for everyone else.
+  #
+  # Done with tmpfiles rather than home-manager because home-manager here manages
+  # `chris` only (modules/home-manager.nix); claude's ~/.config/systemd/user
+  # holds hand-written units. A symlink to /dev/null is exactly what
+  # `systemctl --user mask` creates, and this is its declarative equivalent —
+  # verified live: masking only this stopped the loop (2518 dumps in 30 min -> 0)
+  # while the system-wide handover was still fully in place.
+  #
+  # `environment.plasma6.excludePackages` would be WRONG for any of this — it
+  # only filters systemPackages, so the systemd wiring above would survive and
+  # point at a missing store path.
+  systemd.tmpfiles.rules = [
+    "d /home/claude/.config/systemd/user 0755 claude users -"
+    "L+ /home/claude/.config/systemd/user/drkonqi-coredump-launcher@.service - - - - /dev/null"
+  ];
 
   # Force an explicit ":0" as the FIRST X server argument. SDDM launches X via
   # -displayfd (no display token on the command line), but MeshCentral's agent
