@@ -206,6 +206,81 @@ let
   #   3. STALENESS (backstop) — catches the case divergence CANNOT see: the
   #      whole stack frozen together, where mempool and Fulcrum agree because
   #      neither is advancing. 6h, deliberately loose; divergence is the tripwire.
+  # ── vhost health — is the FRONT DOOR open at all ───────────────────────────
+  #
+  # Written after 2026-09-05, when nginx was down 13:14 -> 16:00 and NOTHING
+  # noticed. Every vhost on the box — Forgejo, Grafana, Jellyfin, Nextcloud —
+  # was unreachable for 2h46m, and the first to spot it was Chris, because herdr
+  # panes, the CLI and the Claude app all bypass nginx entirely.
+  #
+  # Two signals, deliberately distinct:
+  #
+  #   1. THE UNIT. `systemctl is-active nginx` must say `active`. That day it sat
+  #      in **`activating`** — wedged in a looping start-pre — for the whole
+  #      outage. `is-failed` would have answered "no" the entire time, so a
+  #      naive "is it failed?" check would have reported healthy throughout. Any
+  #      state that is not `active` means every vhost is dark.
+  #
+  #   2. REACHABILITY, and only when ALL sampled vhosts fail. Not "any": `chat`
+  #      proxies to wallace-1, which has been offline for days by design, so an
+  #      any-fails rule would page forever and get muted inside a week. All-fail
+  #      is the shape of an nginx-level fault; one-fails is somebody's upstream.
+  #
+  # When everything fails BY NAME we re-probe through 127.0.0.1 with an explicit
+  # Host header. That separates "DNS is broken" from "nginx is broken" — both
+  # deny the user the same page, but they have different remedies, and naming
+  # the wrong one sends the next reader down the wrong path.
+  vhostCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-vhosts";
+    runtimeInputs = [ pkgs.curl pkgs.coreutils pkgs.systemd ];
+    text = ''
+      found=0
+
+      state=$(systemctl is-active nginx 2>/dev/null || true)
+      if [ "$state" != "active" ]; then
+        echo "nginx is '$state' (expected active) — EVERY vhost on the box is unreachable"
+        found=1
+      fi
+
+      # Local backends only. A vhost fronting another host would make this check
+      # report on THAT host's uptime instead of gromit's front door.
+      hosts=(git grafana ntfy notes)
+
+      # A probe list that somehow arrived empty must never read as "all healthy".
+      if [ ''${#hosts[@]} -eq 0 ]; then
+        echo "vhost check has no probes configured — cannot conclude anything"
+        exit 0
+      fi
+
+      up=0; down=0; downlist=""
+      for h in "''${hosts[@]}"; do
+        code=$(curl -sS -k --max-time 10 -o /dev/null -w '%{http_code}' \
+                 "https://$h.rosemaryacres.com/" 2>/dev/null || true)
+        case "$code" in
+          200|301|302|303|307|401|403) up=$((up + 1)) ;;
+          *) down=$((down + 1)); downlist="$downlist $h($code)" ;;
+        esac
+      done
+
+      if [ "$up" -eq 0 ]; then
+        # Everything failed by name. Discriminate DNS from nginx before saying why.
+        direct=$(curl -sS -k --max-time 10 -o /dev/null -w '%{http_code}' \
+                   -H "Host: git.rosemaryacres.com" https://127.0.0.1/ 2>/dev/null || true)
+        case "$direct" in
+          200|301|302|303|307|401|403)
+            echo "all $down sampled vhosts fail BY NAME but 127.0.0.1 answers ($direct) — DNS resolution is the fault, nginx is serving"
+            ;;
+          *)
+            echo "all $down sampled vhosts unreachable and 127.0.0.1 also fails ($direct) — nginx is not serving:$downlist"
+            ;;
+        esac
+        found=1
+      fi
+
+      [ "$found" -eq 1 ]   # exit 0 => findings => sentinel fires
+    '';
+  };
+
   apiCheck = pkgs.writeShellApplication {
     name = "sentinel-check-apis";
     runtimeInputs = [ pkgs.curl pkgs.jq pkgs.coreutils pkgs.gnused pkgs.libressl ];
@@ -509,6 +584,21 @@ let
       # scoped sudo, but it should say what it found before touching anything.
       { id = "api-content"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "${apiCheck}/bin/sentinel-check-apis"; timeout = 60; }
+
+      # Is the front door open at all (see vhostCheck above). Distinct from
+      # api-content, which watches ONE backend's freshness behind nginx and was
+      # therefore blind to nginx itself being down for 2h46m on 2026-09-05.
+      #
+      # severity = "warning", matching every other service check: a web outage is
+      # a network event, and network events do not get to pierce quiet hours.
+      # It will be waiting in the morning, which is the intended behaviour.
+      #
+      # act = false. The remedy on the day was a config change, and the one time
+      # an agent DID auto-fix nginx unattended it was the agent's own change that
+      # had broken it. Diagnose and say so; never restart the front door
+      # unattended.
+      { id = "vhost-health"; type = "command"; severity = "warning"; agent = true; act = false;
+        cmd = "${vhostCheck}/bin/sentinel-check-vhosts"; timeout = 90; }
 
       # DOW forum health — backup freshness + Discourse version drift (see
       # discourseCheck above). New 2026-09-01: forum.driveonwood.com is a
