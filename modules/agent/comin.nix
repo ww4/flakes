@@ -15,8 +15,14 @@
     remotes = [
       {
         name = "origin";
-        # Public repo → comin pulls anonymously, no token needed.
-        url = "https://github.com/ww4/flakes.git";
+        # Pull from Forgejo — the SOURCE OF TRUTH — not the GitHub mirror.
+        # Repointed 2026-09-07 after the push-mirror's GitHub token expired and
+        # deploys silently stopped for 2 days (#241–#244 never reached GitHub;
+        # comin's last deploy was Sep 5). The mirror is cosmetic now: if it
+        # breaks again, nothing stops deploying. Public repo → comin pulls
+        # anonymously, no token needed. (If flakes ever goes private, comin
+        # needs a read token HERE first — see the 2026-09-07 exposure audit.)
+        url = "https://git.rosemaryacres.com/ww4/flakes.git";
 
         branches = {
           # `main` → full `nixos-rebuild switch` (persists + boots). main is
