@@ -3,7 +3,7 @@
 # split: implementations live in the library; everything gromit-specific they
 # read lives here. When a module migrates to the library, its values and
 # secret declarations land here.
-{ ... }:
+{ config, pkgs, ... }:
 
 {
   # ── homelab.* option values ────────────────────────────────────────────────
@@ -33,6 +33,65 @@
       minFreeSpace = "100G";
     };
   };
+
+  # ── Monitoring (wave 1b; the stack machinery lives in the library) ─────────
+  homelab.monitoring = {
+    enable = true;
+    # Site-specific exporters the library doesn't know about.
+    extraScrapeConfigs = [
+      # comin's own metrics — last_build/eval/deployment/fetch_failed gauges,
+      # so a broken merge (comin running but NOT deploying) pages instead of
+      # silently sitting on the old generation.
+      { job_name = "comin";
+        static_configs = [{ targets = [ "127.0.0.1:4243" ]; }];
+      }
+      # Blocky (local split-horizon DNS) — query counts, cache hit ratio,
+      # upstream failures. See services/blocky.nix (metrics on loopback :4000).
+      { job_name = "blocky";
+        static_configs = [{ targets = [ "127.0.0.1:4000" ]; }];
+      }
+    ];
+    # Riverwatch operational/health alerts are info-level AND muted overnight —
+    # they hold until morning. NOT actual river conditions; flood/forecast/
+    # rapid-rise alerts are deliberately not routed here.
+    extraAlertmanagerRoutes = [
+      {
+        matchers = [ ''alertname="RiverwatchFetchFailing"'' ];
+        receiver = "ntfy-noresolve";          # also no "RESOLVED" ping
+        mute_time_intervals = [ "nights" ];
+      }
+      {
+        matchers = [ ''alertname="RiverObservationStale"'' ];
+        receiver = "ntfy";
+        mute_time_intervals = [ "nights" ];
+      }
+    ];
+    extraAlertRuleFiles = [ ./services/grafana/alert-rules-local.json ];
+    extraDatasources = [
+      {
+        # Used by the riverwatch dashboard to overlay the NWPS stage forecast.
+        # No base URL — the panel target supplies the full URL per-query.
+        name = "NWPS";
+        uid = "nwps-infinity";
+        type = "yesoreyeram-infinity-datasource";
+        access = "proxy";
+        jsonData = {
+          # Restrict outbound URLs so this datasource can't be misused as a
+          # generic SSRF tool. NWPS only.
+          allowedHosts = [ "https://api.water.noaa.gov" ];
+          timeoutInSeconds = 30;
+        };
+      }
+    ];
+    extraPlugins = with pkgs.grafanaPlugins; [ yesoreyeram-infinity-datasource ];
+    grafanaOidcSecretFile = config.sops.secrets."grafana-oidc-secret".path;
+  };
+
+  # Prometheus site overrides: 110y retention covers the riverwatch USGS
+  # backfill to the gauge's 1925 install; the 16m lookback keeps a
+  # 15-min-cadence backfill sample queryable until the next would arrive.
+  services.prometheus.retentionTime = "40150d";
+  services.prometheus.extraFlags = [ "--query.lookback-delta=16m" ];
 
   # ── Authelia SSO (wave 1) ──────────────────────────────────────────────────
   homelab.authelia = {
@@ -137,6 +196,14 @@
   boot.kernelParams = [ "video=HDMI-A-1:1920x1080e" ];
 
   # ── sops declarations for library modules ──────────────────────────────────
+  # Grafana's OIDC client secret (generic_oauth reads it via $__file as the
+  # grafana user). The matching pbkdf2 hash is in homelab.authelia.oidcClients.
+  sops.secrets."grafana-oidc-secret" = {
+    sopsFile = ../secrets/grafana-oidc-secret.yaml;
+    key = "grafana-oidc-secret";
+    owner = "grafana";
+  };
+
   # Library modules only ever reference config.sops.secrets.<name>.path; the
   # declarations (and the encrypted files) stay in this repo.
   sops.secrets."decluttarr-env" = {
