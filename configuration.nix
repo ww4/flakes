@@ -16,7 +16,8 @@ let hm = homelab-modules.nixosModules; in
     # Base system.
     hm.boot
     ./modules/homelab-values.nix             # the personal values the hm.* library modules read
-    ./modules/storage.nix
+    ./modules/storage.nix                    # physical drive mounts (hardware)
+    hm.mergerfs-pools                        # assembles homelab.pools into the fusion + backup pools
     ./modules/networking.nix
     ./modules/desktop.nix
     ./modules/users.nix
@@ -102,7 +103,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/forgejo.nix
     ./modules/services/albyhub.nix
     ./modules/services/glances.nix
-    ./modules/services/authelia.nix         # SSO / forward-auth gateway (Phase 1)
+    hm.authelia                             # SSO: forward-auth + OIDC (one list drives protect AND the access rule)
     ./modules/services/paperless.nix
     ./modules/services/uptime-kuma.nix
     ./modules/services/vaultwarden.nix
