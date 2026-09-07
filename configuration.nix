@@ -1,23 +1,26 @@
 # Gromit — top-level NixOS configuration.
 #
-# This file is just the module manifest: each concern lives in its own file
-# under ./modules/ (base system) and ./modules/services/ (per-service). To
-# try something out, add or comment a single import below and `nixos-rebuild
+# This file is just the module manifest: each concern lives in its own file —
+# local under ./modules/, or in the PUBLIC homelab-modules library (`hm.` below,
+# 2026-09 modularization; personal values live in ./modules/homelab-values.nix).
+# To try something out, add or comment a single import below and `nixos-rebuild
 # test`; roll back with git or the boot menu.
-{ ... }:
+{ homelab-modules, ... }:
 
+let hm = homelab-modules.nixosModules; in
 {
   imports = [
     # Hardware scan (generated — do not edit).
     ./hardware-configuration.nix
 
     # Base system.
-    ./modules/boot.nix
+    hm.boot
+    ./modules/homelab-values.nix             # the personal values the hm.* library modules read
     ./modules/storage.nix
     ./modules/networking.nix
     ./modules/desktop.nix
     ./modules/users.nix
-    ./modules/system.nix
+    hm.system
     ./modules/packages.nix
     ./modules/virtualisation.nix
     ./modules/home-manager.nix
@@ -44,7 +47,7 @@
 
     # Services.
     ./modules/services/nginx-access.nix     # source-gate all vhosts to Tailscale + LAN (security review 2026-06-04)
-    ./modules/services/nginx-log-paths-check.nix # eval-time guard: an nginx log outside its writable set = every vhost down
+    hm.nginx-log-paths-check                # eval-time guard: an nginx log outside its writable set = every vhost down
     ./modules/services/blocky.nix           # local split-horizon DNS: rosemaryacres.com -> LAN IP so hostnames resolve with the WAN down
     ./modules/services/jellyfin.nix
     ./modules/services/audiobookshelf.nix
@@ -67,30 +70,30 @@
     ./modules/services/media-mirror.nix
     ./modules/services/media-curate.nix      # backed-up tag sweep + YouTube promote (needs Jellyfin key to activate)
     ./modules/services/media-link.nix        # hardlink completed downloads into the library (keeps seeds alive)
-    ./modules/services/arr-missing-sweep.nix  # weekly missing-episode/movie search (Sonarr has no recurring one)
+    hm.arr-missing-sweep                    # weekly missing-episode/movie search (Sonarr has no recurring one)
     ./modules/services/bub-mirror.nix
-    ./modules/services/remote-desktop.nix
+    hm.remote-desktop
     ./modules/services/meshcentral.nix       # MeshCentral server (remote mgmt)
-    ./modules/services/meshagent             # MeshAgent: self-manage this host via MeshCentral (the nixpkgs gap)
+    hm.meshagent                            # MeshAgent: self-manage this host via MeshCentral (the nixpkgs gap)
     ./modules/services/homepage.nix
     ./modules/services/monitoring.nix
     ./modules/services/drive-temps.nix
     ./modules/services/drive-spindown.nix   # park the idle backup-pool USB drives (cooling) — pairs with drive-temps
-    ./modules/services/smart-dump.nix       # read-only FULL SMART dump to agent-readable files (wrapper, NOT raw smartctl)
+    hm.smart-dump                           # read-only FULL SMART dump to agent-readable files (wrapper, NOT raw smartctl)
     ./modules/services/riverwatch.nix
     ./modules/services/alertmanager-ntfy.nix
     ./modules/services/sentinel.nix          # Phase 1 watchdog: detect trouble + notify (no auto-action yet)
     ./modules/services/tracker-signup-watch.nix # low-freq: ntfy when a watched private tracker opens signup
     ./modules/services/snapraid.nix         # inert until parity drive arrives (enable = false)
     ./modules/services/pool-autoremount.nix # self-heals fusion members that drop off the USB bus
-    ./modules/services/disk-io-watch.nix    # counts kernel I/O errors + USB resets per device — the QUIET fault shape
+    hm.disk-io-watch                        # counts kernel I/O errors + USB resets per device — the QUIET fault shape
     ./modules/services/arr.nix              # Prowlarr + Sonarr + Radarr + Jellyseerr + Gluetun + qBittorrent
-    ./modules/services/qbit-vpn-watchdog.nix # self-heal the gluetun-IP-change qBit netns wedge (no more manual restarts)
+    hm.qbit-vpn-watchdog                    # self-heal the gluetun-IP-change qBit netns wedge (no more manual restarts)
     ./modules/services/qbit-seed-guard.nix  # recover missingFiles torrents after a pool outage + watch tracker H&R rules
     ./modules/services/mam-seedbox.nix      # INERT (enable=false): registers the AirVPN exit IP with MAM's dynamic-seedbox API on change
     ./modules/services/recyclarr.nix        # Daily TRaSH-Guides profile sync into Sonarr/Radarr
     ./modules/services/arr-settings.nix     # declarative Sonarr/Radarr/Prowlarr app settings (recyclarr owns profiles/CFs)
-    ./modules/services/decluttarr.nix       # auto-reaps stalled+failed downloads, re-searches
+    hm.decluttarr                           # auto-reaps stalled+failed downloads, re-searches
     ./modules/services/unpackerr.nix        # extracts RAR-packed Scene releases so *arr can import them
     ./modules/services/lidarr.nix           # music manager (Lidarr)
     ./modules/services/lazylibrarian.nix    # ebook/audiobook manager (Readarr successor)
