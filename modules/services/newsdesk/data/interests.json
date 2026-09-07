@@ -28,7 +28,7 @@
     "kernel": 3, "filesystem": 3, "btrfs": 3, "xfs": 4, "smart data": 4,
     "disk failure": 4, "postmortem": 6, "root cause": 5, "outage": 3,
 
-    "bitcoin core": 5, "full node": 5, "running a node": 6,
+    "bitcoin core": 5, "bitcoin knots": 6, "full node": 5, "running a node": 6,
     "electrum server": 5, "fulcrum": 6, "electrs": 6, "mempool": 4, "utxo": 3,
     "compact block": 4, "assumeutxo": 5, "pruning": 3, "reindex": 3,
     "initial block download": 4, "bitcoind": 5, "block template": 4,
