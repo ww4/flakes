@@ -30,6 +30,13 @@
     # (i.e. when a reviewed PR is merged). See modules/agent/.
     comin.url = "github:nlewo/comin";
 
+    # homelab-modules — the PUBLIC, option-driven module library split out of
+    # this flake (2026-09 modularization). Implementations live there; the
+    # personal values they read live in modules/homelab-values.nix here.
+    # ⚠️ Fetched anonymously at build time (comin builds as root, no forge
+    # credentials) — the repo must stay publicly readable or deploys stop.
+    homelab-modules.url = "git+https://git.rosemaryacres.com/ww4/homelab-modules.git";
+
     # agent-modules — the scoped-agent harness (guard, hooks, managed settings),
     # extracted so gromit and the Broadlinc agent host share ONE definition
     # instead of divergent copies of a security backstop. Its `nix flake check`
@@ -75,7 +82,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-2505, nixpkgs-silverbullet, vscode-server, home-manager, comin, agent-modules, sops-nix, disko, nixos-06cb-009a-fingerprint-sensor }:
+  outputs = { self, nixpkgs, nixpkgs-2505, nixpkgs-silverbullet, vscode-server, home-manager, comin, homelab-modules, agent-modules, sops-nix, disko, nixos-06cb-009a-fingerprint-sensor }:
     let
       system = "x86_64-linux";
       lib = nixpkgs.lib;
@@ -86,7 +93,8 @@
         gromit = lib.nixosSystem {
           inherit system;
           # nixpkgs-silverbullet: consumed only by modules/services/silverbullet.nix.
-          specialArgs = { inherit nixpkgs-silverbullet; };
+          # homelab-modules: the public library — configuration.nix imports from it.
+          specialArgs = { inherit nixpkgs-silverbullet homelab-modules; };
           modules = [
             ./configuration.nix
             vscode-server.nixosModules.default

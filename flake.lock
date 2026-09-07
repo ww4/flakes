@@ -115,6 +115,21 @@
         "type": "github"
       }
     },
+    "homelab-modules": {
+      "locked": {
+        "lastModified": 1788801672,
+        "narHash": "sha256-gvf2tmiW2OeQmDr9kqSbPHzMGC1YAxWJepNXsmiJdWQ=",
+        "ref": "refs/heads/main",
+        "rev": "271153e608edd41a5cade6fb2f92ab7e41dbfcb0",
+        "revCount": 2,
+        "type": "git",
+        "url": "https://git.rosemaryacres.com/ww4/homelab-modules.git"
+      },
+      "original": {
+        "type": "git",
+        "url": "https://git.rosemaryacres.com/ww4/homelab-modules.git"
+      }
+    },
     "nixos-06cb-009a-fingerprint-sensor": {
       "inputs": {
         "nixpkgs": [
@@ -221,6 +236,7 @@
         "comin": "comin",
         "disko": "disko",
         "home-manager": "home-manager",
+        "homelab-modules": "homelab-modules",
         "nixos-06cb-009a-fingerprint-sensor": "nixos-06cb-009a-fingerprint-sensor",
         "nixpkgs": "nixpkgs_3",
         "nixpkgs-2505": "nixpkgs-2505",
