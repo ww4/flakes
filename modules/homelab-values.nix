@@ -20,10 +20,15 @@
       branches = "/mnt/primary/D*";
       createPolicy = "mfs";
       fsname = "mergerfs";
+      # For the auto-remounter (wave 2).
+      memberDir = "/mnt/primary";
+      members = [ "D1" "D2" "D3" "D4" "D5" "D6" ];
     };
     backup = {   # Backup Bucket - 22 TB (4× 6TB drives)
       mountpoint = "/mnt/backup/all";
       branches = "/mnt/backup/D*";
+      memberDir = "/mnt/backup";
+      members = [ "D1" "D2" "D3" "D4" ];
       # epmfs: media-mirror writes /mnt/backup/all/Movies/X and bub-mirror the
       # parallel copy under rick-offsite/; epmfs keeps them on one branch so
       # rsync --link-dest can hardlink between them (see the library module).
@@ -32,6 +37,31 @@
       # fill D1 until a movie temp file no longer fit.
       minFreeSpace = "100G";
     };
+  };
+
+  # ── drive-temps (wave 2) ───────────────────────────────────────────────────
+  homelab.driveTemps = {
+    # Historical metric name — dashboards, the drive-temperature alert group
+    # and months of TSDB history use it; keep it.
+    metricPrefix = "gromit_drive_";
+    # The backup-pool WD Elements bridges misreport power state, so these are
+    # SMART-read only while actively doing I/O (same by-id set as
+    # drive-spindown.nix — keep the two lists in step).
+    spindownDriveIds = [
+      "usb-WD_Elements_25A3_575832324439303132343737-0:0"
+      "usb-WD_Elements_25A3_57583532444330364C304B32-0:0"
+      "usb-WD_Elements_25A3_575835314438394844563632-0:0"
+      "usb-WD_Elements_25A3_575832324443303254584B36-0:0"
+    ];
+  };
+
+  # ── deploy-drift watch (wave 2) ────────────────────────────────────────────
+  # Compares Forgejo main against comin's deployed commit. Born from the
+  # Sep 5 outage: the GitHub mirror froze and every comin gauge stayed green
+  # while merges piled up undeployed for two days.
+  homelab.deployDriftWatch = {
+    enable = true;
+    repoUrl = "https://git.rosemaryacres.com/ww4/flakes.git";
   };
 
   # ── Monitoring (wave 1b; the stack machinery lives in the library) ─────────

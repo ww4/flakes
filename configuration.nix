@@ -78,7 +78,8 @@ let hm = homelab-modules.nixosModules; in
     hm.meshagent                            # MeshAgent: self-manage this host via MeshCentral (the nixpkgs gap)
     ./modules/services/homepage.nix
     hm.monitoring                           # Prometheus + Grafana + Alertmanager; site extras in homelab-values
-    ./modules/services/drive-temps.nix
+    hm.deploy-drift-watch                   # alerts when Forgejo main is ahead of the deployed commit (the Sep 5 gap)
+    hm.drive-temps                          # smartctl temp+SMART exporter; spin-down-safe (ids in values)
     ./modules/services/drive-spindown.nix   # park the idle backup-pool USB drives (cooling) — pairs with drive-temps
     hm.smart-dump                           # read-only FULL SMART dump to agent-readable files (wrapper, NOT raw smartctl)
     ./modules/services/riverwatch.nix
@@ -86,7 +87,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/sentinel.nix          # Phase 1 watchdog: detect trouble + notify (no auto-action yet)
     ./modules/services/tracker-signup-watch.nix # low-freq: ntfy when a watched private tracker opens signup
     ./modules/services/snapraid.nix         # inert until parity drive arrives (enable = false)
-    ./modules/services/pool-autoremount.nix # self-heals fusion members that drop off the USB bus
+    hm.pool-autoremount                     # self-heals pool members that drop off the USB bus (zombie-aware)
     hm.disk-io-watch                        # counts kernel I/O errors + USB resets per device — the QUIET fault shape
     ./modules/services/arr.nix              # Prowlarr + Sonarr + Radarr + Jellyseerr + Gluetun + qBittorrent
     hm.qbit-vpn-watchdog                    # self-heal the gluetun-IP-change qBit netns wedge (no more manual restarts)
