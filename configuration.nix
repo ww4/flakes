@@ -77,7 +77,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/meshcentral.nix       # MeshCentral server (remote mgmt)
     hm.meshagent                            # MeshAgent: self-manage this host via MeshCentral (the nixpkgs gap)
     ./modules/services/homepage.nix
-    ./modules/services/monitoring.nix
+    hm.monitoring                           # Prometheus + Grafana + Alertmanager; site extras in homelab-values
     ./modules/services/drive-temps.nix
     ./modules/services/drive-spindown.nix   # park the idle backup-pool USB drives (cooling) — pairs with drive-temps
     hm.smart-dump                           # read-only FULL SMART dump to agent-readable files (wrapper, NOT raw smartctl)
