@@ -2552,25 +2552,6 @@
    "role": "read"
   },
   {
-   "name": "Bitcoin Knots releases",
-   "lane": "release-radar",
-   "url": "https://github.com/bitcoinknots/bitcoin/releases.atom",
-   "tier": "core",
-   "cap": 2,
-   "insecure_tls": false,
-   "probe": {
-    "last_seen": "2026-08-08",
-    "per_week": 0.4,
-    "on": "2026-08-19"
-   },
-   "note": "He runs Knots.",
-   "dormant": false,
-   "longform": false,
-   "kind": "feed",
-   "evergreen": false,
-   "role": "read"
-  },
-  {
    "name": "Core Lightning releases",
    "lane": "release-radar",
    "url": "https://github.com/ElementsProject/lightning/releases.atom",
@@ -2724,6 +2705,10 @@
   }
  ],
  "dropped": [
+  {
+   "name": "Bitcoin Knots releases",
+   "why": "Chris does not run Knots and does not want to. Dropped 2026-09-07 after the 09-07 brief led with a Knots hardfork and told him \"You run Knots\" \u2014 which came from this entry's note, not from the box: gromit runs Bitcoin Core v31.1.0 and has no Knots package anywhere in the store. Knots has since forked to its own proof-of-work (BLAKE2b), making it a separate coin; he does not want to lend it legitimacy by tracking its releases."
+  },
   {
    "name": "Bitcoin Magazine Technical",
    "why": "70 items/wk, overwhelmingly price and personality. This is precisely the noise he asked to be spared."
