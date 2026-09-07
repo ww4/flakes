@@ -834,10 +834,20 @@ let
         req = urllib.request.Request(
             "%s/%s" % (server, topic), data=body.encode(),
             headers={"Title": safe_title, "Priority": str(priority), "Tags": tags})
+        # Log EVERY send, success included (2026-09-06). Previously only the
+        # failure path printed, so a delivered alert and a silently dropped one
+        # looked identical in the journal afterwards — the exact question that
+        # could not be answered when several newsdesk editions seemed to go
+        # missing. Title only, never the body: sentinel bodies carry diagnoses,
+        # device names and addresses, and the journal is a wider audience than
+        # the phone.
         try:
-            urllib.request.urlopen(req, timeout=10)
+            resp = urllib.request.urlopen(req, timeout=10)
+            print("ntfy: sent topic=%s priority=%s tags=%s bytes=%d http=%s title=%r"
+                  % (topic, priority, tags or "-", len(body), resp.status, safe_title))
         except Exception as e:
-            print("ntfy post failed: %r" % e, file=sys.stderr)
+            print("ntfy: FAILED topic=%s priority=%s title=%r err=%r"
+                  % (topic, priority, safe_title, e), file=sys.stderr)
 
 
     PRI = {"test": 2, "info": 2, "warning": 3, "critical": 4}
