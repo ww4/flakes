@@ -1,4 +1,6 @@
-# Filesystems and the MergerFS pools.
+# Physical drive mounts — the hardware half of storage. The mergerfs pools
+# these feed are assembled by the library's mergerfs-pools module from the
+# homelab.pools values in ./homelab-values.nix.
 { config, lib, pkgs, ... }:
 
 {
@@ -93,60 +95,5 @@
         fsType = "ext4";
         options = [ "nofail" ];   # don't block boot on different hardware
       };
-
-  # mergerfs: two buckets — primary working pool + replica backup pool.
-  # (Decom bucket retired 2026-05-25; its disks were reformatted and
-  # rejoined fusion as D3-D5, with the WD Green as /mnt/scratch.)
-
-    "/mnt/fusion" = {   # Primary Bucket - 28.3 TB (sdf 7.3T + sdg 9.1T + 3× 2.7T Hitachis + sdk 3.6T)
-      device = "/mnt/primary/D*";
-      fsType = "fuse.mergerfs";
-      options = [
-        "defaults"
-        "allow_other"
-        "use_ino"
-        "cache.files=off"
-        "moveonenospc=true"
-        "dropcacheonclose=true"
-        "category.create=mfs"
-        "func.getattr=newest"
-        "fsname=mergerfs"
-      ];
-    };
-
-     "/mnt/backup/all" = {   # Backup Bucket - 22 TB (contains 4x 6TB drives)
-      device = "/mnt/backup/D*";
-      fsType = "fuse.mergerfs";
-      options = [
-        "defaults"
-        "allow_other"
-        "use_ino"
-        "cache.files=off"
-        "moveonenospc=true"
-        "dropcacheonclose=true"
-        # epmfs (Existing-Path Most-Free-Space): when writing a new file,
-        # prefer the branch that already contains the parent directory.
-        # gromit's media-mirror lives at the root of /mnt/backup/all (e.g.
-        # /mnt/backup/all/Movies/X). bub-mirror writes the parallel copy
-        # under /mnt/backup/all/rick-offsite/Movies/X. epmfs keeps
-        # Movies/X on whatever branch already holds the gromit copy, so
-        # rsync --link-dest=/mnt/backup/all can hardlink between them —
-        # mergerfs hardlinks only function within a single branch.
-        "category.create=epmfs"
-        # Reserve headroom: mergerfs won't place a NEW file on a branch with
-        # less than this much free. Hardlinks to existing files and growth of
-        # existing files are unaffected (link() co-locates with its target
-        # regardless of free space). Must exceed the largest single file so a
-        # create never hits ENOSPC mid-write — the 4 GiB default let bub-mirror
-        # fill D1 until a movie temp file no longer fit.
-        "minfreespace=100G"
-        # Match fusion's getattr behavior so stat() returns the newest
-        # branch's metadata when a path exists in multiple branches.
-        "func.getattr=newest"
-      ];
-    };
   };
-
-  # Needed for MergerFS (allow_other).
-  programs.fuse.userAllowOther = true;
 }
