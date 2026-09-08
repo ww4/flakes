@@ -54,12 +54,12 @@ let hm = homelab-modules.nixosModules; in
     hm.audiobookshelf
     hm.tandoor
     hm.pinchflat                            # mediaDir in homelab-values
-    ./modules/services/metube.nix           # yt-dlp web GUI for one-off downloads -> /mnt/fusion/youtube/metube
+    hm.metube                               # yt-dlp web GUI for one-off downloads; dir in homelab-values
     ./modules/services/bitcoind.nix
     ./modules/services/fulcrum.nix          # Electrum server (mempool.space backend + Sparrow); indexes the chain
     ./modules/services/mempool.nix          # mempool.space explorer (mariadb+backend+frontend via docker)
     ./modules/services/gyb.nix
-    ./modules/services/immich.nix
+    hm.immich                               # media dir + wallace ML offload in homelab-values
     ./modules/services/open-webui-proxy.nix  # TLS front door for wallace's Open WebUI (local-LLM chat)
     ./modules/services/open-notebook.nix     # NotebookLM-alt: chat + podcasts over source docs (surrealdb+app+kokoro)
     ./modules/services/vscode-server.nix
@@ -105,9 +105,9 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/albyhub.nix
     hm.glances
     hm.authelia                             # SSO: forward-auth + OIDC (one list drives protect AND the access rule)
-    ./modules/services/paperless.nix
+    hm.paperless                            # secrets + SSO env in homelab-values
     hm.uptime-kuma
-    ./modules/services/vaultwarden.nix
+    hm.vaultwarden                          # subdomain, env secret + SMTP in homelab-values
     ./modules/services/litestream.nix       # continuous SQLite replication of the vault to B2
     ./modules/services/silverbullet.nix     # markdown notes/tasks space — scheduling-assistant SoT
     ./modules/services/pim.nix              # plain-text calendar vdir + vdirsyncer (Nextcloud two-way, Google RO)
