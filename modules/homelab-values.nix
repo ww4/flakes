@@ -42,6 +42,15 @@
   # ── pinchflat (wave 3a) ────────────────────────────────────────────────────
   homelab.pinchflat.mediaDir = "/mnt/fusion/pinchflat";
 
+  # ── download-stack shared values + wave 3d ─────────────────────────────────
+  homelab.arrStack = {
+    root = "/mnt/fusion/arr";
+    owner = "chris";
+    group = "users";
+    # puid/pgid defaults (1000/100) match chris:users.
+  };
+  homelab.recyclarr.configFile = ./services/recyclarr-config.yml;
+
   # ── wave 3c service values ─────────────────────────────────────────────────
   homelab.acme = {
     email = "chris@saenzmail.com";
@@ -311,6 +320,14 @@
     key = "nextcloud-oidc-secret";
     owner = "nextcloud";
     mode = "0400";
+  };
+  sops.secrets."aurral-env" = {
+    sopsFile = ../secrets/aurral-env.yaml;
+    key = "aurral-env";
+  };
+  sops.secrets."unpackerr-env" = {
+    sopsFile = ../secrets/unpackerr-env.yaml;
+    key = "unpackerr-env";
   };
   sops.secrets."forgejo-oidc-secret" = {
     sopsFile = ../secrets/forgejo-oidc-secret.yaml;

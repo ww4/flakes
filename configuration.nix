@@ -84,7 +84,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/drive-spindown.nix   # park the idle backup-pool USB drives (cooling) — pairs with drive-temps
     hm.smart-dump                           # read-only FULL SMART dump to agent-readable files (wrapper, NOT raw smartctl)
     ./modules/services/riverwatch.nix
-    ./modules/services/alertmanager-ntfy.nix
+    hm.alertmanager-ntfy                    # webhook shim: alertmanager JSON -> ntfy
     ./modules/services/sentinel.nix          # Phase 1 watchdog: detect trouble + notify (no auto-action yet)
     ./modules/services/tracker-signup-watch.nix # low-freq: ntfy when a watched private tracker opens signup
     ./modules/services/snapraid.nix         # inert until parity drive arrives (enable = false)
@@ -94,14 +94,14 @@ let hm = homelab-modules.nixosModules; in
     hm.qbit-vpn-watchdog                    # self-heal the gluetun-IP-change qBit netns wedge (no more manual restarts)
     ./modules/services/qbit-seed-guard.nix  # recover missingFiles torrents after a pool outage + watch tracker H&R rules
     ./modules/services/mam-seedbox.nix      # INERT (enable=false): registers the AirVPN exit IP with MAM's dynamic-seedbox API on change
-    ./modules/services/recyclarr.nix        # Daily TRaSH-Guides profile sync into Sonarr/Radarr
+    hm.recyclarr
     ./modules/services/arr-settings.nix     # declarative Sonarr/Radarr/Prowlarr app settings (recyclarr owns profiles/CFs)
     hm.decluttarr                           # auto-reaps stalled+failed downloads, re-searches
-    ./modules/services/unpackerr.nix        # extracts RAR-packed Scene releases so *arr can import them
-    ./modules/services/lidarr.nix           # music manager (Lidarr)
-    ./modules/services/lazylibrarian.nix    # ebook/audiobook manager (Readarr successor)
+    hm.unpackerr
+    hm.lidarr
+    hm.lazylibrarian
     ./modules/services/stacks.nix           # physical book catalog (sale scanner, flood losses)
-    ./modules/services/aurral.nix           # Jellyseerr-for-music (Aurral -> Lidarr)
+    hm.aurral
     hm.forgejo                              # OIDC secret in homelab-values
     ./modules/services/albyhub.nix
     hm.glances
