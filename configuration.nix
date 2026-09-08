@@ -90,7 +90,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/snapraid.nix         # inert until parity drive arrives (enable = false)
     hm.pool-autoremount                     # self-heals pool members that drop off the USB bus (zombie-aware)
     hm.disk-io-watch                        # counts kernel I/O errors + USB resets per device — the QUIET fault shape
-    ./modules/services/arr.nix              # Prowlarr + Sonarr + Radarr + Jellyseerr + Gluetun + qBittorrent
+    hm.arr                                  # Prowlarr + Sonarr + Radarr + Jellyseerr + Gluetun + qBittorrent
     hm.qbit-vpn-watchdog                    # self-heal the gluetun-IP-change qBit netns wedge (no more manual restarts)
     ./modules/services/qbit-seed-guard.nix  # recover missingFiles torrents after a pool outage + watch tracker H&R rules
     ./modules/services/mam-seedbox.nix      # INERT (enable=false): registers the AirVPN exit IP with MAM's dynamic-seedbox API on change

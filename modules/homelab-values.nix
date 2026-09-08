@@ -48,6 +48,12 @@
     owner = "chris";
     group = "users";
     # puid/pgid defaults (1000/100) match chris:users.
+    # incomplete/ on the WD Green tier-3 scratch disk to spare fusion IO.
+    scratchDir = "/mnt/scratch/qbittorrent-incomplete";
+    vpnProvider = "airvpn";   # switched from Mullvad 2026-07-27 (account expired; AirVPN adds static port forwarding)
+    # Tier-2 "keepers" promotion targets (add as second root folders in the UIs).
+    keepersMovies = "/mnt/fusion/Movies";
+    keepersTv = "/mnt/fusion/TV Shows";
   };
   homelab.recyclarr.configFile = ./services/recyclarr-config.yml;
 
@@ -320,6 +326,10 @@
     key = "nextcloud-oidc-secret";
     owner = "nextcloud";
     mode = "0400";
+  };
+  sops.secrets."gluetun-wg" = {
+    sopsFile = ../secrets/gluetun-wg.yaml;
+    key = "gluetun-wg";
   };
   sops.secrets."aurral-env" = {
     sopsFile = ../secrets/aurral-env.yaml;
