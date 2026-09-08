@@ -45,4 +45,45 @@ in
   systemd.tmpfiles.rules = [
     "d /home/claude/.config/blueiris 0700 claude users -"
   ];
+
+  # --- camera-down alerting -------------------------------------------------
+  # Polls the NVR and reports STATE CHANGES only. Every rule netwatch arrived at
+  # the hard way applies here too, because a dead camera is a network event:
+  #
+  #   * NOTHING here pierces quiet hours. Chris's standing rule (2026-08-19)
+  #     covers "all classes of network traffic" — a camera down is not a fire.
+  #     Findings raised 22:00-07:00 are HELD and delivered after 07:00.
+  #   * state change only: a camera down for a week is not news every 10 min.
+  #   * an empty camlist is an ERROR, never an all-clear.
+  #
+  # 10 minutes is deliberate. Faster buys nothing — Blue Iris itself takes time
+  # to declare a camera offline — and every extra poll is load on a customer's
+  # NVR that is also recording 25 streams.
+  systemd.services.blueiris-watch = {
+    description = "Blue Iris camera-down watch (Craigmyle)";
+    after = [ "network-online.target" "tailscaled.service" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      User = "claude";
+      StateDirectory = "blueiris";
+      Environment = [ "HOME=/home/claude" ];
+      # Exit 0 even on failure: a customer NVR being briefly unreachable is not
+      # a gromit fault and must not trip SystemdUnitFailed. The check reports
+      # its own unreachability through ntfy instead, state-change gated.
+      ExecStart = "${lib.getExe blueiris} watch";
+      SuccessExitStatus = "0 1";
+      TimeoutStartSec = "5min";
+    };
+  };
+
+  systemd.timers.blueiris-watch = {
+    description = "Blue Iris camera-down watch";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "*:0/10";
+      Persistent = true;
+      RandomizedDelaySec = "60s";
+    };
+  };
 }
