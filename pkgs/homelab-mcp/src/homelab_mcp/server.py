@@ -1,12 +1,23 @@
-"""MCP tool surface — six tools, no more.
+"""MCP tool surface — a fixed, audited set.
 
-Each additional tool is additional blast radius, so the set is fixed:
+Each additional tool is additional blast radius, so the set is closed and every
+addition is argued for in writing:
 
   reads   get_context, search_notes, read_note
   writes  save_note, append_note, request_work
 
+  cameras camera_status, camera_mute, camera_unmute   [off by default]
+
 There is deliberately no delete tool, no arbitrary-path write, and no
 "call any SilverBullet endpoint" passthrough.
+
+The camera tools were added 2026-09-08 and are gated behind `camera_tools`,
+default FALSE, because they reach a CUSTOMER's NVR rather than Chris's own
+space. The case for them: the outage that motivated the whole Blue Iris CLI had
+Chris ON SITE, with the answer two hours away by road. "Which cameras does the
+NVR think are down" is exactly the question worth answering from a phone. The
+case for the limits — no imagery, no NVR logs, no indefinite mutes, sites
+allowlisted — is in cameras.py.
 """
 
 from __future__ import annotations
@@ -20,6 +31,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from . import audit
+from . import cameras
 from .config import Settings
 from .context import build_context
 from .paths import PathRejected
@@ -218,6 +230,68 @@ def build_server(settings: Settings) -> FastMCP:
             "status": "queued",
             "note": "Picked up on the agent's next scheduled run, not immediately.",
         }
+
+    # --------------------------------------------------------------- cameras
+
+    if settings.camera_tools:
+        def _site(site: str | None) -> str:
+            chosen = site or (settings.camera_sites[0] if settings.camera_sites else "")
+            if chosen not in settings.camera_sites:
+                # Never echo the allowlist back: which customers exist is not
+                # something an unauthenticated probe should be able to enumerate.
+                audit.record_rejection("camera_site", "site not in allowlist")
+                raise cameras.CameraError(f"unknown site {chosen!r}")
+            return chosen
+
+        @mcp.tool(name="camera_status")
+        def camera_status_tool(site: str | None = None,
+                               only_down: bool = True) -> dict[str, Any]:
+            """Which cameras at a customer site are down, and why.
+
+            Reads the NVR live. `only_down` defaults to True — the usual
+            question is "what is broken", not "list everything". Returns each
+            camera's name, short id (e.g. Cam26), online state, FPS and the
+            NVR's own error text.
+
+            An unreachable NVR raises an error. It never returns an empty list
+            that could be mistaken for "all cameras fine".
+
+            No images: this returns status only.
+            """
+            return cameras.camera_status(
+                settings.blueiris_binary, _site(site), only_down)
+
+        @mcp.tool(name="camera_mute")
+        def camera_mute_tool(camera: str, reason: str, days: int = 30,
+                             site: str | None = None) -> dict[str, str]:
+            """Stop alerting on a camera that cannot be fixed yet.
+
+            Silences Chris's own camera-down notifications for this camera —
+            it changes nothing on the customer's system and does not stop
+            recording. Use when a camera is known-dead and awaiting
+            replacement, so the alert channel stays meaningful.
+
+            `camera` is the short id from camera_status (e.g. "Cam26").
+            `reason` is required and shows up in `blueiris muted` — a mute
+            nobody can explain later is a mute nobody dares clear.
+
+            Mutes EXPIRE (default 30 days, max 365). A camera that comes back
+            auto-unmutes, so a stale mute cannot hide the next outage.
+            """
+            chosen = _site(site)
+            result = cameras.mute(settings.blueiris_binary, chosen, camera,
+                                  reason, days)
+            audit.record_write("camera_mute", f"{chosen}/{camera}", days)
+            return {"result": result}
+
+        @mcp.tool(name="camera_unmute")
+        def camera_unmute_tool(camera: str,
+                               site: str | None = None) -> dict[str, str]:
+            """Resume alerting on a camera that was muted."""
+            chosen = _site(site)
+            result = cameras.unmute(settings.blueiris_binary, chosen, camera)
+            audit.record_write("camera_unmute", f"{chosen}/{camera}", 0)
+            return {"result": result}
 
     return mcp
 

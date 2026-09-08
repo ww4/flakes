@@ -109,6 +109,31 @@ class Settings(BaseSettings):
         ),
     )
 
+    # --- customer NVR status ----------------------------------------------
+    camera_tools: bool = Field(
+        default=False,
+        description=(
+            "Expose camera_status / camera_mute / camera_unmute. OFF by "
+            "default: these tools reach a CUSTOMER's equipment, so turning "
+            "them on is a deliberate per-deployment act, not something a "
+            "package update grants. Even on, no tool here returns camera "
+            "IMAGERY — see cameras.py for where that line is drawn and why."
+        ),
+    )
+    camera_sites: list[str] = Field(
+        default_factory=lambda: ["craigmyle"],
+        description=(
+            "ALLOWLIST of --site values the camera tools may pass through. A "
+            "site name selects a credentials file, so an unchecked value is a "
+            "way to probe which customers exist. Callers may only name a site "
+            "already listed here."
+        ),
+    )
+    blueiris_binary: str = Field(
+        default="blueiris",
+        description="The blueiris CLI the camera tools shell out to.",
+    )
+
     @field_validator("path_prefix")
     @classmethod
     def _clean_prefix(cls, value: str) -> str:

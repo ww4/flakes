@@ -343,9 +343,12 @@ def cmd_unmute(site: str, short: str) -> int:
     return 0
 
 
-def cmd_muted(site: str) -> int:
+def cmd_muted(site: str, as_json: bool = False) -> int:
     st = load_state(site)
     m = st.get("muted") or {}
+    if as_json:
+        print(json.dumps({"site": site, "muted": m}, indent=1, sort_keys=True))
+        return 0
     if not m:
         print("  nothing muted")
         return 0
@@ -359,6 +362,12 @@ def cmd_muted(site: str) -> int:
 def main() -> int:
     p = argparse.ArgumentParser(prog="blueiris", description=__doc__.split("\n")[0])
     p.add_argument("--site", default="craigmyle", help="config in ~/.config/blueiris/<site>.env")
+    # Machine-readable output for `cams`, `offline` and `muted`. Exists so the
+    # MCP layer consumes STRUCTURED data instead of scraping these columns —
+    # a report format is not an API, and column-scraping breaks the first time
+    # a camera name gets long enough to truncate.
+    p.add_argument("--json", action="store_true",
+                   help="emit JSON (cams/offline/muted) for machine consumers")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("cams", help="all cameras with health")
     sub.add_parser("offline", help="only cameras the NVR considers down")
@@ -388,7 +397,7 @@ def main() -> int:
     if args.cmd == "unmute":
         return cmd_unmute(args.site, args.camera)
     if args.cmd == "muted":
-        return cmd_muted(args.site)
+        return cmd_muted(args.site, args.json)
 
     bi = BI(load_site(args.site))
     bi.login()
@@ -398,6 +407,22 @@ def main() -> int:
 
     if args.cmd in ("cams", "offline"):
         cams = bi.cameras()
+        if args.json:
+            rows = [c for c in cams
+                    if args.cmd != "offline" or c.get("isOnline") is not True]
+            print(json.dumps({
+                "site": args.site,
+                "total": len(cams),
+                "online": sum(1 for c in cams if c.get("isOnline") is True),
+                "cameras": [{"name": c.get("optionDisplay"),
+                             "short": c.get("optionValue"),
+                             "online": c.get("isOnline"),
+                             "fps": c.get("FPS"),
+                             "error": (c.get("error") or "").strip()}
+                            for c in sorted(
+                                rows, key=lambda x: (x.get("optionDisplay") or ""))],
+            }, indent=1))
+            return 0
         n = fmt_cams(cams, args.cmd == "offline")
         online = sum(1 for c in cams if c.get("isOnline") is True)
         print(f"\n  {online}/{len(cams)} online" +

@@ -29,9 +29,9 @@
 { config, lib, pkgs, ... }:
 
 let
-  blueiris = pkgs.writers.writePython3Bin "blueiris" {
-    flakeIgnore = [ "E501" "E203" "W503" "W504" ];
-  } (builtins.readFile ./blueiris.py);
+  # Shared with modules/services/homelab-mcp.nix, which shells out to this same
+  # binary for its camera tools. One derivation, one tested auth path.
+  blueiris = pkgs.callPackage ../../pkgs/blueiris { };
 in
 {
   environment.systemPackages = [ blueiris ];
@@ -44,6 +44,12 @@ in
   # only needs to live on one host, it goes there and nowhere else".)
   systemd.tmpfiles.rules = [
     "d /home/claude/.config/blueiris 0700 claude users -"
+    # The mute list. StateDirectory= below also creates this, but only when the
+    # timer first fires — and homelab-mcp.nix carries this path in
+    # ReadWritePaths, where a MISSING directory makes the unit fail to start.
+    # Without this line, enabling the camera tools would take the MCP down until
+    # the first camera poll happened to run.
+    "d /var/lib/blueiris 0750 claude users -"
   ];
 
   # --- camera-down alerting -------------------------------------------------
