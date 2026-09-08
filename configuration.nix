@@ -63,10 +63,11 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/open-webui-proxy.nix  # TLS front door for wallace's Open WebUI (local-LLM chat)
     ./modules/services/open-notebook.nix     # NotebookLM-alt: chat + podcasts over source docs (surrealdb+app+kokoro)
     ./modules/services/vscode-server.nix
-    ./modules/services/nextcloud.nix
+    hm.acme                                 # shared ACME DNS-01 defaults (email + token in homelab-values)
+    hm.nextcloud                            # admin/OIDC secrets in homelab-values; pg backups below
     ./modules/services/backup.nix
     ./modules/services/dow-uploads-backup.nix # DOW uploads bucket -> fusion pool (into restic)
-    ./modules/services/notifications.nix
+    hm.ntfy                                 # write-only anon access; baseUrl/topic in homelab-values
     ./modules/services/daily-reminders.nix   # tappable ntfy nudges (reminder only — claims nothing)
     ./modules/services/media-mirror.nix
     ./modules/services/media-curate.nix      # backed-up tag sweep + YouTube promote (needs Jellyfin key to activate)
@@ -101,7 +102,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/lazylibrarian.nix    # ebook/audiobook manager (Readarr successor)
     ./modules/services/stacks.nix           # physical book catalog (sale scanner, flood losses)
     ./modules/services/aurral.nix           # Jellyseerr-for-music (Aurral -> Lidarr)
-    ./modules/services/forgejo.nix
+    hm.forgejo                              # OIDC secret in homelab-values
     ./modules/services/albyhub.nix
     hm.glances
     hm.authelia                             # SSO: forward-auth + OIDC (one list drives protect AND the access rule)
