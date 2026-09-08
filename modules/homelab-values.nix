@@ -3,7 +3,7 @@
 # split: implementations live in the library; everything gromit-specific they
 # read lives here. When a module migrates to the library, its values and
 # secret declarations land here.
-{ config, pkgs, ... }:
+{ config, pkgs, nixpkgs-silverbullet, ... }:
 
 {
   # ── homelab.* option values ────────────────────────────────────────────────
@@ -56,6 +56,21 @@
     keepersTv = "/mnt/fusion/TV Shows";
   };
   homelab.recyclarr.configFile = ./services/recyclarr-config.yml;
+
+  # ── silverbullet (wave 3f) ─────────────────────────────────────────────────
+  # Two-writer space: Chris (web UI/PWA) + the claude agent (direct files),
+  # the scheduling-assistant source of truth. Package from nixos-unstable:
+  # the 26.05 pin is frozen at 2.6.1; 2.7+ carry the mobile sync/offline/
+  # indexing fixes that matter on the phone. Plain package import (no module
+  # eval), so unstable's darwin eval problem (see flake.nix) is not in play.
+  # ⚠️ Check the client-patch journal after every version bump.
+  homelab.silverbullet = {
+    package = (import nixpkgs-silverbullet {
+      inherit (pkgs.stdenv.hostPlatform) system;
+    }).silverbullet;
+    indexPage = "Home";   # quick-capture dashboard, not the space map (Chris, 2026-08-23)
+    secondWriter = "claude";
+  };
 
   # ── wave 3c service values ─────────────────────────────────────────────────
   homelab.acme = {
