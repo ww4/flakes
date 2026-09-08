@@ -47,13 +47,13 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/newsdesk              # personal RSS news digest (collect -> rank -> claude -p -> page)
 
     # Services.
-    ./modules/services/nginx-access.nix     # source-gate all vhosts to Tailscale + LAN (security review 2026-06-04)
+    hm.nginx-access                         # source-gate all vhosts to Tailscale + LAN — the real perimeter
     hm.nginx-log-paths-check                # eval-time guard: an nginx log outside its writable set = every vhost down
     ./modules/services/blocky.nix           # local split-horizon DNS: rosemaryacres.com -> LAN IP so hostnames resolve with the WAN down
-    ./modules/services/jellyfin.nix
-    ./modules/services/audiobookshelf.nix
-    ./modules/services/tandoor.nix
-    ./modules/services/pinchflat.nix
+    hm.jellyfin
+    hm.audiobookshelf
+    hm.tandoor
+    hm.pinchflat                            # mediaDir in homelab-values
     ./modules/services/metube.nix           # yt-dlp web GUI for one-off downloads -> /mnt/fusion/youtube/metube
     ./modules/services/bitcoind.nix
     ./modules/services/fulcrum.nix          # Electrum server (mempool.space backend + Sparrow); indexes the chain
@@ -103,10 +103,10 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/aurral.nix           # Jellyseerr-for-music (Aurral -> Lidarr)
     ./modules/services/forgejo.nix
     ./modules/services/albyhub.nix
-    ./modules/services/glances.nix
+    hm.glances
     hm.authelia                             # SSO: forward-auth + OIDC (one list drives protect AND the access rule)
     ./modules/services/paperless.nix
-    ./modules/services/uptime-kuma.nix
+    hm.uptime-kuma
     ./modules/services/vaultwarden.nix
     ./modules/services/litestream.nix       # continuous SQLite replication of the vault to B2
     ./modules/services/silverbullet.nix     # markdown notes/tasks space — scheduling-assistant SoT

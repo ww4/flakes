@@ -39,6 +39,9 @@
     };
   };
 
+  # ── pinchflat (wave 3a) ────────────────────────────────────────────────────
+  homelab.pinchflat.mediaDir = "/mnt/fusion/pinchflat";
+
   # ── drive-temps (wave 2) ───────────────────────────────────────────────────
   homelab.driveTemps = {
     # Historical metric name — dashboards, the drive-temperature alert group
