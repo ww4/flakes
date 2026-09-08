@@ -42,6 +42,40 @@
   # ── pinchflat (wave 3a) ────────────────────────────────────────────────────
   homelab.pinchflat.mediaDir = "/mnt/fusion/pinchflat";
 
+  # ── wave 3b service values ─────────────────────────────────────────────────
+  homelab.paperless = {
+    adminPasswordFile = config.sops.secrets."paperless-admin".path;
+    oidcEnvFile = config.sops.secrets."paperless-oidc-env".path;
+  };
+  homelab.vaultwarden = {
+    subdomain = "keys";   # renamed from vault.* — Chrome Safe Browsing kept flagging it
+    envFile = config.sops.secrets."vaultwarden-env".path;
+    extraConfig = {
+      # Outbound email via Postmark: invites, new-device alerts, email 2FA.
+      # Postmark uses its Server API token as BOTH SMTP_USERNAME and
+      # SMTP_PASSWORD — both live in the env secret. SMTP_FROM must be a
+      # Postmark-verified sender.
+      SMTP_HOST = "smtp.postmarkapp.com";
+      SMTP_PORT = 587;
+      SMTP_SECURITY = "starttls";        # 587 = STARTTLS
+      SMTP_FROM = "vault@rosemaryacres.com";
+      SMTP_FROM_NAME = "Rosemary Acres Vault";
+    };
+  };
+  homelab.immich = {
+    mediaLocation = "/mnt/fusion/immich";
+    # ML offloaded to wallace (Ryzen 9 5900X) over the tailnet; version kept
+    # in lockstep via hosts/wallace/immich-ml.nix (pkgs.immich.version).
+    mlUrl = "http://100.66.171.120:3003";
+  };
+  homelab.metube = {
+    downloadDir = "/mnt/fusion/youtube/metube";
+    # uid pinned to what was ACTUALLY auto-allocated before pinning (NixOS
+    # refuses to change an existing user's uid); 984 = the media group's gid.
+    uid = 971;
+    mediaGid = 984;
+  };
+
   # ── drive-temps (wave 2) ───────────────────────────────────────────────────
   homelab.driveTemps = {
     # Historical metric name — dashboards, the drive-temperature alert group
@@ -229,6 +263,27 @@
   boot.kernelParams = [ "video=HDMI-A-1:1920x1080e" ];
 
   # ── sops declarations for library modules ──────────────────────────────────
+  sops.secrets."paperless-admin" = {
+    sopsFile = ../secrets/paperless-admin.yaml;
+    key = "paperless-admin";
+    owner = "paperless";
+  };
+  sops.secrets."paperless-oidc-env" = {
+    sopsFile = ../secrets/paperless-oidc-env.yaml;
+    key = "paperless-oidc-env";
+    owner = "paperless";
+  };
+  sops.secrets."vaultwarden-env" = {
+    sopsFile = ../secrets/vaultwarden-env.yaml;
+    key = "vaultwarden-env";
+  };
+  # Immich OIDC secret: not wired declaratively (see the library module's
+  # header); root-owned, read with sudo for the one-time admin-UI step.
+  sops.secrets."immich-oidc-secret" = {
+    sopsFile = ../secrets/immich-oidc-secret.yaml;
+    key = "immich-oidc-secret";
+    mode = "0400";
+  };
   # Grafana's OIDC client secret (generic_oauth reads it via $__file as the
   # grafana user). The matching pbkdf2 hash is in homelab.authelia.oidcClients.
   sops.secrets."grafana-oidc-secret" = {
