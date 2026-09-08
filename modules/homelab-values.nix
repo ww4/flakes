@@ -42,6 +42,31 @@
   # ── pinchflat (wave 3a) ────────────────────────────────────────────────────
   homelab.pinchflat.mediaDir = "/mnt/fusion/pinchflat";
 
+  # ── wave 3c service values ─────────────────────────────────────────────────
+  homelab.acme = {
+    email = "chris@saenzmail.com";
+    credentialsFile = config.sops.secrets."cloudflare-dns-api".path;
+  };
+  homelab.nextcloud = {
+    adminPasswordFile = config.sops.secrets."nextcloud-admin-pass".path;
+    oidcSecretFile = config.sops.secrets."nextcloud-oidc-secret".path;
+  };
+  homelab.forgejo.oidcSecretFile = config.sops.secrets."forgejo-oidc-secret".path;
+  homelab.ntfy = {
+    baseUrl = "http://100.82.117.116:8090";   # what the phone app subscribes to
+    topic = "gromit-alerts";
+  };
+
+  # Nightly database backups. Dump named databases individually (pg_dump per
+  # DB) rather than pg_dumpall — pg_dumpall aborts entirely if any one
+  # database fails, which silently broke ALL backups for 16 months when the
+  # orphaned immich DB became undumpable.
+  services.postgresqlBackup = {
+    enable = true;
+    startAt = "*-*-* 01:15:00";
+    databases = [ "nextcloud" "immich" "stacks" ];
+  };
+
   # ── wave 3b service values ─────────────────────────────────────────────────
   homelab.paperless = {
     adminPasswordFile = config.sops.secrets."paperless-admin".path;
@@ -263,6 +288,35 @@
   boot.kernelParams = [ "video=HDMI-A-1:1920x1080e" ];
 
   # ── sops declarations for library modules ──────────────────────────────────
+  # Cloudflare DNS-01 token for ACME (was 0644 plaintext once — closing that
+  # hole was the point of the sops move). owner=claude/0400 because the token
+  # is DUAL-USE: ACME (systemd reads the environmentFile as root) AND the
+  # agent's own DNS automation, which reads the file directly.
+  sops.secrets."cloudflare-dns-api" = {
+    sopsFile = ../secrets/cloudflare-dns-api.yaml;
+    key = "cloudflare-dns-api";
+    owner = "claude";
+    mode = "0400";
+  };
+  # Only read at first install (long since set up), kept wired to satisfy the
+  # module's required adminpassFile and to retire the old plaintext.
+  sops.secrets."nextcloud-admin-pass" = {
+    sopsFile = ../secrets/nextcloud-admin-pass.yaml;
+    key = "nextcloud-admin-pass";
+    owner = "nextcloud";
+    mode = "0400";
+  };
+  sops.secrets."nextcloud-oidc-secret" = {
+    sopsFile = ../secrets/nextcloud-oidc-secret.yaml;
+    key = "nextcloud-oidc-secret";
+    owner = "nextcloud";
+    mode = "0400";
+  };
+  sops.secrets."forgejo-oidc-secret" = {
+    sopsFile = ../secrets/forgejo-oidc-secret.yaml;
+    key = "forgejo-oidc-secret";
+    owner = "forgejo";
+  };
   sops.secrets."paperless-admin" = {
     sopsFile = ../secrets/paperless-admin.yaml;
     key = "paperless-admin";
