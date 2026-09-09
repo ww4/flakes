@@ -4,8 +4,10 @@
 { config, lib, pkgs, ... }:
 {
   imports = [
-    ./immich-ml.nix   # Immich ML inference offloaded from gromit (CPU on the 5900X)
-    ./llm.nix         # local LLM stack (llama.cpp GPU+CPU + Open WebUI)
+    ./immich-ml.nix    # Immich ML inference offloaded from gromit (CPU on the 5900X)
+    ./llm.nix          # local LLM stack (llama.cpp GPU+CPU + Open WebUI)
+    ./agent-access.nix # scoped `claude` agent login (SSH + ONE efibootmgr rule)
+    ./boot-order.nix   # re-assert NixOS first in the EFI order (Windows reverts it)
   ];
 
   # Dual-boot: GRUB (EFI) with os-prober so the menu lists NixOS + Windows.
