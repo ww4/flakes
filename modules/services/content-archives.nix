@@ -113,9 +113,22 @@ in
         Environment = [
           "HOME=${cfg.home}"          # git finds the ww4-bot credential helper
           "STALE_DAYS=${toString cfg.staleDays}"
-          "ARCHIVES=${lib.concatMapStringsSep " " (a: "${a.name}:${a.path}") cfg.archives}"
         ];
-        ExecStart = lib.getExe refresh;
+        # ⚠️ The archive list is passed as ARGV, not as an environment variable,
+        # and that is the whole point of this line. It used to be
+        #   Environment = [ "ARCHIVES=name:path name:path ..." ]
+        # and systemd SPLITS `Environment=` on whitespace — so it assigned only
+        # the FIRST pair and discarded the rest as a malformed second assignment.
+        # From deploy (2026-08-18) to 2026-09-09 the weekly refresh therefore
+        # covered exactly ONE of the configured archives, logged
+        # "Invalid environment assignment, ignoring: twib-archive:..." on every
+        # boot, and exited 0 — so it reported success for three weeks while
+        # seven archives went untouched. Quoting the value would fix today's
+        # bug; passing argv removes the class, because systemd splits ExecStart
+        # into argv by design and escapeShellArgs keeps each entry intact.
+        ExecStart = "${lib.getExe refresh} ${
+          lib.escapeShellArgs (map (a: "${a.name}:${a.path}") cfg.archives)
+        }";
         # Feed fetches + a full FTS5 reindex; generous but bounded.
         TimeoutStartSec = "45min";
       };
