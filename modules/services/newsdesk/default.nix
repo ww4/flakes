@@ -37,6 +37,7 @@ let
   # systemd `path` option — the exact shape of the #165 bug, where a tool was
   # on the interactive PATH and missing from every timer run.
   nd = "${newsdesk}/bin/newsdesk";
+  notify = "${import ../notify-pkg.nix { inherit pkgs; }}/bin/gromit-notify";
 
   # Shared by both edition units. `kind` is resolved at runtime for the brief
   # so that Monday picks up the release-radar lane (releases are not news;
@@ -113,7 +114,7 @@ let
     hour="$(date +%-H)"
     if [ "$published" -gt 0 ] && [ "$hour" -ge ${toString cfg.notifyAfterHour} ] \
        && [ "$hour" -lt ${toString cfg.notifyBeforeHour} ]; then
-      gromit-notify "Newsdesk — $kind" "$tldr
+      ${notify} "Newsdesk — $kind" "$tldr
 ${cfg.editionUrl}" default "newspaper" "${cfg.editionUrl}"
     else
       echo "newsdesk: not notifying (published=$published hour=$hour)"
