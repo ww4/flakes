@@ -134,12 +134,15 @@ let hm = homelab-modules.nixosModules; in
     # and because of the Environment= splitting bug (see content-archives.nix)
     # only lup was ever actually refreshed. The other six were built once on
     # 2026-08-18 and then frozen, five of them never even pushed to the forge.
-    # Personal shows Chris listens to first, then the discovery set.
     archives = [
+      # PERSONAL — Chris listens to these; archived so questions about what was
+      # discussed can be answered from the text.
       { name = "lup-archive";          path = "/home/claude/lup-archive"; }
       { name = "twib-archive";         path = "/home/claude/twib-archive"; }
       { name = "audible-archive";      path = "/home/claude/audible-archive"; }
       { name = "wbd-archive";          path = "/home/claude/wbd-archive"; }
+      # DISCOVERY — Chris does NOT listen to these. Archived purely so
+      # podcast-triage can surface the occasional episode worth his time.
       { name = "tftc-archive";         path = "/home/claude/tftc-archive"; }
       { name = "rhr-archive";          path = "/home/claude/rhr-archive"; }
       { name = "citadel-archive";      path = "/home/claude/citadel-archive"; }
