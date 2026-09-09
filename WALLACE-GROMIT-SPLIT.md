@@ -1,9 +1,9 @@
-# Wallace & Gromit — the two-host split
+# Wallace & Gromit — the storage/compute split
 
-Two NixOS hosts, one flake (`nixosConfigurations.{gromit,wallace}`). Named for
-the claymation duo: **Gromit** quietly holds everything together (the data);
-**Wallace** runs the heavy contraptions (the compute). Wallace does **not**
-replace Gromit — it offloads CPU/GPU-bound work.
+Two of the flake's three hosts (`nixosConfigurations.{gromit,wallace}`;
+marcus, the laptop, is outside this split). **Gromit** holds the data;
+**Wallace** runs the heavy compute. Wallace does not replace Gromit — it
+offloads CPU/GPU-bound work.
 
 ## The hardware reality (what drives the split)
 
@@ -74,7 +74,14 @@ them reliable internal disks — and gives true hardware separation for 3-2-1:
 
 ## Status
 
-- ✅ Wallace installed (NixOS, dual-boot with Windows), folded into this flake as
-  the second host (bootstrap config).
-- ⏭️ Next, in order: (1) remote Nix builder, (2) comin on Wallace, (3) Immich ML
-  offload, (4) local LLM, (5) transcode offload. Then Phase 2 when drives move.
+- ✅ Wallace installed (NixOS, dual-boot with Windows), second host in the
+  flake, managed by comin like gromit.
+- ✅ Remote Nix builder (`modules/nix-remote-builder.nix`): gromit offloads
+  builds to the 5900X.
+- ✅ Immich ML offload: gromit's Immich points at wallace's ML endpoint
+  (`homelab.immich.mlUrl` in `modules/homelab-values.nix`); versions kept in
+  lockstep via `hosts/wallace/immich-ml.nix`.
+- ✅ Local LLM: Open WebUI + models on wallace (`hosts/wallace/llm.nix`),
+  fronted from gromit by `open-webui-proxy.nix`.
+- ⏭️ Remaining from Phase 1: transcode offload (HandBrake batch + Jellyfin
+  VAAPI). Then Phase 2 when drives move into Wallace's bays.
