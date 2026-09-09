@@ -46,6 +46,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/agent/digest.nix              # weekly headless digest (claude -p /catch-up -> ntfy)
     ./modules/agent/claude-config-sync.nix  # hourly pull of the synced global ~/.claude/CLAUDE.md
     ./modules/services/content-archives.nix  # weekly rebuild of the podcast transcript corpora
+    ./modules/services/podcast-triage.nix    # mine the discovery archives for episodes worth Chris's time
     ./modules/services/blueiris.nix          # CLI for customer Blue Iris NVRs (Craigmyle) over Tailscale
     ./modules/services/newsdesk              # personal RSS news digest (collect -> rank -> claude -p -> page)
     ./modules/services/wx                    # NWS alerts (fast) + Ryan Hall lead time (into the newsdesk)
@@ -144,6 +145,21 @@ let hm = homelab-modules.nixosModules; in
       { name = "rhr-archive";          path = "/home/claude/rhr-archive"; }
       { name = "citadel-archive";      path = "/home/claude/citadel-archive"; }
       { name = "btcexplained-archive"; path = "/home/claude/btcexplained-archive"; }
+    ];
+  };
+
+  # The discovery half of the archive fleet: rank new episodes from the four
+  # shows Chris does NOT listen to, then have `claude -p` judge which few are
+  # actually worth his time and write them into the SilverBullet queue. Stranded
+  # unmerged on origin/content-archives since 2026-08-18 — the archives half
+  # (#164) landed without it, so nothing has ever mined the corpus.
+  services.podcastTriage = {
+    enable = true;
+    archives = [
+      "/home/claude/tftc-archive"
+      "/home/claude/rhr-archive"
+      "/home/claude/citadel-archive"
+      "/home/claude/btcexplained-archive"
     ];
   };
 

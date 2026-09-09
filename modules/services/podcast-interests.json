@@ -1,0 +1,64 @@
+{
+  "_comment": [
+    "Interest profile for podcast-triage. This is the PACKAGED DEFAULT; it is",
+    "copied to /var/lib/podcast-triage/interests.json on first run and the copy",
+    "wins from then on, so tune it there without a rebuild.",
+    "",
+    "Weights are relative. Positive terms lift an episode; penalties suppress it.",
+    "Scores are per-1000-words, so these are about DENSITY of a topic, not raw",
+    "mentions. A term appearing in the TITLE is worth double.",
+    "",
+    "Derived from what Chris actually builds and runs: a homelab on NixOS, a",
+    "full Bitcoin node stack, self-hosted everything, and a WISP day job. The",
+    "penalties encode his own complaint about these shows — price talk, macro",
+    "punditry and personality noise are the filler he wants filtered out."
+  ],
+
+  "interests": {
+    "nixos": 6, "nix flake": 6, "self-host": 5, "self-hosted": 5, "homelab": 5,
+    "docker": 3, "systemd": 4, "proxmox": 4, "zfs": 3, "raid": 2, "backup": 3,
+
+    "bitcoin core": 5, "bitcoin knots": 6, "full node": 5, "running a node": 6,
+    "electrum server": 5, "fulcrum": 6, "electrs": 6, "mempool": 4,
+    "utxo": 3, "compact block": 4, "assumeutxo": 5, "pruning": 3, "reindex": 3,
+    "initial block download": 4, "ibd": 3, "bitcoind": 5,
+
+    "lightning": 4, "lnd": 4, "core lightning": 5, "channel": 2, "routing node": 5,
+    "lsp": 4, "lnbits": 4, "alby": 4, "phoenixd": 4, "submarine swap": 4,
+
+    "coldcard": 5, "seedsigner": 5, "foundation devices": 5, "passport": 3,
+    "hardware wallet": 4, "multisig": 5, "seed phrase": 3, "descriptor": 4,
+    "sparrow": 5, "bitcoin wallet": 3, "air-gapped": 4, "psbt": 5,
+
+    "taproot": 4, "covenant": 5, "ctv": 4, "silent payment": 5, "bip": 4,
+    "ecash": 5, "cashu": 5, "fedimint": 5, "ark protocol": 5, "liquid network": 3,
+    "sidechain": 3, "payjoin": 4, "coinjoin": 4, "whirlpool": 3,
+
+    "tor": 4, "privacy": 3, "opsec": 4, "self-custody": 3, "sovereignty": 2,
+    "open source": 3, "opensats": 3, "reproducible build": 5,
+
+    "start9": 5, "umbrel": 4, "raspiblitz": 5, "mynode": 4, "nixbitcoin": 6,
+    "tailscale": 5, "wireguard": 4, "vpn": 2, "dns": 3, "networking": 3,
+    "starlink": 4, "isp": 3, "mikrotik": 5, "ubiquiti": 4,
+
+    "how i built": 5, "walkthrough": 4, "tutorial": 4, "deep dive": 4,
+    "technical": 3, "under the hood": 5, "architecture": 3, "postmortem": 5,
+    "developer": 3, "code review": 4, "pull request": 4, "release notes": 4
+  },
+
+  "penalties": {
+    "price target": 6, "price prediction": 6, "to the moon": 6, "all time high": 4,
+    "bull run": 4, "bear market": 3, "cycle top": 5, "supercycle": 5,
+    "number go up": 4, "hodl": 2, "buy the dip": 4, "market cap": 3,
+    "technical analysis": 5, "chart": 2, "rally": 3, "pump": 3,
+
+    "federal reserve": 3, "jerome powell": 4, "cpi": 3, "inflation number": 3,
+    "rate cut": 4, "money printer": 4, "fiat": 2, "keynesian": 3,
+
+    "election": 4, "president": 3, "politician": 3, "regulation": 2,
+    "mainstream media": 4, "shitcoin": 3, "altcoin": 3, "ethereum": 2,
+    "drama": 4, "twitter spat": 5, "beef": 3, "clout": 4, "grifter": 4,
+
+    "sponsor": 1, "promo code": 3, "use code": 3, "affiliate": 3
+  }
+}
