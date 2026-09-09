@@ -1,6 +1,6 @@
 # Backup Architecture
 
-Last updated: 2026-06-16
+Last updated: 2026-09-09
 
 This document describes how data flows between **Gromit** (NixOS, primary
 homelab at home) and **Bub** (Ubuntu 22.04, secondary Plex server at Rick's
@@ -171,6 +171,22 @@ Nothing in this architecture changes that — bub's Plex is independent of
 the backup flows. Bub's `/mnt/fusion` is its own canonical store for
 Rick's library.
 
+### Flow 6 — Vaultwarden continuous replication (Litestream)
+
+Configured via `modules/services/litestream.nix`. Litestream streams the
+Vaultwarden SQLite database to B2 continuously, so the password vault has
+sub-minute recovery independent of the nightly restic snapshot (which also
+covers `/var/lib/bitwarden_rs`).
+
+### Flow 7 — DOW forum uploads (three legs)
+
+The Drive On Wood forum's uploads bucket (DigitalOcean Spaces, ~46 GB, no
+versioning) is mirrored nightly to `/mnt/fusion/dow-uploads`
+(`modules/services/dow-uploads-backup.nix`), which restic then carries into
+both tier-1 repos, and additionally pushed to a separate **append-only** B2
+bucket — append-only so a compromise of the source bucket cannot propagate
+deletions offsite.
+
 ## Storage math (approximate, 2026-05-27)
 
 Gromit `/mnt/backup/all` is a 22 TB mergerfs pool over 4× 6 TB drives
@@ -200,11 +216,14 @@ root-only files (bub is a separate Ubuntu host, not on sops).
 | `/etc/bub-restic/b2-env`   | Bub    | Same B2 creds as gromit                |
 | `/etc/bub-restic/ssh-key`  | Bub    | Dedicated key authorized for restic-push@gromit |
 
-The restic passphrase exists in several places: gromit's sops (recoverable with
-the **admin age key** via `sops -d secrets/restic-password.yaml` on any machine,
-even if gromit's disk is gone), bub (`/etc/bub-restic/password`), and the user's
-password manager. Loss of all of them = data is encrypted bricks. Verify the
-passphrase is in the password manager before relying on this.
+The restic passphrase exists in several places: gromit's sops (recoverable
+with the **admin age key** via `sops -d secrets/restic-password.yaml` on any
+machine, even if gromit's disk is gone), and bub
+(`/etc/bub-restic/password`). The admin age key itself is escrowed off-box
+in Vaultwarden, which syncs to Chris's phone (verified 2026-09-08) — and
+because this repo is push-mirrored to GitHub, the full recovery chain
+survives total loss of the house: mirror → `secrets/*.yaml` → age key from
+the phone → restic passphrase + B2 credentials → restore.
 
 ## Recovery procedures
 
@@ -268,8 +287,9 @@ sudo rsync -aH -e "ssh -i /root/.ssh/id_ed25519 -p 4089" \
   failed — investigate epmfs placement.
 - **Restic repo lock contention**: Gromit's local + B2 push runs at
   02:30/03:00, Bub's runs at 04:00. The gap is intentional. If a job
-  overruns and locks the repo, the next will fail loudly via the
-  `notify-failure@` template — that's the signal to investigate.
+  overruns and locks the repo, the next fails as a failed unit, which the
+  Grafana `SystemdUnitFailed` rule pages on — that's the signal to
+  investigate.
 - **Bandwidth**: bub-mirror moves real bytes only for files not already in
   `/mnt/backup/all`. After steady state, weekly transfer should be modest
   (= Rick's new acquisitions). The first run will be large — schedule it
@@ -284,25 +304,24 @@ sudo rsync -aH -e "ssh -i /root/.ssh/id_ed25519 -p 4089" \
 
 ## Flake state — fully declarative on gromit's side ✅
 
-What were once "pending" items are now in the flake (`backup.nix` /
-`storage.nix`):
+Everything gromit-side is in the flake:
 
-1. **`backup.nix`** declares `users.groups.restic`, the `restic-push` SFTP user
-   with bub's locked-down authorized key, and `chris`'s `restic` group membership.
-2. **`backup.nix`** owns the repo group/setgid/ACLs idempotently via the
+1. **`backup.nix`** declares `users.groups.restic`, the `restic-push` SFTP
+   user with bub's locked-down authorized key, chris's `restic` group
+   membership, and owns the repo group/setgid/ACLs idempotently via the
    `restic-repo-perms` oneshot (runs after the backup pool mounts).
-3. **`storage.nix`** sets `category.create=epmfs` + `func.getattr=newest` +
-   `minfreespace=100G` on `/mnt/backup/all`.
+2. The backup pool's mergerfs options (`category.create=epmfs`,
+   `func.getattr=newest`, `minfreespace=100G`) are set through
+   `homelab.pools.backup` in `modules/homelab-values.nix`, assembled by the
+   library's `mergerfs-pools` module.
+3. **`bub-mirror.nix`** and **`media-mirror.nix`** are imported and live.
 
 The remaining imperative piece is **bub's own side** (restic install, its
-`/etc/bub-restic/*` creds, its push timer) — bub is a separate Ubuntu host, so
-that lives on bub, not in this flake.
-4. **`bub-mirror.nix`** — already drafted, needs to be added to
-   `configuration.nix` imports.
-
-Until step 3 lands, the imperative gromit setup persists because
-`users.mutableUsers = true` is the NixOS default — but a future tightening
-to `mutableUsers = false` would wipe the `restic-push` account.
+`/etc/bub-restic/*` creds, its push timer) — bub is a separate Ubuntu host,
+so that lives on bub, not in this flake. Note `users.mutableUsers = true`
+(the NixOS default) is load-bearing for nothing here anymore, but a future
+tightening to `mutableUsers = false` should be checked against the
+`restic-push` account.
 
 ## What's NOT in this architecture
 

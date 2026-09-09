@@ -1,70 +1,66 @@
-# Agent access structure — Claude on gromit (STAGED / INERT)
+# The scoped agent — live since June 2026
 
-Design for letting an AI agent (Claude Code) live permanently on gromit with
-*enough* access to be useful, but with consequential changes **gated on Chris's
-say-so** — not standing root. Drafted 2026-06-07. See memory `[[gromit-security-review]]`.
+A Claude agent (Claude Code) runs permanently on gromit as the `claude` user
+and does routine operations work: wiring services, extending monitoring,
+migrating secrets' plumbing, keeping documentation current. This directory is
+its access model.
 
-**Nothing here is active until you import the modules in `configuration.nix` and
-add the comin flake input.** These files have zero effect as-is.
-
-## Principle: three buckets, gated differently
+## Three kinds of action, gated differently
 
 | What the agent does | Gate |
 |---|---|
-| Read / diagnose (most of the time) | standing, **read-only** (journal group + a few scoped read cmds) |
-| Propose changes (edit the flake) | standing — produces a git branch/PR, applies nothing |
-| **Apply** (rebuild, restart, delete) | **your approval** — via PR merge (declarative) or a tiny sudo allowlist (safe imperative ops) |
+| Read and diagnose (most of the time) | Standing, read-only: journal group + scoped read commands |
+| Propose changes (edit the flake) | Standing: produces a branch and a PR, applies nothing |
+| Apply (rebuild, restart, delete) | Chris's approval — a PR merge, or a short sudo allowlist for safe imperative ops |
 
-The old `NOPASSWD: ALL` collapsed all three into one. This splits them.
+The middle row is the important one: the agent's normal output is a diff, not
+an effect.
 
-## The pieces (this directory)
+## Files here
 
-- **`claude-user.nix`** — dedicated `claude` system user. Bounds blast radius;
-  does NOT inherit chris's keys/wallets/GUI. Read access via the `systemd-journal`
-  group. Carries the agent's SSH key (the agent connects as `claude@`, not root/chris).
-- **`sudo.nix`** — scoped sudoers: passwordless for a SHORT explicit allowlist of
-  safe ops only (restart specific services, run media-mirror). No `rm`, no
-  `nixos-rebuild` (comin owns that), no wildcards.
-- **`comin.nix`** — the GitOps applier. Polls the flake repo; `nixos-rebuild test`
-  on the `testing` branch (so the agent can self-validate ephemerally), full
-  `switch` only when a commit reaches **`main`**. **You merging the PR is the gate.**
-- **`claude-agent-profile.nix`** — the Claude Code harness (guard, hooks,
-  managed settings), consumed from the shared `agent-modules` flake so gromit
-  and the Broadlinc agent host run ONE definition instead of two drifting
-  copies. The local `claude-harness.nix` and its guard/settings files were
-  removed 2026-08-17 after the audit found them drifted from what actually
-  deploys.
+- **`claude-user.nix`** — the dedicated `claude` system user. It does not
+  inherit chris's keys, wallets, or desktop session. Read access comes from
+  the `systemd-journal` group.
+- **`sudo.nix`** — the sudo allowlist: exact commands only, no wildcards on
+  dangerous verbs, no `rm`, no `nixos-rebuild` (comin owns rebuilds). Where
+  the agent needs a privileged capability, it gets a fixed-purpose wrapper
+  with a closed vocabulary (`smart-dump`, `netdiag-priv`,
+  `agent-restic-ro.sh`) — never the underlying tool. Each entry's comment
+  states what it allows and why.
+- **`comin.nix`** — the GitOps applier, shared by all three hosts. It polls
+  Forgejo `main` (plus the GitHub mirror as a fallback remote) and rebuilds
+  on merge. Chris merging the PR is the human-in-the-loop.
+- **`claude-agent-profile.nix`** — the Claude Code harness (command guard,
+  hooks, managed settings), consumed from the shared `agent-modules` flake so
+  this host and the work-side agent host run one definition. The guard is
+  root-owned at mode 0555 in `/etc/claude-code/`; the agent cannot edit it.
+- **`digest.nix`, `daybook.nix`, `claude-config-sync.nix`** — scheduled
+  headless runs: a weekly status digest, twice-daily planning notes, and an
+  hourly pull of the shared global config.
+- **`*-secret.nix`** — sops declarations for API keys the agent uses
+  (Sonarr/Radarr/Prowlarr, Jellyfin, Cloudflare for lock3, Discourse,
+  DigitalOcean, Open WebUI). The agent reads these; it cannot read any other
+  secret.
 
-## How a change flows once active
+## How a change flows
 
-1. Agent (as `claude`) edits the flake, pushes a **branch**, opens a PR.
-2. Optionally pushes to `testing` → comin runs `nixos-rebuild test` (ephemeral) so
-   the agent can verify it builds/works without persisting.
-3. **You review the PR diff on the GitHub/Forgejo mobile app and merge to `main`.**
-4. comin sees `main` advanced → `nixos-rebuild switch`. Revertible via git +
-   NixOS generation. The agent never held root for any of it.
+1. The agent edits its own clone, pushes a branch, opens a PR on Forgejo.
+2. Optionally it pushes to `testing` first; comin applies that with
+   `nixos-rebuild test` so the change can be verified live and reverts on
+   reboot.
+3. Chris reviews the diff and merges to `main`.
+4. comin sees `main` advance and runs `nixos-rebuild switch`. Both git and
+   the NixOS generation list can roll it back.
 
-## Activation checklist (at a keyboard)
+The agent never holds root at any point in that flow. Docs-repo PRs are the
+exception to the review gate: Chris opted out of reviewing documentation, so
+the agent self-merges those via the ww4-bot API.
 
-1. Add comin as a flake input (`flake.nix`): `comin.url = "github:nlewo/comin";`
-   and import its module; verify option names with `nixos-option services.comin`.
-2. Set the repo URL in `comin.nix`. If the flake repo is private, add a read token
-   file for comin.
-3. **Protect `main`** on the flake remote (require PR + your review). THIS is the
-   approval gate — without branch protection the model is just a suggestion.
-4. Generate an SSH key for `claude` for git push; add as a deploy key (write to
-   branches, NOT a path around main protection).
-5. Move the agent's authorized key from root/chris onto `claude` (in
-   `claude-user.nix`); point the agent's connection at `claude@100.82.117.116`.
-6. Import the three `.nix` modules in `configuration.nix`; `nixos-rebuild test`.
-7. (Historical) Install the proposed Claude Code settings and wire the hook —
-   today the managed settings + guard deploy root-owned to /etc/claude-code
-   via the `agent-modules` flake; confirm reads are allowed and
-   writes/destructive are gated.
-8. Tighten the `sudo.nix` allowlist to the exact ops you want me to do unattended.
-9. Once verified, you can drop chris's `NOPASSWD: ALL` (security review Tier 2).
+## Boundaries worth restating
 
-## What to verify (don't trust this blindly)
-- Exact `services.comin` option schema (versions differ) — `nixos-option`.
-- sudoers command paths (`/run/current-system/sw/bin/...`) resolve on this system.
-- The Claude Code permission-rule + hook JSON format against current docs.
+- The agent cannot grant itself new powers: the harness is root-owned and the
+  managed-settings tier rejects hooks and permissions from anywhere else.
+  Widening its access takes a PR like any other change.
+- It is not a sops recipient. It wires `sops.secrets.<name>` plumbing but
+  cannot decrypt values.
+- Every sudo invocation is logged to `/var/log/sudo-claude.log`.
