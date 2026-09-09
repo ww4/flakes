@@ -43,13 +43,21 @@ let
   # commits the encrypted file — no module change needed to turn layer 1 on.
   secretPresent = builtins.pathExists ../../../secrets/wx-location.json;
 
-  commonEnv = [
-    "WX_STATE=${cfg.stateDir}"
-    "WX_CORPUS_DIR=${cfg.corpusDir}"
-    "WX_PROMPT=${wx}/share/wx/extract-prompt.md"
-    "WX_USER_AGENT=${cfg.userAgent}"
-    "WX_LOCATION_FILE=${cfg.locationFile}"
-  ];
+  # ⚠️ An ATTRSET rendered via `environment`, NOT a list via
+  # `serviceConfig.Environment`. NixOS quotes every assignment it renders from
+  # this option; the raw list is passed through verbatim. `userAgent` contains a
+  # space, so as a list entry systemd split it at the space: WX_USER_AGENT was
+  # silently set to the truncated `(gromit-wx,` and the remainder was logged as
+  # "Invalid environment assignment, ignoring". Nothing would have surfaced
+  # that — the variable WAS set, just to a malformed User-Agent, which is
+  # precisely what NWS throttles. Found 2026-09-09, deployed broken.
+  commonEnv = {
+    WX_STATE = cfg.stateDir;
+    WX_CORPUS_DIR = cfg.corpusDir;
+    WX_PROMPT = "${wx}/share/wx/extract-prompt.md";
+    WX_USER_AGENT = cfg.userAgent;
+    WX_LOCATION_FILE = cfg.locationFile;
+  };
 in
 {
   options.services.wx = {
@@ -180,12 +188,22 @@ in
       description = "wx — NWS alerts for this point (layer 1)";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
+      environment = commonEnv;
+      # ⚠️ NOT CONFIGURED YET IS NOT A FAILURE. Without this condition the unit
+      # exits 1 every three minutes for as long as the location secret is
+      # missing — 81 failures in the first eight hours after deploy — and each
+      # sentinel sweep re-escalates a unit that is behaving exactly as designed.
+      # I chose "fail loudly" so a missing secret could not go quiet, and got a
+      # repeating false alarm about a condition only Chris can clear. A
+      # condition check makes systemd SKIP the unit and leave it inactive rather
+      # than failed, so the state stays visible (`wx status`, the eval warning,
+      # the skip line in the journal) without crying wolf on a 3-minute loop.
+      unitConfig.ConditionPathExists = cfg.locationFile;
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;
         StateDirectory = "wx";
         TimeoutStartSec = "2min";
-        Environment = commonEnv;
         # It talks to one public API and writes one SQLite file.
         ProtectSystem = "strict";
         ReadWritePaths = [ cfg.stateDir ];
@@ -213,6 +231,20 @@ in
       description = "wx — Ryan Hall transcripts, extraction and trend rules (layers 2+3)";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
+      # No ConditionPathExists here: layers 2 and 3 are the half that works
+      # without the secret, and they must keep running while it is missing.
+      environment = commonEnv // {
+        HOME = "/home/${cfg.user}";
+        # Mirrors newsdesk/digest: the interactive claude env, so `claude -p`
+        # finds its subscription OAuth credentials rather than an API key.
+        # mkForce because NixOS already defines PATH for every unit from the
+        # `path` option — overriding it is the point, and without mkForce the
+        # two definitions conflict rather than one winning silently.
+        PATH = lib.mkForce "/etc/profiles/per-user/${cfg.user}/bin:/run/current-system/sw/bin:/usr/bin:/bin";
+        # Headless run — the agent's Stop reflection hook must no-op rather
+        # than derail an extraction into doing /retro work.
+        CLAUDE_AUTONOMOUS = "1";
+      };
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;
@@ -223,15 +255,6 @@ in
         # handled everywhere else.
         UMask = "0002";
         TimeoutStartSec = "30min";
-        Environment = commonEnv ++ [
-          "HOME=/home/${cfg.user}"
-          # Mirrors newsdesk/digest: the interactive claude env, so `claude -p`
-          # finds its subscription OAuth credentials rather than an API key.
-          "PATH=/etc/profiles/per-user/${cfg.user}/bin:/run/current-system/sw/bin:/usr/bin:/bin"
-          # Headless run — the agent's Stop reflection hook must no-op rather
-          # than derail an extraction into doing /retro work.
-          "CLAUDE_AUTONOMOUS=1"
-        ];
       };
       script = ''
         set -uo pipefail
@@ -254,12 +277,12 @@ in
     # ------------------------------------------------ the quiet-hours release
     systemd.services.wx-morning = {
       description = "wx — deliver what quiet hours held, as one summary";
+      environment = commonEnv;
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;
         StateDirectory = "wx";
         TimeoutStartSec = "2min";
-        Environment = commonEnv;
         ProtectSystem = "strict";
         ReadWritePaths = [ cfg.stateDir ];
         NoNewPrivileges = true;

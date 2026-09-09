@@ -463,6 +463,18 @@ class TestLocation(unittest.TestCase):
             db.load_location(self._write("nothing: here\n"))
         self.assertNotIn("here", str(ctx.exception))
 
+    def test_layer1_ready_discriminates(self):
+        # Since 2026-09-09 the unit is SKIPPED rather than failed when the
+        # secret is missing, so this function is the ONLY thing that reports
+        # "layer 1 never ran". A constant here would make the state invisible.
+        from wx import cli
+        good = self._write('{"latitude": "38.4", "longitude": "-84.8"}')
+        with mock.patch.dict(os.environ, {"WX_LOCATION_FILE": str(good)}):
+            self.assertTrue(cli.layer1_ready())
+        with mock.patch.dict(os.environ,
+                             {"WX_LOCATION_FILE": "/nonexistent/wx-location"}):
+            self.assertFalse(cli.layer1_ready())
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

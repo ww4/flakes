@@ -169,16 +169,41 @@ def cmd_ryan(args) -> int:
     return 0
 
 
+def layer1_ready() -> bool:
+    """Can layer 1 run at all? Mirrors the unit's ConditionPathExists.
+
+    The unit is SKIPPED rather than failed while the location secret is
+    missing, which is quiet by design. This is what keeps the state
+    discoverable instead of invisible.
+    """
+    try:
+        _location()
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def cmd_morning(args) -> int:
     con = db.connect()
     n = notify.flush_pending(con, notifier=args.notifier)
     print(f"wx: flushed {n} held item(s)")
+    # The counterweight to the condition check: once a day, in the journal, so
+    # "layer 1 never ran" cannot go unnoticed. Deliberately NOT an ntfy — a
+    # daily push about something only Chris can fix is a nag, and this is the
+    # same class of thing the newsdesk refuses to nag about.
+    if not layer1_ready():
+        print("wx: LAYER 1 IS NOT RUNNING — secrets/wx-location.json is missing,"
+              " so there are no coordinates to query NWS with", file=sys.stderr)
     return 0
 
 
 def cmd_status(args) -> int:
     con = db.connect()
+    ready = layer1_ready()
     out = {
+        # First field on purpose: /health reads this, and "layer 1 is not
+        # running" is the single most important thing this command can say.
+        "layer1": "ready" if ready else "NOT RUNNING — secrets/wx-location.json missing",
         "active_alerts_seen": con.execute(
             "SELECT COUNT(*) c FROM nws_alert").fetchone()["c"],
         "notified": con.execute(
