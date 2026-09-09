@@ -116,24 +116,48 @@ in
       # API 500'd for 17 days (2026-07-23 → 08-09) while every unit looked
       # healthy. Same root cause, same fix, as services/fulcrum.nix.
       #
-      # Re-read the cookie until bitcoind ACCEPTS it. 401 is the only status
-      # meaning "wrong cookie"; 503 ("Loading block index") / 500 prove auth
-      # already succeeded and the node is just warming up.
+      # Re-read the cookie until bitcoind ACCEPTS it. 200 means the call worked;
+      # 503 ("Loading block index") / 500 prove auth already succeeded and the
+      # node is merely warming up.
+      #
+      # ⚠️ THE SUCCESS TEST IS A WHITELIST, AND THAT IS THE WHOLE POINT.
+      #
+      # It used to be a blacklist — `case "$code" in 401|000) wait ;; *) succeed`
+      # — and on 2026-09-08 that published a stale cookie 1 second into boot,
+      # taking fulcrum AND mempool down together until both were restarted by
+      # hand. The mechanism is a shell detail worth remembering:
+      #
+      #     code=$(curl -w '%{http_code}' ... || echo 000)
+      #
+      # curl ALREADY prints "000" via -w when it cannot connect, and then exits
+      # non-zero, so `|| echo 000` appends a SECOND one. The variable holds
+      # "000000", which is neither 401 nor 000, so the blacklist fell through to
+      # "success" and staged the previous boot's password. Reproduced exactly
+      # against a dead port before this fix was written.
+      #
+      # A blacklist has to enumerate every way the world can go wrong. A
+      # whitelist only has to enumerate the ways it can go RIGHT, so an
+      # unrecognised code — 000000, a proxy's 502, anything future — waits
+      # instead of declaring victory. That asymmetry is why this is a whitelist.
+      #
+      # The `|| true` also moves OUT of the substitution so a connection failure
+      # yields "000" rather than "000000", but that alone would not have saved
+      # us; the blacklist was the real defect.
       for _ in $(seq 1 150); do
         if [ -f ${bitcoindCookie} ]; then
           code=$(${pkgs.curl}/bin/curl -sS -o /dev/null -w '%{http_code}' \
             --max-time 5 --user "$(cat ${bitcoindCookie})" \
             --data-binary '{"jsonrpc":"1.0","id":"probe","method":"uptime","params":[]}' \
-            -H 'content-type: text/plain;' http://127.0.0.1:8332/ 2>/dev/null || echo 000)
-          case "$code" in
-            401|000) ;;
-            *)
+            -H 'content-type: text/plain;' http://127.0.0.1:8332/ 2>/dev/null) || true
+          case "''${code:-000}" in
+            200|500|503)
               # Cookie format: __cookie__:<password>. Strip the prefix; emit as env.
               pw=$(cut -d: -f2 ${bitcoindCookie})
               umask 077
               printf 'CORE_RPC_PASSWORD=%s\n' "$pw" > /var/lib/mempool/rpc.env
               exit 0
               ;;
+            *) ;;   # 401 wrong cookie, 000 not listening, anything else unknown
           esac
         fi
         sleep 2
