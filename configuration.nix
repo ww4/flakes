@@ -32,6 +32,7 @@ let hm = homelab-modules.nixosModules; in
 
     # Agent access (scoped, non-root Claude agent) — see modules/agent/README.md.
     ./modules/agent/claude-user.nix
+    ./modules/agent/claude-code-pin.nix  # claude-code newer than 26.05 ships — see the file
     ./modules/agent/openwebui-secret.nix    # gromit-only: agent's Open WebUI API key (sops)
     ./modules/agent/arr-api-secret.nix      # gromit-only: agent's Sonarr/Radarr/Prowlarr API keys (sops)
     ./modules/agent/jellyfin-api-secret.nix # gromit-only: agent's Jellyfin API key (sops)
