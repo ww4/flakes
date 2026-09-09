@@ -51,6 +51,7 @@
     # incomplete/ on the WD Green tier-3 scratch disk to spare fusion IO.
     scratchDir = "/mnt/scratch/qbittorrent-incomplete";
     vpnProvider = "airvpn";   # switched from Mullvad 2026-07-27 (account expired; AirVPN adds static port forwarding)
+    vpnEnvFile = config.sops.secrets."gluetun-wg".path;
     # Tier-2 "keepers" promotion targets (add as second root folders in the UIs).
     keepersMovies = "/mnt/fusion/Movies";
     keepersTv = "/mnt/fusion/TV Shows";
@@ -320,6 +321,13 @@
   };
   homelab.quietHours = { start = 22; end = 7; };   # no non-critical pages overnight
   homelab.arrMissingSweep.user = "claude";         # owns the arr-api sops secret
+  homelab.arrMissingSweep.apiEnvFile = config.sops.secrets."arr-api".path;   # declared in agent/arr-api-secret.nix
+
+  # ── per-service secret paths (the library reads these, never a sops name) ──
+  homelab.aurral.envFile     = config.sops.secrets."aurral-env".path;
+  homelab.unpackerr.envFile  = config.sops.secrets."unpackerr-env".path;
+  homelab.decluttarr.envFile = config.sops.secrets."decluttarr-env".path;
+  homelab.meshagent.mshFile  = config.sops.secrets."meshagent-msh".path;
 
   # ── values that lived in the moved base modules ────────────────────────────
   # (was modules/system.nix)
