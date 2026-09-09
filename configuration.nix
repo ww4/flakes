@@ -45,6 +45,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/agent/claude-config-sync.nix  # hourly pull of the synced global ~/.claude/CLAUDE.md
     ./modules/services/content-archives.nix  # weekly rebuild of the podcast transcript corpora
     ./modules/services/newsdesk              # personal RSS news digest (collect -> rank -> claude -p -> page)
+    ./modules/services/wx                    # NWS alerts (fast) + Ryan Hall lead time (into the newsdesk)
 
     # Services.
     hm.nginx-access                         # source-gate all vhosts to Tailscale + LAN — the real perimeter
@@ -140,4 +141,17 @@ let hm = homelab-modules.nixosModules; in
   # Defaults carry the schedule (weekday 07:00 brief, Saturday long-read,
   # release notes batched to Mondays) and the quiet-hours notification guard.
   services.newsdesk.enable = true;
+
+  # The weather watch. Three layers on three timers:
+  #   wx-alerts   NWS for his coordinates, every 3 minutes. The ONLY thing here
+  #               allowed to pierce quiet hours, and only for a tornado warning,
+  #               a flash flood emergency or an extreme wind warning.
+  #   wx-ryan     Ryan Hall's forecasts -> a `weather` lane in the newsdesk, plus
+  #               an ad-hoc ntfy when he is AHEAD of the SPC outlook.
+  #   wx-morning  07:05 release of anything quiet hours held, as one summary.
+  #
+  # Design: ww4/nixos-homelab-improvements docs/weather-watch-research.md.
+  # ⚠️ Needs secrets/wx-location.json (his home coordinates — PII) before
+  # wx-alerts can do anything; wx-ryan works without it on a cached SPC picture.
+  services.wx.enable = true;
 }

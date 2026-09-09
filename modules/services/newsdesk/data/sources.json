@@ -2721,6 +2721,44 @@
    "kind": "feed",
    "evergreen": false,
    "role": "read"
+  },
+  {
+   "name": "Ryan Hall (wx extractions)",
+   "lane": "weather",
+   "url": "/var/lib/wx/corpus",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "corpus",
+   "evergreen": false,
+   "role": "read",
+   "probe": {
+    "last_seen": null,
+    "per_week": null,
+    "on": "2026-09-07"
+   },
+   "note": "Structured extractions from Ryan Hall's daily forecast videos, written by the wx module (see ww4/nixos-homelab-improvements docs/weather-watch-research.md). Chris asked for weather TRENDS to arrive here rather than in a second daily brief, so this lane is where 'something is coming next week' lands. Anything genuinely urgent has already been pushed by wx before it reaches an edition \u2014 if an item here is the first he hears of a severe threat, the alerting layer failed and that is worth investigating. He narrates maps, so the 'Regions he named' field is often empty; that is honest, not broken."
+  },
+  {
+   "name": "Ryan Hall, Y'all blog",
+   "lane": "weather",
+   "url": "https://ryanhallyall.com/blog/rss.xml",
+   "tier": "firehose",
+   "cap": 0,
+   "insecure_tls": false,
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "signal",
+   "probe": {
+    "last_seen": "2026-09-03",
+    "per_week": 18.0,
+    "on": "2026-09-06"
+   },
+   "note": "SIGNAL ONLY \u2014 counted, never published. Measured 2026-09-06: 699 posts, 679 of them authored by 'Yallbot', i.e. generated off NWS/SPC data rather than carrying Ryan's own judgement, and the feed body is a one-line excerpt. Not worth reading and genuinely worth counting: its posts are tagged by region ('Ohio Valley' on 56 of them), so a cluster is the RHY team's own machine-readable opinion that this region is in play. Do not promote it to role=read \u2014 that would fill the weather lane with bot copy and bury the extractions above."
   }
  ],
  "dropped": [
