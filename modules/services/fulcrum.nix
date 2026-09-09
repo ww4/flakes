@@ -108,13 +108,24 @@ in
             if [ -f ${bitcoindCookie} ]; then
               ${pkgs.coreutils}/bin/install -o fulcrum -g fulcrum -m 0400 \
                 ${bitcoindCookie} ${dataDir}/.cookie
+              # ⚠️ WHITELIST, not a blacklist — full account in services/mempool.nix.
+              # Short version: this was `401|000) wait ;; *) succeed`, and
+              # `curl -w '%{http_code}' ... || echo 000` yields "000000" when
+              # bitcoind is not listening yet (curl's -w prints 000, then the ||
+              # appends a second). "000000" is neither 401 nor 000, so the old
+              # blacklist read a REFUSED CONNECTION AS SUCCESS and Fulcrum started
+              # against the previous boot's cookie — 401 forever, the Electrum port
+              # never opened, and mempool dead behind it (2026-09-08).
+              #
+              # Only 200/500/503 prove auth actually succeeded. Everything else,
+              # known or not, waits.
               code=$(${pkgs.curl}/bin/curl -sS -o /dev/null -w '%{http_code}' \
                 --max-time 5 --user "$(${pkgs.coreutils}/bin/cat ${dataDir}/.cookie)" \
                 --data-binary '{"jsonrpc":"1.0","id":"probe","method":"uptime","params":[]}' \
-                -H 'content-type: text/plain;' http://127.0.0.1:8332/ 2>/dev/null || echo 000)
-              case "$code" in
-                401|000) ;;
-                *) exit 0 ;;
+                -H 'content-type: text/plain;' http://127.0.0.1:8332/ 2>/dev/null) || true
+              case "''${code:-000}" in
+                200|500|503) exit 0 ;;
+                *) ;;   # 401 wrong cookie, 000 not listening, anything else unknown
               esac
             fi
             ${pkgs.coreutils}/bin/sleep 2
