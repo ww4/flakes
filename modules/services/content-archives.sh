@@ -18,11 +18,16 @@
 #     existing failed-unit alerting should see it. This is the whole point:
 #     an updater that quietly stops working is indistinguishable from a show
 #     that stopped releasing episodes, and only one of those is fine.
+#
+# The archive list arrives as ARGV ("name:path" per argument), NOT as a
+# whitespace-separated $ARCHIVES environment variable. It was the latter until
+# 2026-09-09, and systemd splits `Environment=` on whitespace — so the unit saw
+# only the first archive, ignored the rest, and exited 0. Three weeks of green
+# runs covering one of eight archives. argv is what systemd splits correctly.
 set -uo pipefail
 
 STAMP_DIR=${STATE_DIRECTORY:-/var/lib/content-archives}
 STALE_DAYS=${STALE_DAYS:-21}
-ARCHIVES=${ARCHIVES:-}
 
 log() { echo "content-archives: $*"; }
 
@@ -115,8 +120,19 @@ main() {
   mkdir -p "$STAMP_DIR"
   local failed=0 stale=0 now entry name path stamp age
 
+  # FAIL CLOSED ON AN EMPTY LIST. With zero archives every loop below is a
+  # no-op, stale stays 0, and the unit exits 0 — a perfect green run that did
+  # nothing at all. That is precisely how the Environment= truncation hid for
+  # three weeks, and "configured nothing" must never be indistinguishable from
+  # "checked everything and all was well".
+  if [ "$#" -eq 0 ]; then
+    log "no archives passed on the command line — refusing to report success"
+    return 1
+  fi
+  log "$# archive(s) to refresh"
+
   now=$(date +%s)
-  for entry in $ARCHIVES; do
+  for entry in "$@"; do
     name=${entry%%:*}
     path=${entry#*:}
     log "--- $name ($path)"
@@ -126,12 +142,24 @@ main() {
   # Persistent-failure escalation. A single bad week is quiet; an archive that
   # has not refreshed in STALE_DAYS is a broken updater, and saying nothing
   # about it would repeat exactly the failure this tool exists to fix.
-  for entry in $ARCHIVES; do
+  for entry in "$@"; do
     name=${entry%%:*}
     stamp="$STAMP_DIR/$name.stamp"
+    # A NEWLY ADDED archive has no stamp yet, and "no stamp" must not mean
+    # "instantly stale" — that would hard-fail the unit the first time a new
+    # archive's feed hiccups, with none of the grace window every other archive
+    # gets. Start its clock at first sight instead, so a new archive is judged
+    # by the same STALE_DAYS rule as the rest.
     if [ ! -f "$stamp" ]; then
-      log "$name: NEVER refreshed successfully"
-      stale=$((stale + 1))
+      local seen="$STAMP_DIR/$name.first-seen"
+      [ -f "$seen" ] || date +%s > "$seen"
+      age=$(( (now - $(cat "$seen")) / 86400 ))
+      if [ "$age" -gt "$STALE_DAYS" ]; then
+        log "$name: NEVER refreshed successfully since it was added ${age}d ago (limit ${STALE_DAYS}d)"
+        stale=$((stale + 1))
+      else
+        log "$name: not yet refreshed successfully (added ${age}d ago, within the ${STALE_DAYS}d grace window)"
+      fi
       continue
     fi
     age=$(( (now - $(cat "$stamp")) / 86400 ))
