@@ -80,6 +80,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/homepage.nix
     hm.monitoring                           # Prometheus + Grafana + Alertmanager; site extras in homelab-values
     hm.deploy-drift-watch                   # alerts when Forgejo main is ahead of the deployed commit (the Sep 5 gap)
+    hm.mirror-drift-watch                   # alerts when a GitHub push-mirror stops tracking Forgejo (pairs in values)
     hm.drive-temps                          # smartctl temp+SMART exporter; spin-down-safe (ids in values)
     ./modules/services/drive-spindown.nix   # park the idle backup-pool USB drives (cooling) — pairs with drive-temps
     hm.smart-dump                           # read-only FULL SMART dump to agent-readable files (wrapper, NOT raw smartctl)

@@ -57,6 +57,24 @@
   };
   homelab.recyclarr.configFile = ./services/recyclarr-config.yml;
 
+  # ── mirror-drift watch (forge redundancy, 2026-09-08) ─────────────────────
+  # Watches the GitHub push-mirrors of the two PUBLIC load-bearing repos
+  # anonymously. The private mirrors (docs, showcase) ride the same
+  # sync_on_commit config but can't be checked without credentials — their
+  # stakes are lower and the 8h interval retries cover them.
+  homelab.mirrorDriftWatch.pairs = [
+    {
+      name = "flakes";
+      source = "https://git.rosemaryacres.com/ww4/flakes.git";
+      mirror = "https://github.com/ww4/flakes.git";
+    }
+    {
+      name = "homelab-modules";
+      source = "https://git.rosemaryacres.com/ww4/homelab-modules.git";
+      mirror = "https://github.com/ww4/homelab-modules.git";
+    }
+  ];
+
   # ── silverbullet (wave 3f) ─────────────────────────────────────────────────
   # Two-writer space: Chris (web UI/PWA) + the claude agent (direct files),
   # the scheduling-assistant source of truth. Package from nixos-unstable:

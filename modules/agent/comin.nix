@@ -35,6 +35,24 @@
           testing.name = "testing";
         };
       }
+      {
+        # BREAK-GLASS remote (2026-09-08 forge-redundancy work): the GitHub
+        # push-mirror of the same repo. Normally a fast-forward twin of
+        # Forgejo main (sync_on_commit, watched by mirror-drift-watch), so
+        # comin's commit-selection sees the same history from both remotes —
+        # its algorithm refuses force-pushed mains, and a push-mirror is
+        # always fast-forward, so this can never fight the origin.
+        #
+        # What it buys: if Forgejo (or gromit's forge stack) is DOWN, deploys
+        # don't stall — and in a disaster Chris can push directly to GitHub
+        # main to drive the fleet without a working Forgejo. That closes the
+        # "all changes deploy from the box where the forge lives" loop.
+        name = "github-mirror";
+        url = "https://github.com/ww4/flakes.git";
+        branches = {
+          main.name = "main";
+        };
+      }
     ];
 
     # comin builds nixosConfigurations.<networking.hostName> = "gromit". Default.
