@@ -77,11 +77,17 @@ def notify(title: str, body: str, priority: str = "default",
     safe = re.sub(r"[^\x20-\x7e]", "", title)[:200]
     headers = {"Title": safe, "Priority": priority, "Tags": tags}
     if actions:
-        headers["Actions"] = actions
+        # Sanitised too, not just the title. Actions embed DEVICE LABELS, and
+        # labels are user-supplied via `netwatch accept <mac> "Cafe printer"`.
+        # HTTP headers are latin-1, so one accented label would raise
+        # UnicodeEncodeError and take the whole guard-dog run down with it.
+        headers["Actions"] = re.sub(r"[^\x20-\x7e]", "", actions)
     req = urllib.request.Request(NTFY, data=body.encode(), headers=headers)
     try:
         urllib.request.urlopen(req, timeout=10).read()
-    except OSError as exc:
+    # Broad on purpose: failing to SEND an alert must not abort the run that
+    # DETECTS the problem, or a bad header costs us the baseline write too.
+    except Exception as exc:  # noqa: E722
         print(f"netwatch: ntfy post failed: {exc!r}", file=sys.stderr)
 
 

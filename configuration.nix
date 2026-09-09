@@ -45,6 +45,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/agent/digest.nix              # weekly headless digest (claude -p /catch-up -> ntfy)
     ./modules/agent/claude-config-sync.nix  # hourly pull of the synced global ~/.claude/CLAUDE.md
     ./modules/services/content-archives.nix  # weekly rebuild of the podcast transcript corpora
+    ./modules/services/blueiris.nix          # CLI for customer Blue Iris NVRs (Craigmyle) over Tailscale
     ./modules/services/newsdesk              # personal RSS news digest (collect -> rank -> claude -p -> page)
     ./modules/services/wx                    # NWS alerts (fast) + Ryan Hall lead time (into the newsdesk)
 

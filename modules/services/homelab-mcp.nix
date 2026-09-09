@@ -76,6 +76,29 @@ let
   stateDir = "/var/lib/homelab-mcp";
   credsEnv = "${stateDir}/credentials.env";
 
+  # --- customer NVR status tools -------------------------------------------
+  # Shared derivation with modules/services/blueiris.nix — the MCP tools shell
+  # out to the same tested CLI rather than reimplementing the NVR's MD5 login.
+  blueiris = pkgs.callPackage ../../pkgs/blueiris { };
+  blueirisState = "/var/lib/blueiris";
+
+  # Which customer NVRs the camera tools may name. This is an ALLOWLIST: a site
+  # name selects a credentials file, so leaving it open would be a way to probe
+  # which customers exist.
+  cameraSites = [ "craigmyle" ];
+
+  # ⚠️ SECURITY TRADE-OFF, made deliberately and worth re-reading before adding
+  # a second entry. This service is otherwise IPAddressAllow=localhost, so that
+  # "a bug in request handling cannot be turned into an outbound connection".
+  # The camera tools need exactly one exception: the NVR's tailnet address.
+  #
+  # Kept as narrow as it can be — single /32s, not the tailnet, not the LAN. The
+  # residual risk is that code execution inside homelab-mcp could reach this one
+  # host on this one address; it could already do so THROUGH the camera tools,
+  # so the hole does not grant reachability the tool surface withheld. Anything
+  # broader than a /32 would.
+  cameraNvrs = [ "100.68.224.97/32" ];  # craigmyle-blueiris
+
   # This box's Tailscale address. The listener below binds it specifically
   # rather than the wildcard, so the port cannot appear on the LAN or the WAN
   # even if the firewall rule below were ever loosened.
@@ -201,6 +224,18 @@ in
       HOMELAB_MCP_INCLUDE_SERVICE_INVENTORY = "true";
       HOMELAB_MCP_FLAKE_ROOT = "/home/claude/flakes";
 
+      # Camera tools: status of a customer's NVR, and control of OUR alerting
+      # on it. No imagery and no NVR logs are reachable from here — see
+      # pkgs/homelab-mcp/src/homelab_mcp/cameras.py for where that line sits.
+      HOMELAB_MCP_CAMERA_TOOLS = "true";
+      HOMELAB_MCP_CAMERA_SITES = builtins.toJSON cameraSites;
+      HOMELAB_MCP_BLUEIRIS_BINARY = lib.getExe blueiris;
+
+      # Set explicitly rather than left to the pwd lookup: the CLI resolves its
+      # credentials at ~/.config/blueiris/<site>.env, and a service that fell
+      # back to a different HOME would report every site as unconfigured.
+      HOME = "/home/claude";
+
       PYTHONUNBUFFERED = "1"; # audit lines reach journald promptly
     };
 
@@ -250,12 +285,15 @@ in
 
       # The space is the ONLY writable path. Everything else is read-only even
       # before the application's own path scoping is considered.
-      ReadWritePaths = [ spaceDir ];
+      # The space, plus the blueiris mute list — muting is the one camera
+      # operation that writes, and it writes only here. Camera CREDENTIALS stay
+      # read-only (ProtectHome=read-only covers ~/.config/blueiris).
+      ReadWritePaths = [ spaceDir blueirisState ];
 
       # Loopback only — it cannot reach the LAN or the internet, so a bug in
       # request handling cannot be turned into an outbound connection.
       RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
-      IPAddressAllow = [ "localhost" ];
+      IPAddressAllow = [ "localhost" ] ++ cameraNvrs;
       IPAddressDeny = "any";
     };
   };
