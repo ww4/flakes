@@ -607,6 +607,27 @@ class TestPublish(Base):
         self.assertIn("reader did not complete", page.lower())
         self.assertEqual(res["published"], 2, "fallback should list the shortlist")
 
+    def test_uncited_judge_output_falls_back(self):
+        """Regression, 2026-09-04/05: non-empty output with no citations.
+
+        `claude -p` printed 'Failed to authenticate: OAuth session expired and
+        could not be refreshed' to STDOUT, and the caller had redirected stdout
+        into the edition body. The old guard only asked 'is it empty?' — a
+        73-byte error is not empty, so the fallback declined, the error was
+        published as the edition, 0 items matched, and no notification was sent.
+        Two editions vanished with no trace anywhere.
+
+        An edition with no [nd:N] citations cites nothing, whatever it contains.
+        """
+        res = self._publish(
+            "Failed to authenticate: OAuth session expired and could not be refreshed")
+        self.assertTrue(res["fell_back"], "uncited output must trigger the fallback")
+        self.assertEqual(res["published"], 2, "fallback should list the shortlist")
+        page = self._page()
+        self.assertIn("reader did not complete", page.lower())
+        self.assertNotIn("OAuth session expired", page,
+                         "the reader's error must never become the edition body")
+
     def test_grading_links_rendered(self):
         self._publish(f"- **kept** [nd:{self.kept}]\n")
         page = self._page()
