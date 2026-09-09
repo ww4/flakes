@@ -43,6 +43,15 @@
 { config, lib, pkgs, ... }:
 
 let
+  # By ABSOLUTE store path, never via PATH: the Environment=PATH below overrides
+  # the systemd `path` option, and the system-profile binary was renamed
+  # gromit-notify -> notify by the homelab-modules migration (wave 3c), which
+  # broke both daybook runs on 2026-09-08 with `gromit-notify: command not
+  # found` (exit 127) AFTER the claude run had already done its work. Same
+  # idiom as daily-reminders.nix.
+  notifyPkg = import ../services/notify-pkg.nix { inherit pkgs; };
+  notify = "${notifyPkg}/bin/gromit-notify";
+
   spaceDir = "/var/lib/silverbullet";
   notesUrl = "https://notes.rosemaryacres.com";
 
@@ -314,7 +323,7 @@ let
           || out="TLDR: Daybook ${name} run FAILED — check journalctl -u claude-daybook-${name}"
         tldr="$(printf '%s' "$out" | grep -m1 -iE '^TLDR:' | sed -E 's/^[Tt][Ll][Dd][Rr]:[[:space:]]*//')"
         [ -n "$tldr" ] || tldr="Daybook ${name} run finished (no TLDR line — check the journal page)."
-        gromit-notify "${title}" "$tldr
+        ${notify} "${title}" "$tldr
         ${notesUrl}/Journal/Day/$(date +%F)" default "${ntfyTag}"
 
         # Commit this run's space changes (the autosave repo is the undo log).
@@ -426,7 +435,7 @@ let
             || out="TLDR: On-demand daybook FAILED — check journalctl -u claude-inbox-triage"
           tldr="$(printf '%s' "$out" | grep -m1 -iE '^TLDR:' | sed -E 's/^[Tt][Ll][Dd][Rr]:[[:space:]]*//')"
           [ -n "$tldr" ] || tldr="On-demand daybook finished (no TLDR line — check the journal page)."
-          gromit-notify "Daybook — on-demand run" \
+          ${notify} "Daybook — on-demand run" \
             "$tldr"$'\n'"${notesUrl}/Journal/Day/$(date +%F)" default "zap"
           commit_msg="daybook on-demand $(date '+%Y-%m-%d %H:%M')"
         else
