@@ -119,6 +119,8 @@ let hm = homelab-modules.nixosModules; in
     hm.silverbullet                         # markdown notes/tasks space — scheduling-assistant SoT; two-writer values below
     ./modules/services/pim.nix              # plain-text calendar vdir + vdirsyncer (Nextcloud two-way, Google RO)
     ./modules/services/homelab-mcp.nix      # MCP connector for Claude-in-the-app — public via the lock3 VPS jump host
+    ./modules/services/asterisk.nix         # house PBX (pjsip): dial 0 for the switchboard, 1XX for a handset — LAN/tailnet only
+    ./modules/services/switchboard.nix      # dial 0: whisper -> intents / claude -p -> piper (FastAGI behind Asterisk)
     ./modules/agent/daybook.nix             # 09:00/20:00 claude -p bookends: plan the day / review + tomorrow
   ];
 
@@ -187,4 +189,13 @@ let hm = homelab-modules.nixosModules; in
   # ⚠️ Needs secrets/wx-location.json (his home coordinates — PII) before
   # wx-alerts can do anything; wx-ryan works without it on a cached SPC picture.
   services.wx.enable = true;
+
+  # House PBX + the voice switchboard: dial 0 from any registered handset and
+  # ask the box a question. Fast intents (status/temps/disk/incidents/time)
+  # answer in ~4 s; anything else goes to `claude -p` (~15-60 s, then a
+  # call-back if it runs long). Phones/ATAs register with the secrets in
+  # /var/lib/asterisk/pjsip-auth.conf (generated at first start).
+  # Design + bench numbers: ww4/nixos-homelab-improvements docs/switchboard.md.
+  services.homelab-pbx.enable = true;
+  services.switchboard.enable = true;
 }
