@@ -80,8 +80,9 @@ in
 
     kokoroAudition = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [ "af_heart" "af_bella" "af_nova" "af_sky" "am_michael" "am_adam" "am_fenrir" "am_puck" "bf_emma" "bf_isabella" "bm_george" "bm_lewis" ];
-      description = "Kokoro voices rendered for the dial-8 audition (at boot, by switchboard-audition-kokoro).";
+      # hexgrad's grades, best first: heart A, bella A-, nicole/emma B-, rest C+.
+      default = [ "af_heart" "af_bella" "af_nicole" "bf_emma" "am_fenrir" "am_michael" "am_puck" "af_aoede" "af_kore" "af_sarah" ];
+      description = "Kokoro voices rendered for the dial-8 audition (at boot, by switchboard-audition-kokoro), in the order played.";
     };
 
     pace = lib.mkOption {

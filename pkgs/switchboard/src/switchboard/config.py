@@ -46,10 +46,11 @@ class Settings(BaseSettings):
     kokoro_speed: float = 1.0
     kokoro_timeout_s: float = 90.0
     # Voices the dial-8 audition renders (ids from /v1/audio/voices).
+    # hexgrad's own grades: heart A, bella A-, nicole/emma B-, the rest C+.
+    # (adam is an F+, lewis a D+ — not worth a listen.)
     kokoro_audition: list[str] = Field(default_factory=lambda: [
-        "af_heart", "af_bella", "af_nova", "af_sky",
-        "am_michael", "am_adam", "am_fenrir", "am_puck",
-        "bf_emma", "bf_isabella", "bm_george", "bm_lewis",
+        "af_heart", "af_bella", "af_nicole", "bf_emma",
+        "am_fenrir", "am_michael", "am_puck", "af_aoede", "af_kore", "af_sarah",
     ])
 
     # --- piper: CLI + a voice model (.onnx with .onnx.json beside it) ---
