@@ -154,7 +154,9 @@ in
 
           [switchboard]
           exten => s,1,Answer()
-           same => n,Wait(0.5)
+           ; 1.5 s, not 0.5: media takes a beat to flow after the 200 OK and the
+           ; first call from a tailnet phone lost the start of the greeting.
+           same => n,Wait(1.5)
            same => n,AGI(agi://127.0.0.1:${toString config.services.switchboard.agiPort})
            same => n,Hangup()
 
