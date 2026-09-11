@@ -2,11 +2,11 @@
 
 Pipeline for one turn of a call:
 
-    Asterisk RECORD FILE (8 kHz wav)
+    Asterisk RECORD FILE (16 kHz wav16)
       -> stt.transcribe   (sox 8k->16k, whisper-server /inference)
       -> intents.route    (fast, deterministic readers over Prometheus / systemd / sentinel)
          or agent.ask     (slow: `claude -p`, memory-loaded, spoken-answer prompt)
-      -> tts.say          (piper 22 kHz -> sox 8 kHz mono wav)
+      -> tts.say          (piper 22 kHz -> sox 16 kHz raw .sln16)
     Asterisk STREAM FILE
 
 The same pipeline is exposed on the CLI (`switchboard turn in.wav out.wav`,

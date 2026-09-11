@@ -2,12 +2,12 @@
 #
 # `voices.<name>` is a directory with <file>.onnx + <file>.onnx.json side by
 # side (piper wants them together). `audition` renders every voice saying the
-# same lines at phone rate so they can be compared from a handset (dial 9 —
+# same lines at 16 kHz so they can be compared from a handset (dial 9 —
 # asterisk.nix). The production voice is `services.switchboard.voice`.
 #
 # Adding one: find it at https://huggingface.co/rhasspy/piper-voices/tree/v1.0.0,
 # add the entry, put ANY hash, build, paste the real ones from the error.
-{ lib, fetchurl, runCommand, piper-tts, sox }:
+{ lib, fetchurl, runCommand, piper-tts, sox, jq }:
 
 let
   base = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0";
@@ -52,15 +52,22 @@ in
 {
   inherit voices order model;
 
-  # sample1..sampleN.wav, 8 kHz s16 mono — the same lines in every voice.
-  audition = runCommand "switchboard-audition" { nativeBuildInputs = [ piper-tts sox ]; } ''
+  # sample1..sampleN.sln16, 16 kHz s16 mono raw. Each voice introduces itself
+  # from its own metadata (quality tier, training set, native rate, pace) so
+  # the listener knows what is being compared, then says the same lines.
+  audition = runCommand "switchboard-audition" { nativeBuildInputs = [ piper-tts sox jq ]; } ''
     mkdir -p $out
     n=0
     ${lib.concatMapStringsSep "\n" (name: ''
       n=$((n+1))
-      printf 'Voice %d, ${voices.${name}.label}. This is the Gromit switchboard. What would you like to know? ... CPU 34 degrees. NVMe 29 degrees. The hottest spinning drive is S D B at 44 degrees, across 8 drives. ... Press any key for the next voice, star to hear this one again, or pound to hang up.' "$n" \
+      j=${voices.${name}}/${voices.${name}.file}.onnx.json
+      quality=$(jq -r .audio.quality $j)
+      khz=$(jq -r '.audio.sample_rate / 1000' $j)
+      pace=$(jq -r '.inference.length_scale' $j)
+      dataset=$(jq -r '.dataset | gsub("_"; " ")' $j)
+      printf 'Hi, my name is ${voices.${name}.label}, voice number %d. I am a Piper %s quality model trained on the %s voice, native rate %s kilohertz, played here at 16, pace %s. ... This is the Gromit switchboard. What would you like to know? ... CPU 34 degrees. NVMe 29 degrees. The hottest spinning drive is S D B at 44 degrees, across 8 drives. ... Any key for the next voice, star to repeat, pound to hang up.' "$n" "$quality" "$dataset" "$khz" "$pace" \
         | piper --model ${model name} --output_file raw.wav
-      sox raw.wav -r 8000 -c 1 -b 16 $out/sample$n.wav
+      sox raw.wav -r 16000 -c 1 -b 16 -e signed-integer -t raw $out/sample$n.sln16
     '') order}
     echo $n > $out/count
   '';

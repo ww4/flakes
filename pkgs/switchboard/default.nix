@@ -10,13 +10,14 @@
 # never rebuilds the Python package; the module points whisper-server at
 # `passthru.whisperModel` by store path. Voices live in voices.nix.
 { lib, python3Packages, fetchurl, runCommand, makeWrapper, sox, piper-tts, systemd
+, jq
 , voice ? "lessac-medium" }:
 
 let
   # The production voice: a catalogue name from voices.nix (module option
   # services.switchboard.voice). Every entry is a fetchurl, so a swap is a
   # one-line config change and a ~60 MB download.
-  catalogue = import ./voices.nix { inherit lib fetchurl runCommand piper-tts sox; };
+  catalogue = import ./voices.nix { inherit lib fetchurl runCommand piper-tts sox jq; };
   voiceModel = catalogue.model voice;
   # ggml base.en (~148 MB): a couple of seconds per phone utterance on the
   # i5-4690K. small.en is noticeably better on names but ~4x slower.

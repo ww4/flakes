@@ -110,7 +110,7 @@ in
           type=endpoint
           context=phones
           disallow=all
-          allow=g722      ; wideband first if the phone offers it (piper output is 8 kHz for now)
+          allow=g722      ; wideband first: the switchboard renders 16 kHz .sln16
           allow=ulaw
           allow=alaw
           direct_media=no

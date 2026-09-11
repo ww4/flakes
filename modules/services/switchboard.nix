@@ -39,6 +39,7 @@ let
     SWITCHBOARD_AGI_PORT = toString cfg.agiPort;
     SWITCHBOARD_CALLBACK_CHANNEL = cfg.callbackChannel;
     SWITCHBOARD_GREETING = cfg.greeting;
+    SWITCHBOARD_PIPER_LENGTH_SCALE = toString cfg.pace;
   };
 in
 {
@@ -56,10 +57,16 @@ in
 
     voice = lib.mkOption {
       type = lib.types.enum (lib.attrNames (import ../../pkgs/switchboard/voices.nix {
-        inherit (pkgs) lib fetchurl runCommand piper-tts sox;
+        inherit (pkgs) lib fetchurl runCommand piper-tts sox jq;
       }).voices);
       default = "lessac-medium";
       description = "Piper voice (pkgs/switchboard/voices.nix). Dial 9 to audition them all from a handset.";
+    };
+
+    pace = lib.mkOption {
+      type = lib.types.float;
+      default = 1.0;
+      description = "piper length_scale: 1.0 = the voice's trained pace, 0.9 = 10% brisker. Some voices are trained slow.";
     };
 
     greeting = lib.mkOption {

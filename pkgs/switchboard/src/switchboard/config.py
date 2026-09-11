@@ -39,9 +39,14 @@ class Settings(BaseSettings):
     # --- text-to-speech: piper CLI + a voice model (.onnx with .onnx.json beside it) ---
     piper_bin: str = "piper"
     piper_voice: Path = Path("/var/lib/switchboard/voice/en_US-lessac-medium.onnx")
-    # Rate Asterisk expects for a plain .wav prompt (8 kHz signed 16-bit mono).
-    # Bump to 16000 and write .sln16 if the phones negotiate G.722.
-    out_rate_hz: int = 8000
+    # Speaking pace: piper's length_scale. 1.0 = as trained; <1 faster.
+    piper_length_scale: float = 1.0
+    # Wideband: 16 kHz raw signed-linear (.sln16). Asterisk plays it straight
+    # to a G.722 handset and downsamples for a mu-law one, so this is never
+    # worse than the 8 kHz .wav it replaced. (2026-09-11: 8 kHz sounded
+    # "grinding" on the first real calls.)
+    out_rate_hz: int = 16000
+    out_ext: str = "sln16"
 
     sox_bin: str = "sox"
 
