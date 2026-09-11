@@ -29,13 +29,17 @@ let
   cfg = config.services.switchboard;
   switchboard = pkgs.callPackage ../../pkgs/switchboard { inherit (cfg) voice; };
   stateDir = "/var/lib/switchboard";
-  env = [
-    "SWITCHBOARD_STATE_DIR=${stateDir}"
-    "SWITCHBOARD_WHISPER_URL=http://127.0.0.1:${toString cfg.whisperPort}"
-    "SWITCHBOARD_AGI_PORT=${toString cfg.agiPort}"
-    "SWITCHBOARD_CALLBACK_CHANNEL=${cfg.callbackChannel}"
-    "SWITCHBOARD_GREETING=${cfg.greeting}"
-  ];
+  # As an attrset, NOT a serviceConfig.Environment list: NixOS quotes these,
+  # whereas a bare `Environment=K=v with spaces` splits on whitespace and the
+  # greeting shipped as the single word "This" (2026-09-11 — the same trap as
+  # [[systemd-environment-splits-on-whitespace]], found by playing the file).
+  env = {
+    SWITCHBOARD_STATE_DIR = stateDir;
+    SWITCHBOARD_WHISPER_URL = "http://127.0.0.1:${toString cfg.whisperPort}";
+    SWITCHBOARD_AGI_PORT = toString cfg.agiPort;
+    SWITCHBOARD_CALLBACK_CHANNEL = cfg.callbackChannel;
+    SWITCHBOARD_GREETING = cfg.greeting;
+  };
 in
 {
   options.services.switchboard = {
@@ -124,18 +128,18 @@ in
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" "whisper-server.service" ];
       wants = [ "whisper-server.service" ];
+      # The claude profile so the slow path's `claude -p` resolves with its
+      # OAuth credentials, exactly as digest.nix does. Setting PATH here
+      # replaces the one NixOS derives from `path`, which is why the package
+      # wraps its own tool paths (sox/piper/systemctl) instead of relying on it.
+      environment = env // {
+        HOME = "/home/claude";
+        PATH = lib.mkForce "/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin";
+        CLAUDE_AUTONOMOUS = "1";
+      };
       serviceConfig = {
         User = "claude";
         SupplementaryGroups = [ "asterisk" ];
-        # The claude profile so the slow path's `claude -p` resolves with its
-        # OAuth credentials, exactly as digest.nix does. This OVERRIDES the
-        # systemd `path` option, which is why the package wraps its own tool
-        # paths (sox/piper/systemctl) instead of relying on PATH.
-        Environment = env ++ [
-          "HOME=/home/claude"
-          "PATH=/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin"
-          "CLAUDE_AUTONOMOUS=1"
-        ];
         WorkingDirectory = "/home/claude/nixos-homelab-improvements";
         # Render the fixed prompt set before listening. Cheap (~4 s), and
         # guarantees the greeting matches the voice model in this build.
