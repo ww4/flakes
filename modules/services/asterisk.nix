@@ -117,7 +117,7 @@ in
           rtp_symmetric=yes
           force_rport=yes
           rewrite_contact=yes
-          dtmf_mode=rfc4733
+          dtmf_mode=auto_info   ; RFC 4733 when negotiated, SIP INFO otherwise (Linphone does either)
           language=en
 
           [phone-aor](!)
@@ -165,15 +165,17 @@ in
            same => n,AGI(agi://127.0.0.1:${toString config.services.switchboard.agiPort})
            same => n,Hangup()
 
-          ; Voice audition. Read() waits up to 12 s for ONE digit after each
-          ; sample: a digit = next (wraps), * = same again, # or silence = bye.
+          ; Voice audition. The sample is Read()'s PROMPT, so a key pressed while
+          ; it is still talking takes effect at once (Playback() would discard it
+          ; — first attempt 2026-09-11: every press was ignored). After the
+          ; sample, 15 s more of listening. Digit = next (wraps), * = again,
+          ; # or silence = bye.
           [voices]
           exten => s,1,Answer()
            same => n,Wait(1.5)
            same => n,Set(N=1)
            same => n,Set(COUNT=${toString config.services.switchboard.auditionCount})
-           same => n(play),Playback(${config.services.switchboard.auditionDir}/sample''${N})
-           same => n,Read(D,,1,,1,12)
+           same => n(play),Read(D,${config.services.switchboard.auditionDir}/sample''${N},1,,1,15)
            same => n,GotoIf($["''${D}" = ""]?bye)
            same => n,GotoIf($["''${D}" = "*"]?play)
            same => n,Set(N=$[''${N} % ''${COUNT} + 1])
