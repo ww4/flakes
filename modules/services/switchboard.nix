@@ -40,6 +40,9 @@ let
     SWITCHBOARD_CALLBACK_CHANNEL = cfg.callbackChannel;
     SWITCHBOARD_GREETING = cfg.greeting;
     SWITCHBOARD_PIPER_LENGTH_SCALE = toString cfg.pace;
+    SWITCHBOARD_TTS = cfg.tts;
+    SWITCHBOARD_KOKORO_VOICE = cfg.kokoroVoice;
+    SWITCHBOARD_KOKORO_AUDITION = builtins.toJSON cfg.kokoroAudition;   # pydantic parses a JSON list
   };
 in
 {
@@ -61,6 +64,24 @@ in
       }).voices);
       default = "lessac-medium";
       description = "Piper voice (pkgs/switchboard/voices.nix). Dial 9 to audition them all from a handset.";
+    };
+
+    tts = lib.mkOption {
+      type = lib.types.enum [ "piper" "kokoro" ];
+      default = "piper";
+      description = "Speech backend. kokoro = open-notebook's Kokoro-FastAPI container (nicer prosody, ~5x slower to render).";
+    };
+
+    kokoroVoice = lib.mkOption {
+      type = lib.types.str;
+      default = "af_heart";
+      description = "Kokoro voice id when tts = kokoro. Dial 8 to audition.";
+    };
+
+    kokoroAudition = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ "af_heart" "af_bella" "af_nova" "af_sky" "am_michael" "am_adam" "am_fenrir" "am_puck" "bf_emma" "bf_isabella" "bm_george" "bm_lewis" ];
+      description = "Kokoro voices rendered for the dial-8 audition (at boot, by switchboard-audition-kokoro).";
     };
 
     pace = lib.mkOption {
@@ -103,7 +124,29 @@ in
       "d ${stateDir}/in       2775 claude asterisk 1d"   # recordings are deleted after transcription; 1d is the safety net
       "d ${stateDir}/out      0755 claude asterisk 1d"
       "d ${stateDir}/prompts  0755 claude asterisk -"
+      "d ${stateDir}/audition-kokoro 0755 claude asterisk -"
     ];
+
+    # Kokoro can't be rendered at build time (no network in the sandbox), so
+    # the dial-8 samples are made here: a oneshot after the container is up,
+    # off the switchboard's critical path. ~12 voices x ~25 s of audio at
+    # ~0.75x realtime = a few minutes after boot before 8 has anything to play.
+    systemd.services.switchboard-audition-kokoro = {
+      description = "Render the Kokoro voice audition samples (dial 8)";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "docker-open-notebook-kokoro.service" "network.target" ];
+      wants = [ "docker-open-notebook-kokoro.service" ];
+      environment = env;
+      serviceConfig = {
+        Type = "oneshot";
+        User = "claude";
+        ExecStart = "${switchboard}/bin/switchboard audition-kokoro";
+        # The container takes a while to answer after it starts; retry rather than fail once.
+        Restart = "on-failure";
+        RestartSec = 30;
+        TimeoutStartSec = "20min";
+      };
+    };
 
     systemd.services.whisper-server = {
       description = "whisper.cpp server (speech-to-text for the switchboard)";

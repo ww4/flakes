@@ -6,6 +6,7 @@
   turn IN.wav OUT          the full round trip: hear -> ask -> say
   call "text" [CHANNEL]    ring a handset and speak the text (call file)
   render-prompts           (re)render the static prompt set into <state>/prompts
+  audition-kokoro          render the dial-8 Kokoro voice samples into <state>/audition-kokoro
   agi                      run the FastAGI server (the systemd unit)
 
 Every stage that a call goes through can be exercised here without a phone;
@@ -44,6 +45,7 @@ async def _main(argv: list[str]) -> int:
     t = sub.add_parser("turn"); t.add_argument("wav", type=Path); t.add_argument("out", type=Path); t.add_argument("--no-agent", action="store_true")
     c = sub.add_parser("call"); c.add_argument("text"); c.add_argument("channel", nargs="?")
     sub.add_parser("render-prompts")
+    sub.add_parser("audition-kokoro")
     sub.add_parser("agi")
 
     args = p.parse_args(argv)
@@ -74,6 +76,13 @@ async def _main(argv: list[str]) -> int:
             for stale in settings.prompts.glob(f"{name}.*"):
                 stale.unlink()
             print(await audio.say(settings, text, settings.prompts / name))
+    elif args.cmd == "audition-kokoro":
+        d = settings.kokoro_audition_dir
+        d.mkdir(parents=True, exist_ok=True)
+        for n, voice in enumerate(settings.kokoro_audition, start=1):
+            for stale in d.glob(f"sample{n}.*"):
+                stale.unlink()
+            print(await audio.say_kokoro_voice(settings, audio.kokoro_audition_script(voice, n), voice, d / f"sample{n}"))
     elif args.cmd == "agi":
         await agi.serve(settings)
     return 0

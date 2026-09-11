@@ -97,16 +97,69 @@ async def say(settings: Settings, text: str, dst: Path) -> Path:
     if dst.suffix != ext:
         dst = dst.with_name(dst.name + ext)
     dst.parent.mkdir(parents=True, exist_ok=True)
-    raw = dst.with_name(dst.name + ".piper.wav")
-    await _run(
-        settings.piper_bin,
-        "--model", str(settings.piper_voice),
-        "--length_scale", str(settings.piper_length_scale),
-        "--output_file", str(raw),
-        stdin=text.encode(),
-    )
+    raw = dst.with_name(dst.name + ".tts.wav")
+    if settings.tts == "kokoro":
+        await _kokoro(settings, text, raw)
+    else:
+        await _run(
+            settings.piper_bin,
+            "--model", str(settings.piper_voice),
+            "--length_scale", str(settings.piper_length_scale),
+            "--output_file", str(raw),
+            stdin=text.encode(),
+        )
     try:
         await resample(settings, raw, dst, settings.out_rate_hz, raw=(settings.out_ext.startswith("sln")))
     finally:
         raw.unlink(missing_ok=True)
     return dst
+
+
+async def _kokoro(settings: Settings, text: str, dst: Path, voice: str | None = None) -> None:
+    """Kokoro-FastAPI: POST /v1/audio/speech -> 24 kHz wav bytes."""
+    body = {
+        "model": "kokoro",
+        "voice": voice or settings.kokoro_voice,
+        "input": text,
+        "response_format": "wav",
+        "speed": settings.kokoro_speed,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=settings.kokoro_timeout_s) as client:
+            resp = await client.post(f"{settings.kokoro_url}/v1/audio/speech", json=body)
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise AudioError(f"kokoro: {exc}") from exc
+    dst.write_bytes(resp.content)
+
+
+async def say_kokoro_voice(settings: Settings, text: str, voice: str, dst: Path) -> Path:
+    """say() pinned to one Kokoro voice — the audition renderer."""
+    ext = "." + settings.out_ext
+    if dst.suffix != ext:
+        dst = dst.with_name(dst.name + ext)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    raw = dst.with_name(dst.name + ".tts.wav")
+    await _kokoro(settings, text, raw, voice=voice)
+    try:
+        await resample(settings, raw, dst, settings.out_rate_hz, raw=(settings.out_ext.startswith("sln")))
+    finally:
+        raw.unlink(missing_ok=True)
+    return dst
+
+
+# Kokoro voice ids are <accent><gender>_<name>: a=American b=British, f/m.
+_ACCENT = {"a": "American", "b": "British"}
+_GENDER = {"f": "female", "m": "male"}
+
+
+def kokoro_audition_script(voice: str, n: int) -> str:
+    prefix, _, name = voice.partition("_")
+    who = f"{_ACCENT.get(prefix[:1], '')} {_GENDER.get(prefix[1:2], '')}".strip()
+    return (
+        f"Hi, my name is {name.capitalize()}, voice number {n}. I am a Kokoro 82 million parameter model, "
+        f"{who}, native rate 24 kilohertz, played here at 16. ... "
+        "This is the Gromit switchboard. What would you like to know? ... "
+        "CPU 34 degrees. NVMe 29 degrees. The hottest spinning drive is S D B at 44 degrees, across 8 drives. ... "
+        "Any key for the next voice, star to repeat, pound to hang up."
+    )

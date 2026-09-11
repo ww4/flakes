@@ -2,8 +2,9 @@
 # dialplan is this file, so a phone-system change is a PR like everything else.
 #
 #   Dial 0        -> the switchboard (services/switchboard.nix): talk to the box.
-#   Dial 9        -> voice audition: every piper voice says the same lines;
-#                    any key = next, * = again, # = hang up.
+#   Dial 9 / 8    -> voice audition, piper / Kokoro: every voice introduces
+#                    itself and says the same lines; any key = next, * = again,
+#                    # = hang up.
 #   Dial 1XX      -> ring that extension.
 #   Dial 911      -> "no service" tone + hangup. THERE IS NO PSTN TRUNK. This
 #                    PBX cannot reach emergency services; a real phone must.
@@ -38,6 +39,27 @@ let
   '';
 
   authFile = "/var/lib/asterisk/pjsip-auth.conf";
+  stateDir = "/var/lib/switchboard";
+
+  # A voice-audition context: sample1..N under `dir`. The sample is Read()'s
+  # PROMPT, so a key pressed while it is still talking takes effect at once
+  # (Playback() would discard it — first attempt 2026-09-11: every press was
+  # ignored). After the sample, 15 s more of listening. Digit = next (wraps),
+  # * = again, # or silence = bye.
+  audition = ctx: dir: count: ''
+    [${ctx}]
+    exten => s,1,Answer()
+     same => n,Wait(1.5)
+     same => n,Set(N=1)
+     same => n,Set(COUNT=${toString count})
+     same => n(play),Read(D,${dir}/sample''${N},1,,1,15)
+     same => n,GotoIf($["''${D}" = ""]?bye)
+     same => n,GotoIf($["''${D}" = "*"]?play)
+     same => n,Set(N=$[''${N} % ''${COUNT} + 1])
+     same => n,Goto(play)
+     same => n(bye),Playback(vm-goodbye)
+     same => n,Hangup()
+  '';
 
   # Generates the auth sections and fixes the spool mode. Extensions arrive as
   # ARGV, not an env var —
@@ -147,6 +169,8 @@ in
 
           ; 9 — audition the piper voices (samples are rendered at build time).
           exten => 9,1,Goto(voices,s,1)
+          ; 8 — audition the Kokoro voices (rendered at boot; silence until then).
+          exten => 8,1,Goto(voices-kokoro,s,1)
 
           ; 1XX — ring an extension; voicemail is a later problem.
           exten => _1XX,1,Dial(PJSIP/''${EXTEN},25)
@@ -165,23 +189,8 @@ in
            same => n,AGI(agi://127.0.0.1:${toString config.services.switchboard.agiPort})
            same => n,Hangup()
 
-          ; Voice audition. The sample is Read()'s PROMPT, so a key pressed while
-          ; it is still talking takes effect at once (Playback() would discard it
-          ; — first attempt 2026-09-11: every press was ignored). After the
-          ; sample, 15 s more of listening. Digit = next (wraps), * = again,
-          ; # or silence = bye.
-          [voices]
-          exten => s,1,Answer()
-           same => n,Wait(1.5)
-           same => n,Set(N=1)
-           same => n,Set(COUNT=${toString config.services.switchboard.auditionCount})
-           same => n(play),Read(D,${config.services.switchboard.auditionDir}/sample''${N},1,,1,15)
-           same => n,GotoIf($["''${D}" = ""]?bye)
-           same => n,GotoIf($["''${D}" = "*"]?play)
-           same => n,Set(N=$[''${N} % ''${COUNT} + 1])
-           same => n,Goto(play)
-           same => n(bye),Playback(vm-goodbye)
-           same => n,Hangup()
+          ${audition "voices" config.services.switchboard.auditionDir config.services.switchboard.auditionCount}
+          ${audition "voices-kokoro" "${stateDir}/audition-kokoro" (lib.length config.services.switchboard.kokoroAudition)}
 
           ; Outbound announcements arrive here from call files
           ; (switchboard outbound.py sets MESSAGE to a prompt path, no extension).

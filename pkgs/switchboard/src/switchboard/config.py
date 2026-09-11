@@ -8,6 +8,7 @@ in place; the CLI can override any of it for a bench test
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,7 +37,22 @@ class Settings(BaseSettings):
     # sounded abrupt on the first real call; module option services.switchboard.greeting.
     greeting: str = "This is the Gromit switchboard. What would you like to know?"
 
-    # --- text-to-speech: piper CLI + a voice model (.onnx with .onnx.json beside it) ---
+    # --- text-to-speech backend: "piper" (CLI, ~0.15x realtime on this CPU)
+    # or "kokoro" (open-notebook's Kokoro-FastAPI container, OpenAI-style
+    # /v1/audio/speech, ~0.75x realtime — nicer prosody, slower) ---
+    tts: Literal["piper", "kokoro"] = "piper"
+    kokoro_url: str = "http://127.0.0.1:8880"
+    kokoro_voice: str = "af_heart"
+    kokoro_speed: float = 1.0
+    kokoro_timeout_s: float = 90.0
+    # Voices the dial-8 audition renders (ids from /v1/audio/voices).
+    kokoro_audition: list[str] = Field(default_factory=lambda: [
+        "af_heart", "af_bella", "af_nova", "af_sky",
+        "am_michael", "am_adam", "am_fenrir", "am_puck",
+        "bf_emma", "bf_isabella", "bm_george", "bm_lewis",
+    ])
+
+    # --- piper: CLI + a voice model (.onnx with .onnx.json beside it) ---
     piper_bin: str = "piper"
     piper_voice: Path = Path("/var/lib/switchboard/voice/en_US-lessac-medium.onnx")
     # Speaking pace: piper's length_scale. 1.0 = as trained; <1 faster.
@@ -94,3 +110,7 @@ class Settings(BaseSettings):
     @property
     def prompts(self) -> Path:
         return self.state_dir / "prompts"
+
+    @property
+    def kokoro_audition_dir(self) -> Path:
+        return self.state_dir / "audition-kokoro"
