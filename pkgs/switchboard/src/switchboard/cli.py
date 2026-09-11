@@ -69,6 +69,10 @@ async def _main(argv: list[str]) -> int:
         settings.prompts.mkdir(parents=True, exist_ok=True)
         prompts = {"greeting": settings.greeting, **agi.PROMPTS}
         for name, text in prompts.items():
+            # Asterisk picks among <name>.* by transcoding cost, so a leftover
+            # from an earlier format (8 kHz .wav) could win over the new render.
+            for stale in settings.prompts.glob(f"{name}.*"):
+                stale.unlink()
             print(await audio.say(settings, text, settings.prompts / name))
     elif args.cmd == "agi":
         await agi.serve(settings)
