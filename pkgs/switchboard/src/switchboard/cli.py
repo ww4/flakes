@@ -67,7 +67,8 @@ async def _main(argv: list[str]) -> int:
         print(await outbound.call_and_say(settings, args.text, args.channel))
     elif args.cmd == "render-prompts":
         settings.prompts.mkdir(parents=True, exist_ok=True)
-        for name, text in agi.PROMPTS.items():
+        prompts = {"greeting": settings.greeting, **agi.PROMPTS}
+        for name, text in prompts.items():
             print(await audio.say(settings, text, settings.prompts / name))
     elif args.cmd == "agi":
         await agi.serve(settings)

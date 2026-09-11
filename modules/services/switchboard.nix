@@ -27,13 +27,14 @@
 
 let
   cfg = config.services.switchboard;
-  switchboard = pkgs.callPackage ../../pkgs/switchboard { };
+  switchboard = pkgs.callPackage ../../pkgs/switchboard { inherit (cfg) voice; };
   stateDir = "/var/lib/switchboard";
   env = [
     "SWITCHBOARD_STATE_DIR=${stateDir}"
     "SWITCHBOARD_WHISPER_URL=http://127.0.0.1:${toString cfg.whisperPort}"
     "SWITCHBOARD_AGI_PORT=${toString cfg.agiPort}"
     "SWITCHBOARD_CALLBACK_CHANNEL=${cfg.callbackChannel}"
+    "SWITCHBOARD_GREETING=${cfg.greeting}"
   ];
 in
 {
@@ -47,6 +48,33 @@ in
       type = lib.types.int;
       default = 3;
       description = "CPU threads for whisper-server. The box has 4; leave one for everything else.";
+    };
+
+    voice = lib.mkOption {
+      type = lib.types.enum (lib.attrNames (import ../../pkgs/switchboard/voices.nix {
+        inherit (pkgs) lib fetchurl runCommand piper-tts sox;
+      }).voices);
+      default = "lessac-medium";
+      description = "Piper voice (pkgs/switchboard/voices.nix). Dial 9 to audition them all from a handset.";
+    };
+
+    greeting = lib.mkOption {
+      type = lib.types.str;
+      default = "This is the Gromit switchboard. What would you like to know?";
+      description = "Spoken when the switchboard picks up.";
+    };
+
+    # Exposed for asterisk.nix: the rendered audition samples (dial 9) and
+    # how many there are (known at eval — no import-from-derivation).
+    auditionDir = lib.mkOption {
+      type = lib.types.path;
+      readOnly = true;
+      default = switchboard.audition;
+    };
+    auditionCount = lib.mkOption {
+      type = lib.types.int;
+      readOnly = true;
+      default = lib.length switchboard.catalogue.order;
     };
 
     callbackChannel = lib.mkOption {

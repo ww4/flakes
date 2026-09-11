@@ -32,6 +32,10 @@ class Settings(BaseSettings):
         "Prometheus, Grafana, Tailscale, restic, NVMe, CPU."
     )
 
+    # What the switchboard says when it picks up. Terse two-word greetings
+    # sounded abrupt on the first real call; module option services.switchboard.greeting.
+    greeting: str = "This is the Gromit switchboard. What would you like to know?"
+
     # --- text-to-speech: piper CLI + a voice model (.onnx with .onnx.json beside it) ---
     piper_bin: str = "piper"
     piper_voice: Path = Path("/var/lib/switchboard/voice/en_US-lessac-medium.onnx")

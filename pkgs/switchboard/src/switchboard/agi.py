@@ -203,8 +203,8 @@ class Switchboard:
 
 
 # The static prompt set, rendered once at service start (cli render-prompts).
+# The greeting comes from Settings (see cli.render_prompts).
 PROMPTS: dict[str, str] = {
-    "greeting":      "Gromit switchboard. What would you like to know?",
     "didnt-catch":   "Sorry, I didn't catch that. Try again after the tone.",
     "one-moment":    "Let me look into that. One moment.",
     "still-working": "Still working on it.",

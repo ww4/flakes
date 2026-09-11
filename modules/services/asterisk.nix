@@ -2,6 +2,8 @@
 # dialplan is this file, so a phone-system change is a PR like everything else.
 #
 #   Dial 0        -> the switchboard (services/switchboard.nix): talk to the box.
+#   Dial 9        -> voice audition: every piper voice says the same lines;
+#                    any key = next, * = again, # = hang up.
 #   Dial 1XX      -> ring that extension.
 #   Dial 911      -> "no service" tone + hangup. THERE IS NO PSTN TRUNK. This
 #                    PBX cannot reach emergency services; a real phone must.
@@ -143,6 +145,9 @@ in
           ; 0 — the switchboard. Answer, hand the call to the FastAGI server.
           exten => 0,1,Goto(switchboard,s,1)
 
+          ; 9 — audition the piper voices (samples are rendered at build time).
+          exten => 9,1,Goto(voices,s,1)
+
           ; 1XX — ring an extension; voicemail is a later problem.
           exten => _1XX,1,Dial(PJSIP/''${EXTEN},25)
            same => n,Hangup()
@@ -158,6 +163,22 @@ in
            ; first call from a tailnet phone lost the start of the greeting.
            same => n,Wait(1.5)
            same => n,AGI(agi://127.0.0.1:${toString config.services.switchboard.agiPort})
+           same => n,Hangup()
+
+          ; Voice audition. Read() waits up to 12 s for ONE digit after each
+          ; sample: a digit = next (wraps), * = same again, # or silence = bye.
+          [voices]
+          exten => s,1,Answer()
+           same => n,Wait(1.5)
+           same => n,Set(N=1)
+           same => n,Set(COUNT=${toString config.services.switchboard.auditionCount})
+           same => n(play),Playback(${config.services.switchboard.auditionDir}/sample''${N})
+           same => n,Read(D,,1,,1,12)
+           same => n,GotoIf($["''${D}" = ""]?bye)
+           same => n,GotoIf($["''${D}" = "*"]?play)
+           same => n,Set(N=$[''${N} % ''${COUNT} + 1])
+           same => n,Goto(play)
+           same => n(bye),Playback(vm-goodbye)
            same => n,Hangup()
 
           ; Outbound announcements arrive here from call files
@@ -178,6 +199,11 @@ in
         '';
       };
     };
+
+    # A dialplan/pjsip change should take effect on deploy. The upstream module
+    # sets restartIfChanged = false (a restart drops live calls); a reload is
+    # `core reload` — re-reads the confs, keeps calls and registrations.
+    systemd.services.asterisk.reloadIfChanged = true;
 
     # mkAfter: the upstream module's preStart creates /var/lib/asterisk from the
     # package skeleton only if it does NOT exist — this must run after it, or a
