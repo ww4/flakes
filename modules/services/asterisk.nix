@@ -206,6 +206,11 @@ in
     # sets restartIfChanged = false (a restart drops live calls); a reload is
     # `core reload` — re-reads the confs, keeps calls and registrations.
     systemd.services.asterisk.reloadIfChanged = true;
+    # ...but the confs are /etc files, not part of the unit, so name them as
+    # reload triggers or a dialplan-only change deploys and does nothing
+    # (2026-09-11: it reloaded once — when THIS flag appeared — then never).
+    systemd.services.asterisk.reloadTriggers =
+      map (f: config.environment.etc."asterisk/${f}".source) [ "pjsip.conf" "extensions.conf" "rtp.conf" ];
 
     # mkAfter: the upstream module's preStart creates /var/lib/asterisk from the
     # package skeleton only if it does NOT exist — this must run after it, or a
