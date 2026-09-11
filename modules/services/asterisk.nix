@@ -56,8 +56,10 @@ let
     chown asterisk:asterisk "$f"
     chmod 0600 "$f"
     # The call-file spool: group-writable so the switchboard unit (in group
-    # asterisk) can originate calls. The skeleton copy leaves it 0755.
-    chmod 2775 /var/spool/asterisk/outgoing
+    # asterisk) can originate calls. The package skeleton does NOT ship
+    # outgoing/ (Asterisk makes it on its first run), so create it here —
+    # a bare chmod failed the very first start on 2026-09-11.
+    install -d -m 2775 -o asterisk -g asterisk /var/spool/asterisk/outgoing
   '';
 in
 {
