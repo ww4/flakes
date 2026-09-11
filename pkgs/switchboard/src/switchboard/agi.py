@@ -170,9 +170,10 @@ class Switchboard:
     async def slow(self, call: Call, question: str) -> intents.Reply | None:
         """Ask the agent while keeping the caller company. Past hold_max_s,
         release the line and deliver the answer by calling back."""
-        await call.play(self.prompt("one-moment"))
+        # Kick the agent off FIRST; the filler plays while it is already working.
         task = asyncio.create_task(agent.ask(self.s, question))
         started = time.monotonic()
+        await call.play(self.prompt("one-moment"))
         while True:
             try:
                 text = await asyncio.wait_for(asyncio.shield(task), timeout=self.s.filler_every_s)
