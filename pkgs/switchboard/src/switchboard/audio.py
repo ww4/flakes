@@ -58,7 +58,7 @@ async def transcribe(settings: Settings, wav: Path) -> str:
     if wav.stat().st_size < 44 + int(MIN_UTTERANCE_S * PHONE_RATE_HZ * 2):
         log.info("stt: recording too short (%d bytes), skipping", wav.stat().st_size)
         return ""
-    wav16 = wav.with_suffix(".16k.wav")
+    wav16 = wav.with_name(wav.name + ".16k.wav")   # not with_suffix: ".wav16" would be replaced
     await resample(settings, wav, wav16, WHISPER_RATE_HZ)
     try:
         async with httpx.AsyncClient(timeout=settings.whisper_timeout_s) as client:

@@ -122,3 +122,34 @@ def test_tiny_recording_skips_whisper(tmp_path: Path) -> None:
     wav.write_bytes(b"RIFF" + b"\x00" * 40)
     s = Settings(state_dir=tmp_path, whisper_url="http://127.0.0.1:1")   # nothing listens; would fail if called
     assert asyncio.run(audio.transcribe(s, wav)) == ""
+
+
+def test_record_missing_file_is_an_error_not_a_hangup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RECORD FILE says 'timeout' but nothing is on disk: raise, don't quietly end the call."""
+    import asyncio
+
+    from switchboard import agi as agi_mod
+
+    s = Settings(state_dir=tmp_path)
+    board = agi_mod.Switchboard(s)
+
+    async def fake_record(self, path_no_ext, **kw):
+        return "timeout"
+
+    monkeypatch.setattr(agi_mod.Call, "record", fake_record)
+
+    async def run():
+        fake = FakeAsterisk([])   # inside the loop: StreamReader needs one on 3.13
+        call = agi_mod.Call(fake.reader, fake.writer)  # type: ignore[arg-type]
+        s.inbox.mkdir(parents=True)
+        await board.converse(call)
+
+    with pytest.raises(RuntimeError, match="does not exist"):
+        asyncio.run(run())
+
+
+def test_record_extension_matches_format() -> None:
+    assert agi.Call.RECORD_FORMAT == "wav16"
+    # the AGI command and the on-disk name must agree
+    from switchboard import audio
+    assert audio.PHONE_RATE_HZ == 16000
