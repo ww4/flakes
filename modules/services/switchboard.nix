@@ -41,6 +41,7 @@ let
     SWITCHBOARD_GREETING = cfg.greeting;
     SWITCHBOARD_PIPER_LENGTH_SCALE = toString cfg.pace;
     SWITCHBOARD_TTS = cfg.tts;
+    SWITCHBOARD_ANNOUNCE_TTS = cfg.announceTts;
     SWITCHBOARD_KOKORO_VOICE = cfg.kokoroVoice;
     SWITCHBOARD_KOKORO_AUDITION = builtins.toJSON cfg.kokoroAudition;   # pydantic parses a JSON list
   };
@@ -70,6 +71,12 @@ in
       type = lib.types.enum [ "piper" "kokoro" ];
       default = "piper";
       description = "Speech backend. kokoro = open-notebook's Kokoro-FastAPI container (nicer prosody, ~5x slower to render).";
+    };
+
+    announceTts = lib.mkOption {
+      type = lib.types.enum [ "piper" "kokoro" ];
+      default = cfg.tts;
+      description = "Backend for announcements: outbound `switchboard call` and the time/date intent. Chris: piper lessac-high has an announcement flavour; Kokoro is conversational.";
     };
 
     kokoroVoice = lib.mkOption {

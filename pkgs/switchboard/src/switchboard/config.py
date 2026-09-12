@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     # or "kokoro" (open-notebook's Kokoro-FastAPI container, OpenAI-style
     # /v1/audio/speech, ~0.75x realtime — nicer prosody, slower) ---
     tts: Literal["piper", "kokoro"] = "piper"
+    # Announcements (outbound `switchboard call`, the time/date intent) can use
+    # a different backend: Chris, 2026-09-12 — Kokoro is conversational, piper
+    # lessac-high "has an announcement flavor". Defaults to `tts`.
+    announce_tts: Literal["piper", "kokoro", ""] = ""
     kokoro_url: str = "http://127.0.0.1:8880"
     kokoro_voice: str = "af_heart"
     kokoro_speed: float = 1.0

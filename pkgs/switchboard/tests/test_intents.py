@@ -63,3 +63,13 @@ def test_answer_reports_lookup_failure(monkeypatch: pytest.MonkeyPatch, tmp_path
     reply = asyncio.run(intents.answer(Settings(state_dir=tmp_path), "temps"))
     assert "couldn't look that up" in reply.text
     assert not reply.hangup
+
+
+def test_time_uses_announce_voice() -> None:
+    import asyncio
+
+    from switchboard.config import Settings
+
+    reply = asyncio.run(intents.answer(Settings(), "time"))
+    assert reply.style == "announce" and reply.text.startswith("It is ")
+    assert asyncio.run(intents.answer(Settings(), "help")).style == "conversational"

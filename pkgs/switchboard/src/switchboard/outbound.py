@@ -53,6 +53,6 @@ def spool(settings: Settings, contents: str) -> Path:
 async def call_and_say(settings: Settings, text: str, channel: str | None = None) -> Path:
     """Render `text` and ring `channel` (default: the callback handset)."""
     stamp = int(time.time())
-    out = await audio.say(settings, text, settings.outbox / f"announce-{stamp}")
+    out = await audio.say(settings, text, settings.outbox / f"announce-{stamp}", style="announce")
     prompt = out.with_name(out.name.removesuffix(out.suffix))   # Asterisk adds the extension itself
     return spool(settings, call_file(channel or settings.callback_channel, prompt))

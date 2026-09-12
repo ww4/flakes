@@ -10,6 +10,7 @@ import asyncio
 import logging
 import re
 from pathlib import Path
+from typing import Literal
 
 import httpx
 
@@ -86,8 +87,13 @@ def _clean_transcript(text: str) -> str:
 
 # ---------------------------------------------------------------- TTS
 
-async def say(settings: Settings, text: str, dst: Path) -> Path:
+Style = Literal["conversational", "announce"]
+
+
+async def say(settings: Settings, text: str, dst: Path, style: Style = "conversational") -> Path:
     """text -> Asterisk-playable audio at dst (16 kHz .sln16 by default).
+    style picks the backend: conversational -> settings.tts, announce ->
+    settings.announce_tts (falls back to tts).
 
     piper emits 22.05 kHz; a second sox pass brings it to out_rate_hz. dst is
     given without an extension (Asterisk's STREAM FILE convention) — the
@@ -98,7 +104,8 @@ async def say(settings: Settings, text: str, dst: Path) -> Path:
         dst = dst.with_name(dst.name + ext)
     dst.parent.mkdir(parents=True, exist_ok=True)
     raw = dst.with_name(dst.name + ".tts.wav")
-    if settings.tts == "kokoro":
+    backend = (settings.announce_tts or settings.tts) if style == "announce" else settings.tts
+    if backend == "kokoro":
         await _kokoro(settings, text, raw)
     else:
         await _run(

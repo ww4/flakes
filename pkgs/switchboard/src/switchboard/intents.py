@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 class Reply:
     text: str
     hangup: bool = False
+    style: str = "conversational"   # "announce" -> the announcement voice (audio.say)
 
 
 # Ordered: first match wins. Patterns are matched against the lowercased,
@@ -194,4 +195,4 @@ async def answer(settings: Settings, intent: str) -> Reply:
         # Say that the lookup failed. Never let a failed read sound like good news.
         log.warning("intent %s: %s", intent, exc)
         text = "I couldn't look that up right now."
-    return Reply(text=text, hangup=(intent == "goodbye"))
+    return Reply(text=text, hangup=(intent == "goodbye"), style=("announce" if intent == "time" else "conversational"))

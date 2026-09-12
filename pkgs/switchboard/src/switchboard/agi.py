@@ -161,7 +161,7 @@ class Switchboard:
                 reply = await self.slow(call, text)
                 if reply is None:
                     return   # went to call-back mode; the line has been released
-            out = await audio.say(self.s, reply.text, self.s.outbox / f"{call.id}-{turn}")
+            out = await audio.say(self.s, reply.text, self.s.outbox / f"{call.id}-{turn}", style=reply.style)  # type: ignore[arg-type]
             await call.play(str(out.with_name(out.name.removesuffix(out.suffix))))
             if reply.hangup:
                 return
