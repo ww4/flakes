@@ -164,6 +164,7 @@ in
       # Rendered-sentence cache: entries unused for 30 days are swept.
       "d ${stateDir}/cache    0755 claude asterisk 30d"
       "d ${stateDir}/answers  0755 claude asterisk -"
+      "d ${stateDir}/notes    0750 claude asterisk 30d"   # note recordings, for recovering a mis-heard word
     ];
 
     # Standing questions: every 15 min check the watched sources' fingerprints
@@ -286,7 +287,9 @@ in
       };
       serviceConfig = {
         User = "claude";
-        SupplementaryGroups = [ "asterisk" ];
+        # asterisk: read its recordings. silverbullet: notes are appended to
+        # the space, whose files are group-writable (silverbullet.nix).
+        SupplementaryGroups = [ "asterisk" "silverbullet" ];
         WorkingDirectory = "/home/claude/nixos-homelab-improvements";
         # Render the fixed prompt set before listening. Cheap (~4 s), and
         # guarantees the greeting matches the voice model in this build.
@@ -299,7 +302,9 @@ in
         ExecStart = "${switchboard}/bin/switchboard agi";
         Restart = "on-failure";
         RestartSec = 3;
-        UMask = "0022";
+        # Files born in the space must be group-writable or the web UI loses
+        # them (silverbullet.nix) — same UMask the daybook uses.
+        UMask = "0002";
       };
     };
   };
