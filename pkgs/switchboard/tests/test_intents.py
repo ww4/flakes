@@ -9,6 +9,9 @@ from switchboard import intents
         ("What's the status?", "status"),
         ("how is everything", "status"),
         ("is everything okay", "status"),
+        ("How's the home lab doing?", "status"),   # slow-path log, 2026-09-12 — 16 s for a status answer
+        ("how's it going", "status"),
+        ("how are we doing", "status"),
         ("how hot is the CPU", "temps"),
         ("drive temperatures please", "temps"),
         ("how much disk space is left", "disk"),
