@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # reproducible). The routing never depended on proper nouns anyway.
     whisper_prompt: str = ""
 
+    # What the switchboard says when it picks up. Terse two-word greetings
+    # sounded abrupt on the first real call; module option services.switchboard.greeting.
+    greeting: str = "This is the Gromit switchboard. What would you like to know?"
+
     # --- text-to-speech backend: "piper" (CLI, ~0.15x realtime on this CPU)
     # or "kokoro" (open-notebook's Kokoro-FastAPI container, OpenAI-style
     # /v1/audio/speech, ~0.75x realtime — nicer prosody, slower) ---
