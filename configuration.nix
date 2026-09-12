@@ -206,5 +206,9 @@ let hm = homelab-modules.nixosModules; in
     kokoroVoice = "af_heart";
     announceTts = "piper";
     voice = "lessac-high";
+    # wallace first (5900X), gromit's own whisper/Kokoro as the fallback when
+    # wallace is powered off — hosts/wallace/switchboard-inference.nix.
+    remoteWhisperUrls = [ "http://100.66.171.120:8778" ];
+    remoteKokoroUrls = [ "http://100.66.171.120:8880" ];
   };
 }

@@ -35,7 +35,8 @@ let
   # [[systemd-environment-splits-on-whitespace]], found by playing the file).
   env = {
     SWITCHBOARD_STATE_DIR = stateDir;
-    SWITCHBOARD_WHISPER_URL = "http://127.0.0.1:${toString cfg.whisperPort}";
+    SWITCHBOARD_WHISPER_URLS = builtins.toJSON (cfg.remoteWhisperUrls ++ [ "http://127.0.0.1:${toString cfg.whisperPort}" ]);
+    SWITCHBOARD_KOKORO_URLS = builtins.toJSON (cfg.remoteKokoroUrls ++ [ "http://127.0.0.1:8880" ]);
     SWITCHBOARD_AGI_PORT = toString cfg.agiPort;
     SWITCHBOARD_CALLBACK_CHANNEL = cfg.callbackChannel;
     SWITCHBOARD_GREETING = cfg.greeting;
@@ -51,6 +52,19 @@ in
     enable = lib.mkEnableOption "the voice switchboard (whisper + intents/agent + piper behind Asterisk)";
 
     whisperPort = lib.mkOption { type = lib.types.port; default = 8778; };
+
+    # Remote inference, tried BEFORE the local copies (which stay running as
+    # the fallback). wallace: hosts/wallace/switchboard-inference.nix.
+    remoteWhisperUrls = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "http://100.66.171.120:8778" ];
+    };
+    remoteKokoroUrls = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "http://100.66.171.120:8880" ];
+    };
     agiPort = lib.mkOption { type = lib.types.port; default = 4573; };
 
     whisperThreads = lib.mkOption {

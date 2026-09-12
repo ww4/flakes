@@ -23,8 +23,13 @@ class Settings(BaseSettings):
     state_dir: Path = Path("/var/lib/switchboard")
 
     # --- speech-to-text: whisper.cpp's whisper-server, kept warm as a unit ---
-    whisper_url: str = "http://127.0.0.1:8778"
+    # Tried in order; the first that answers wins. wallace (5900X) first when
+    # it is on, gromit's own copy otherwise — so wallace being off costs
+    # latency, not the phone. Set as a JSON list in the environment.
+    whisper_urls: list[str] = Field(default_factory=lambda: ["http://127.0.0.1:8778"])
     whisper_timeout_s: float = 60.0
+    # How long to wait for a remote to accept the connection before moving on.
+    connect_timeout_s: float = 2.0
     # Vocabulary hint: whisper biases towards words it has just "heard", so
     # the box's proper nouns go in here or base.en turns "Gromit" into "from it".
     whisper_prompt: str = (
@@ -45,7 +50,7 @@ class Settings(BaseSettings):
     # a different backend: Chris, 2026-09-12 — Kokoro is conversational, piper
     # lessac-high "has an announcement flavor". Defaults to `tts`.
     announce_tts: Literal["piper", "kokoro", ""] = ""
-    kokoro_url: str = "http://127.0.0.1:8880"
+    kokoro_urls: list[str] = Field(default_factory=lambda: ["http://127.0.0.1:8880"])
     kokoro_voice: str = "af_heart"
     kokoro_speed: float = 1.0
     kokoro_timeout_s: float = 90.0
