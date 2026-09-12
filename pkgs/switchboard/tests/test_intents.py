@@ -21,6 +21,11 @@ from switchboard import intents
         ("thanks, that's all", "goodbye"),
         ("goodbye", "goodbye"),
         ("", "empty"),
+        ("Go.", "empty"),            # clipped "Goodbye" — a fragment, not a question
+        ("Hello.", "hello"),
+        ("hey there", "hello"),
+        ("Hi", "hello"),             # short but a known word, not a fragment
+        ("what", None),              # 4 chars: past the fragment cutoff, goes to the agent
         ("[BLANK_AUDIO]", None),   # audio.py strips this before routing; raw it is a word
         ("did the immich backup finish last night", None),
         ("what is the mempool doing", None),

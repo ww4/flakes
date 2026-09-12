@@ -40,6 +40,7 @@ let
     SWITCHBOARD_AGI_PORT = toString cfg.agiPort;
     SWITCHBOARD_CALLBACK_CHANNEL = cfg.callbackChannel;
     SWITCHBOARD_GREETING = cfg.greeting;
+    SWITCHBOARD_AGENT_HINTS = cfg.agentHints;
     SWITCHBOARD_PIPER_LENGTH_SCALE = toString cfg.pace;
     SWITCHBOARD_TTS = cfg.tts;
     SWITCHBOARD_ANNOUNCE_TTS = cfg.announceTts;
@@ -110,6 +111,12 @@ in
       type = lib.types.float;
       default = 1.0;
       description = "piper length_scale: 1.0 = the voice's trained pace, 0.9 = 10% brisker. Some voices are trained slow.";
+    };
+
+    agentHints = lib.mkOption {
+      type = lib.types.lines;
+      default = "";
+      description = "\"Where things live\" lines for the slow path's prompt; empty uses the package default. Cuts tool turns from 3-7 to 2-4 (measured 2026-09-12).";
     };
 
     greeting = lib.mkOption {

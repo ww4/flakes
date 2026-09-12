@@ -35,8 +35,25 @@ Rules:
 - Read-only: look things up, do not change anything.
 - If you cannot find out, say so in one sentence.
 
+Where things live (go straight there — one or two commands, no exploring):
+{hints}
+
 Question: {question}
 """
+
+# Measured 2026-09-12 on three real phone questions: without this list the
+# agent spent 3-7 tool turns finding the data (8-52 s, and the smaller
+# models sometimes gave up); with it, 2-4 turns (3-10 s) on every model.
+# The model is not the lever; the turn count is. Overridable per deployment
+# via settings.agent_hints (services.switchboard.agentHints).
+DEFAULT_HINTS = """\
+- failed units: systemctl --failed
+- backups: journalctl -u restic-backups-critical-local -u restic-backups-critical-b2 --since yesterday
+- calendar: /var/lib/pim/calendars/nextcloud/personal/*.ics (grep DTSTART/SUMMARY for the day)
+- incidents: newest files in /var/lib/sentinel/incidents/
+- weather forecast: curl -A gromit https://api.weather.gov/gridpoints/ILN/26,12/forecast (Owenton KY) -> properties.periods[].name/shortForecast/temperature
+- weather alerts (NWS) and Ryan Hall's latest: sqlite3 /var/lib/wx/wx.db, tables nws_alert and extraction
+- temps, disk, pool: Prometheus at http://127.0.0.1:9090/api/v1/query"""
 
 
 class AgentError(RuntimeError):
@@ -47,9 +64,11 @@ async def ask(settings: Settings, question: str) -> str:
     env = dict(os.environ)
     env.setdefault("HOME", str(settings.claude_cwd.parent))
     env["CLAUDE_AUTONOMOUS"] = "1"   # reflection hook no-ops on headless runs
+    hints = settings.agent_hints or DEFAULT_HINTS
     proc = await asyncio.create_subprocess_exec(
-        settings.claude_bin, "-p", _PROMPT.format(question=question),
+        settings.claude_bin, "-p", _PROMPT.format(question=question, hints=hints),
         "--output-format", "text",
+        "--max-turns", str(settings.agent_max_turns),
         cwd=str(settings.claude_cwd),
         env=env,
         stdin=asyncio.subprocess.DEVNULL,

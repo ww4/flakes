@@ -93,6 +93,10 @@ class Settings(BaseSettings):
     claude_bin: str = "claude"
     claude_cwd: Path = Path("/home/claude/nixos-homelab-improvements")
     claude_timeout_s: float = 120.0
+    # Tool-loop cap: a wandering answer is worse than "I couldn't find out".
+    agent_max_turns: int = 6
+    # "Where things live" for the phone prompt; empty = agent.DEFAULT_HINTS.
+    agent_hints: str = ""
     # How long the caller waits on the line before we switch to "I'll call you
     # back" mode. Filler prompts play every filler_every_s meanwhile.
     hold_max_s: float = 75.0
@@ -101,8 +105,10 @@ class Settings(BaseSettings):
     # --- FastAGI listener ---
     agi_host: str = "127.0.0.1"
     agi_port: int = 4573
-    # Consecutive empty turns (silence / nothing transcribed) before hanging up.
-    max_empty_turns: int = 2
+    # Consecutive empty turns (silence / nothing transcribed) before hanging
+    # up. Three, not two: the call log showed silences that were Chris
+    # reading or thinking, and one call ended on them (2026-09-11).
+    max_empty_turns: int = 3
 
     # --- outbound: call files (Asterisk spool) ---
     asterisk_outgoing: Path = Path("/var/spool/asterisk/outgoing")

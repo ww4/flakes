@@ -35,6 +35,7 @@ class Reply:
 # could contain "bye" incidentally.
 _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("goodbye",   re.compile(r"\b(goodbye|good bye|bye|hang up|that'?s all|thanks? (that'?s )?(all|it))\b")),
+    ("hello",     re.compile(r"^(hi|hello|hey|hey there|good (morning|afternoon|evening))( there)?( gromit| switchboard)?$")),
     ("help",      re.compile(r"\b(help|what can (you|i) (do|ask|say)|options|menu)\b")),
     ("incidents", re.compile(r"\b(incident|anything (wrong|broken|happen)|what (happened|broke|went wrong)|alerts?)\b")),
     ("status",    re.compile(r"\b(status|health|how (are|is) (things|everything|the (box|server|homelab|pool)|gromit)|everything (ok|okay|fine|alright)|all good)\b")),
@@ -50,6 +51,12 @@ def normalise(text: str) -> str:
     return _PUNCT.sub(" ", text.lower()).strip()
 
 
+# Anything this short that matched no rule is a clipped word ("Go." for
+# "Goodbye" cut off by the silence window, 2026-09-12) — not a question worth
+# 10 s of agent time. Treated as an empty turn.
+_FRAGMENT_MAX_CHARS = 3
+
+
 def route(text: str) -> str | None:
     """Transcript -> intent name, or None for the slow path."""
     t = normalise(text)
@@ -58,6 +65,8 @@ def route(text: str) -> str | None:
     for name, pat in _RULES:
         if pat.search(t):
             return name
+    if len(t) <= _FRAGMENT_MAX_CHARS:
+        return "empty"
     return None
 
 
@@ -169,6 +178,10 @@ async def _goodbye(s: Settings) -> str:
     return "Goodbye."
 
 
+async def _hello(s: Settings) -> str:
+    return "Hi Chris. What would you like to know?"
+
+
 async def _empty(s: Settings) -> str:
     return "I didn't catch that."
 
@@ -183,6 +196,7 @@ _HANDLERS: dict[str, Handler] = {
     "time": _time,
     "help": _help,
     "goodbye": _goodbye,
+    "hello": _hello,
     "empty": _empty,
 }
 
@@ -212,6 +226,7 @@ FIXED_PHRASES: list[str] = [
     "Anything else I will pass to the agent, which takes a little longer.",
     "Say goodbye to hang up.",
     "Goodbye.",
+    "Hi Chris. What would you like to know?",
     "I didn't catch that.",
     "I couldn't look that up right now.",
     "The agent couldn't answer that just now.",
