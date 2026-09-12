@@ -216,3 +216,6 @@ FIXED_PHRASES: list[str] = [
     "I couldn't look that up right now.",
     "The agent couldn't answer that just now.",
 ]
+
+# Intents whose answers the prewarm timer pre-renders (read-only, cheap).
+LIVE_INTENTS: list[str] = ["status", "temps", "disk", "incidents"]

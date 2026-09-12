@@ -172,6 +172,33 @@ in
       };
     };
 
+    # Every few minutes, run the live fast-path intents and render whatever
+    # sentences are new into the cache (Chris, 2026-09-12: "have the answer
+    # already ready … update with just the delta"). The call-time lookup is
+    # still live; this just means the numbers it produces are usually already
+    # rendered. Off the AGI unit's critical path.
+    systemd.services.switchboard-prewarm = {
+      description = "Pre-render the switchboard's likely answers into the TTS cache";
+      after = [ "switchboard-agi.service" ];
+      environment = env // { HOME = "/home/claude"; };
+      serviceConfig = {
+        Type = "oneshot";
+        User = "claude";
+        SupplementaryGroups = [ "asterisk" ];
+        ExecStart = "${switchboard}/bin/switchboard prewarm --live";
+        Nice = 10;
+        UMask = "0022";
+      };
+    };
+    systemd.timers.switchboard-prewarm = {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "3min";
+        OnUnitActiveSec = "3min";
+        RandomizedDelaySec = "30s";
+      };
+    };
+
     systemd.services.whisper-server = {
       description = "whisper.cpp server (speech-to-text for the switchboard)";
       wantedBy = [ "multi-user.target" ];
