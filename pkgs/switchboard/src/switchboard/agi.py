@@ -93,9 +93,14 @@ class Call:
     async def play(self, prompt_no_ext: str) -> None:
         await self.command("STREAM FILE", prompt_no_ext, '""')
 
+    # Asterisk names the file <path>.<format>: "wav16" -> ".wav16", not ".wav".
+    # (2026-09-12: three calls hung up after the beep because converse()
+    # looked for .wav and read "no file" as "caller gone".)
+    RECORD_FORMAT = "wav16"
+
     async def record(self, path_no_ext: str, *, max_ms: int = 15000, silence_s: int = 2) -> str:
         """Returns why recording stopped: timeout | dtmf | hangup | writefile | silence."""
-        r = await self.command("RECORD FILE", path_no_ext, "wav16", '"#"', str(max_ms), "0", "BEEP", f"s={silence_s}")
+        r = await self.command("RECORD FILE", path_no_ext, self.RECORD_FORMAT, '"#"', str(max_ms), "0", "BEEP", f"s={silence_s}")
         m = _WHY.search(r.rest)   # e.g. "(timeout) endpos=12345"
         return m.group(1) if m else "unknown"
 
@@ -141,9 +146,13 @@ class Switchboard:
         for turn in range(50):
             rec = self.s.inbox / f"{call.id}-{turn}"
             why = await call.record(str(rec))
-            wav = rec.with_name(rec.name + ".wav")   # what RECORD FILE ... wav16 wrote (16 kHz, .wav on disk)
-            if why == "hangup" or not wav.exists():
+            wav = rec.with_name(f"{rec.name}.{call.RECORD_FORMAT}")
+            if why == "hangup":
                 return
+            if not wav.exists():
+                # Never treat this as "caller gone": it is a bug or a permissions
+                # problem, and a silent goodbye is how it hid twice.
+                raise RuntimeError(f"RECORD FILE reported {why!r} but {wav} does not exist")
             text = await audio.transcribe(self.s, wav)
             wav.unlink(missing_ok=True)
             intent = intents.route(text)
