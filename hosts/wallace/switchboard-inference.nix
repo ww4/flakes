@@ -16,8 +16,9 @@
 
 let
   tailnetIp = "100.66.171.120";
-  # Same model derivation gromit uses (pkgs/switchboard/default.nix passthru),
-  # so the two hosts transcribe identically and a swap is one place.
+  # Models come from pkgs/switchboard/default.nix passthru. This box runs
+  # small.en (4x base.en's cost, which the 5900X absorbs; it got the first real
+  # notes right where base.en did not); gromit's local fallback stays base.en.
   switchboard = pkgs.callPackage ../../pkgs/switchboard { };
   whisperPort = 8778;
   kokoroPort = 8880;
@@ -31,7 +32,7 @@ in
       ExecStart = lib.concatStringsSep " " [
         "${pkgs.whisper-cpp}/bin/whisper-server"
         "--host 0.0.0.0" "--port ${toString whisperPort}"   # firewall scopes it to tailscale0
-        "-m ${switchboard.whisperModel}"
+        "-m ${switchboard.whisperModelSmall}"   # small.en here; gromit's fallback stays base.en
         "-t 12"
       ];
       DynamicUser = true;

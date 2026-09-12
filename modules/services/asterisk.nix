@@ -2,6 +2,7 @@
 # dialplan is this file, so a phone-system change is a PR like everything else.
 #
 #   Dial 0        -> the switchboard (services/switchboard.nix): talk to the box.
+#   Dial 7        -> leave a note: yours -> Inbox.md, "for Claude" -> the agent queue.
 #   Dial 9 / 8    -> voice audition, piper / Kokoro: every voice introduces
 #                    itself and says the same lines; any key = next, * = again,
 #                    # = hang up.
@@ -171,6 +172,8 @@ in
           exten => 9,1,Goto(voices,s,1)
           ; 8 — audition the Kokoro voices (rendered at boot; silence until then).
           exten => 8,1,Goto(voices-kokoro,s,1)
+          ; 7 — leave a note (for Chris -> Inbox.md; "for Claude" -> the agent queue).
+          exten => 7,1,Goto(notes,s,1)
 
           ; 1XX — ring an extension; voicemail is a later problem.
           exten => _1XX,1,Dial(PJSIP/''${EXTEN},25)
@@ -179,6 +182,13 @@ in
           ; 911 — NO TRUNK. Say so audibly rather than fail silently.
           exten => 911,1,Answer()
            same => n,Playback(ss-noservice)
+           same => n,Hangup()
+
+          ; Same FastAGI server; the script path picks the flow (agi.py).
+          [notes]
+          exten => s,1,Answer()
+           same => n,Wait(1.5)
+           same => n,AGI(agi://127.0.0.1:${toString config.services.switchboard.agiPort}/note)
            same => n,Hangup()
 
           [switchboard]

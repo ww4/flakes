@@ -30,13 +30,11 @@ class Settings(BaseSettings):
     whisper_timeout_s: float = 60.0
     # How long to wait for a remote to accept the connection before moving on.
     connect_timeout_s: float = 2.0
-    # Vocabulary hint: whisper biases towards words it has just "heard", so
-    # the box's proper nouns go in here or base.en turns "Gromit" into "from it".
-    whisper_prompt: str = (
-        "Gromit switchboard. Fusion pool, backup pool, sentinel, comin, Immich, "
-        "Jellyfin, Nextcloud, Forgejo, Vaultwarden, mempool, bitcoind, qBittorrent, "
-        "Prometheus, Grafana, Tailscale, restic, NVMe, CPU."
-    )
+    # Vocabulary hint for whisper. EMPTY on purpose: with a word list, base.en
+    # stopped mid-sentence when it couldn't fit a listed word ("through the
+    # Gra" for "through the Gromit switchboard", 2026-09-12, both hosts,
+    # reproducible). The routing never depended on proper nouns anyway.
+    whisper_prompt: str = ""
 
     # What the switchboard says when it picks up. Terse two-word greetings
     # sounded abrupt on the first real call; module option services.switchboard.greeting.
@@ -142,6 +140,19 @@ class Settings(BaseSettings):
     @property
     def slowlog(self) -> Path:
         return self.state_dir / "slowlog.jsonl"
+
+    # --- notes (notes.py): where "take a note" lands ---
+    space_dir: Path = Path("/var/lib/silverbullet")
+    inbox_page: str = "Inbox.md"                    # for Chris — triaged by the daybook
+    queue_page: str = "System/Agent Queue.md"       # for Claude — the request_work format
+    # Notes get a longer window than questions: up to two minutes, three
+    # seconds of silence to end.
+    note_max_ms: int = 120_000
+    note_silence_s: int = 3
+
+    @property
+    def notes_dir(self) -> Path:
+        return self.state_dir / "notes"
 
     # Rendered-sentence cache (see audio.say): <state>/cache/<backend>-<voice>/<sha1>.sln16
     tts_cache: bool = True

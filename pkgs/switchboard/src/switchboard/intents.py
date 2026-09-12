@@ -35,10 +35,13 @@ class Reply:
 # could contain "bye" incidentally.
 _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("goodbye",   re.compile(r"\b(goodbye|good bye|bye|hang up|that'?s all|thanks? (that'?s )?(all|it))\b")),
+    ("note",      re.compile(r"^(please )?((take|make|leave|save) a note|note to self|remind me|remember (that|to))\b")),
     ("hello",     re.compile(r"^(hi|hello|hey|hey there|good (morning|afternoon|evening))( there)?( gromit| switchboard)?$")),
     ("help",      re.compile(r"\b(help|what can (you|i) (do|ask|say)|options|menu)\b")),
     ("incidents", re.compile(r"\b(incident|anything (wrong|broken|happen)|what (happened|broke|went wrong)|alerts?)\b")),
-    ("status",    re.compile(r"\b(status|health|how (are|is) (things|everything|the (box|server|homelab|pool)|gromit)|everything (ok|okay|fine|alright)|all good)\b")),
+    # "home lab" (two words) is how whisper spells it; "how's the home lab
+    # doing" went to the slow path on 2026-09-12 — 16 s for the status answer.
+    ("status",    re.compile(r"\b(status|health|how(?:'s| are| is| are we| am i) (?:things|everything|it going|we doing|the (?:box|server|home ?lab|pool|system)|gromit)|everything (?:ok|okay|fine|alright)|all good)\b")),
     ("temps",     re.compile(r"\b(temp|temperature|how hot|thermal|cool|warm|drives? temp)\w*")),
     ("disk",      re.compile(r"\b(disk|storage|space|room|full|free|capacity|pool)\b")),
     ("time",      re.compile(r"\b(what time|the time|what day|the date|today'?s date)\b")),

@@ -20,8 +20,11 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from . import agent, audio, intents, outbound, standing
+import datetime as dt
+
+from . import agent, audio, intents, notes, outbound, standing
 from .config import Settings
 
 log = logging.getLogger(__name__)
@@ -125,8 +128,12 @@ class Switchboard:
         call = Call(reader, writer)
         try:
             await call.handshake()
-            log.info("call %s from %s", call.id, call.caller)
+            script = call.env.get("agi_network_script", "")
+            log.info("call %s from %s%s", call.id, call.caller, f" ({script})" if script else "")
             await call.answer()
+            if script == "note":
+                await self.notes(call)
+                return
             await call.play(self.prompt("greeting"))
             await self.converse(call)
         except Hangup as exc:
@@ -154,8 +161,9 @@ class Switchboard:
                 # problem, and a silent goodbye is how it hid twice.
                 raise RuntimeError(f"RECORD FILE reported {why!r} but {wav} does not exist")
             text = await audio.transcribe(self.s, wav)
-            wav.unlink(missing_ok=True)
             intent = intents.route(text)
+            if intent != "note":
+                wav.unlink(missing_ok=True)
             if intent == "empty":
                 empty += 1
                 if empty >= self.s.max_empty_turns:
@@ -177,6 +185,19 @@ class Switchboard:
                     reply = await self.slow(call, q.ask, store_as=q)
                     if reply is None:
                         return
+            elif intent == "note":
+                # Note said in the same breath ("take a note: ...")? Use it.
+                # Otherwise prompt and record one with the note's longer window.
+                note = notes.parse(text) if notes.body_after_trigger(text) else None
+                if note is None:
+                    await call.play(self.prompt("note-go-ahead"))
+                    note, rec_path = await self.take_note(call, f"{call.id}-{turn}n")
+                    if note is None:
+                        await call.play(self.prompt("note-empty"))
+                        continue
+                else:
+                    rec_path = wav
+                reply = intents.Reply(text=self.save_note(note, rec_path))
             elif intent is not None:
                 reply = await intents.answer(self.s, intent)
             else:
@@ -187,6 +208,41 @@ class Switchboard:
             await call.play(str(out.with_name(out.name.removesuffix(out.suffix))))
             if reply.hangup:
                 return
+        await call.play(self.prompt("goodbye"))
+
+    # ------------------------------------------------------------ notes
+
+    async def take_note(self, call: Call, stem: str) -> tuple["notes.Note | None", Path | None]:
+        """Record with the note window, transcribe, parse. Recording is kept for save_note."""
+        rec = self.s.inbox / stem
+        why = await call.record(str(rec), max_ms=self.s.note_max_ms, silence_s=self.s.note_silence_s)
+        wav = rec.with_name(f"{rec.name}.{call.RECORD_FORMAT}")
+        if why == "hangup" or not wav.exists():
+            return None, None
+        text = await audio.transcribe(self.s, wav)
+        return notes.parse(text), wav
+
+    def save_note(self, note: "notes.Note", recording: Path | None) -> str:
+        now = dt.datetime.now()
+        audio_path = notes.keep_audio(self.s, recording, now) if recording else None
+        if recording:
+            recording.unlink(missing_ok=True)
+        notes.save(self.s, note, audio=audio_path, now=now)
+        return f"Saved for {note.recipient}: {note.text}"
+
+    async def notes(self, call: Call) -> None:
+        """Dial 7: tone, note, read-back, repeat until silence or hangup."""
+        await call.play(self.prompt("note-prompt"))
+        for n in range(10):
+            note, rec = await self.take_note(call, f"{call.id}-note{n}")
+            if rec is None:
+                return                      # hung up
+            if note is None:
+                await call.play(self.prompt("note-empty" if n == 0 else "goodbye"))
+                return
+            out = await audio.say(self.s, self.save_note(note, rec), self.s.outbox / f"{call.id}-note{n}")
+            await call.play(str(out.with_name(out.name.removesuffix(out.suffix))))
+            await call.play(self.prompt("note-again"))
         await call.play(self.prompt("goodbye"))
 
     async def slow(self, call: Call, question: str, store_as: "standing.StandingQuestion | None" = None) -> intents.Reply | None:
@@ -239,6 +295,10 @@ PROMPTS: dict[str, str] = {
     "callback":      "This is taking a while. I'll call you back with the answer. Goodbye.",
     "sorry":         "Something went wrong on my end. Goodbye.",
     "goodbye":       "Goodbye.",
+    "note-prompt":   "Leave your note after the tone. Start with 'for Claude' if it's for me.",
+    "note-go-ahead": "Go ahead.",
+    "note-again":    "Another note? Say it after the tone, or just hang up.",
+    "note-empty":    "I didn't get a note. Goodbye.",
 }
 
 
