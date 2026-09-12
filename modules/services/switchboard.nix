@@ -193,7 +193,7 @@ in
     systemd.timers.switchboard-prewarm = {
       wantedBy = [ "timers.target" ];
       timerConfig = {
-        OnBootSec = "3min";
+        OnBootSec = "1min";
         OnUnitActiveSec = "3min";
         RandomizedDelaySec = "30s";
       };
@@ -244,11 +244,12 @@ in
         WorkingDirectory = "/home/claude/nixos-homelab-improvements";
         # Render the fixed prompt set before listening. Cheap (~4 s), and
         # guarantees the greeting matches the voice model in this build.
-        ExecStartPre = [
-          "${switchboard}/bin/switchboard render-prompts"
-          # Fixed fast-path sentences into the cache; cheap when already there.
-          "${switchboard}/bin/switchboard prewarm"
-        ];
+        # Only the prompts here (cached after the first render). The fixed-phrase
+        # pre-warm belongs to the timer below — with Kokoro on gromit's own CPU,
+        # prompts + pre-warm blew systemd's 90 s start timeout on three deploys
+        # in a row (2026-09-12), each time failing the unit twice before it came up.
+        ExecStartPre = "${switchboard}/bin/switchboard render-prompts";
+        TimeoutStartSec = "5min";
         ExecStart = "${switchboard}/bin/switchboard agi";
         Restart = "on-failure";
         RestartSec = 3;
