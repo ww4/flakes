@@ -161,7 +161,9 @@ class Switchboard:
                 if empty >= self.s.max_empty_turns:
                     await call.play(self.prompt("goodbye"))
                     return
-                await call.play(self.prompt("didnt-catch"))
+                # First silence: maybe we missed it. Second: they're thinking —
+                # say so, don't nag.
+                await call.play(self.prompt("didnt-catch" if empty == 1 else "still-here"))
                 continue
             empty = 0
             if intent is not None:
@@ -215,6 +217,7 @@ class Switchboard:
 # The greeting comes from Settings (see cli.render_prompts).
 PROMPTS: dict[str, str] = {
     "didnt-catch":   "Sorry, I didn't catch that. Try again after the tone.",
+    "still-here":    "Still here. Go ahead whenever you're ready.",
     "one-moment":    "Let me look into that. One moment.",
     "still-working": "Still working on it.",
     "callback":      "This is taking a while. I'll call you back with the answer. Goodbye.",

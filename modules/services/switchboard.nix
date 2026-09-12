@@ -35,10 +35,12 @@ let
   # [[systemd-environment-splits-on-whitespace]], found by playing the file).
   env = {
     SWITCHBOARD_STATE_DIR = stateDir;
-    SWITCHBOARD_WHISPER_URL = "http://127.0.0.1:${toString cfg.whisperPort}";
+    SWITCHBOARD_WHISPER_URLS = builtins.toJSON (cfg.remoteWhisperUrls ++ [ "http://127.0.0.1:${toString cfg.whisperPort}" ]);
+    SWITCHBOARD_KOKORO_URLS = builtins.toJSON (cfg.remoteKokoroUrls ++ [ "http://127.0.0.1:8880" ]);
     SWITCHBOARD_AGI_PORT = toString cfg.agiPort;
     SWITCHBOARD_CALLBACK_CHANNEL = cfg.callbackChannel;
     SWITCHBOARD_GREETING = cfg.greeting;
+    SWITCHBOARD_AGENT_HINTS = cfg.agentHints;
     SWITCHBOARD_PIPER_LENGTH_SCALE = toString cfg.pace;
     SWITCHBOARD_TTS = cfg.tts;
     SWITCHBOARD_ANNOUNCE_TTS = cfg.announceTts;
@@ -51,6 +53,19 @@ in
     enable = lib.mkEnableOption "the voice switchboard (whisper + intents/agent + piper behind Asterisk)";
 
     whisperPort = lib.mkOption { type = lib.types.port; default = 8778; };
+
+    # Remote inference, tried BEFORE the local copies (which stay running as
+    # the fallback). wallace: hosts/wallace/switchboard-inference.nix.
+    remoteWhisperUrls = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "http://100.66.171.120:8778" ];
+    };
+    remoteKokoroUrls = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "http://100.66.171.120:8880" ];
+    };
     agiPort = lib.mkOption { type = lib.types.port; default = 4573; };
 
     whisperThreads = lib.mkOption {
@@ -98,6 +113,12 @@ in
       description = "piper length_scale: 1.0 = the voice's trained pace, 0.9 = 10% brisker. Some voices are trained slow.";
     };
 
+    agentHints = lib.mkOption {
+      type = lib.types.lines;
+      default = "";
+      description = "\"Where things live\" lines for the slow path's prompt; empty uses the package default. Cuts tool turns from 3-7 to 2-4 (measured 2026-09-12).";
+    };
+
     greeting = lib.mkOption {
       type = lib.types.str;
       default = "This is the Gromit switchboard. What would you like to know?";
@@ -133,6 +154,8 @@ in
       "d ${stateDir}/out      0755 claude asterisk 1d"
       "d ${stateDir}/prompts  0755 claude asterisk -"
       "d ${stateDir}/audition-kokoro 0755 claude asterisk -"
+      # Rendered-sentence cache: entries unused for 30 days are swept.
+      "d ${stateDir}/cache    0755 claude asterisk 30d"
     ];
 
     # Kokoro can't be rendered at build time (no network in the sandbox), so
@@ -153,6 +176,33 @@ in
         Restart = "on-failure";
         RestartSec = 30;
         TimeoutStartSec = "20min";
+      };
+    };
+
+    # Every few minutes, run the live fast-path intents and render whatever
+    # sentences are new into the cache (Chris, 2026-09-12: "have the answer
+    # already ready … update with just the delta"). The call-time lookup is
+    # still live; this just means the numbers it produces are usually already
+    # rendered. Off the AGI unit's critical path.
+    systemd.services.switchboard-prewarm = {
+      description = "Pre-render the switchboard's likely answers into the TTS cache";
+      after = [ "switchboard-agi.service" ];
+      environment = env // { HOME = "/home/claude"; };
+      serviceConfig = {
+        Type = "oneshot";
+        User = "claude";
+        SupplementaryGroups = [ "asterisk" ];
+        ExecStart = "${switchboard}/bin/switchboard prewarm --live";
+        Nice = 10;
+        UMask = "0022";
+      };
+    };
+    systemd.timers.switchboard-prewarm = {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "1min";
+        OnUnitActiveSec = "3min";
+        RandomizedDelaySec = "30s";
       };
     };
 
@@ -201,7 +251,12 @@ in
         WorkingDirectory = "/home/claude/nixos-homelab-improvements";
         # Render the fixed prompt set before listening. Cheap (~4 s), and
         # guarantees the greeting matches the voice model in this build.
+        # Only the prompts here (cached after the first render). The fixed-phrase
+        # pre-warm belongs to the timer below — with Kokoro on gromit's own CPU,
+        # prompts + pre-warm blew systemd's 90 s start timeout on three deploys
+        # in a row (2026-09-12), each time failing the unit twice before it came up.
         ExecStartPre = "${switchboard}/bin/switchboard render-prompts";
+        TimeoutStartSec = "5min";
         ExecStart = "${switchboard}/bin/switchboard agi";
         Restart = "on-failure";
         RestartSec = 3;

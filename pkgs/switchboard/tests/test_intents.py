@@ -21,6 +21,11 @@ from switchboard import intents
         ("thanks, that's all", "goodbye"),
         ("goodbye", "goodbye"),
         ("", "empty"),
+        ("Go.", "empty"),            # clipped "Goodbye" — a fragment, not a question
+        ("Hello.", "hello"),
+        ("hey there", "hello"),
+        ("Hi", "hello"),             # short but a known word, not a fragment
+        ("what", None),              # 4 chars: past the fragment cutoff, goes to the agent
         ("[BLANK_AUDIO]", None),   # audio.py strips this before routing; raw it is a word
         ("did the immich backup finish last night", None),
         ("what is the mempool doing", None),
@@ -73,3 +78,18 @@ def test_time_uses_announce_voice() -> None:
     reply = asyncio.run(intents.answer(Settings(), "time"))
     assert reply.style == "announce" and reply.text.startswith("It is ")
     assert asyncio.run(intents.answer(Settings(), "help")).style == "conversational"
+
+
+def test_fixed_phrases_cover_the_handlers_verbatim_output() -> None:
+    """Every fixed sentence the handlers emit should be in the pre-warm list."""
+    for phrase in ["Goodbye.", "I didn't catch that.", "I couldn't look that up right now."]:
+        assert phrase in intents.FIXED_PHRASES
+
+
+def test_sentence_split_matches_how_answers_are_built() -> None:
+    from switchboard import audio
+
+    assert audio.sentences("CPU 34 degrees. NVMe 29 degrees. hottest drive is sdb.") == [
+        "CPU 34 degrees.", "NVMe 29 degrees.", "hottest drive is sdb."]
+    assert audio.sentences("Voice 1, Lessac. ... Press any key.") == ["Voice 1, Lessac.", "...", "Press any key."]
+    assert audio.sentences("Goodbye.") == ["Goodbye."]

@@ -120,7 +120,7 @@ def test_tiny_recording_skips_whisper(tmp_path: Path) -> None:
 
     wav = tmp_path / "empty.wav"
     wav.write_bytes(b"RIFF" + b"\x00" * 40)
-    s = Settings(state_dir=tmp_path, whisper_url="http://127.0.0.1:1")   # nothing listens; would fail if called
+    s = Settings(state_dir=tmp_path, whisper_urls=["http://127.0.0.1:1"])   # nothing listens; would fail if called
     assert asyncio.run(audio.transcribe(s, wav)) == ""
 
 
@@ -153,3 +153,42 @@ def test_record_extension_matches_format() -> None:
     # the AGI command and the on-disk name must agree
     from switchboard import audio
     assert audio.PHONE_RATE_HZ == 16000
+
+
+# ---------------------------------------------------------------- backend fallback
+
+def test_first_up_skips_a_dead_host_and_uses_the_next(tmp_path: Path) -> None:
+    """wallace powered off (connection refused) must fall through to gromit's local copy."""
+    import asyncio
+
+    from switchboard import audio
+
+    async def run():
+        seen = []
+
+        async def handle(reader, writer):
+            req = await reader.read(65536)
+            seen.append(req.split(b"\r\n")[0])
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}")
+            await writer.drain()
+            writer.close()
+
+        server = await asyncio.start_server(handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        s = Settings(state_dir=tmp_path, connect_timeout_s=1.0)
+        async with server:
+            resp = await audio._first_up(s, ["http://127.0.0.1:1", f"http://127.0.0.1:{port}"], "/inference", json={"x": 1})
+        return resp.status_code, seen
+
+    status, seen = asyncio.run(run())
+    assert status == 200 and seen == [b"POST /inference HTTP/1.1"]
+
+
+def test_first_up_all_dead_is_an_audio_error(tmp_path: Path) -> None:
+    import asyncio
+
+    from switchboard import audio
+
+    s = Settings(state_dir=tmp_path, connect_timeout_s=1.0)
+    with pytest.raises(audio.AudioError, match="no backend reachable"):
+        asyncio.run(audio._first_up(s, ["http://127.0.0.1:1", "http://127.0.0.1:2"], "/inference", json={}))

@@ -8,6 +8,7 @@
     ./llm.nix          # local LLM stack (llama.cpp GPU+CPU + Open WebUI)
     ./agent-access.nix # scoped `claude` agent login (SSH + ONE efibootmgr rule)
     ./boot-order.nix   # re-assert NixOS first in the EFI order (Windows reverts it)
+    ./switchboard-inference.nix   # whisper + Kokoro for gromit's phone switchboard (gromit falls back to local when this box is off)
   ];
 
   # Dual-boot: GRUB (EFI) with os-prober so the menu lists NixOS + Windows.
