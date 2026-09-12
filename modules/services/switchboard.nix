@@ -41,6 +41,7 @@ let
     SWITCHBOARD_CALLBACK_CHANNEL = cfg.callbackChannel;
     SWITCHBOARD_GREETING = cfg.greeting;
     SWITCHBOARD_AGENT_HINTS = cfg.agentHints;
+    SWITCHBOARD_STANDING_JSON = if cfg.standing == null then "" else builtins.toJSON cfg.standing;
     SWITCHBOARD_PIPER_LENGTH_SCALE = toString cfg.pace;
     SWITCHBOARD_TTS = cfg.tts;
     SWITCHBOARD_ANNOUNCE_TTS = cfg.announceTts;
@@ -113,6 +114,12 @@ in
       description = "piper length_scale: 1.0 = the voice's trained pace, 0.9 = 10% brisker. Some voices are trained slow.";
     };
 
+    standing = lib.mkOption {
+      type = lib.types.nullOr (lib.types.listOf lib.types.attrs);
+      default = null;
+      description = "Standing questions (pre-answered, refreshed when their sources change). null = the package default list (pkgs/switchboard/src/switchboard/standing.py); each entry: name, patterns, ask, watch, daily, max_age_s.";
+    };
+
     agentHints = lib.mkOption {
       type = lib.types.lines;
       default = "";
@@ -156,7 +163,39 @@ in
       "d ${stateDir}/audition-kokoro 0755 claude asterisk -"
       # Rendered-sentence cache: entries unused for 30 days are swept.
       "d ${stateDir}/cache    0755 claude asterisk 30d"
+      "d ${stateDir}/answers  0755 claude asterisk -"
     ];
+
+    # Standing questions: every 15 min check the watched sources' fingerprints
+    # and re-ask the agent only for the ones that moved (or aged out). Runs
+    # with the AGI unit's environment because it IS the slow path (claude -p).
+    systemd.services.switchboard-standing = {
+      description = "Refresh the switchboard's standing answers whose sources changed";
+      after = [ "switchboard-agi.service" ];
+      environment = env // {
+        HOME = "/home/claude";
+        PATH = lib.mkForce "/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin";
+        CLAUDE_AUTONOMOUS = "1";
+      };
+      serviceConfig = {
+        Type = "oneshot";
+        User = "claude";
+        SupplementaryGroups = [ "asterisk" ];
+        WorkingDirectory = "/home/claude/nixos-homelab-improvements";
+        ExecStart = "${switchboard}/bin/switchboard standing";
+        TimeoutStartSec = "15min";
+        Nice = 10;
+        UMask = "0022";
+      };
+    };
+    systemd.timers.switchboard-standing = {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "2min";
+        OnUnitActiveSec = "15min";
+        RandomizedDelaySec = "1min";
+      };
+    };
 
     # Kokoro can't be rendered at build time (no network in the sandbox), so
     # the dial-8 samples are made here: a oneshot after the container is up,

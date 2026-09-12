@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from . import sources
+from . import sources, standing
 from .config import Settings
 from .sources import SourceError
 
@@ -67,7 +67,26 @@ def route(text: str) -> str | None:
             return name
     if len(t) <= _FRAGMENT_MAX_CHARS:
         return "empty"
+    q = standing.match(standing_questions(), t)
+    if q is not None:
+        return f"standing:{q.name}"
     return None
+
+
+_standing_cache: list["standing.StandingQuestion"] | None = None
+
+
+def standing_questions() -> list["standing.StandingQuestion"]:
+    """The configured standing questions (Settings.standing_json or the default)."""
+    global _standing_cache
+    if _standing_cache is None:
+        raw = Settings().standing_json
+        if raw:
+            import json
+            _standing_cache = [standing.StandingQuestion(**d) for d in json.loads(raw)]
+        else:
+            _standing_cache = list(standing.DEFAULT_STANDING)
+    return _standing_cache
 
 
 # ---------------------------------------------------------------- phrasing
