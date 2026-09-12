@@ -25,6 +25,12 @@ let
     url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
     hash = "sha256-oDd5yG3zMjB19eeWyyzlAp8A7Ihp7uP9+4l6/jbG0AI=";
   };
+  # small.en (~488 MB): got both of the first real phone notes right where
+  # base.en mangled "Linphone note-taking" — for wallace's 12 cores, not gromit's 4.
+  whisperModelSmall = fetchurl {
+    url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin";
+    hash = "sha256-xhONbVjsyDIgl+D5h8MvG+i7ChhTKj+I9zTRu/nEHl0=";
+  };
 in
 python3Packages.buildPythonApplication {
   pname = "switchboard";
@@ -54,7 +60,7 @@ python3Packages.buildPythonApplication {
       --set-default SWITCHBOARD_PIPER_VOICE ${voiceModel}
   '';
 
-  passthru = { inherit whisperModel catalogue; audition = catalogue.audition; };
+  passthru = { inherit whisperModel whisperModelSmall catalogue; audition = catalogue.audition; };
 
   meta = with lib; {
     description = "Voice front-end for the homelab: Asterisk FastAGI -> whisper -> intents/agent -> piper";

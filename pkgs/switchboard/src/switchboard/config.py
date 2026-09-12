@@ -30,17 +30,11 @@ class Settings(BaseSettings):
     whisper_timeout_s: float = 60.0
     # How long to wait for a remote to accept the connection before moving on.
     connect_timeout_s: float = 2.0
-    # Vocabulary hint: whisper biases towards words it has just "heard", so
-    # the box's proper nouns go in here or base.en turns "Gromit" into "from it".
-    whisper_prompt: str = (
-        "Gromit switchboard. Fusion pool, backup pool, sentinel, comin, Immich, "
-        "Jellyfin, Nextcloud, Forgejo, Vaultwarden, mempool, bitcoind, qBittorrent, "
-        "Prometheus, Grafana, Tailscale, restic, NVMe, CPU."
-    )
-
-    # What the switchboard says when it picks up. Terse two-word greetings
-    # sounded abrupt on the first real call; module option services.switchboard.greeting.
-    greeting: str = "This is the Gromit switchboard. What would you like to know?"
+    # Vocabulary hint for whisper. EMPTY on purpose: with a word list, base.en
+    # stopped mid-sentence when it couldn't fit a listed word ("through the
+    # Gra" for "through the Gromit switchboard", 2026-09-12, both hosts,
+    # reproducible). The routing never depended on proper nouns anyway.
+    whisper_prompt: str = ""
 
     # --- text-to-speech backend: "piper" (CLI, ~0.15x realtime on this CPU)
     # or "kokoro" (open-notebook's Kokoro-FastAPI container, OpenAI-style

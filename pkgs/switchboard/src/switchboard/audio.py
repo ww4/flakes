@@ -66,7 +66,8 @@ async def transcribe(settings: Settings, wav: Path) -> str:
         resp = await _first_up(
             settings, settings.whisper_urls, "/inference",
             files={"file": (wav16.name, payload, "audio/wav")},
-            data={"response_format": "json", "temperature": "0.0", "prompt": settings.whisper_prompt},
+            data={"response_format": "json", "temperature": "0.0",
+                  **({"prompt": settings.whisper_prompt} if settings.whisper_prompt else {})},
         )
         text = str(resp.json().get("text", "")).strip()
     finally:
