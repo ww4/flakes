@@ -143,6 +143,19 @@ class Settings(BaseSettings):
     def slowlog(self) -> Path:
         return self.state_dir / "slowlog.jsonl"
 
+    # --- notes (notes.py): where "take a note" lands ---
+    space_dir: Path = Path("/var/lib/silverbullet")
+    inbox_page: str = "Inbox.md"                    # for Chris — triaged by the daybook
+    queue_page: str = "System/Agent Queue.md"       # for Claude — the request_work format
+    # Notes get a longer window than questions: up to two minutes, three
+    # seconds of silence to end.
+    note_max_ms: int = 120_000
+    note_silence_s: int = 3
+
+    @property
+    def notes_dir(self) -> Path:
+        return self.state_dir / "notes"
+
     # Rendered-sentence cache (see audio.say): <state>/cache/<backend>-<voice>/<sha1>.sln16
     tts_cache: bool = True
 
