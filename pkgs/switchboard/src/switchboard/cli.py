@@ -6,6 +6,7 @@
   turn IN.wav OUT          the full round trip: hear -> ask -> say
   call "text" [CHANNEL]    ring a handset and speak the text (call file)
   render-prompts           (re)render the static prompt set into <state>/prompts
+  prewarm                  render the fast path's fixed sentences into the TTS cache
   audition-kokoro          render the dial-8 Kokoro voice samples into <state>/audition-kokoro
   agi                      run the FastAGI server (the systemd unit)
 
@@ -45,6 +46,7 @@ async def _main(argv: list[str]) -> int:
     t = sub.add_parser("turn"); t.add_argument("wav", type=Path); t.add_argument("out", type=Path); t.add_argument("--no-agent", action="store_true")
     c = sub.add_parser("call"); c.add_argument("text"); c.add_argument("channel", nargs="?")
     sub.add_parser("render-prompts")
+    sub.add_parser("prewarm")
     sub.add_parser("audition-kokoro")
     sub.add_parser("agi")
 
@@ -76,6 +78,13 @@ async def _main(argv: list[str]) -> int:
             for stale in settings.prompts.glob(f"{name}.*"):
                 stale.unlink()
             print(await audio.say(settings, text, settings.prompts / name))
+    elif args.cmd == "prewarm":
+        scratch = settings.cache_dir / "prewarm"
+        for i, phrase in enumerate(intents.FIXED_PHRASES):
+            await audio.say(settings, phrase, scratch / f"p{i}")
+        for f in scratch.glob("*"):
+            f.unlink()
+        print(f"prewarmed {len(intents.FIXED_PHRASES)} phrases into {settings.cache_dir}")
     elif args.cmd == "audition-kokoro":
         d = settings.kokoro_audition_dir
         d.mkdir(parents=True, exist_ok=True)

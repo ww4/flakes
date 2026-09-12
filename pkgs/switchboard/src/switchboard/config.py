@@ -124,3 +124,10 @@ class Settings(BaseSettings):
     @property
     def kokoro_audition_dir(self) -> Path:
         return self.state_dir / "audition-kokoro"
+
+    # Rendered-sentence cache (see audio.say): <state>/cache/<backend>-<voice>/<sha1>.sln16
+    tts_cache: bool = True
+
+    @property
+    def cache_dir(self) -> Path:
+        return self.state_dir / "cache"

@@ -196,3 +196,23 @@ async def answer(settings: Settings, intent: str) -> Reply:
         log.warning("intent %s: %s", intent, exc)
         text = "I couldn't look that up right now."
     return Reply(text=text, hangup=(intent == "goodbye"), style=("announce" if intent == "time" else "conversational"))
+
+
+# Sentences the fast path says verbatim — pre-warmed into the TTS cache at
+# unit start (cli prewarm) so the first caller of the day doesn't pay for them.
+# Numeric sentences ("CPU 34 degrees.") are rendered on demand and cached too.
+FIXED_PHRASES: list[str] = [
+    "Everything is green. No failed units and all six pool drives are mounted.",
+    "No failed units.",
+    "All six pool drives are mounted.",
+    "I could not read the sentinel incident log.",
+    "Nothing from the sentinel in the last 24 hours.",
+    "Prometheus has no filesystem data for the paths I watch.",
+    "You can ask for status, incidents, temperatures, disk space, or the time.",
+    "Anything else I will pass to the agent, which takes a little longer.",
+    "Say goodbye to hang up.",
+    "Goodbye.",
+    "I didn't catch that.",
+    "I couldn't look that up right now.",
+    "The agent couldn't answer that just now.",
+]

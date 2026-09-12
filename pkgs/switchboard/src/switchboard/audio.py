@@ -7,6 +7,7 @@ and what the models want.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 from pathlib import Path
@@ -87,36 +88,84 @@ def _clean_transcript(text: str) -> str:
 
 Style = Literal["conversational", "announce"]
 
+# Sentence boundaries for the cache: split after . ! ? followed by whitespace.
+# "..." (a pause in the audition scripts) stays inside a sentence.
+_SENTENCE = re.compile(r"(?<=[.!?])\s+(?=\S)")
+# 250 ms of silence at 16 kHz s16 mono, between cached sentences.
+_GAP_S = 0.25
 
-async def say(settings: Settings, text: str, dst: Path, style: Style = "conversational") -> Path:
-    """text -> Asterisk-playable audio at dst (16 kHz .sln16 by default).
-    style picks the backend: conversational -> settings.tts, announce ->
-    settings.announce_tts (falls back to tts).
 
-    piper emits 22.05 kHz; a second sox pass brings it to out_rate_hz. dst is
-    given without an extension (Asterisk's STREAM FILE convention) — the
-    extension is appended here.
-    """
-    ext = "." + settings.out_ext
-    if dst.suffix != ext:
-        dst = dst.with_name(dst.name + ext)
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    raw = dst.with_name(dst.name + ".tts.wav")
-    backend = (settings.announce_tts or settings.tts) if style == "announce" else settings.tts
+def sentences(text: str) -> list[str]:
+    return [t for t in _SENTENCE.split(text.strip()) if t]
+
+
+def _backend_for(settings: Settings, style: Style) -> str:
+    return (settings.announce_tts or settings.tts) if style == "announce" else settings.tts
+
+
+def _voice_key(settings: Settings, backend: str) -> str:
     if backend == "kokoro":
-        await _kokoro(settings, text, raw)
+        return f"kokoro-{settings.kokoro_voice}-{settings.kokoro_speed}"
+    return f"piper-{settings.piper_voice.stem}-{settings.piper_length_scale}"
+
+
+async def render(settings: Settings, text: str, backend: str, dst_raw: Path) -> None:
+    """One backend call: text -> 16 kHz s16 mono raw PCM at dst_raw."""
+    tmp = dst_raw.with_name(dst_raw.name + ".tts.wav")
+    if backend == "kokoro":
+        await _kokoro(settings, text, tmp)
     else:
         await _run(
             settings.piper_bin,
             "--model", str(settings.piper_voice),
             "--length_scale", str(settings.piper_length_scale),
-            "--output_file", str(raw),
+            "--output_file", str(tmp),
             stdin=text.encode(),
         )
     try:
-        await resample(settings, raw, dst, settings.out_rate_hz, raw=(settings.out_ext.startswith("sln")))
+        await resample(settings, tmp, dst_raw, settings.out_rate_hz, raw=True)
     finally:
-        raw.unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)
+
+
+async def say(settings: Settings, text: str, dst: Path, style: Style = "conversational") -> Path:
+    """text -> Asterisk-playable audio at dst (16 kHz .sln16 by default).
+
+    style picks the backend: conversational -> settings.tts, announce ->
+    settings.announce_tts (falls back to tts). dst is given without an
+    extension (Asterisk's STREAM FILE convention); it is appended here.
+
+    Sentence cache: each sentence is rendered once per (backend, voice) and
+    kept under <state>/cache; a reply is the byte-concatenation of its
+    sentences with a short gap. Raw PCM makes that free, and most fast-path
+    replies are fixed sentences plus one with a number in it — so a typical
+    call renders one sentence, not four. (Chris, 2026-09-12: "pre-render a
+    bunch of the common phrases".)
+    """
+    ext = "." + settings.out_ext
+    if dst.suffix != ext:
+        dst = dst.with_name(dst.name + ext)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    backend = _backend_for(settings, style)
+    if not settings.tts_cache or settings.out_ext != "sln16":
+        await render(settings, text, backend, dst)
+        return dst
+
+    cache = settings.cache_dir / _voice_key(settings, backend)
+    cache.mkdir(parents=True, exist_ok=True)
+    gap = b"\x00" * int(_GAP_S * settings.out_rate_hz * 2)
+    parts: list[bytes] = []
+    misses = 0
+    for sent in sentences(text):
+        key = cache / (hashlib.sha1(sent.encode()).hexdigest() + ext)
+        if not key.exists():
+            tmp = key.with_name(key.name + ".part")
+            await render(settings, sent, backend, tmp)
+            tmp.replace(key)   # atomic: a concurrent call never sees a half-written entry
+            misses += 1
+        parts.append(key.read_bytes())
+    log.info("tts %s: %d sentences, %d rendered", backend, len(parts), misses)
+    dst.write_bytes(gap.join(parts))
     return dst
 
 
@@ -159,7 +208,7 @@ async def _first_up(settings: Settings, bases: list[str], path: str, *, timeout:
 
 
 async def say_kokoro_voice(settings: Settings, text: str, voice: str, dst: Path) -> Path:
-    """say() pinned to one Kokoro voice — the audition renderer."""
+    """say() pinned to one Kokoro voice, uncached — the audition renderer."""
     ext = "." + settings.out_ext
     if dst.suffix != ext:
         dst = dst.with_name(dst.name + ext)

@@ -147,6 +147,8 @@ in
       "d ${stateDir}/out      0755 claude asterisk 1d"
       "d ${stateDir}/prompts  0755 claude asterisk -"
       "d ${stateDir}/audition-kokoro 0755 claude asterisk -"
+      # Rendered-sentence cache: entries unused for 30 days are swept.
+      "d ${stateDir}/cache    0755 claude asterisk 30d"
     ];
 
     # Kokoro can't be rendered at build time (no network in the sandbox), so
@@ -215,7 +217,11 @@ in
         WorkingDirectory = "/home/claude/nixos-homelab-improvements";
         # Render the fixed prompt set before listening. Cheap (~4 s), and
         # guarantees the greeting matches the voice model in this build.
-        ExecStartPre = "${switchboard}/bin/switchboard render-prompts";
+        ExecStartPre = [
+          "${switchboard}/bin/switchboard render-prompts"
+          # Fixed fast-path sentences into the cache; cheap when already there.
+          "${switchboard}/bin/switchboard prewarm"
+        ];
         ExecStart = "${switchboard}/bin/switchboard agi";
         Restart = "on-failure";
         RestartSec = 3;
