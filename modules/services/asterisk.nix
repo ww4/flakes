@@ -2,6 +2,9 @@
 # dialplan is this file, so a phone-system change is a PR like everything else.
 #
 #   Dial 0        -> the switchboard (services/switchboard.nix): talk to the box.
+#   Dial 9 / 8    -> voice audition, piper / Kokoro: every voice introduces
+#                    itself and says the same lines; any key = next, * = again,
+#                    # = hang up.
 #   Dial 1XX      -> ring that extension.
 #   Dial 911      -> "no service" tone + hangup. THERE IS NO PSTN TRUNK. This
 #                    PBX cannot reach emergency services; a real phone must.
@@ -36,6 +39,27 @@ let
   '';
 
   authFile = "/var/lib/asterisk/pjsip-auth.conf";
+  stateDir = "/var/lib/switchboard";
+
+  # A voice-audition context: sample1..N under `dir`. The sample is Read()'s
+  # PROMPT, so a key pressed while it is still talking takes effect at once
+  # (Playback() would discard it — first attempt 2026-09-11: every press was
+  # ignored). After the sample, 15 s more of listening. Digit = next (wraps),
+  # * = again, # or silence = bye.
+  audition = ctx: dir: count: ''
+    [${ctx}]
+    exten => s,1,Answer()
+     same => n,Wait(1.5)
+     same => n,Set(N=1)
+     same => n,Set(COUNT=${toString count})
+     same => n(play),Read(D,${dir}/sample''${N},1,,1,15)
+     same => n,GotoIf($["''${D}" = ""]?bye)
+     same => n,GotoIf($["''${D}" = "*"]?play)
+     same => n,Set(N=$[''${N} % ''${COUNT} + 1])
+     same => n,Goto(play)
+     same => n(bye),Playback(vm-goodbye)
+     same => n,Hangup()
+  '';
 
   # Generates the auth sections and fixes the spool mode. Extensions arrive as
   # ARGV, not an env var —
@@ -108,14 +132,14 @@ in
           type=endpoint
           context=phones
           disallow=all
-          allow=g722      ; wideband first if the phone offers it (piper output is 8 kHz for now)
+          allow=g722      ; wideband first: the switchboard renders 16 kHz .sln16
           allow=ulaw
           allow=alaw
           direct_media=no
           rtp_symmetric=yes
           force_rport=yes
           rewrite_contact=yes
-          dtmf_mode=rfc4733
+          dtmf_mode=auto_info   ; RFC 4733 when negotiated, SIP INFO otherwise (Linphone does either)
           language=en
 
           [phone-aor](!)
@@ -143,6 +167,11 @@ in
           ; 0 — the switchboard. Answer, hand the call to the FastAGI server.
           exten => 0,1,Goto(switchboard,s,1)
 
+          ; 9 — audition the piper voices (samples are rendered at build time).
+          exten => 9,1,Goto(voices,s,1)
+          ; 8 — audition the Kokoro voices (rendered at boot; silence until then).
+          exten => 8,1,Goto(voices-kokoro,s,1)
+
           ; 1XX — ring an extension; voicemail is a later problem.
           exten => _1XX,1,Dial(PJSIP/''${EXTEN},25)
            same => n,Hangup()
@@ -159,6 +188,9 @@ in
            same => n,Wait(1.5)
            same => n,AGI(agi://127.0.0.1:${toString config.services.switchboard.agiPort})
            same => n,Hangup()
+
+          ${audition "voices" config.services.switchboard.auditionDir config.services.switchboard.auditionCount}
+          ${audition "voices-kokoro" "${stateDir}/audition-kokoro" (lib.length config.services.switchboard.kokoroAudition)}
 
           ; Outbound announcements arrive here from call files
           ; (switchboard outbound.py sets MESSAGE to a prompt path, no extension).
@@ -178,6 +210,16 @@ in
         '';
       };
     };
+
+    # A dialplan/pjsip change should take effect on deploy. The upstream module
+    # sets restartIfChanged = false (a restart drops live calls); a reload is
+    # `core reload` — re-reads the confs, keeps calls and registrations.
+    systemd.services.asterisk.reloadIfChanged = true;
+    # ...but the confs are /etc files, not part of the unit, so name them as
+    # reload triggers or a dialplan-only change deploys and does nothing
+    # (2026-09-11: it reloaded once — when THIS flag appeared — then never).
+    systemd.services.asterisk.reloadTriggers =
+      map (f: config.environment.etc."asterisk/${f}".source) [ "pjsip.conf" "extensions.conf" "rtp.conf" ];
 
     # mkAfter: the upstream module's preStart creates /var/lib/asterisk from the
     # package skeleton only if it does NOT exist — this must run after it, or a

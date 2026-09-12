@@ -8,6 +8,7 @@ in place; the CLI can override any of it for a bench test
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -32,12 +33,41 @@ class Settings(BaseSettings):
         "Prometheus, Grafana, Tailscale, restic, NVMe, CPU."
     )
 
-    # --- text-to-speech: piper CLI + a voice model (.onnx with .onnx.json beside it) ---
+    # What the switchboard says when it picks up. Terse two-word greetings
+    # sounded abrupt on the first real call; module option services.switchboard.greeting.
+    greeting: str = "This is the Gromit switchboard. What would you like to know?"
+
+    # --- text-to-speech backend: "piper" (CLI, ~0.15x realtime on this CPU)
+    # or "kokoro" (open-notebook's Kokoro-FastAPI container, OpenAI-style
+    # /v1/audio/speech, ~0.75x realtime — nicer prosody, slower) ---
+    tts: Literal["piper", "kokoro"] = "piper"
+    # Announcements (outbound `switchboard call`, the time/date intent) can use
+    # a different backend: Chris, 2026-09-12 — Kokoro is conversational, piper
+    # lessac-high "has an announcement flavor". Defaults to `tts`.
+    announce_tts: Literal["piper", "kokoro", ""] = ""
+    kokoro_url: str = "http://127.0.0.1:8880"
+    kokoro_voice: str = "af_heart"
+    kokoro_speed: float = 1.0
+    kokoro_timeout_s: float = 90.0
+    # Voices the dial-8 audition renders (ids from /v1/audio/voices).
+    # hexgrad's own grades: heart A, bella A-, nicole/emma B-, the rest C+.
+    # (adam is an F+, lewis a D+ — not worth a listen.)
+    kokoro_audition: list[str] = Field(default_factory=lambda: [
+        "af_heart", "af_bella", "af_nicole", "bf_emma",
+        "am_fenrir", "am_michael", "am_puck", "af_aoede", "af_kore", "af_sarah",
+    ])
+
+    # --- piper: CLI + a voice model (.onnx with .onnx.json beside it) ---
     piper_bin: str = "piper"
     piper_voice: Path = Path("/var/lib/switchboard/voice/en_US-lessac-medium.onnx")
-    # Rate Asterisk expects for a plain .wav prompt (8 kHz signed 16-bit mono).
-    # Bump to 16000 and write .sln16 if the phones negotiate G.722.
-    out_rate_hz: int = 8000
+    # Speaking pace: piper's length_scale. 1.0 = as trained; <1 faster.
+    piper_length_scale: float = 1.0
+    # Wideband: 16 kHz raw signed-linear (.sln16). Asterisk plays it straight
+    # to a G.722 handset and downsamples for a mu-law one, so this is never
+    # worse than the 8 kHz .wav it replaced. (2026-09-11: 8 kHz sounded
+    # "grinding" on the first real calls.)
+    out_rate_hz: int = 16000
+    out_ext: str = "sln16"
 
     sox_bin: str = "sox"
 
@@ -85,3 +115,7 @@ class Settings(BaseSettings):
     @property
     def prompts(self) -> Path:
         return self.state_dir / "prompts"
+
+    @property
+    def kokoro_audition_dir(self) -> Path:
+        return self.state_dir / "audition-kokoro"

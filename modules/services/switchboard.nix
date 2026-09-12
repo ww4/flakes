@@ -27,14 +27,24 @@
 
 let
   cfg = config.services.switchboard;
-  switchboard = pkgs.callPackage ../../pkgs/switchboard { };
+  switchboard = pkgs.callPackage ../../pkgs/switchboard { inherit (cfg) voice; };
   stateDir = "/var/lib/switchboard";
-  env = [
-    "SWITCHBOARD_STATE_DIR=${stateDir}"
-    "SWITCHBOARD_WHISPER_URL=http://127.0.0.1:${toString cfg.whisperPort}"
-    "SWITCHBOARD_AGI_PORT=${toString cfg.agiPort}"
-    "SWITCHBOARD_CALLBACK_CHANNEL=${cfg.callbackChannel}"
-  ];
+  # As an attrset, NOT a serviceConfig.Environment list: NixOS quotes these,
+  # whereas a bare `Environment=K=v with spaces` splits on whitespace and the
+  # greeting shipped as the single word "This" (2026-09-11 — the same trap as
+  # [[systemd-environment-splits-on-whitespace]], found by playing the file).
+  env = {
+    SWITCHBOARD_STATE_DIR = stateDir;
+    SWITCHBOARD_WHISPER_URL = "http://127.0.0.1:${toString cfg.whisperPort}";
+    SWITCHBOARD_AGI_PORT = toString cfg.agiPort;
+    SWITCHBOARD_CALLBACK_CHANNEL = cfg.callbackChannel;
+    SWITCHBOARD_GREETING = cfg.greeting;
+    SWITCHBOARD_PIPER_LENGTH_SCALE = toString cfg.pace;
+    SWITCHBOARD_TTS = cfg.tts;
+    SWITCHBOARD_ANNOUNCE_TTS = cfg.announceTts;
+    SWITCHBOARD_KOKORO_VOICE = cfg.kokoroVoice;
+    SWITCHBOARD_KOKORO_AUDITION = builtins.toJSON cfg.kokoroAudition;   # pydantic parses a JSON list
+  };
 in
 {
   options.services.switchboard = {
@@ -47,6 +57,64 @@ in
       type = lib.types.int;
       default = 3;
       description = "CPU threads for whisper-server. The box has 4; leave one for everything else.";
+    };
+
+    voice = lib.mkOption {
+      type = lib.types.enum (lib.attrNames (import ../../pkgs/switchboard/voices.nix {
+        inherit (pkgs) lib fetchurl runCommand piper-tts sox jq;
+      }).voices);
+      default = "lessac-medium";
+      description = "Piper voice (pkgs/switchboard/voices.nix). Dial 9 to audition them all from a handset.";
+    };
+
+    tts = lib.mkOption {
+      type = lib.types.enum [ "piper" "kokoro" ];
+      default = "piper";
+      description = "Speech backend. kokoro = open-notebook's Kokoro-FastAPI container (nicer prosody, ~5x slower to render).";
+    };
+
+    announceTts = lib.mkOption {
+      type = lib.types.enum [ "piper" "kokoro" ];
+      default = cfg.tts;
+      description = "Backend for announcements: outbound `switchboard call` and the time/date intent. Chris: piper lessac-high has an announcement flavour; Kokoro is conversational.";
+    };
+
+    kokoroVoice = lib.mkOption {
+      type = lib.types.str;
+      default = "af_heart";
+      description = "Kokoro voice id when tts = kokoro. Dial 8 to audition.";
+    };
+
+    kokoroAudition = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      # hexgrad's grades, best first: heart A, bella A-, nicole/emma B-, rest C+.
+      default = [ "af_heart" "af_bella" "af_nicole" "bf_emma" "am_fenrir" "am_michael" "am_puck" "af_aoede" "af_kore" "af_sarah" ];
+      description = "Kokoro voices rendered for the dial-8 audition (at boot, by switchboard-audition-kokoro), in the order played.";
+    };
+
+    pace = lib.mkOption {
+      type = lib.types.float;
+      default = 1.0;
+      description = "piper length_scale: 1.0 = the voice's trained pace, 0.9 = 10% brisker. Some voices are trained slow.";
+    };
+
+    greeting = lib.mkOption {
+      type = lib.types.str;
+      default = "This is the Gromit switchboard. What would you like to know?";
+      description = "Spoken when the switchboard picks up.";
+    };
+
+    # Exposed for asterisk.nix: the rendered audition samples (dial 9) and
+    # how many there are (known at eval — no import-from-derivation).
+    auditionDir = lib.mkOption {
+      type = lib.types.path;
+      readOnly = true;
+      default = switchboard.audition;
+    };
+    auditionCount = lib.mkOption {
+      type = lib.types.int;
+      readOnly = true;
+      default = lib.length switchboard.catalogue.order;
     };
 
     callbackChannel = lib.mkOption {
@@ -64,7 +132,29 @@ in
       "d ${stateDir}/in       2775 claude asterisk 1d"   # recordings are deleted after transcription; 1d is the safety net
       "d ${stateDir}/out      0755 claude asterisk 1d"
       "d ${stateDir}/prompts  0755 claude asterisk -"
+      "d ${stateDir}/audition-kokoro 0755 claude asterisk -"
     ];
+
+    # Kokoro can't be rendered at build time (no network in the sandbox), so
+    # the dial-8 samples are made here: a oneshot after the container is up,
+    # off the switchboard's critical path. ~12 voices x ~25 s of audio at
+    # ~0.75x realtime = a few minutes after boot before 8 has anything to play.
+    systemd.services.switchboard-audition-kokoro = {
+      description = "Render the Kokoro voice audition samples (dial 8)";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "docker-open-notebook-kokoro.service" "network.target" ];
+      wants = [ "docker-open-notebook-kokoro.service" ];
+      environment = env;
+      serviceConfig = {
+        Type = "oneshot";
+        User = "claude";
+        ExecStart = "${switchboard}/bin/switchboard audition-kokoro";
+        # The container takes a while to answer after it starts; retry rather than fail once.
+        Restart = "on-failure";
+        RestartSec = 30;
+        TimeoutStartSec = "20min";
+      };
+    };
 
     systemd.services.whisper-server = {
       description = "whisper.cpp server (speech-to-text for the switchboard)";
@@ -96,18 +186,18 @@ in
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" "whisper-server.service" ];
       wants = [ "whisper-server.service" ];
+      # The claude profile so the slow path's `claude -p` resolves with its
+      # OAuth credentials, exactly as digest.nix does. Setting PATH here
+      # replaces the one NixOS derives from `path`, which is why the package
+      # wraps its own tool paths (sox/piper/systemctl) instead of relying on it.
+      environment = env // {
+        HOME = "/home/claude";
+        PATH = lib.mkForce "/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin";
+        CLAUDE_AUTONOMOUS = "1";
+      };
       serviceConfig = {
         User = "claude";
         SupplementaryGroups = [ "asterisk" ];
-        # The claude profile so the slow path's `claude -p` resolves with its
-        # OAuth credentials, exactly as digest.nix does. This OVERRIDES the
-        # systemd `path` option, which is why the package wraps its own tool
-        # paths (sox/piper/systemctl) instead of relying on PATH.
-        Environment = env ++ [
-          "HOME=/home/claude"
-          "PATH=/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin"
-          "CLAUDE_AUTONOMOUS=1"
-        ];
         WorkingDirectory = "/home/claude/nixos-homelab-improvements";
         # Render the fixed prompt set before listening. Cheap (~4 s), and
         # guarantees the greeting matches the voice model in this build.

@@ -76,7 +76,7 @@ def test_handshake_and_record_reason() -> None:
     ], fn)
     assert call.id == "1757614000-42" and call.caller == "101"   # dot sanitised (Path.with_suffix trap)
     assert why == "timeout"
-    assert fake.sent == ["ANSWER", 'RECORD FILE /tmp/x wav "#" 5000 0 BEEP s=2']
+    assert fake.sent == ["ANSWER", 'RECORD FILE /tmp/x wav16 "#" 5000 0 BEEP s=2']
 
 
 def test_hangup_line_raises() -> None:

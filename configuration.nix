@@ -197,5 +197,14 @@ let hm = homelab-modules.nixosModules; in
   # /var/lib/asterisk/pjsip-auth.conf (generated at first start).
   # Design + bench numbers: ww4/nixos-homelab-improvements docs/switchboard.md.
   services.homelab-pbx.enable = true;
-  services.switchboard.enable = true;
+  services.switchboard = {
+    enable = true;
+    # Chosen by ear on 2026-09-12 after the dial-8/9 auditions: Kokoro is
+    # "clearly superior" for conversation; piper lessac-high keeps an
+    # announcement flavour, so it voices call-outs and the time/date intent.
+    tts = "kokoro";
+    kokoroVoice = "af_heart";
+    announceTts = "piper";
+    voice = "lessac-high";
+  };
 }

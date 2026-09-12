@@ -95,7 +95,7 @@ class Call:
 
     async def record(self, path_no_ext: str, *, max_ms: int = 15000, silence_s: int = 2) -> str:
         """Returns why recording stopped: timeout | dtmf | hangup | writefile | silence."""
-        r = await self.command("RECORD FILE", path_no_ext, "wav", '"#"', str(max_ms), "0", "BEEP", f"s={silence_s}")
+        r = await self.command("RECORD FILE", path_no_ext, "wav16", '"#"', str(max_ms), "0", "BEEP", f"s={silence_s}")
         m = _WHY.search(r.rest)   # e.g. "(timeout) endpos=12345"
         return m.group(1) if m else "unknown"
 
@@ -141,7 +141,7 @@ class Switchboard:
         for turn in range(50):
             rec = self.s.inbox / f"{call.id}-{turn}"
             why = await call.record(str(rec))
-            wav = rec.with_name(rec.name + ".wav")   # what RECORD FILE ... wav wrote
+            wav = rec.with_name(rec.name + ".wav")   # what RECORD FILE ... wav16 wrote (16 kHz, .wav on disk)
             if why == "hangup" or not wav.exists():
                 return
             text = await audio.transcribe(self.s, wav)
@@ -161,8 +161,8 @@ class Switchboard:
                 reply = await self.slow(call, text)
                 if reply is None:
                     return   # went to call-back mode; the line has been released
-            out = await audio.say(self.s, reply.text, self.s.outbox / f"{call.id}-{turn}")
-            await call.play(str(out.with_suffix("")))
+            out = await audio.say(self.s, reply.text, self.s.outbox / f"{call.id}-{turn}", style=reply.style)  # type: ignore[arg-type]
+            await call.play(str(out.with_name(out.name.removesuffix(out.suffix))))
             if reply.hangup:
                 return
         await call.play(self.prompt("goodbye"))
@@ -203,8 +203,8 @@ class Switchboard:
 
 
 # The static prompt set, rendered once at service start (cli render-prompts).
+# The greeting comes from Settings (see cli.render_prompts).
 PROMPTS: dict[str, str] = {
-    "greeting":      "Gromit switchboard. What would you like to know?",
     "didnt-catch":   "Sorry, I didn't catch that. Try again after the tone.",
     "one-moment":    "Let me look into that. One moment.",
     "still-working": "Still working on it.",
