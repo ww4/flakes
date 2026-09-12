@@ -21,7 +21,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-from . import agent, audio, intents, outbound
+from . import agent, audio, intents, outbound, standing
 from .config import Settings
 
 log = logging.getLogger(__name__)
@@ -166,7 +166,18 @@ class Switchboard:
                 await call.play(self.prompt("didnt-catch" if empty == 1 else "still-here"))
                 continue
             empty = 0
-            if intent is not None:
+            if intent is not None and intent.startswith("standing:"):
+                q = next(q for q in intents.standing_questions() if q.name == intent.split(":", 1)[1])
+                stored = standing.load(self.s, q.name)
+                if stored is not None and standing.needs_refresh(q, stored) != "sources changed":
+                    reply = intents.Reply(text=standing.spoken(stored))
+                else:
+                    # Nothing stored (or the sources moved): ask now with the
+                    # curated question, and keep the answer for next time.
+                    reply = await self.slow(call, q.ask, store_as=q)
+                    if reply is None:
+                        return
+            elif intent is not None:
                 reply = await intents.answer(self.s, intent)
             else:
                 reply = await self.slow(call, text)
@@ -178,9 +189,11 @@ class Switchboard:
                 return
         await call.play(self.prompt("goodbye"))
 
-    async def slow(self, call: Call, question: str) -> intents.Reply | None:
+    async def slow(self, call: Call, question: str, store_as: "standing.StandingQuestion | None" = None) -> intents.Reply | None:
         """Ask the agent while keeping the caller company. Past hold_max_s,
-        release the line and deliver the answer by calling back."""
+        release the line and deliver the answer by calling back. Every slow
+        answer is logged (standing.log_slow) so repeat questions surface as
+        candidates for pre-answering."""
         # Kick the agent off FIRST; the filler plays while it is already working.
         task = asyncio.create_task(agent.ask(self.s, question))
         started = time.monotonic()
@@ -188,6 +201,9 @@ class Switchboard:
         while True:
             try:
                 text = await asyncio.wait_for(asyncio.shield(task), timeout=self.s.filler_every_s)
+                standing.log_slow(self.s, question, time.monotonic() - started)
+                if store_as is not None:
+                    standing.store(self.s, store_as.name, text, standing.fingerprint(store_as))
                 return intents.Reply(text=text)
             except asyncio.TimeoutError:
                 pass

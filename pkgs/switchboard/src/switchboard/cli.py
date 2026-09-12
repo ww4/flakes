@@ -10,6 +10,8 @@
                            --live also runs the live intents (status/temps/disk/
                            incidents) so today's numbers are rendered before anyone asks
   audition-kokoro          render the dial-8 Kokoro voice samples into <state>/audition-kokoro
+  standing [--force]       refresh the standing questions whose sources changed (the timer)
+  slowlog [--days N]       repeated slow-path questions — candidates for a standing question
   agi                      run the FastAGI server (the systemd unit)
 
 Every stage that a call goes through can be exercised here without a phone;
@@ -24,12 +26,24 @@ import logging
 import sys
 from pathlib import Path
 
-from . import agent, agi, audio, intents, outbound
+from . import agent, agi, audio, intents, outbound, standing
 from .config import Settings
 
 
 async def ask_text(settings: Settings, text: str, *, allow_agent: bool = True) -> intents.Reply:
+    """Same decision the AGI makes, for the bench (`ask` / `turn`)."""
     intent = intents.route(text)
+    if intent is not None and intent.startswith("standing:"):
+        q = next(q for q in intents.standing_questions() if q.name == intent.split(":", 1)[1])
+        stored = standing.load(settings, q.name)
+        if stored is not None and standing.needs_refresh(q, stored) != "sources changed":
+            return intents.Reply(text=standing.spoken(stored))
+        if not allow_agent:
+            return intents.Reply(text=f"(standing question {q.name!r} has no stored answer; agent disabled)")
+        text = q.ask
+        answer = await agent.ask(settings, text)
+        standing.store(settings, q.name, answer, standing.fingerprint(q))
+        return intents.Reply(text=answer)
     if intent is not None:
         return await intents.answer(settings, intent)
     if not allow_agent:
@@ -50,6 +64,8 @@ async def _main(argv: list[str]) -> int:
     sub.add_parser("render-prompts")
     pw = sub.add_parser("prewarm"); pw.add_argument("--live", action="store_true")
     sub.add_parser("audition-kokoro")
+    st = sub.add_parser("standing"); st.add_argument("--force", action="store_true")
+    sl = sub.add_parser("slowlog"); sl.add_argument("--days", type=float, default=7.0)
     sub.add_parser("agi")
 
     args = p.parse_args(argv)
@@ -90,6 +106,10 @@ async def _main(argv: list[str]) -> int:
             # serving a stale answer — the lookup at call time is still live.
             for intent in intents.LIVE_INTENTS:
                 phrases.append((await intents.answer(settings, intent)).text)
+            for q in intents.standing_questions():
+                stored = standing.load(settings, q.name)
+                if stored is not None:
+                    phrases.append(standing.spoken(stored))
         rendered = 0
         for i, phrase in enumerate(phrases):
             before = sum(1 for _ in settings.cache_dir.rglob("*.sln16"))
@@ -98,6 +118,18 @@ async def _main(argv: list[str]) -> int:
         for f in scratch.glob("*"):
             f.unlink()
         print(f"prewarm: {len(phrases)} phrases, {rendered} new sentences rendered")
+    elif args.cmd == "standing":
+        qs = intents.standing_questions()
+        done = await standing.refresh(settings, qs, force=args.force)
+        print(f"standing: {len(qs)} questions, refreshed {done or 'none'}")
+        for key, n, example in standing.candidates(settings, qs):
+            print(f"candidate for a standing question ({n} slow-path hits this week): {example!r}")
+    elif args.cmd == "slowlog":
+        rows = standing.slow_report(settings, args.days)
+        if not rows:
+            print("no slow-path questions logged")
+        for key, n, mean_s, example in rows:
+            print(f"{n:3d}x  {mean_s:5.1f}s  {example}")
     elif args.cmd == "audition-kokoro":
         d = settings.kokoro_audition_dir
         d.mkdir(parents=True, exist_ok=True)

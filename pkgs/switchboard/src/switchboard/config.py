@@ -131,6 +131,18 @@ class Settings(BaseSettings):
     def kokoro_audition_dir(self) -> Path:
         return self.state_dir / "audition-kokoro"
 
+    # Standing questions (standing.py): JSON list overriding the package
+    # default when set (services.switchboard.standing).
+    standing_json: str = ""
+
+    @property
+    def answers_dir(self) -> Path:
+        return self.state_dir / "answers"
+
+    @property
+    def slowlog(self) -> Path:
+        return self.state_dir / "slowlog.jsonl"
+
     # Rendered-sentence cache (see audio.say): <state>/cache/<backend>-<voice>/<sha1>.sln16
     tts_cache: bool = True
 

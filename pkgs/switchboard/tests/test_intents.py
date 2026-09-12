@@ -27,7 +27,7 @@ from switchboard import intents
         ("Hi", "hello"),             # short but a known word, not a fragment
         ("what", None),              # 4 chars: past the fragment cutoff, goes to the agent
         ("[BLANK_AUDIO]", None),   # audio.py strips this before routing; raw it is a word
-        ("did the immich backup finish last night", None),
+        ("did the immich backup finish last night", "standing:backups"),   # standing question, pre-answered
         ("what is the mempool doing", None),
     ],
 )
