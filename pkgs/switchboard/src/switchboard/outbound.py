@@ -46,8 +46,9 @@ def spool(settings: Settings, contents: str) -> Path:
     fd, tmp = tempfile.mkstemp(prefix=".call-", dir=outgoing)
     # mkstemp gives 0600 and Asterisk is another user: it saw "Permission
     # denied" and DELETED the first real escalation call file (2026-09-13).
-    # The spool is setgid asterisk, so group-readable is enough.
-    os.fchmod(fd, 0o640)
+    # The spool is setgid asterisk; group-writable so Asterisk can append its
+    # StartRetry/EndRetry lines — read-only ignored MaxRetries and retried forever.
+    os.fchmod(fd, 0o660)   # group-WRITABLE: Asterisk appends retry state to the file (MaxRetries was ignored at 0640)
     with os.fdopen(fd, "w") as fh:
         fh.write(contents)
     final = outgoing / f"switchboard-{int(time.time() * 1000)}.call"

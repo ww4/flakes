@@ -103,7 +103,7 @@ def test_spool_is_atomic_rename(tmp_path: Path) -> None:
     s = Settings(state_dir=tmp_path, asterisk_outgoing=tmp_path)
     final = outbound.spool(s, "Channel: X\n")
     assert final.suffix == ".call" and final.read_text() == "Channel: X\n"
-    assert oct(final.stat().st_mode & 0o777) == "0o640", "Asterisk (group) must be able to read it"
+    assert oct(final.stat().st_mode & 0o777) == "0o660", "Asterisk (group) must read AND append retry state"
     assert not list(tmp_path.glob(".call-*")), "temp file must be renamed away"
 
 
