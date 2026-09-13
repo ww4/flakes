@@ -45,7 +45,21 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("temps",     re.compile(r"\b(temp|temperature|how hot|thermal|cool|warm|drives? temp)\w*")),
     ("disk",      re.compile(r"\b(disk|storage|space|room|full|free|capacity|pool)\b")),
     ("time",      re.compile(r"\b(what time|the time|what day|the date|today'?s date)\b")),
+    ("weather",   re.compile(r"\b(weather|forecast|rain|snow|storms?|how hot (is it going|will it)|temperature (today|tomorrow|outside))\b")),
 ]
+
+# Weather scope: which periods to read. "today" also covers tonight; nothing
+# said means both days (Chris, 2026-09-13: "tomorrow" was getting both).
+_SCOPE_TOMORROW = re.compile(r"\btomorrow\b")
+_SCOPE_TODAY = re.compile(r"\b(today|tonight|this (afternoon|evening|morning)|right now|currently|outside)\b")
+
+
+def weather_scope(normalised: str) -> str:
+    if _SCOPE_TOMORROW.search(normalised):
+        return "tomorrow"
+    if _SCOPE_TODAY.search(normalised):
+        return "today"
+    return "both"
 
 _PUNCT = re.compile(r"[^\w\s']")
 
@@ -67,7 +81,7 @@ def route(text: str) -> str | None:
         return "empty"
     for name, pat in _RULES:
         if pat.search(t):
-            return name
+            return f"weather:{weather_scope(t)}" if name == "weather" else name
     if len(t) <= _FRAGMENT_MAX_CHARS:
         return "empty"
     q = standing.match(standing_questions(), t)
@@ -186,13 +200,38 @@ async def _disk(s: Settings) -> str:
     return ". ".join(bits) + "."
 
 
+def _period_sentence(p: "sources.Period") -> str:
+    """'Tonight: slight chance of showers then partly cloudy, low around 61, 20 percent chance of rain.'"""
+    short = p.short.lower().replace(" and ", " and ").replace("chance", "chance of")
+    short = re.sub(r"chance of of", "chance of", short)
+    hi_lo = f"{'high' if p.daytime else 'low'} {'near' if p.daytime else 'around'} {p.temperature}"
+    pop = f", {p.pop} percent chance of rain" if p.pop else ""
+    return f"{p.name}: {short}, {hi_lo}{pop}."
+
+
+def _weather_text(periods: list["sources.Period"], scope: str, today: str, tomorrow: str) -> str:
+    want = {"today": [today], "tomorrow": [tomorrow], "both": [today, tomorrow]}[scope]
+    chosen = [p for p in periods if p.date in want]
+    if not chosen:
+        return "I don't have a forecast for that day yet."
+    return " ".join(_period_sentence(p) for p in chosen)
+
+
+def _weather(scope: str) -> Handler:
+    async def handler(s: Settings) -> str:
+        periods = await sources.nws_forecast(s)
+        today = dt.date.today()
+        return _weather_text(periods, scope, today.isoformat(), (today + dt.timedelta(days=1)).isoformat())
+    return handler
+
+
 async def _time(s: Settings) -> str:
     now = dt.datetime.now().astimezone()
     return now.strftime("It is %-I:%M %p on %A, %B %-d.")
 
 
 async def _help(s: Settings) -> str:
-    return ("You can ask for status, incidents, temperatures, disk space, or the time. "
+    return ("You can ask for status, incidents, temperatures, disk space, the weather today or tomorrow, or the time. "
             "Anything else I will pass to the agent, which takes a little longer. Say goodbye to hang up.")
 
 
@@ -216,6 +255,9 @@ _HANDLERS: dict[str, Handler] = {
     "temps": _temps,
     "disk": _disk,
     "time": _time,
+    "weather:today": _weather("today"),
+    "weather:tomorrow": _weather("tomorrow"),
+    "weather:both": _weather("both"),
     "help": _help,
     "goodbye": _goodbye,
     "hello": _hello,
@@ -244,7 +286,7 @@ FIXED_PHRASES: list[str] = [
     "I could not read the sentinel incident log.",
     "Nothing from the sentinel in the last 24 hours.",
     "Prometheus has no filesystem data for the paths I watch.",
-    "You can ask for status, incidents, temperatures, disk space, or the time.",
+    "You can ask for status, incidents, temperatures, disk space, the weather today or tomorrow, or the time.",
     "Anything else I will pass to the agent, which takes a little longer.",
     "Say goodbye to hang up.",
     "Goodbye.",
@@ -255,4 +297,4 @@ FIXED_PHRASES: list[str] = [
 ]
 
 # Intents whose answers the prewarm timer pre-renders (read-only, cheap).
-LIVE_INTENTS: list[str] = ["status", "temps", "disk", "incidents"]
+LIVE_INTENTS: list[str] = ["status", "temps", "disk", "incidents", "weather:today", "weather:tomorrow", "weather:both"]

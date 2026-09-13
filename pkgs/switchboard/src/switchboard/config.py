@@ -87,6 +87,10 @@ class Settings(BaseSettings):
         default_factory=lambda: ["/mnt/fusion", "/mnt/backup/all", "/"]
     )
 
+    # --- weather: the NWS gridpoint for Owenton, KY (public, county-level) ---
+    nws_forecast_url: str = "https://api.weather.gov/gridpoints/ILN/26,12/forecast"
+    forecast_cache_s: float = 1800.0
+
     # --- slow path: the memory-loaded agent ---
     claude_bin: str = "claude"
     claude_cwd: Path = Path("/home/claude/nixos-homelab-improvements")

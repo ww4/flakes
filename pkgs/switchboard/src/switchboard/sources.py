@@ -8,6 +8,7 @@ never be reported the same way (a dead Prometheus is not a cool CPU).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -174,3 +175,46 @@ def recent_incidents(settings: Settings, within_h: float = 24.0, now: float | No
         found.append(Incident(kind=kind, age_s=age, headline=first))
     found.sort(key=lambda i: i.age_s)
     return found
+
+
+# ---------------------------------------------------------------- NWS forecast
+
+@dataclass(frozen=True)
+class Period:
+    name: str            # "This Afternoon", "Tonight", "Monday", "Monday Night"
+    date: str            # local date of startTime, YYYY-MM-DD
+    daytime: bool
+    temperature: int
+    short: str           # "Mostly Sunny"
+    pop: int | None      # chance of precipitation, percent
+
+
+async def nws_forecast(settings: Settings) -> list[Period]:
+    """The NWS gridpoint forecast periods, cached for forecast_cache_s.
+    The cache lives in the state dir so the prewarm timer and calls share it."""
+    cache = settings.state_dir / "cache" / "nws-forecast.json"
+    try:
+        if time.time() - cache.stat().st_mtime < settings.forecast_cache_s:
+            return [Period(**d) for d in json.loads(cache.read_text())]
+    except (OSError, ValueError, TypeError):
+        pass
+    try:
+        async with httpx.AsyncClient(timeout=10.0, headers={"User-Agent": "gromit-switchboard"}) as client:
+            resp = await client.get(settings.nws_forecast_url)
+        resp.raise_for_status()
+        raw = resp.json()["properties"]["periods"]
+    except (httpx.HTTPError, ValueError, KeyError) as exc:
+        raise SourceError(f"nws: {exc}") from exc
+    periods = [
+        Period(
+            name=p["name"], date=p["startTime"][:10], daytime=bool(p["isDaytime"]),
+            temperature=int(p["temperature"]), short=p["shortForecast"],
+            pop=(p.get("probabilityOfPrecipitation") or {}).get("value"),
+        )
+        for p in raw
+    ]
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cache.with_suffix(".json.part")
+    tmp.write_text(json.dumps([p.__dict__ for p in periods]))
+    tmp.replace(cache)
+    return periods
