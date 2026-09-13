@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -86,6 +86,37 @@ class Settings(BaseSettings):
     disk_paths: list[str] = Field(
         default_factory=lambda: ["/mnt/fusion", "/mnt/backup/all", "/"]
     )
+
+    # --- issues, spoken before the greeting's question (issues.py) ---
+    alertmanager_url: str = "http://127.0.0.1:9093"
+    sentinel_state: Path = Path("/var/lib/sentinel/state.json")
+    # If the check takes longer than this the caller hears the plain greeting
+    # rather than dead air; the issues then come out when asked.
+    issues_timeout_s: float = 2.5
+
+    # --- notifications: the ntfy topic the phone app subscribes to. The topic
+    # is write-only for anonymous readers (#169), so reading needs the
+    # subscriber credential ntfy-provision generates on the box. The units get
+    # it via EnvironmentFile (read as root, like Homepage does); the names
+    # below are that file's.
+    ntfy_url: str = "http://localhost:8090"
+    ntfy_topic: str = "gromit-alerts"
+    ntfy_user: str = Field(default="", validation_alias=AliasChoices("SWITCHBOARD_NTFY_USER", "HOMEPAGE_VAR_NTFY_USER"))
+    ntfy_pass: str = Field(default="", validation_alias=AliasChoices("SWITCHBOARD_NTFY_PASS", "HOMEPAGE_VAR_NTFY_PASS"))
+    notifications_hours: float = 24.0
+
+    # --- bitcoin: the local mempool.space backend (services/mempool.nix). The
+    # node has no fiat price; mempool's backend polls a price feed every few
+    # minutes and serves it here along with the tip and fee estimates.
+    mempool_url: str = "http://127.0.0.1:8081"
+    # Reachable-node count: bitnodes (redirects to btcnodes.io). The one
+    # external call in the bitcoin set; cached an hour, absent if unreachable.
+    btcnodes_url: str = "https://btcnodes.io/api/v1/snapshots/?limit=1"
+    nodes_cache_s: float = 3600.0
+
+    # --- weather: the NWS gridpoint for Owenton, KY (public, county-level) ---
+    nws_forecast_url: str = "https://api.weather.gov/gridpoints/ILN/26,12/forecast"
+    forecast_cache_s: float = 1800.0
 
     # --- slow path: the memory-loaded agent ---
     claude_bin: str = "claude"

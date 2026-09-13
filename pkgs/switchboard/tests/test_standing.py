@@ -16,7 +16,7 @@ def q(**kw) -> standing.StandingQuestion:
 def test_route_matches_standing_after_fixed_rules() -> None:
     assert intents.route("did the backup run last night") == "standing:backups"
     assert intents.route("what's on my schedule today") == "standing:schedule"
-    assert intents.route("what's the weather tomorrow") == "standing:forecast"
+    assert intents.route("what's the weather tomorrow") == "weather:tomorrow"   # a fast intent now, not standing
     assert intents.route("what did ryan hall say") == "standing:ryan-hall"
     # fixed rules still win
     assert intents.route("what's the status") == "status"

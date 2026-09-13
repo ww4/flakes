@@ -77,13 +77,6 @@ DEFAULT_STANDING: list[StandingQuestion] = [
         max_age_s=3 * 3600,
     ),
     StandingQuestion(
-        name="forecast",
-        patterns=[r"\b(weather|forecast|rain|snow|storms?)\b"],
-        ask="What is the weather forecast for the rest of today and tomorrow?",
-        watch=["/var/lib/wx/wx.db"],
-        daily=True, max_age_s=2 * 3600,
-    ),
-    StandingQuestion(
         name="ryan-hall",
         patterns=[r"\bryan\b"],
         ask="What did Ryan Hall say in his latest video? Two sentences.",

@@ -20,6 +20,12 @@ from switchboard import intents
         ("what happened overnight", "incidents"),
         ("any alerts", "incidents"),
         ("what time is it", "time"),
+        ("what's the bitcoin price", "btc-price"),
+        ("how much is bitcoin right now", "btc-price"),
+        ("what's the price of BTC", "btc-price"),
+        ("what are fees like", "btc-fees"),
+        ("what's the block height", "btc-block"),
+        ("latest block", "btc-block"),
         ("what can you do", "help"),
         ("thanks, that's all", "goodbye"),
         ("goodbye", "goodbye"),
@@ -115,3 +121,65 @@ def test_every_setting_the_units_use_exists() -> None:
     # the prompt set renders from PROMPTS + greeting
     assert set(agi_mod.PROMPTS) >= {"didnt-catch", "still-here", "one-moment", "still-working", "callback", "sorry", "goodbye",
                                     "note-prompt", "note-go-ahead", "note-again", "note-empty"}
+
+
+def test_bitcoin_phrasing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+    import datetime as dt
+
+    from switchboard import sources
+    from switchboard.config import Settings
+
+    async def fake(_s):
+        return sources.Bitcoin(usd=77118, price_age_s=1200, usd_24h_ago=77344, height=966844, fee_fast=1, fee_hour=1, fee_economy=1)
+
+    async def fake_stats(_s):
+        return sources.BitcoinStats(ath_usd=124734, ath_date="2025-10-06", retarget_date="2026-09-19T05:31:10Z",
+                                    retarget_change_pct=4.77, retarget_blocks=832, nodes=26895, nodes_age_s=600)
+
+    monkeypatch.setattr(sources, "bitcoin", fake)
+    monkeypatch.setattr(sources, "bitcoin_stats", fake_stats)
+    s = Settings()
+    assert asyncio.run(intents.answer(s, "btc-price")).text == "Bitcoin is 77,118 dollars, as of 20 minutes ago, down 0.3 percent over the last 24 hours."
+    assert asyncio.run(intents.answer(s, "btc-block")).text == "The block height is 966,844."
+    assert asyncio.run(intents.answer(s, "btc-fees")).text == "Fees are 1 sat per byte across the board."
+    ath = intents._ath_sentence(asyncio.run(fake(s)), asyncio.run(fake_stats(s)), dt.date(2026, 9, 13))
+    assert ath == "The all-time high is 124,734 dollars, set on October 6, 2025, 342 days ago. Bitcoin is 38 percent below it."
+    assert asyncio.run(intents.answer(s, "btc-diff")).text.startswith("The next difficulty adjustment is expected Saturday, September 19, in 832 blocks, up 4.8 percent.")
+    assert asyncio.run(intents.answer(s, "btc-nodes")).text == "26,895 reachable bitcoin nodes are online."
+    everything = asyncio.run(intents.answer(s, "btc-stats")).text
+    assert everything.startswith("Bitcoin is 77,118 dollars") and "all-time high" in everything and "difficulty" in everything \
+        and "nodes" in everything and everything.endswith("across the board.")
+
+
+def test_bitcoin_routing_specifics() -> None:
+    assert intents.route("give me some bitcoin statistics") == "btc-stats"
+    assert intents.route("bitcoin stats") == "btc-stats"
+    assert intents.route("what's the all-time high") == "btc-ath"
+    assert intents.route("when is the next difficulty adjustment") == "btc-diff"
+    assert intents.route("how many nodes are online") == "btc-nodes"
+    assert intents.route("what's bitcoin at") == "btc-price"
+
+
+def test_nodes_unreachable_is_spoken(monkeypatch: pytest.MonkeyPatch) -> None:
+    from switchboard import sources
+    st = sources.BitcoinStats(ath_usd=1, ath_date="2025-01-01", retarget_date="2026-09-19T05:31:10Z",
+                              retarget_change_pct=0.0, retarget_blocks=1, nodes=None, nodes_age_s=None)
+    assert intents._nodes_sentence(st) == "I couldn't reach the node count right now."
+
+
+def test_notifications_phrasing() -> None:
+    from switchboard import sources
+
+    now = 1_789_322_000.0
+    notes = [
+        sources.Notification(now - 7200, "🌧️ Weather", "Severe thunderstorm watch until 9 p.m. https://ntfy.example/x", 4),
+        sources.Notification(now - 60, "Sentinel resolved: comin-deploy", "comin-deploy cleared.", 2),
+    ]
+    text = intents._notifications_text(sorted(notes, key=lambda n: -n.time), 24, now)
+    assert text == ("2 notifications in the last 24 hours. just now: Sentinel resolved: comin-deploy. comin-deploy cleared. "
+                    "2 hours ago: Urgent. Weather. Severe thunderstorm watch until 9 p.m.")
+    assert intents._notifications_text([], 24, now) == "No notifications in the last 24 hours."
+    assert intents.route("what notifications did you send") == "notifications"
+    assert intents.route("any recent notifications") == "notifications"
+    assert intents.route("any alerts") == "incidents"          # unchanged
