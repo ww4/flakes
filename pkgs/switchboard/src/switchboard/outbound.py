@@ -44,6 +44,10 @@ def spool(settings: Settings, contents: str) -> Path:
     if not outgoing.is_dir():
         raise FileNotFoundError(f"asterisk outgoing spool missing: {outgoing}")
     fd, tmp = tempfile.mkstemp(prefix=".call-", dir=outgoing)
+    # mkstemp gives 0600 and Asterisk is another user: it saw "Permission
+    # denied" and DELETED the first real escalation call file (2026-09-13).
+    # The spool is setgid asterisk, so group-readable is enough.
+    os.fchmod(fd, 0o640)
     with os.fdopen(fd, "w") as fh:
         fh.write(contents)
     final = outgoing / f"switchboard-{int(time.time() * 1000)}.call"
