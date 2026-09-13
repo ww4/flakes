@@ -24,7 +24,7 @@ from pathlib import Path
 
 import datetime as dt
 
-from . import agent, audio, intents, notes, outbound, standing
+from . import agent, audio, intents, issues, notes, outbound, standing
 from .config import Settings
 
 log = logging.getLogger(__name__)
@@ -130,11 +130,15 @@ class Switchboard:
             await call.handshake()
             script = call.env.get("agi_network_script", "")
             log.info("call %s from %s%s", call.id, call.caller, f" ({script})" if script else "")
+            # Start the "anything wrong?" check now; it usually finishes
+            # before the greeting is due (Chris: hear the warnings first).
+            issues_task = asyncio.create_task(issues.current(self.s))
             await call.answer()
             if script == "note":
+                issues_task.cancel()
                 await self.notes(call)
                 return
-            await call.play(self.prompt("greeting"))
+            await self.greet(call, issues_task)
             await self.converse(call)
         except Hangup as exc:
             log.info("call %s: hangup (%s)", call.id, exc)
@@ -147,6 +151,27 @@ class Switchboard:
         finally:
             await call.hangup()
             writer.close()
+
+    async def greet(self, call: Call, issues_task: "asyncio.Task[list[issues.Issue]]") -> None:
+        """'This is the Gromit switchboard. There are some issues. <issues> What
+        would you like to know?' — or the plain greeting when nothing is wrong
+        (or the check is slow: the caller never waits on it)."""
+        try:
+            found = await asyncio.wait_for(asyncio.shield(issues_task), timeout=self.s.issues_timeout_s)
+        except asyncio.TimeoutError:
+            log.warning("issues check exceeded %.1fs; plain greeting", self.s.issues_timeout_s)
+            found = []
+        except Exception:
+            log.exception("issues check failed; plain greeting")
+            found = []
+        if not found:
+            await call.play(self.prompt("greeting"))
+            return
+        log.info("greeting with %d issue(s): %s", len(found), "; ".join(i.text for i in found)[:200])
+        await call.play(self.prompt("greeting-issues"))
+        out = await audio.say(self.s, issues.spoken(found), self.s.outbox / f"{call.id}-issues")
+        await call.play(str(out.with_name(out.name.removesuffix(out.suffix))))
+        await call.play(self.prompt("ask"))
 
     async def converse(self, call: Call) -> None:
         empty = 0
@@ -295,6 +320,8 @@ PROMPTS: dict[str, str] = {
     "callback":      "This is taking a while. I'll call you back with the answer. Goodbye.",
     "sorry":         "Something went wrong on my end. Goodbye.",
     "goodbye":       "Goodbye.",
+    "greeting-issues": "This is the Gromit switchboard. There are some issues.",
+    "ask":           "What would you like to know?",
     "note-prompt":   "Leave your note after the tone. Start with 'for Claude' if it's for me.",
     "note-go-ahead": "Go ahead.",
     "note-again":    "Another note? Say it after the tone, or just hang up.",

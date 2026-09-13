@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from . import sources, standing
+from . import issues, sources, standing
 from .config import Settings
 from .sources import SourceError
 
@@ -38,6 +38,7 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("note",      re.compile(r"^(please )?((take|make|leave|save) a note|note to self|remind me|remember (that|to))\b")),
     ("hello",     re.compile(r"^(hi|hello|hey|hey there|good (morning|afternoon|evening))( there)?( gromit| switchboard)?$")),
     ("help",      re.compile(r"\b(help|what can (you|i) (do|ask|say)|options|menu)\b")),
+    ("issues",    re.compile(r"\b(issues?|problems?|what'?s wrong|warnings?|critical)\b")),
     ("incidents", re.compile(r"\b(incident|anything (wrong|broken|happen)|what (happened|broke|went wrong)|alerts?)\b")),
     # "home lab" (two words) is how whisper spells it; "how's the home lab
     # doing" went to the slow path on 2026-09-12 — 16 s for the status answer.
@@ -172,6 +173,11 @@ async def _status(s: Settings) -> str:
     return " ".join(parts)
 
 
+async def _issues(s: Settings) -> str:
+    text = issues.spoken(await issues.current(s))
+    return text or "No warnings or criticals right now."
+
+
 async def _incidents(s: Settings) -> str:
     incidents = sources.recent_incidents(s, within_h=24)
     if not incidents:
@@ -278,6 +284,7 @@ Handler = Callable[[Settings], Awaitable[str]]
 
 _HANDLERS: dict[str, Handler] = {
     "status": _status,
+    "issues": _issues,
     "incidents": _incidents,
     "temps": _temps,
     "disk": _disk,
@@ -315,6 +322,7 @@ FIXED_PHRASES: list[str] = [
     "All six pool drives are mounted.",
     "I could not read the sentinel incident log.",
     "Nothing from the sentinel in the last 24 hours.",
+    "No warnings or criticals right now.",
     "Prometheus has no filesystem data for the paths I watch.",
     "You can ask for status, incidents, temperatures, disk space, the weather today or tomorrow, the bitcoin price, or the time.",
     "Anything else I will pass to the agent, which takes a little longer.",
@@ -327,4 +335,4 @@ FIXED_PHRASES: list[str] = [
 ]
 
 # Intents whose answers the prewarm timer pre-renders (read-only, cheap).
-LIVE_INTENTS: list[str] = ["status", "temps", "disk", "incidents", "weather:today", "weather:tomorrow", "weather:both", "btc-price", "btc-block", "btc-fees"]
+LIVE_INTENTS: list[str] = ["status", "issues", "temps", "disk", "incidents", "weather:today", "weather:tomorrow", "weather:both", "btc-price", "btc-block", "btc-fees"]

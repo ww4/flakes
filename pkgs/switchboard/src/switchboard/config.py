@@ -87,6 +87,13 @@ class Settings(BaseSettings):
         default_factory=lambda: ["/mnt/fusion", "/mnt/backup/all", "/"]
     )
 
+    # --- issues, spoken before the greeting's question (issues.py) ---
+    alertmanager_url: str = "http://127.0.0.1:9093"
+    sentinel_state: Path = Path("/var/lib/sentinel/state.json")
+    # If the check takes longer than this the caller hears the plain greeting
+    # rather than dead air; the issues then come out when asked.
+    issues_timeout_s: float = 2.5
+
     # --- bitcoin: the local mempool.space backend (services/mempool.nix). The
     # node has no fiat price; mempool's backend polls a price feed every few
     # minutes and serves it here along with the tip and fee estimates.
