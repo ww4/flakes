@@ -39,6 +39,7 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("note",      re.compile(r"^(please )?((take|make|leave|save) a note|note to self|remind me|remember (that|to))\b")),
     ("hello",     re.compile(r"^(hi|hello|hey|hey there|good (morning|afternoon|evening))( there)?( gromit| switchboard)?$")),
     ("help",      re.compile(r"\b(help|what can (you|i) (do|ask|say)|options|menu)\b")),
+    ("notifications", re.compile(r"\b(notifications?|ntfy|pushes|what (have|did) you (sent|send|pushed|push)( me)?)\b")),
     ("issues",    re.compile(r"\b(issues?|problems?|what'?s wrong|warnings?|critical)\b")),
     ("incidents", re.compile(r"\b(incident|anything (wrong|broken|happen)|what (happened|broke|went wrong)|alerts?)\b")),
     # "home lab" (two words) is how whisper spells it; "how's the home lab
@@ -176,6 +177,46 @@ async def _status(s: Settings) -> str:
     elif incidents:
         parts.append(f"The sentinel logged {len(incidents)} incident{'s' if len(incidents) != 1 else ''} in the last day. Ask me about incidents for details.")
     return " ".join(parts)
+
+
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F]")
+
+
+def _clean(text: str, words: int) -> str:
+    text = _EMOJI.sub("", text)
+    text = re.sub(r"https?://\S+", "", text)              # nobody wants a URL read out
+    text = " ".join(text.replace("*", "").replace("`", "").split())
+    parts = text.split(" ")
+    return " ".join(parts[:words]) + ("…" if len(parts) > words else "")
+
+
+def _ago(seconds: float) -> str:
+    m = round(seconds / 60)
+    if m < 2:
+        return "just now"
+    if m < 60:
+        return f"{m} minutes ago"
+    h = round(m / 60)
+    return "an hour ago" if h == 1 else f"{h} hours ago"
+
+
+def _notifications_text(notes: list["sources.Notification"], hours: float, now: float, limit: int = 5) -> str:
+    if not notes:
+        return f"No notifications in the last {round(hours)} hours."
+    head = [f"{len(notes)} notification{'s' if len(notes) != 1 else ''} in the last {round(hours)} hours."]
+    for n in notes[:limit]:
+        title = _clean(n.title, 12)
+        body = _clean(n.message, 25)
+        urgent = "Urgent. " if n.priority >= 4 else ""
+        head.append(f"{_ago(now - n.time)}: {urgent}{title}. {body}".rstrip(". ") + ".")
+    if len(notes) > limit:
+        head.append(f"And {len(notes) - limit} more.")
+    return " ".join(head)
+
+
+async def _notifications(s: Settings) -> str:
+    import time as _time
+    return _notifications_text(await sources.ntfy_recent(s), s.notifications_hours, _time.time())
 
 
 async def _issues(s: Settings) -> str:
@@ -324,7 +365,7 @@ async def _time(s: Settings) -> str:
 
 
 async def _help(s: Settings) -> str:
-    return ("You can ask for status, incidents, temperatures, disk space, the weather today or tomorrow, the bitcoin price, or the time. "
+    return ("You can ask for status, issues, recent notifications, temperatures, disk space, the weather today or tomorrow, bitcoin, or the time. "
             "Anything else I will pass to the agent, which takes a little longer. Say goodbye to hang up.")
 
 
@@ -345,6 +386,7 @@ Handler = Callable[[Settings], Awaitable[str]]
 _HANDLERS: dict[str, Handler] = {
     "status": _status,
     "issues": _issues,
+    "notifications": _notifications,
     "incidents": _incidents,
     "temps": _temps,
     "disk": _disk,
@@ -388,7 +430,7 @@ FIXED_PHRASES: list[str] = [
     "Nothing from the sentinel in the last 24 hours.",
     "No warnings or criticals right now.",
     "Prometheus has no filesystem data for the paths I watch.",
-    "You can ask for status, incidents, temperatures, disk space, the weather today or tomorrow, the bitcoin price, or the time.",
+    "You can ask for status, issues, recent notifications, temperatures, disk space, the weather today or tomorrow, bitcoin, or the time.",
     "Anything else I will pass to the agent, which takes a little longer.",
     "Say goodbye to hang up.",
     "Goodbye.",
@@ -399,4 +441,4 @@ FIXED_PHRASES: list[str] = [
 ]
 
 # Intents whose answers the prewarm timer pre-renders (read-only, cheap).
-LIVE_INTENTS: list[str] = ["status", "issues", "temps", "disk", "incidents", "weather:today", "weather:tomorrow", "weather:both", "btc-price", "btc-block", "btc-fees", "btc-ath", "btc-diff", "btc-nodes", "btc-stats"]
+LIVE_INTENTS: list[str] = ["status", "issues", "notifications", "temps", "disk", "incidents", "weather:today", "weather:tomorrow", "weather:both", "btc-price", "btc-block", "btc-fees", "btc-ath", "btc-diff", "btc-nodes", "btc-stats"]

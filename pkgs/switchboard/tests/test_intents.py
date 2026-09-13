@@ -166,3 +166,20 @@ def test_nodes_unreachable_is_spoken(monkeypatch: pytest.MonkeyPatch) -> None:
     st = sources.BitcoinStats(ath_usd=1, ath_date="2025-01-01", retarget_date="2026-09-19T05:31:10Z",
                               retarget_change_pct=0.0, retarget_blocks=1, nodes=None, nodes_age_s=None)
     assert intents._nodes_sentence(st) == "I couldn't reach the node count right now."
+
+
+def test_notifications_phrasing() -> None:
+    from switchboard import sources
+
+    now = 1_789_322_000.0
+    notes = [
+        sources.Notification(now - 7200, "🌧️ Weather", "Severe thunderstorm watch until 9 p.m. https://ntfy.example/x", 4),
+        sources.Notification(now - 60, "Sentinel resolved: comin-deploy", "comin-deploy cleared.", 2),
+    ]
+    text = intents._notifications_text(sorted(notes, key=lambda n: -n.time), 24, now)
+    assert text == ("2 notifications in the last 24 hours. just now: Sentinel resolved: comin-deploy. comin-deploy cleared. "
+                    "2 hours ago: Urgent. Weather. Severe thunderstorm watch until 9 p.m.")
+    assert intents._notifications_text([], 24, now) == "No notifications in the last 24 hours."
+    assert intents.route("what notifications did you send") == "notifications"
+    assert intents.route("any recent notifications") == "notifications"
+    assert intents.route("any alerts") == "incidents"          # unchanged

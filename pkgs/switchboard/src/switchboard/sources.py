@@ -328,3 +328,37 @@ async def bitcoin_stats(settings: Settings) -> BitcoinStats:
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise SourceError(f"mempool: unexpected shape: {exc}") from exc
+
+
+# ---------------------------------------------------------------- ntfy notifications
+
+@dataclass(frozen=True)
+class Notification:
+    time: float
+    title: str
+    message: str
+    priority: int    # ntfy 1-5, 3 = default
+
+
+async def ntfy_recent(settings: Settings, hours: float | None = None) -> list[Notification]:
+    """Messages on the topic in the last N hours, newest first (ntfy's poll API)."""
+    hours = hours or settings.notifications_hours
+    if not settings.ntfy_user:
+        raise SourceError("ntfy: no subscriber credential in the environment")
+    try:
+        async with httpx.AsyncClient(timeout=5.0, auth=(settings.ntfy_user, settings.ntfy_pass)) as client:
+            resp = await client.get(f"{settings.ntfy_url}/{settings.ntfy_topic}/json", params={"poll": "1", "since": f"{int(hours)}h"})
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise SourceError(f"ntfy: {exc}") from exc
+    out = []
+    for line in resp.text.splitlines():
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if d.get("event") != "message":
+            continue
+        out.append(Notification(time=float(d.get("time", 0)), title=d.get("title") or "", message=d.get("message") or "",
+                                priority=int(d.get("priority") or 3)))
+    return sorted(out, key=lambda n: -n.time)
