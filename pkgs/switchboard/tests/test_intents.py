@@ -20,6 +20,12 @@ from switchboard import intents
         ("what happened overnight", "incidents"),
         ("any alerts", "incidents"),
         ("what time is it", "time"),
+        ("what's the bitcoin price", "btc-price"),
+        ("how much is bitcoin right now", "btc-price"),
+        ("what's the price of BTC", "btc-price"),
+        ("what are fees like", "btc-fees"),
+        ("what's the block height", "btc-block"),
+        ("latest block", "btc-block"),
         ("what can you do", "help"),
         ("thanks, that's all", "goodbye"),
         ("goodbye", "goodbye"),
@@ -115,3 +121,19 @@ def test_every_setting_the_units_use_exists() -> None:
     # the prompt set renders from PROMPTS + greeting
     assert set(agi_mod.PROMPTS) >= {"didnt-catch", "still-here", "one-moment", "still-working", "callback", "sorry", "goodbye",
                                     "note-prompt", "note-go-ahead", "note-again", "note-empty"}
+
+
+def test_bitcoin_phrasing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from switchboard import sources
+    from switchboard.config import Settings
+
+    async def fake(_s):
+        return sources.Bitcoin(usd=77118, price_age_s=1200, height=966844, fee_fast=1, fee_hour=1, fee_economy=1)
+
+    monkeypatch.setattr(sources, "bitcoin", fake)
+    s = Settings()
+    assert asyncio.run(intents.answer(s, "btc-price")).text == "Bitcoin is 77,118 dollars, as of 20 minutes ago."
+    assert asyncio.run(intents.answer(s, "btc-block")).text == "The chain tip is block 966,844."
+    assert asyncio.run(intents.answer(s, "btc-fees")).text == "Fees are 1 sat per byte across the board."

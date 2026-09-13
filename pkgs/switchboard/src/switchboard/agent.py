@@ -53,7 +53,8 @@ DEFAULT_HINTS = """\
 - incidents: newest files in /var/lib/sentinel/incidents/
 - weather forecast: curl -A gromit https://api.weather.gov/gridpoints/ILN/26,12/forecast (Owenton KY) -> properties.periods[].name/shortForecast/temperature
 - weather alerts (NWS) and Ryan Hall's latest: sqlite3 /var/lib/wx/wx.db, tables nws_alert and extraction
-- temps, disk, pool: Prometheus at http://127.0.0.1:9090/api/v1/query"""
+- temps, disk, pool: Prometheus at http://127.0.0.1:9090/api/v1/query
+- bitcoin price / tip / fees / mempool: the local mempool backend http://127.0.0.1:8081/api/v1/prices, /api/blocks/tip/height, /api/v1/fees/recommended, /api/mempool"""
 
 
 class AgentError(RuntimeError):

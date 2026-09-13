@@ -218,3 +218,37 @@ async def nws_forecast(settings: Settings) -> list[Period]:
     tmp.write_text(json.dumps([p.__dict__ for p in periods]))
     tmp.replace(cache)
     return periods
+
+
+# ---------------------------------------------------------------- bitcoin (mempool backend)
+
+@dataclass(frozen=True)
+class Bitcoin:
+    usd: int
+    price_age_s: float
+    height: int
+    fee_fast: int      # sat/vB
+    fee_hour: int
+    fee_economy: int
+
+
+async def bitcoin(settings: Settings) -> Bitcoin:
+    async def get(path: str):
+        resp = await client.get(f"{settings.mempool_url}{path}")
+        resp.raise_for_status()
+        return resp.json() if path != "/api/blocks/tip/height" else int(resp.text)
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            prices, height, fees = await asyncio.gather(
+                get("/api/v1/prices"), get("/api/blocks/tip/height"), get("/api/v1/fees/recommended"))
+    except (httpx.HTTPError, ValueError) as exc:
+        raise SourceError(f"mempool: {exc}") from exc
+    try:
+        return Bitcoin(
+            usd=int(prices["USD"]), price_age_s=max(0.0, time.time() - float(prices["time"])),
+            height=int(height), fee_fast=int(fees["fastestFee"]), fee_hour=int(fees["hourFee"]),
+            fee_economy=int(fees["economyFee"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SourceError(f"mempool: unexpected shape: {exc}") from exc

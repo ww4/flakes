@@ -45,6 +45,10 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("temps",     re.compile(r"\b(temp|temperature|how hot|thermal|cool|warm|drives? temp)\w*")),
     ("disk",      re.compile(r"\b(disk|storage|space|room|full|free|capacity|pool)\b")),
     ("time",      re.compile(r"\b(what time|the time|what day|the date|today'?s date)\b")),
+    # Bitcoin: fees and block height before the general price rule.
+    ("btc-fees",  re.compile(r"\b(fee|fees|sat(s|oshi)?s? per (v?byte|vb))\b")),
+    ("btc-block", re.compile(r"\b(block ?height|latest block|current block|what block|tip)\b")),
+    ("btc-price", re.compile(r"\b(bitcoin|btc|coin price|price of bitcoin)\b")),
     ("weather",   re.compile(r"\b(weather|forecast|rain|snow|storms?|how hot (is it going|will it)|temperature (today|tomorrow|outside))\b")),
 ]
 
@@ -225,13 +229,36 @@ def _weather(scope: str) -> Handler:
     return handler
 
 
+def _dollars(n: int) -> str:
+    return f"{n:,} dollars"
+
+
+async def _btc_price(s: Settings) -> str:
+    b = await sources.bitcoin(s)
+    age = round(b.price_age_s / 60)
+    when = "just now" if age < 1 else ("a minute ago" if age == 1 else f"{age} minutes ago")
+    return f"Bitcoin is {_dollars(b.usd)}, as of {when}."
+
+
+async def _btc_block(s: Settings) -> str:
+    b = await sources.bitcoin(s)
+    return f"The chain tip is block {b.height:,}."
+
+
+async def _btc_fees(s: Settings) -> str:
+    b = await sources.bitcoin(s)
+    if b.fee_fast == b.fee_economy:
+        return f"Fees are {b.fee_fast} sat per byte across the board."
+    return f"Fees: {b.fee_fast} sat per byte for next block, {b.fee_hour} within the hour, {b.fee_economy} economy."
+
+
 async def _time(s: Settings) -> str:
     now = dt.datetime.now().astimezone()
     return now.strftime("It is %-I:%M %p on %A, %B %-d.")
 
 
 async def _help(s: Settings) -> str:
-    return ("You can ask for status, incidents, temperatures, disk space, the weather today or tomorrow, or the time. "
+    return ("You can ask for status, incidents, temperatures, disk space, the weather today or tomorrow, the bitcoin price, or the time. "
             "Anything else I will pass to the agent, which takes a little longer. Say goodbye to hang up.")
 
 
@@ -255,6 +282,9 @@ _HANDLERS: dict[str, Handler] = {
     "temps": _temps,
     "disk": _disk,
     "time": _time,
+    "btc-price": _btc_price,
+    "btc-block": _btc_block,
+    "btc-fees": _btc_fees,
     "weather:today": _weather("today"),
     "weather:tomorrow": _weather("tomorrow"),
     "weather:both": _weather("both"),
@@ -286,7 +316,7 @@ FIXED_PHRASES: list[str] = [
     "I could not read the sentinel incident log.",
     "Nothing from the sentinel in the last 24 hours.",
     "Prometheus has no filesystem data for the paths I watch.",
-    "You can ask for status, incidents, temperatures, disk space, the weather today or tomorrow, or the time.",
+    "You can ask for status, incidents, temperatures, disk space, the weather today or tomorrow, the bitcoin price, or the time.",
     "Anything else I will pass to the agent, which takes a little longer.",
     "Say goodbye to hang up.",
     "Goodbye.",
@@ -297,4 +327,4 @@ FIXED_PHRASES: list[str] = [
 ]
 
 # Intents whose answers the prewarm timer pre-renders (read-only, cheap).
-LIVE_INTENTS: list[str] = ["status", "temps", "disk", "incidents", "weather:today", "weather:tomorrow", "weather:both"]
+LIVE_INTENTS: list[str] = ["status", "temps", "disk", "incidents", "weather:today", "weather:tomorrow", "weather:both", "btc-price", "btc-block", "btc-fees"]

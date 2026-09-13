@@ -87,6 +87,11 @@ class Settings(BaseSettings):
         default_factory=lambda: ["/mnt/fusion", "/mnt/backup/all", "/"]
     )
 
+    # --- bitcoin: the local mempool.space backend (services/mempool.nix). The
+    # node has no fiat price; mempool's backend polls a price feed every few
+    # minutes and serves it here along with the tip and fee estimates.
+    mempool_url: str = "http://127.0.0.1:8081"
+
     # --- weather: the NWS gridpoint for Owenton, KY (public, county-level) ---
     nws_forecast_url: str = "https://api.weather.gov/gridpoints/ILN/26,12/forecast"
     forecast_cache_s: float = 1800.0
