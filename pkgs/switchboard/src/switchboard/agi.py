@@ -216,7 +216,7 @@ class Switchboard:
                 else:
                     # Nothing stored (or the sources moved): ask now with the
                     # curated question, and keep the answer for next time.
-                    reply = await self.slow(call, q.ask, store_as=q)
+                    reply = await self.slow(call, q.ask, store_as=q, heard=text, turn=turn)
                     if reply is None:
                         return
             elif intent == "news":
@@ -241,11 +241,12 @@ class Switchboard:
             elif intent is not None:
                 reply = await intents.answer(self.s, intent)
             else:
-                reply = await self.slow(call, text)
+                reply = await self.slow(call, text, heard=text, turn=turn)
                 if reply is None:
                     return   # went to call-back mode; the line has been released
-            out = await audio.say(self.s, reply.text, self.s.outbox / f"{call.id}-{turn}", style=reply.style)  # type: ignore[arg-type]
-            await call.play(str(out.with_name(out.name.removesuffix(out.suffix))), escape=Call.ANY_KEY)
+            if not reply.silent:
+                out = await audio.say(self.s, reply.text, self.s.outbox / f"{call.id}-{turn}", style=reply.style)  # type: ignore[arg-type]
+                await call.play(str(out.with_name(out.name.removesuffix(out.suffix))), escape=Call.ANY_KEY)
             if reply.hangup:
                 return
             await call.play(self.prompt(f"glue-{random.randrange(len(GLUE))}"))
@@ -340,11 +341,39 @@ class Switchboard:
             await call.play(self.prompt("note-again"))
         await call.play(self.prompt("goodbye"))
 
-    async def slow(self, call: Call, question: str, store_as: "standing.StandingQuestion | None" = None) -> intents.Reply | None:
+    _YES = re.compile(r"\b(yes|yeah|yep|yup|sure|go ahead|do it|please|okay|ok|find out|look it up)\b", re.IGNORECASE)
+
+    async def confirm_agent(self, call: Call, heard: str, turn: int) -> bool:
+        """Read back what was heard and ask before spending an agent call
+        (Chris, 2026-09-13: mishears were re-triggering model calls). Yes or
+        a 1 proceeds; no, silence, or anything else drops it."""
+        ask = await audio.say(self.s, f"I heard: {heard}", self.s.outbox / f"{call.id}-{turn}c")
+        key = await call.play(str(ask.with_name(ask.name.removesuffix(ask.suffix))), escape="1")
+        if key is None:
+            key = await call.play(self.prompt("confirm-agent"), escape="1")
+        if key == "1":
+            return True
+        rec = self.s.inbox / f"{call.id}-{turn}y"
+        why = await call.record(str(rec), max_ms=4000, silence_s=1)
+        wav = rec.with_name(f"{rec.name}.{call.RECORD_FORMAT}")
+        if why == "dtmf":            # a 1 pressed during the recording window
+            wav.unlink(missing_ok=True)
+            return True
+        answer = await audio.transcribe(self.s, wav) if wav.exists() else ""
+        wav.unlink(missing_ok=True)
+        yes = bool(self._YES.search(answer)) and not re.search(r"\b(no|nope|don't|never mind|cancel)\b", answer, re.IGNORECASE)
+        log.info("confirm: %r -> %s", answer, "yes" if yes else "no")
+        return yes
+
+    async def slow(self, call: Call, question: str, store_as: "standing.StandingQuestion | None" = None,
+                   heard: str | None = None, turn: int = 0) -> intents.Reply | None:
         """Ask the agent while keeping the caller company. Past hold_max_s,
         release the line and deliver the answer by calling back. Every slow
         answer is logged (standing.log_slow) so repeat questions surface as
-        candidates for pre-answering."""
+        candidates for pre-answering. Always confirmed first (confirm_agent)."""
+        if not await self.confirm_agent(call, heard or question, turn):
+            await call.play(self.prompt("okay-dropped"))
+            return intents.Reply(text="", hangup=False, style="conversational", silent=True)
         # Kick the agent off FIRST; the filler plays while it is already working.
         task = asyncio.create_task(agent.ask(self.s, question))
         started = time.monotonic()
@@ -415,6 +444,8 @@ PROMPTS: dict[str, str] = {
     "note-again":    "Another note? Say it after the tone, or just hang up.",
     "note-empty":    "I didn't get a note. Goodbye.",
     "acknowledged":  "Acknowledged. I won't call again about this one. Goodbye.",
+    "confirm-agent": "I'm not sure about that one. Should I find out? Say yes, or press 1.",
+    "okay-dropped":  "Okay, I'll leave it.",
 }
 
 

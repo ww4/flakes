@@ -29,6 +29,7 @@ class Reply:
     text: str
     hangup: bool = False
     style: str = "conversational"   # "announce" -> the announcement voice (audio.say)
+    silent: bool = False            # nothing to play (e.g. a declined agent call); glue still follows
 
 
 # Ordered: first match wins. Patterns are matched against the lowercased,

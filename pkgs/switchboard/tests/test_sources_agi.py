@@ -193,3 +193,41 @@ def test_first_up_all_dead_is_an_audio_error(tmp_path: Path) -> None:
     s = Settings(state_dir=tmp_path, connect_timeout_s=1.0)
     with pytest.raises(audio.AudioError, match="no backend reachable"):
         asyncio.run(audio._first_up(s, ["http://127.0.0.1:1", "http://127.0.0.1:2"], "/inference", json={}))
+
+
+def test_confirm_agent_yes_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 1 during the read-back, a 1 during the prompt, a 1 during the
+    answer window, or a spoken yes all proceed; 'no' and silence do not."""
+    from switchboard import agi as agi_mod, audio
+
+    s = Settings(state_dir=tmp_path)
+    (tmp_path / "in").mkdir(); (tmp_path / "out").mkdir()
+    board = agi_mod.Switchboard(s)
+
+    async def fake_say(settings, text, dst, style="conversational"):
+        p = dst.with_name(dst.name + ".sln16"); p.write_bytes(b"\x00" * 100); return p
+
+    monkeypatch.setattr(audio, "say", fake_say)
+
+    def run(lines, transcript=""):
+        async def fake_transcribe(settings, wav):
+            return transcript
+        monkeypatch.setattr(audio, "transcribe", fake_transcribe)
+
+        async def go():
+            fake = FakeAsterisk(lines)
+            call = agi_mod.Call(fake.reader, fake.writer)  # type: ignore[arg-type]
+            await call.handshake()
+            # RECORD FILE needs a file on disk to count as "heard"
+            (tmp_path / "in" / "x-0y.wav16").write_bytes(b"\x00" * 20000)
+            call.env["agi_uniqueid"] = "x"
+            return await board.confirm_agent(call, "what is on my schedule", 0), fake.sent
+
+        return asyncio.run(go())
+
+    assert run(["", "200 result=49 endpos=1"])[0] is True                                  # 1 during read-back
+    assert run(["", "200 result=0 endpos=1", "200 result=49 endpos=1"])[0] is True         # 1 during the prompt
+    assert run(["", "200 result=0 endpos=1", "200 result=0 endpos=1", "200 result=0 (dtmf) endpos=1"])[0] is True
+    assert run(["", "200 result=0 endpos=1", "200 result=0 endpos=1", "200 result=0 (timeout) endpos=1"], "yeah go ahead")[0] is True
+    assert run(["", "200 result=0 endpos=1", "200 result=0 endpos=1", "200 result=0 (timeout) endpos=1"], "no, never mind")[0] is False
+    assert run(["", "200 result=0 endpos=1", "200 result=0 endpos=1", "200 result=0 (timeout) endpos=1"], "")[0] is False
