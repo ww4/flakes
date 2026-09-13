@@ -298,17 +298,17 @@ async def _btc_nodes(s: Settings) -> str:
 
 
 async def _btc_stats(s: Settings) -> str:
-    """Everything, in the order Chris asked: price and 24 h move, ATH, difficulty, nodes, then tip and fees."""
+    """Everything, in the order Chris asked: price and 24 h move, ATH, difficulty, nodes, then block height and fees."""
     b, st = await asyncio.gather(sources.bitcoin(s), sources.bitcoin_stats(s))
     return " ".join([
         _price_sentence(b), _ath_sentence(b, st, dt.date.today()), _difficulty_sentence(st), _nodes_sentence(st),
-        f"The chain tip is block {b.height:,}.", await _btc_fees(s),
+        f"The block height is {b.height:,}.", await _btc_fees(s),
     ])
 
 
 async def _btc_block(s: Settings) -> str:
     b = await sources.bitcoin(s)
-    return f"The chain tip is block {b.height:,}."
+    return f"The block height is {b.height:,}."
 
 
 async def _btc_fees(s: Settings) -> str:

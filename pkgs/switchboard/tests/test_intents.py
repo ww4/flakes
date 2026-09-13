@@ -141,7 +141,7 @@ def test_bitcoin_phrasing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sources, "bitcoin_stats", fake_stats)
     s = Settings()
     assert asyncio.run(intents.answer(s, "btc-price")).text == "Bitcoin is 77,118 dollars, as of 20 minutes ago, down 0.3 percent over the last 24 hours."
-    assert asyncio.run(intents.answer(s, "btc-block")).text == "The chain tip is block 966,844."
+    assert asyncio.run(intents.answer(s, "btc-block")).text == "The block height is 966,844."
     assert asyncio.run(intents.answer(s, "btc-fees")).text == "Fees are 1 sat per byte across the board."
     ath = intents._ath_sentence(asyncio.run(fake(s)), asyncio.run(fake_stats(s)), dt.date(2026, 9, 13))
     assert ath == "The all-time high is 124,734 dollars, set on October 6, 2025, 342 days ago. Bitcoin is 38 percent below it."
