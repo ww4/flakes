@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from . import issues, sources, standing
+from . import issues, newsdesk, sources, standing
 from .config import Settings
 from .sources import SourceError
 
@@ -39,6 +39,11 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("note",      re.compile(r"^(please )?((take|make|leave|save) a note|note to self|remind me|remember (that|to))\b")),
     ("hello",     re.compile(r"^(hi|hello|hey|hey there|good (morning|afternoon|evening))( there)?( gromit| switchboard)?$")),
     ("help",      re.compile(r"\b(help|what can (you|i) (do|ask|say)|options|menu)\b")),
+    # The newsletter. "more about X" / "next" are handled in the AGI (they
+    # need the caller's words and per-call position); route() only names them.
+    ("news:next",  re.compile(r"^(next|next (one|story|item)|skip|go on|keep going)$")),
+    ("news:more",  re.compile(r"^((tell me |give me )?(some )?(more|details?|the detail)( about| on)? |(tell me |what) about |expand on |go deeper on )\S")),
+    ("news",       re.compile(r"\b(what'?s new|the news|headlines|newsletter|news ?desk|today'?s (news|edition)|latest edition)\b")),
     ("notifications", re.compile(r"\b(notifications?|ntfy|pushes|what (have|did) you (sent|send|pushed|push)( me)?)\b")),
     ("issues",    re.compile(r"\b(issues?|problems?|what'?s wrong|warnings?|critical)\b")),
     ("incidents", re.compile(r"\b(incident|anything (wrong|broken|happen)|what (happened|broke|went wrong)|alerts?)\b")),
@@ -219,6 +224,13 @@ async def _notifications(s: Settings) -> str:
     return _notifications_text(await sources.ntfy_recent(s), s.notifications_hours, _time.time())
 
 
+async def _news(s: Settings) -> str:
+    ed = newsdesk.load(s)
+    if ed is None or not ed.items:
+        return "I couldn't find a newsdesk edition."
+    return newsdesk.headlines(ed)
+
+
 async def _issues(s: Settings) -> str:
     text = issues.spoken(await issues.current(s))
     return text or "No warnings or criticals right now."
@@ -365,7 +377,7 @@ async def _time(s: Settings) -> str:
 
 
 async def _help(s: Settings) -> str:
-    return ("You can ask for status, issues, recent notifications, temperatures, disk space, the weather today or tomorrow, bitcoin, or the time. "
+    return ("You can ask for status, issues, recent notifications, what's new in the newsletter, temperatures, disk space, the weather today or tomorrow, bitcoin, or the time. "
             "Anything else I will pass to the agent, which takes a little longer. Say goodbye to hang up.")
 
 
@@ -387,6 +399,7 @@ _HANDLERS: dict[str, Handler] = {
     "status": _status,
     "issues": _issues,
     "notifications": _notifications,
+    "news": _news,
     "incidents": _incidents,
     "temps": _temps,
     "disk": _disk,
@@ -430,7 +443,7 @@ FIXED_PHRASES: list[str] = [
     "Nothing from the sentinel in the last 24 hours.",
     "No warnings or criticals right now.",
     "Prometheus has no filesystem data for the paths I watch.",
-    "You can ask for status, issues, recent notifications, temperatures, disk space, the weather today or tomorrow, bitcoin, or the time.",
+    "You can ask for status, issues, recent notifications, what's new in the newsletter, temperatures, disk space, the weather today or tomorrow, bitcoin, or the time.",
     "Anything else I will pass to the agent, which takes a little longer.",
     "Say goodbye to hang up.",
     "Goodbye.",
@@ -441,4 +454,4 @@ FIXED_PHRASES: list[str] = [
 ]
 
 # Intents whose answers the prewarm timer pre-renders (read-only, cheap).
-LIVE_INTENTS: list[str] = ["status", "issues", "notifications", "temps", "disk", "incidents", "weather:today", "weather:tomorrow", "weather:both", "btc-price", "btc-block", "btc-fees", "btc-ath", "btc-diff", "btc-nodes", "btc-stats"]
+LIVE_INTENTS: list[str] = ["status", "issues", "notifications", "news", "temps", "disk", "incidents", "weather:today", "weather:tomorrow", "weather:both", "btc-price", "btc-block", "btc-fees", "btc-ath", "btc-diff", "btc-nodes", "btc-stats"]

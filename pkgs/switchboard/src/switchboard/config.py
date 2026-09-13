@@ -105,6 +105,10 @@ class Settings(BaseSettings):
     ntfy_pass: str = Field(default="", validation_alias=AliasChoices("SWITCHBOARD_NTFY_PASS", "HOMEPAGE_VAR_NTFY_PASS"))
     notifications_hours: float = 24.0
 
+    # --- the newsletter (newsdesk.py): the latest edition, as the newsdesk wrote it ---
+    newsdesk_edition: Path = Path("/var/lib/newsdesk/edition.reader.md")
+    newsdesk_publish: Path = Path("/var/lib/newsdesk/last-publish.json")
+
     # --- bitcoin: the local mempool.space backend (services/mempool.nix). The
     # node has no fiat price; mempool's backend polls a price feed every few
     # minutes and serves it here along with the tip and fee estimates.

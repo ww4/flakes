@@ -30,7 +30,7 @@ from pathlib import Path
 
 import httpx
 
-from . import agent, agi, audio, escalation, intents, outbound, standing
+from . import agent, agi, audio, escalation, intents, newsdesk, outbound, standing
 from .config import Settings
 
 
@@ -116,6 +116,11 @@ async def _main(argv: list[str]) -> int:
                 stored = standing.load(settings, q.name)
                 if stored is not None:
                     phrases.append(standing.spoken(stored))
+            # The newsletter: every story's paragraph, so "more about" and
+            # "next" are instant. Only a new edition costs anything.
+            ed = newsdesk.load(settings)
+            if ed is not None:
+                phrases.extend(it.spoken_detail for it in ed.items)
         rendered = 0
         for i, phrase in enumerate(phrases):
             before = sum(1 for _ in settings.cache_dir.rglob("*.sln16"))

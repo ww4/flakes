@@ -25,7 +25,7 @@ from pathlib import Path
 
 import datetime as dt
 
-from . import agent, audio, intents, issues, notes, outbound, standing
+from . import agent, audio, intents, issues, newsdesk, notes, outbound, standing
 from .config import Settings
 
 log = logging.getLogger(__name__)
@@ -121,6 +121,7 @@ class Switchboard:
     def __init__(self, settings: Settings) -> None:
         self.s = settings
         self.background: set[asyncio.Task[None]] = set()
+        self.news_pos: dict[str, int] = {}   # call id -> index of the last story read
 
     def prompt(self, name: str) -> str:
         return str(self.s.prompts / name)
@@ -150,6 +151,7 @@ class Switchboard:
             except Hangup:
                 pass
         finally:
+            self.news_pos.pop(call.id, None)
             await call.hangup()
             writer.close()
 
@@ -211,6 +213,8 @@ class Switchboard:
                     reply = await self.slow(call, q.ask, store_as=q)
                     if reply is None:
                         return
+            elif intent in ("news:more", "news:next"):
+                reply = self.news_detail(call, intent, text)
             elif intent == "note":
                 # Note said in the same breath ("take a note: ...")? Use it.
                 # Otherwise prompt and record one with the note's longer window.
@@ -236,6 +240,35 @@ class Switchboard:
                 return
             await call.play(self.prompt(f"glue-{random.randrange(len(GLUE))}"))
         await call.play(self.prompt("goodbye"))
+
+    # ------------------------------------------------------------ the newsletter
+
+    def news_detail(self, call: Call, intent: str, text: str) -> intents.Reply:
+        """'more about X' finds the item; 'next' steps from the last one read.
+        Position is per call (self.news_pos[call.id])."""
+        ed = newsdesk.load(self.s)
+        if ed is None or not ed.items:
+            return intents.Reply(text="I couldn't find a newsdesk edition.")
+        pos = self.news_pos.get(call.id, -1)
+        if intent == "news:next":
+            pos += 1
+            if pos >= len(ed.items):
+                self.news_pos[call.id] = -1
+                return intents.Reply(text="That was the last story.")
+            item = ed.items[pos]
+        else:
+            query = newsdesk.more_query(text) or text
+            item, close = newsdesk.find(ed, query)
+            if item is None:
+                return intents.Reply(text="I don't have a story about that in this edition.")
+            if close:
+                # Ambiguous: name the contenders and let the caller pick (their next "more about" narrows it).
+                names = " Or: ".join([item.headline] + [c.headline for c in close])
+                return intents.Reply(text=f"A couple of stories match. {names} Which one?")
+            pos = ed.items.index(item)
+        self.news_pos[call.id] = pos
+        lane = f"{item.lane}. " if intent == "news:next" else ""
+        return intents.Reply(text=f"{lane}{item.spoken_detail}")
 
     # ------------------------------------------------------------ notes
 
