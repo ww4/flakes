@@ -226,29 +226,105 @@ async def nws_forecast(settings: Settings) -> list[Period]:
 class Bitcoin:
     usd: int
     price_age_s: float
+    usd_24h_ago: int | None   # from the backend's hourly price history
     height: int
     fee_fast: int      # sat/vB
     fee_hour: int
     fee_economy: int
 
+    @property
+    def change_24h_pct(self) -> float | None:
+        if not self.usd_24h_ago:
+            return None
+        return (self.usd - self.usd_24h_ago) / self.usd_24h_ago * 100
+
+
+@dataclass(frozen=True)
+class BitcoinStats:
+    ath_usd: int
+    ath_date: str            # YYYY-MM-DD
+    retarget_date: str       # ISO 8601 UTC from the backend
+    retarget_change_pct: float
+    retarget_blocks: int
+    nodes: int | None        # reachable nodes, or None if btcnodes was unreachable
+    nodes_age_s: float | None
+
+
+async def _mempool_get(client: httpx.AsyncClient, settings: Settings, path: str, params: dict | None = None):
+    resp = await client.get(f"{settings.mempool_url}{path}", params=params)
+    resp.raise_for_status()
+    return int(resp.text) if path == "/api/blocks/tip/height" else resp.json()
+
 
 async def bitcoin(settings: Settings) -> Bitcoin:
-    async def get(path: str):
-        resp = await client.get(f"{settings.mempool_url}{path}")
-        resp.raise_for_status()
-        return resp.json() if path != "/api/blocks/tip/height" else int(resp.text)
-
+    """Price (+24 h ago), tip and fees — everything local, ~0.1 s."""
+    day_ago = int(time.time()) - 86400
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            prices, height, fees = await asyncio.gather(
-                get("/api/v1/prices"), get("/api/blocks/tip/height"), get("/api/v1/fees/recommended"))
+            prices, height, fees, hist = await asyncio.gather(
+                _mempool_get(client, settings, "/api/v1/prices"),
+                _mempool_get(client, settings, "/api/blocks/tip/height"),
+                _mempool_get(client, settings, "/api/v1/fees/recommended"),
+                _mempool_get(client, settings, "/api/v1/historical-price", {"currency": "USD", "timestamp": day_ago}),
+            )
     except (httpx.HTTPError, ValueError) as exc:
         raise SourceError(f"mempool: {exc}") from exc
     try:
+        pts = hist.get("prices") or []
+        usd_24h = int(pts[0]["USD"]) if pts and pts[0].get("USD") else None
         return Bitcoin(
-            usd=int(prices["USD"]), price_age_s=max(0.0, time.time() - float(prices["time"])),
+            usd=int(prices["USD"]), price_age_s=max(0.0, time.time() - float(prices["time"])), usd_24h_ago=usd_24h,
             height=int(height), fee_fast=int(fees["fastestFee"]), fee_hour=int(fees["hourFee"]),
             fee_economy=int(fees["economyFee"]),
+        )
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        raise SourceError(f"mempool: unexpected shape: {exc}") from exc
+
+
+async def _btcnodes(settings: Settings) -> tuple[int, float] | None:
+    """(reachable nodes, age of the snapshot) — cached; None if the site is down."""
+    cache = settings.state_dir / "cache" / "btcnodes.json"
+    try:
+        if time.time() - cache.stat().st_mtime < settings.nodes_cache_s:
+            d = json.loads(cache.read_text())
+            return int(d["total_nodes"]), time.time() - float(d["timestamp"])
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers={"User-Agent": "gromit-switchboard"}) as client:
+            resp = await client.get(settings.btcnodes_url)
+        resp.raise_for_status()
+        snap = resp.json()["results"][0]
+        d = {"total_nodes": int(snap["total_nodes"]), "timestamp": float(snap["timestamp"])}
+    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
+        log.warning("btcnodes: %s", exc)
+        return None
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cache.with_suffix(".json.part"); tmp.write_text(json.dumps(d)); tmp.replace(cache)
+    return d["total_nodes"], time.time() - d["timestamp"]
+
+
+async def bitcoin_stats(settings: Settings) -> BitcoinStats:
+    """ATH (from the backend's full daily history), next difficulty adjustment, node count."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            hist, diff = await asyncio.gather(
+                _mempool_get(client, settings, "/api/v1/historical-price", {"currency": "USD"}),
+                _mempool_get(client, settings, "/api/v1/difficulty-adjustment"),
+            )
+    except (httpx.HTTPError, ValueError) as exc:
+        raise SourceError(f"mempool: {exc}") from exc
+    nodes = await _btcnodes(settings)
+    try:
+        pts = [p for p in hist["prices"] if p.get("USD")]
+        top = max(pts, key=lambda p: p["USD"])
+        import datetime as _dt
+        return BitcoinStats(
+            ath_usd=int(top["USD"]), ath_date=_dt.datetime.fromtimestamp(int(top["time"]), _dt.timezone.utc).date().isoformat(),
+            retarget_date=diff["estimatedRetargetDate"] if isinstance(diff["estimatedRetargetDate"], str)
+                          else _dt.datetime.fromtimestamp(diff["estimatedRetargetDate"] / 1000, _dt.timezone.utc).isoformat(),
+            retarget_change_pct=float(diff["difficultyChange"]), retarget_blocks=int(diff["remainingBlocks"]),
+            nodes=nodes[0] if nodes else None, nodes_age_s=nodes[1] if nodes else None,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise SourceError(f"mempool: unexpected shape: {exc}") from exc

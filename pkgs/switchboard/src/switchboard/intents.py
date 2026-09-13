@@ -10,6 +10,7 @@ slow path (agent.py).
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import logging
 import re
@@ -46,7 +47,11 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("temps",     re.compile(r"\b(temp|temperature|how hot|thermal|cool|warm|drives? temp)\w*")),
     ("disk",      re.compile(r"\b(disk|storage|space|room|full|free|capacity|pool)\b")),
     ("time",      re.compile(r"\b(what time|the time|what day|the date|today'?s date)\b")),
-    # Bitcoin: fees and block height before the general price rule.
+    # Bitcoin: the specific questions before the general price rule; "stats" first.
+    ("btc-stats", re.compile(r"\b(bitcoin|btc) (stat(istic)?s|summary|rundown|numbers|report|overview)\b|\b(all|everything) (about|on) bitcoin\b")),
+    ("btc-ath",   re.compile(r"\b(all[- ]time high|ath|record high|highest (ever|price))\b")),
+    ("btc-diff",  re.compile(r"\bdifficulty\b|\bretarget\b")),
+    ("btc-nodes", re.compile(r"\bnodes?\b.*\b(online|running|reachable|are there)\b|\bhow many nodes\b|\bnode count\b")),
     ("btc-fees",  re.compile(r"\b(fee|fees|sat(s|oshi)?s? per (v?byte|vb))\b")),
     ("btc-block", re.compile(r"\b(block ?height|latest block|current block|what block|tip)\b")),
     ("btc-price", re.compile(r"\b(bitcoin|btc|coin price|price of bitcoin)\b")),
@@ -239,11 +244,66 @@ def _dollars(n: int) -> str:
     return f"{n:,} dollars"
 
 
-async def _btc_price(s: Settings) -> str:
-    b = await sources.bitcoin(s)
+def _price_sentence(b: "sources.Bitcoin") -> str:
     age = round(b.price_age_s / 60)
     when = "just now" if age < 1 else ("a minute ago" if age == 1 else f"{age} minutes ago")
-    return f"Bitcoin is {_dollars(b.usd)}, as of {when}."
+    move = ""
+    if b.change_24h_pct is not None:
+        pct = b.change_24h_pct
+        move = f", {'up' if pct >= 0 else 'down'} {abs(pct):.1f} percent over the last 24 hours"
+    return f"Bitcoin is {_dollars(b.usd)}, as of {when}{move}."
+
+
+async def _btc_price(s: Settings) -> str:
+    return _price_sentence(await sources.bitcoin(s))
+
+
+def _spoken_date(iso_date: str) -> str:
+    d = dt.date.fromisoformat(iso_date[:10])
+    return d.strftime("%B %-d, %Y")
+
+
+def _ath_sentence(b: "sources.Bitcoin", st: "sources.BitcoinStats", today: dt.date) -> str:
+    days = (today - dt.date.fromisoformat(st.ath_date)).days
+    below = (st.ath_usd - b.usd) / st.ath_usd * 100
+    ago = "today" if days == 0 else ("yesterday" if days == 1 else f"{days} days ago")
+    rel = f" Bitcoin is {below:.0f} percent below it." if below >= 0.5 else " Bitcoin is at a new high."
+    return f"The all-time high is {_dollars(st.ath_usd)}, set on {_spoken_date(st.ath_date)}, {ago}.{rel}"
+
+
+def _difficulty_sentence(st: "sources.BitcoinStats") -> str:
+    when = dt.datetime.fromisoformat(st.retarget_date.replace("Z", "+00:00")).astimezone()
+    direction = "up" if st.retarget_change_pct >= 0 else "down"
+    return (f"The next difficulty adjustment is expected {when.strftime('%A, %B %-d')}, in {st.retarget_blocks:,} blocks, "
+            f"{direction} {abs(st.retarget_change_pct):.1f} percent.")
+
+
+def _nodes_sentence(st: "sources.BitcoinStats") -> str:
+    if st.nodes is None:
+        return "I couldn't reach the node count right now."
+    return f"{st.nodes:,} reachable bitcoin nodes are online."
+
+
+async def _btc_ath(s: Settings) -> str:
+    b, st = await asyncio.gather(sources.bitcoin(s), sources.bitcoin_stats(s))
+    return _ath_sentence(b, st, dt.date.today())
+
+
+async def _btc_diff(s: Settings) -> str:
+    return _difficulty_sentence(await sources.bitcoin_stats(s))
+
+
+async def _btc_nodes(s: Settings) -> str:
+    return _nodes_sentence(await sources.bitcoin_stats(s))
+
+
+async def _btc_stats(s: Settings) -> str:
+    """Everything, in the order Chris asked: price and 24 h move, ATH, difficulty, nodes, then tip and fees."""
+    b, st = await asyncio.gather(sources.bitcoin(s), sources.bitcoin_stats(s))
+    return " ".join([
+        _price_sentence(b), _ath_sentence(b, st, dt.date.today()), _difficulty_sentence(st), _nodes_sentence(st),
+        f"The chain tip is block {b.height:,}.", await _btc_fees(s),
+    ])
 
 
 async def _btc_block(s: Settings) -> str:
@@ -292,6 +352,10 @@ _HANDLERS: dict[str, Handler] = {
     "btc-price": _btc_price,
     "btc-block": _btc_block,
     "btc-fees": _btc_fees,
+    "btc-ath": _btc_ath,
+    "btc-diff": _btc_diff,
+    "btc-nodes": _btc_nodes,
+    "btc-stats": _btc_stats,
     "weather:today": _weather("today"),
     "weather:tomorrow": _weather("tomorrow"),
     "weather:both": _weather("both"),
@@ -335,4 +399,4 @@ FIXED_PHRASES: list[str] = [
 ]
 
 # Intents whose answers the prewarm timer pre-renders (read-only, cheap).
-LIVE_INTENTS: list[str] = ["status", "issues", "temps", "disk", "incidents", "weather:today", "weather:tomorrow", "weather:both", "btc-price", "btc-block", "btc-fees"]
+LIVE_INTENTS: list[str] = ["status", "issues", "temps", "disk", "incidents", "weather:today", "weather:tomorrow", "weather:both", "btc-price", "btc-block", "btc-fees", "btc-ath", "btc-diff", "btc-nodes", "btc-stats"]

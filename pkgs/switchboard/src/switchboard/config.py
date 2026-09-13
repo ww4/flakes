@@ -98,6 +98,10 @@ class Settings(BaseSettings):
     # node has no fiat price; mempool's backend polls a price feed every few
     # minutes and serves it here along with the tip and fee estimates.
     mempool_url: str = "http://127.0.0.1:8081"
+    # Reachable-node count: bitnodes (redirects to btcnodes.io). The one
+    # external call in the bitcoin set; cached an hour, absent if unreachable.
+    btcnodes_url: str = "https://btcnodes.io/api/v1/snapshots/?limit=1"
+    nodes_cache_s: float = 3600.0
 
     # --- weather: the NWS gridpoint for Owenton, KY (public, county-level) ---
     nws_forecast_url: str = "https://api.weather.gov/gridpoints/ILN/26,12/forecast"
