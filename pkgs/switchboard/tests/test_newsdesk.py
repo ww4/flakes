@@ -45,7 +45,7 @@ def test_parse_structure() -> None:
 def test_headlines_text() -> None:
     ed = newsdesk.parse(EDITION, "2026-09-04-longread")   # a Friday well in the past: "Friday's", not "yesterday's"
     text = newsdesk.headlines(ed)
-    assert text.startswith("Friday's long read, 6 stories. What happened: AI agents attacked RubyGems")
+    assert text.startswith("Friday's long read, 6 stories. Press any key to stop me at a story. What happened: AI agents attacked RubyGems")
     assert "Bitcoin: Adam Gibson wants coinjoins" in text
     assert "Nothing today in Network and Agrarian." in text
     assert text.endswith("Say more about and a topic for the detail, or next to go through them.")
@@ -83,3 +83,27 @@ def test_more_query_extraction_and_routing() -> None:
     assert intents.route("read me the newsletter") == "news"
     assert intents.route("what's the status") == "status"      # "what about"-style phrasings must not steal these
     assert intents.route("what's the weather tomorrow") == "weather:tomorrow"
+
+
+def test_segments_carry_item_indexes_and_the_stop_hint() -> None:
+    ed = newsdesk.parse(EDITION, "2026-09-04-longread")
+    segs = newsdesk.segments(ed)
+    assert segs[0] == (None, "Friday's long read, 6 stories. Press any key to stop me at a story.")
+    assert segs[1][0] == 0 and segs[1][1].startswith("What happened: AI agents")
+    assert segs[2][0] == 1 and segs[2][1].startswith("Bitcoin: Adam Gibson")
+    assert segs[3][0] == 2 and not segs[3][1].startswith("Bitcoin")      # same lane: no lane prefix
+    assert segs[-1] == (None, "Say more about and a topic for the detail, or next to go through them.")
+    assert newsdesk.headlines(ed) == " ".join(t for _, t in segs)
+    assert intents.route("more") == "news:this"
+    assert intents.route("tell me more") == "news:this"
+    assert intents.route("more about the tv") == "news:more"
+
+
+def test_stream_file_reports_the_interrupting_key() -> None:
+    import asyncio
+    from tests.test_sources_agi import drive
+
+    key, call, fake = drive(["", "200 result=49 endpos=8000"], lambda c: c.play("/x", escape="0123456789*#"))
+    assert key == "1" and fake.sent == ['STREAM FILE /x "0123456789*#"']
+    key, call, fake = drive(["", "200 result=0 endpos=20155"], lambda c: c.play("/x", escape="0123456789*#"))
+    assert key is None

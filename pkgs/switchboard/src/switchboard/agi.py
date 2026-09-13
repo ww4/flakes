@@ -94,8 +94,14 @@ class Call:
     async def answer(self) -> None:
         await self.command("ANSWER")
 
-    async def play(self, prompt_no_ext: str) -> None:
-        await self.command("STREAM FILE", prompt_no_ext, '""')
+    ANY_KEY = "0123456789*#"
+
+    async def play(self, prompt_no_ext: str, escape: str = "") -> str | None:
+        """Play a file; with `escape` digits, return the digit that interrupted
+        it (or None if it played through). Chris, 2026-09-13: any key stops an
+        answer — a long one otherwise has to be hung up on."""
+        r = await self.command("STREAM FILE", prompt_no_ext, f'"{escape}"')
+        return chr(r.result) if r.result > 0 else None
 
     # Asterisk names the file <path>.<format>: "wav16" -> ".wav16", not ".wav".
     # (2026-09-12: three calls hung up after the beep because converse()
@@ -213,7 +219,11 @@ class Switchboard:
                     reply = await self.slow(call, q.ask, store_as=q)
                     if reply is None:
                         return
-            elif intent in ("news:more", "news:next"):
+            elif intent == "news":
+                reply = await self.news_headlines(call)
+                if reply is None:
+                    continue      # played through (or stopped and announced); glue already handled
+            elif intent in ("news:more", "news:next", "news:this"):
                 reply = self.news_detail(call, intent, text)
             elif intent == "note":
                 # Note said in the same breath ("take a note: ...")? Use it.
@@ -235,13 +245,34 @@ class Switchboard:
                 if reply is None:
                     return   # went to call-back mode; the line has been released
             out = await audio.say(self.s, reply.text, self.s.outbox / f"{call.id}-{turn}", style=reply.style)  # type: ignore[arg-type]
-            await call.play(str(out.with_name(out.name.removesuffix(out.suffix))))
+            await call.play(str(out.with_name(out.name.removesuffix(out.suffix))), escape=Call.ANY_KEY)
             if reply.hangup:
                 return
             await call.play(self.prompt(f"glue-{random.randrange(len(GLUE))}"))
         await call.play(self.prompt("goodbye"))
 
     # ------------------------------------------------------------ the newsletter
+
+    async def news_headlines(self, call: Call) -> intents.Reply | None:
+        """The headline pass, one story per file, so a key press stops it AT
+        that story: 'Stopped at: <headline>.' — a bare 'more' then reads it."""
+        ed = newsdesk.load(self.s)
+        if ed is None or not ed.items:
+            return intents.Reply(text="I couldn't find a newsdesk edition.")
+        for k, (idx, text) in enumerate(newsdesk.segments(ed)):
+            out = await audio.say(self.s, text, self.s.outbox / f"{call.id}-news{k}")
+            key = await call.play(str(out.with_name(out.name.removesuffix(out.suffix))), escape=Call.ANY_KEY)
+            if key is not None:
+                if idx is not None:
+                    self.news_pos[call.id] = idx
+                    stop = await audio.say(self.s, f"Stopped at: {ed.items[idx].headline} Say more for the detail, or next.", self.s.outbox / f"{call.id}-newsstop")
+                    await call.play(str(stop.with_name(stop.name.removesuffix(stop.suffix))))
+                else:
+                    await call.play(self.prompt(f"glue-{random.randrange(len(GLUE))}"))
+                return None
+        self.news_pos[call.id] = -1
+        await call.play(self.prompt(f"glue-{random.randrange(len(GLUE))}"))
+        return None
 
     def news_detail(self, call: Call, intent: str, text: str) -> intents.Reply:
         """'more about X' finds the item; 'next' steps from the last one read.
@@ -255,6 +286,10 @@ class Switchboard:
             if pos >= len(ed.items):
                 self.news_pos[call.id] = -1
                 return intents.Reply(text="That was the last story.")
+            item = ed.items[pos]
+        elif intent == "news:this":
+            if pos < 0:
+                return intents.Reply(text="Which story? Say more about and a topic, or what's new for the headlines.")
             item = ed.items[pos]
         else:
             query = newsdesk.more_query(text) or text

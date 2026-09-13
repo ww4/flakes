@@ -42,6 +42,8 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     # The newsletter. "more about X" / "next" are handled in the AGI (they
     # need the caller's words and per-call position); route() only names them.
     ("news:next",  re.compile(r"^(next|next (one|story|item)|skip|go on|keep going)$")),
+    # bare "more" = the story I was just hearing (after a key press or a "next")
+    ("news:this",  re.compile(r"^((tell me )?more|(the )?details?|more detail|that one|go deeper|go on with that|read (that|it))$")),
     ("news:more",  re.compile(r"^((tell me |give me )?(some )?(more|details?|the detail)( about| on)? |(tell me |what) about |expand on |go deeper on )\S")),
     ("news",       re.compile(r"\b(what'?s new|the news|headlines|newsletter|news ?desk|today'?s (news|edition)|latest edition)\b")),
     ("notifications", re.compile(r"\b(notifications?|ntfy|pushes|what (have|did) you (sent|send|pushed|push)( me)?)\b")),

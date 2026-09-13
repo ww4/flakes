@@ -118,20 +118,30 @@ def load(settings: Settings) -> Edition | None:
 
 # ---------------------------------------------------------------- speaking
 
-def headlines(ed: Edition) -> str:
+def segments(ed: Edition) -> list[tuple[int | None, str]]:
+    """The headline pass as (item index or None, spoken text) pieces. The AGI
+    plays them one at a time so a key press knows WHICH story it landed on;
+    headlines() joins the same pieces for the bench and the pre-warm (same
+    sentences, so the cache serves both)."""
     n = len(ed.items)
-    parts = [f"{ed.spoken_name}, {n} stor{'y' if n == 1 else 'ies'}."]
+    out: list[tuple[int | None, str]] = [(None, f"{ed.spoken_name}, {n} stor{'y' if n == 1 else 'ies'}. Press any key to stop me at a story.")]
     lane = None
-    for it in ed.items:
+    for i, it in enumerate(ed.items):
+        head = it.headline if it.headline.endswith((".", "!", "?")) else it.headline + "."
         if it.lane != lane:
             lane = it.lane
-            parts.append(f"{lane}:")
-        parts.append(it.headline if it.headline.endswith((".", "!", "?")) else it.headline + ".")
+            out.append((i, f"{lane}: {head}"))
+        else:
+            out.append((i, head))
     if ed.nothing:
         lanes = list(ed.nothing)
-        parts.append("Nothing today in " + (" and ".join(lanes) if len(lanes) <= 2 else ", ".join(lanes[:-1]) + ", and " + lanes[-1]) + ".")
-    parts.append("Say more about and a topic for the detail, or next to go through them.")
-    return " ".join(parts)
+        out.append((None, "Nothing today in " + (" and ".join(lanes) if len(lanes) <= 2 else ", ".join(lanes[:-1]) + ", and " + lanes[-1]) + "."))
+    out.append((None, "Say more about and a topic for the detail, or next to go through them."))
+    return out
+
+
+def headlines(ed: Edition) -> str:
+    return " ".join(text for _, text in segments(ed))
 
 
 # ---------------------------------------------------------------- matching
