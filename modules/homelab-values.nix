@@ -254,7 +254,11 @@
   # Fire precursor as Prometheus rules (the Grafana rule of the same name
   # only reaches ntfy). Thresholds from gromit-temp-monitoring: HDD crit 58,
   # CPU crit 85, NVMe crit 75. `for` keeps a one-sample spike from ringing.
-  services.prometheus.rules = [ (builtins.toJSON {
+  # Own file, not `services.prometheus.rules`: that option concatenates its
+  # entries into ONE file, and a second JSON document there is a multi-doc
+  # YAML Prometheus refuses ("Multiple document yaml rules files are not
+  # supported") — it loaded riverwatch and silently dropped this group.
+  services.prometheus.ruleFiles = [ (pkgs.writeText "physical-rules.json" (builtins.toJSON {
     groups = [{
       name = "physical";
       rules = [
@@ -278,7 +282,7 @@
         }
       ];
     }];
-  }) ];
+  })) ];
 
   # Prometheus site overrides: 110y retention covers the riverwatch USGS
   # backfill to the gauge's 1925 install; the 16m lookback keeps a
