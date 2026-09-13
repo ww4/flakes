@@ -51,6 +51,11 @@ in
       dependsOn = [ "mempool-db" ];
       environment = {
         MEMPOOL_BACKEND = "electrum";
+        # Price feed: the default is ONE averaged fetch per hour, on the hour
+        # (log: "Latest BTC fiat averaged price" at 14:00, 15:00, 16:00). The
+        # phone switchboard reads /api/v1/prices for "what's bitcoin at", so
+        # every five minutes — a handful of public-ticker requests per fetch.
+        MEMPOOL_PRICE_UPDATES_PER_HOUR = "12";
         ELECTRUM_HOST   = "172.17.0.1";              # docker0 host gateway
         ELECTRUM_PORT   = "50001";
         ELECTRUM_TLS_ENABLED = "false";
