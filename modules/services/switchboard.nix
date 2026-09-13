@@ -39,6 +39,7 @@ let
     SWITCHBOARD_KOKORO_URLS = builtins.toJSON (cfg.remoteKokoroUrls ++ [ "http://127.0.0.1:8880" ]);
     SWITCHBOARD_AGI_PORT = toString cfg.agiPort;
     SWITCHBOARD_CALLBACK_CHANNEL = cfg.callbackChannel;
+    SWITCHBOARD_HOOK_PORT = toString cfg.hookPort;
     SWITCHBOARD_GREETING = cfg.greeting;
     SWITCHBOARD_AGENT_HINTS = cfg.agentHints;
     SWITCHBOARD_STANDING_JSON = if cfg.standing == null then "" else builtins.toJSON cfg.standing;
@@ -145,6 +146,17 @@ in
       default = lib.length switchboard.catalogue.order;
     };
 
+    hookPort = lib.mkOption {
+      type = lib.types.port;
+      default = 4575;
+      description = "Loopback port of the escalation webhook (Alertmanager -> phone call; the dialplan's ack POSTs here).";
+    };
+    promptsDir = lib.mkOption {
+      type = lib.types.path;
+      readOnly = true;
+      default = "${stateDir}/prompts";
+    };
+
     callbackChannel = lib.mkOption {
       type = lib.types.str;
       default = "PJSIP/101";
@@ -165,7 +177,27 @@ in
       "d ${stateDir}/cache    0755 claude asterisk 30d"
       "d ${stateDir}/answers  0755 claude asterisk -"
       "d ${stateDir}/notes    0750 claude asterisk 30d"   # note recordings, for recovering a mis-heard word
+      "d ${stateDir}/calls    0755 claude asterisk 90d"   # escalation call records (called / acknowledged)
     ];
+
+    # The physical-hazard tier: Alertmanager posts `tier="physical"` alerts to
+    # this loopback hook; each firing alert rings the callback handset and
+    # asks for a 1 to acknowledge. Separate from the AGI unit so a busy call
+    # never delays an escalation, and so it can be restarted independently.
+    systemd.services.switchboard-hook = {
+      description = "switchboard escalation webhook (Alertmanager -> phone call)";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network.target" ];
+      environment = env // { HOME = "/home/claude"; };
+      serviceConfig = {
+        User = "claude";
+        SupplementaryGroups = [ "asterisk" ];   # writes call files into the spool
+        ExecStart = "${switchboard}/bin/switchboard hook";
+        Restart = "on-failure";
+        RestartSec = 3;
+        UMask = "0022";
+      };
+    };
 
     # Standing questions: every 15 min check the watched sources' fingerprints
     # and re-ask the agent only for the ones that moved (or aged out). Runs

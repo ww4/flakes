@@ -196,6 +196,18 @@
     # they hold until morning. NOT actual river conditions; flood/forecast/
     # rapid-rise alerts are deliberately not routed here.
     extraAlertmanagerRoutes = [
+      # The physical-hazard tier (fire precursor, flood; electrical when there
+      # is something to detect it) RINGS THE PHONE — services/switchboard.nix
+      # serves the hook. The only class allowed to pierce quiet hours (Chris,
+      # 2026-08-19). continue = true so ntfy still gets it; hourly repeats
+      # until acknowledged with a 1 on the call.
+      {
+        matchers = [ ''tier="physical"'' ];
+        receiver = "switchboard-call";
+        continue = true;
+        repeat_interval = "1h";
+        group_wait = "10s";
+      }
       {
         matchers = [ ''alertname="RiverwatchFetchFailing"'' ];
         receiver = "ntfy-noresolve";          # also no "RESOLVED" ping
@@ -227,6 +239,46 @@
     extraPlugins = with pkgs.grafanaPlugins; [ yesoreyeram-infinity-datasource ];
     grafanaOidcSecretFile = config.sops.secrets."grafana-oidc-secret".path;
   };
+
+  # Receivers are a top-level key of the alertmanager `configuration` attrset,
+  # so a host definition REPLACES the library's list rather than appending —
+  # the two library receivers are restated here. (A library option
+  # `extraAlertmanagerReceivers` would be the tidy fix; noted on the board.)
+  services.prometheus.alertmanager.configuration.receivers = [
+    { name = "ntfy";           webhook_configs = [{ url = config.homelab.monitoring.alertWebhookUrl; send_resolved = true; }]; }
+    { name = "ntfy-noresolve"; webhook_configs = [{ url = config.homelab.monitoring.alertWebhookUrl; send_resolved = false; }]; }
+    { name = "switchboard-call";
+      webhook_configs = [{ url = "http://127.0.0.1:${toString config.services.switchboard.hookPort}/alert"; send_resolved = true; }]; }
+  ];
+
+  # Fire precursor as Prometheus rules (the Grafana rule of the same name
+  # only reaches ntfy). Thresholds from gromit-temp-monitoring: HDD crit 58,
+  # CPU crit 85, NVMe crit 75. `for` keeps a one-sample spike from ringing.
+  services.prometheus.rules = [ (builtins.toJSON {
+    groups = [{
+      name = "physical";
+      rules = [
+        { alert = "DriveTemperatureCritical";
+          expr = "gromit_drive_temp_celsius{rotational=\"1\"} >= 58";
+          "for" = "10m";
+          labels = { severity = "critical"; tier = "physical"; };
+          annotations = { summary = "drive {{ $labels.device }} at {{ $value }} degrees, above the 58 degree critical line for ten minutes"; };
+        }
+        { alert = "CpuTemperatureCritical";
+          expr = "max(node_hwmon_temp_celsius{chip=~\"platform_coretemp.*\"}) >= 85";
+          "for" = "5m";
+          labels = { severity = "critical"; tier = "physical"; };
+          annotations = { summary = "CPU at {{ $value }} degrees, above the 85 degree critical line for five minutes"; };
+        }
+        { alert = "NvmeTemperatureCritical";
+          expr = "max(node_hwmon_temp_celsius{chip=~\"nvme.*\"}) >= 75";
+          "for" = "5m";
+          labels = { severity = "critical"; tier = "physical"; };
+          annotations = { summary = "NVMe at {{ $value }} degrees, above the 75 degree critical line for five minutes"; };
+        }
+      ];
+    }];
+  }) ];
 
   # Prometheus site overrides: 110y retention covers the riverwatch USGS
   # backfill to the gauge's 1925 install; the 16m lookback keeps a

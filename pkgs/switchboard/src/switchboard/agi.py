@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import time
 import uuid
@@ -233,6 +234,7 @@ class Switchboard:
             await call.play(str(out.with_name(out.name.removesuffix(out.suffix))))
             if reply.hangup:
                 return
+            await call.play(self.prompt(f"glue-{random.randrange(len(GLUE))}"))
         await call.play(self.prompt("goodbye"))
 
     # ------------------------------------------------------------ notes
@@ -310,6 +312,24 @@ class Switchboard:
         t.add_done_callback(self.background.discard)
 
 
+# Verbal glue after each answer, before the next turn (Chris, 2026-09-13:
+# "say something nice like is there anything else"). Rotated at random;
+# rendered once as prompts glue-0..N.
+GLUE: list[str] = [
+    "Anything else?",
+    "What else would you like to know?",
+    "Is there anything else I can look up?",
+    "What else can I help with?",
+    "Anything else on your mind?",
+    "What's next?",
+    "Anything more?",
+    "Is there something else?",
+    "What else?",
+    "Anything else you'd like to check?",
+    "What else can I tell you?",
+    "Is there anything else you need?",
+]
+
 # The static prompt set, rendered once at service start (cli render-prompts).
 # The greeting comes from Settings (see cli.render_prompts).
 PROMPTS: dict[str, str] = {
@@ -326,6 +346,7 @@ PROMPTS: dict[str, str] = {
     "note-go-ahead": "Go ahead.",
     "note-again":    "Another note? Say it after the tone, or just hang up.",
     "note-empty":    "I didn't get a note. Goodbye.",
+    "acknowledged":  "Acknowledged. I won't call again about this one. Goodbye.",
 }
 
 

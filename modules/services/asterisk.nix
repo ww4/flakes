@@ -202,15 +202,25 @@ in
           ${audition "voices" config.services.switchboard.auditionDir config.services.switchboard.auditionCount}
           ${audition "voices-kokoro" "${stateDir}/audition-kokoro" (lib.length config.services.switchboard.kokoroAudition)}
 
-          ; Outbound announcements arrive here from call files
-          ; (switchboard outbound.py sets MESSAGE to a prompt path, no extension).
-          ; The message plays twice: the first second after a pickup is always lost.
+          ; Outbound announcements arrive here from call files (switchboard
+          ; outbound.py: MESSAGE = a prompt path without extension, ALERTID = the
+          ; alert's fingerprint, empty for a plain `switchboard call`). The
+          ; message is Read()'s prompt so a 1 pressed mid-sentence counts; it is
+          ; offered twice because the first second after a pickup is always lost.
+          ; 1 with an ALERTID -> POST the ack to the escalation hook (func_curl),
+          ; which stops the hourly re-calls.
           [switchboard-announce]
           exten => s,1,Wait(1)
-           same => n,Playback(''${MESSAGE})
-           same => n,Wait(0.7)
-           same => n,Playback(''${MESSAGE})
+           same => n,Read(ACK,''${MESSAGE},1,,1,6)
+           same => n,GotoIf($["''${ACK}" = "1"]?ack)
+           same => n,Read(ACK,''${MESSAGE},1,,1,6)
+           same => n,GotoIf($["''${ACK}" = "1"]?ack)
            same => n,Hangup()
+           same => n(ack),GotoIf($["''${ALERTID}" = ""]?bye)
+           same => n,Set(CURLOPT(httptimeout)=5)
+           same => n,Set(RES=''${CURL(http://127.0.0.1:${toString config.services.switchboard.hookPort}/ack/''${ALERTID},x=1)})
+           same => n,Playback(${config.services.switchboard.promptsDir}/acknowledged)
+           same => n(bye),Hangup()
         '';
 
         "rtp.conf" = ''

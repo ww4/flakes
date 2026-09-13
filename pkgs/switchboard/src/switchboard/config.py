@@ -139,6 +139,17 @@ class Settings(BaseSettings):
     # reading or thinking, and one call ended on them (2026-09-11).
     max_empty_turns: int = 3
 
+    # --- escalation hook (escalation.py): Alertmanager -> loopback -> a phone call ---
+    hook_host: str = "127.0.0.1"
+    hook_port: int = 4575
+    # Don't ring twice for the same alert inside this window even if
+    # Alertmanager repeats sooner (the route repeats hourly).
+    call_min_gap_s: float = 45 * 60
+
+    @property
+    def calls_dir(self) -> Path:
+        return self.state_dir / "calls"
+
     # --- outbound: call files (Asterisk spool) ---
     asterisk_outgoing: Path = Path("/var/spool/asterisk/outgoing")
     # Channel to ring for "call me back" / escalations. PJSIP/<extension>.
