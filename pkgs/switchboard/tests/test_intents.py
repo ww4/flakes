@@ -183,3 +183,16 @@ def test_notifications_phrasing() -> None:
     assert intents.route("what notifications did you send") == "notifications"
     assert intents.route("any recent notifications") == "notifications"
     assert intents.route("any alerts") == "incidents"          # unchanged
+
+
+def test_help_lists_every_group_and_routes() -> None:
+    text = intents.help_text()
+    for group, _ in intents.HELP_GROUPS:
+        assert f"{group}:" in text
+    assert text.endswith("Any key stops me. Press 1 to say yes.")
+    for phrase in ["what can I ask", "what can you do", "options", "help", "what do you know", "list the commands", "menu"]:
+        assert intents.route(phrase) == "help", phrase
+    # every help phrase group mentions things the router actually handles
+    assert intents.route("did the backups run") == "standing:backups"
+    assert intents.route("bitcoin statistics") == "btc-stats"
+    assert intents.route("what's on my schedule") == "standing:schedule"

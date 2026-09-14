@@ -39,7 +39,7 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("goodbye",   re.compile(r"\b(goodbye|good bye|bye|hang up|that'?s all|thanks? (that'?s )?(all|it))\b")),
     ("note",      re.compile(r"^(please )?((take|make|leave|save) a note|note to self|remind me|remember (that|to))\b")),
     ("hello",     re.compile(r"^(hi|hello|hey|hey there|good (morning|afternoon|evening))( there)?( gromit| switchboard)?$")),
-    ("help",      re.compile(r"\b(help|what can (you|i) (do|ask|say)|options|menu)\b")),
+    ("help",      re.compile(r"\b(help|what can (you|i) (do|ask|say)|what do you know|what are (my|the) options|options|menu|commands|list (the )?(phrases|commands|options))\b")),
     # The newsletter. "more about X" / "next" are handled in the AGI (they
     # need the caller's words and per-call position); route() only names them.
     ("news:next",  re.compile(r"^(next|next (one|story|item)|skip|go on|keep going)$")),
@@ -379,9 +379,31 @@ async def _time(s: Settings) -> str:
     return now.strftime("It is %-I:%M %p on %A, %B %-d.")
 
 
+# The help menu, grouped the way the phrases are used. Every fast intent and
+# standing question above has an entry here; keep them in step. Spoken in
+# full (~70 s) — any key stops it, like everything else.
+HELP_GROUPS: list[tuple[str, str]] = [
+    ("The box", "status, any issues, notifications, temperatures, disk space, or incidents"),
+    ("The newsletter", "what's new, more about and a topic, more, or next"),
+    ("Bitcoin", "the price, all-time high, difficulty, nodes, block height, fees, or bitcoin statistics"),
+    ("Weather", "the weather today, tomorrow, or just the weather for both"),
+    ("Standing questions", "did the backups run, what's on my schedule, what happened recently, or Ryan Hall's latest"),
+    ("Notes", "take a note, or take a note for Claude. Dial 7 for a note without the switchboard"),
+    ("Also", "the time, hello, and goodbye to hang up"),
+]
+
+
+def help_text() -> str:
+    parts = ["Here's what I know."]
+    for group, phrases in HELP_GROUPS:
+        parts.append(f"{group}: {phrases}.")
+    parts.append("Anything else, I'll read back what I heard and ask before I go find out.")
+    parts.append("Any key stops me. Press 1 to say yes.")
+    return " ".join(parts)
+
+
 async def _help(s: Settings) -> str:
-    return ("You can ask for status, issues, recent notifications, what's new in the newsletter, temperatures, disk space, the weather today or tomorrow, bitcoin, or the time. "
-            "Anything else I will pass to the agent, which takes a little longer. Say goodbye to hang up.")
+    return help_text()
 
 
 async def _goodbye(s: Settings) -> str:
@@ -446,9 +468,11 @@ FIXED_PHRASES: list[str] = [
     "Nothing from the sentinel in the last 24 hours.",
     "No warnings or criticals right now.",
     "Prometheus has no filesystem data for the paths I watch.",
-    "You can ask for status, issues, recent notifications, what's new in the newsletter, temperatures, disk space, the weather today or tomorrow, bitcoin, or the time.",
-    "Anything else I will pass to the agent, which takes a little longer.",
-    "Say goodbye to hang up.",
+    *[f"{g}: {p}." for g, p in HELP_GROUPS],
+    "Here's what I know.",
+    "Anything else, I'll read back what I heard and ask before I go find out.",
+    "Any key stops me.",
+    "Press 1 to say yes.",
     "Goodbye.",
     "Hi Chris. What would you like to know?",
     "I didn't catch that.",
