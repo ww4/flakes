@@ -13,6 +13,8 @@
   standing [--force]       refresh the standing questions whose sources changed (the timer)
   slowlog [--days N]       repeated slow-path questions — candidates for a standing question
   agi                      run the FastAGI server (the systemd unit)
+  hook                     run the escalation webhook (Alertmanager -> phone call; systemd unit)
+  alert-test               ring the callback handset with a test alert through the hook path
 
 Every stage that a call goes through can be exercised here without a phone;
 `turn` is the bench test for the whole pipeline.
@@ -26,7 +28,9 @@ import logging
 import sys
 from pathlib import Path
 
-from . import agent, agi, audio, intents, outbound, standing
+import httpx
+
+from . import agent, agi, audio, escalation, intents, newsdesk, outbound, standing
 from .config import Settings
 
 
@@ -67,6 +71,8 @@ async def _main(argv: list[str]) -> int:
     st = sub.add_parser("standing"); st.add_argument("--force", action="store_true")
     sl = sub.add_parser("slowlog"); sl.add_argument("--days", type=float, default=7.0)
     sub.add_parser("agi")
+    sub.add_parser("hook")
+    sub.add_parser("alert-test")
 
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -89,7 +95,7 @@ async def _main(argv: list[str]) -> int:
         print(await outbound.call_and_say(settings, args.text, args.channel))
     elif args.cmd == "render-prompts":
         settings.prompts.mkdir(parents=True, exist_ok=True)
-        prompts = {"greeting": settings.greeting, **agi.PROMPTS}
+        prompts = {"greeting": settings.greeting, **agi.PROMPTS, **{f"glue-{i}": t for i, t in enumerate(agi.GLUE)}}
         for name, text in prompts.items():
             # Asterisk picks among <name>.* by transcoding cost, so a leftover
             # from an earlier format (8 kHz .wav) could win over the new render.
@@ -110,6 +116,11 @@ async def _main(argv: list[str]) -> int:
                 stored = standing.load(settings, q.name)
                 if stored is not None:
                     phrases.append(standing.spoken(stored))
+            # The newsletter: every story's paragraph, so "more about" and
+            # "next" are instant. Only a new edition costs anything.
+            ed = newsdesk.load(settings)
+            if ed is not None:
+                phrases.extend(it.spoken_detail for it in ed.items)
         rendered = 0
         for i, phrase in enumerate(phrases):
             before = sum(1 for _ in settings.cache_dir.rglob("*.sln16"))
@@ -137,6 +148,16 @@ async def _main(argv: list[str]) -> int:
             for stale in d.glob(f"sample{n}.*"):
                 stale.unlink()
             print(await audio.say_kokoro_voice(settings, audio.kokoro_audition_script(voice, n), voice, d / f"sample{n}"))
+    elif args.cmd == "hook":
+        await escalation.serve(settings)
+    elif args.cmd == "alert-test":
+        # The same shape Alertmanager posts, so the whole path is exercised.
+        payload = {"alerts": [{"status": "firing", "fingerprint": f"test-{int(asyncio.get_event_loop().time())}",
+                               "labels": {"alertname": "SwitchboardCallTest", "severity": "test", "tier": "physical"},
+                               "annotations": {"summary": "This is a test of the emergency call path. Nothing is wrong."}}]}
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"http://{settings.hook_host}:{settings.hook_port}/alert", json=payload)
+        print(resp.status_code, resp.text.strip())
     elif args.cmd == "agi":
         await agi.serve(settings)
     return 0

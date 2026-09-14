@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from . import issues, sources, standing
+from . import issues, newsdesk, sources, standing
 from .config import Settings
 from .sources import SourceError
 
@@ -29,6 +29,7 @@ class Reply:
     text: str
     hangup: bool = False
     style: str = "conversational"   # "announce" -> the announcement voice (audio.say)
+    silent: bool = False            # nothing to play (e.g. a declined agent call); glue still follows
 
 
 # Ordered: first match wins. Patterns are matched against the lowercased,
@@ -38,7 +39,14 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("goodbye",   re.compile(r"\b(goodbye|good bye|bye|hang up|that'?s all|thanks? (that'?s )?(all|it))\b")),
     ("note",      re.compile(r"^(please )?((take|make|leave|save) a note|note to self|remind me|remember (that|to))\b")),
     ("hello",     re.compile(r"^(hi|hello|hey|hey there|good (morning|afternoon|evening))( there)?( gromit| switchboard)?$")),
-    ("help",      re.compile(r"\b(help|what can (you|i) (do|ask|say)|options|menu)\b")),
+    ("help",      re.compile(r"\b(help|what can (you|i) (do|ask|say)|what do you know|what are (my|the) options|options|menu|commands|list (the )?(phrases|commands|options))\b")),
+    # The newsletter. "more about X" / "next" are handled in the AGI (they
+    # need the caller's words and per-call position); route() only names them.
+    ("news:next",  re.compile(r"^(next|next (one|story|item)|skip|go on|keep going)$")),
+    # bare "more" = the story I was just hearing (after a key press or a "next")
+    ("news:this",  re.compile(r"^((tell me )?more|(the )?details?|more detail|that one|go deeper|go on with that|read (that|it))$")),
+    ("news:more",  re.compile(r"^((tell me |give me )?(some )?(more|details?|the detail)( about| on)? |(tell me |what) about |expand on |go deeper on )\S")),
+    ("news",       re.compile(r"\b(what'?s new|the news|headlines|newsletter|news ?desk|today'?s (news|edition)|latest edition)\b")),
     ("notifications", re.compile(r"\b(notifications?|ntfy|pushes|what (have|did) you (sent|send|pushed|push)( me)?)\b")),
     ("issues",    re.compile(r"\b(issues?|problems?|what'?s wrong|warnings?|critical)\b")),
     ("incidents", re.compile(r"\b(incident|anything (wrong|broken|happen)|what (happened|broke|went wrong)|alerts?)\b")),
@@ -219,6 +227,13 @@ async def _notifications(s: Settings) -> str:
     return _notifications_text(await sources.ntfy_recent(s), s.notifications_hours, _time.time())
 
 
+async def _news(s: Settings) -> str:
+    ed = newsdesk.load(s)
+    if ed is None or not ed.items:
+        return "I couldn't find a newsdesk edition."
+    return newsdesk.headlines(ed)
+
+
 async def _issues(s: Settings) -> str:
     text = issues.spoken(await issues.current(s))
     return text or "No warnings or criticals right now."
@@ -364,9 +379,31 @@ async def _time(s: Settings) -> str:
     return now.strftime("It is %-I:%M %p on %A, %B %-d.")
 
 
+# The help menu, grouped the way the phrases are used. Every fast intent and
+# standing question above has an entry here; keep them in step. Spoken in
+# full (~70 s) — any key stops it, like everything else.
+HELP_GROUPS: list[tuple[str, str]] = [
+    ("The box", "status, any issues, notifications, temperatures, disk space, or incidents"),
+    ("The newsletter", "what's new, more about and a topic, more, or next"),
+    ("Bitcoin", "the price, all-time high, difficulty, nodes, block height, fees, or bitcoin statistics"),
+    ("Weather", "the weather today, tomorrow, or just the weather for both"),
+    ("Standing questions", "did the backups run, what's on my schedule, what happened recently, or Ryan Hall's latest"),
+    ("Notes", "take a note, or take a note for Claude. Dial 7 for a note without the switchboard"),
+    ("Also", "the time, hello, and goodbye to hang up"),
+]
+
+
+def help_text() -> str:
+    parts = ["Here's what I know."]
+    for group, phrases in HELP_GROUPS:
+        parts.append(f"{group}: {phrases}.")
+    parts.append("Anything else, I'll read back what I heard and ask before I go find out.")
+    parts.append("Any key stops me. Press 1 to say yes.")
+    return " ".join(parts)
+
+
 async def _help(s: Settings) -> str:
-    return ("You can ask for status, issues, recent notifications, temperatures, disk space, the weather today or tomorrow, bitcoin, or the time. "
-            "Anything else I will pass to the agent, which takes a little longer. Say goodbye to hang up.")
+    return help_text()
 
 
 async def _goodbye(s: Settings) -> str:
@@ -387,6 +424,7 @@ _HANDLERS: dict[str, Handler] = {
     "status": _status,
     "issues": _issues,
     "notifications": _notifications,
+    "news": _news,
     "incidents": _incidents,
     "temps": _temps,
     "disk": _disk,
@@ -430,9 +468,11 @@ FIXED_PHRASES: list[str] = [
     "Nothing from the sentinel in the last 24 hours.",
     "No warnings or criticals right now.",
     "Prometheus has no filesystem data for the paths I watch.",
-    "You can ask for status, issues, recent notifications, temperatures, disk space, the weather today or tomorrow, bitcoin, or the time.",
-    "Anything else I will pass to the agent, which takes a little longer.",
-    "Say goodbye to hang up.",
+    *[f"{g}: {p}." for g, p in HELP_GROUPS],
+    "Here's what I know.",
+    "Anything else, I'll read back what I heard and ask before I go find out.",
+    "Any key stops me.",
+    "Press 1 to say yes.",
     "Goodbye.",
     "Hi Chris. What would you like to know?",
     "I didn't catch that.",
@@ -441,4 +481,4 @@ FIXED_PHRASES: list[str] = [
 ]
 
 # Intents whose answers the prewarm timer pre-renders (read-only, cheap).
-LIVE_INTENTS: list[str] = ["status", "issues", "notifications", "temps", "disk", "incidents", "weather:today", "weather:tomorrow", "weather:both", "btc-price", "btc-block", "btc-fees", "btc-ath", "btc-diff", "btc-nodes", "btc-stats"]
+LIVE_INTENTS: list[str] = ["status", "issues", "notifications", "news", "temps", "disk", "incidents", "weather:today", "weather:tomorrow", "weather:both", "btc-price", "btc-block", "btc-fees", "btc-ath", "btc-diff", "btc-nodes", "btc-stats"]

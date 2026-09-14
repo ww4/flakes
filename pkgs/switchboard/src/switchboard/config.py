@@ -105,6 +105,10 @@ class Settings(BaseSettings):
     ntfy_pass: str = Field(default="", validation_alias=AliasChoices("SWITCHBOARD_NTFY_PASS", "HOMEPAGE_VAR_NTFY_PASS"))
     notifications_hours: float = 24.0
 
+    # --- the newsletter (newsdesk.py): the latest edition, as the newsdesk wrote it ---
+    newsdesk_edition: Path = Path("/var/lib/newsdesk/edition.reader.md")
+    newsdesk_publish: Path = Path("/var/lib/newsdesk/last-publish.json")
+
     # --- bitcoin: the local mempool.space backend (services/mempool.nix). The
     # node has no fiat price; mempool's backend polls a price feed every few
     # minutes and serves it here along with the tip and fee estimates.
@@ -138,6 +142,17 @@ class Settings(BaseSettings):
     # up. Three, not two: the call log showed silences that were Chris
     # reading or thinking, and one call ended on them (2026-09-11).
     max_empty_turns: int = 3
+
+    # --- escalation hook (escalation.py): Alertmanager -> loopback -> a phone call ---
+    hook_host: str = "127.0.0.1"
+    hook_port: int = 4575
+    # Don't ring twice for the same alert inside this window even if
+    # Alertmanager repeats sooner (the route repeats hourly).
+    call_min_gap_s: float = 45 * 60
+
+    @property
+    def calls_dir(self) -> Path:
+        return self.state_dir / "calls"
 
     # --- outbound: call files (Asterisk spool) ---
     asterisk_outgoing: Path = Path("/var/spool/asterisk/outgoing")

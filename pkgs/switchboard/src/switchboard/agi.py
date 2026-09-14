@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import time
 import uuid
@@ -24,7 +25,7 @@ from pathlib import Path
 
 import datetime as dt
 
-from . import agent, audio, intents, issues, notes, outbound, standing
+from . import agent, audio, intents, issues, newsdesk, notes, outbound, standing
 from .config import Settings
 
 log = logging.getLogger(__name__)
@@ -93,8 +94,14 @@ class Call:
     async def answer(self) -> None:
         await self.command("ANSWER")
 
-    async def play(self, prompt_no_ext: str) -> None:
-        await self.command("STREAM FILE", prompt_no_ext, '""')
+    ANY_KEY = "0123456789*#"
+
+    async def play(self, prompt_no_ext: str, escape: str = "") -> str | None:
+        """Play a file; with `escape` digits, return the digit that interrupted
+        it (or None if it played through). Chris, 2026-09-13: any key stops an
+        answer — a long one otherwise has to be hung up on."""
+        r = await self.command("STREAM FILE", prompt_no_ext, f'"{escape}"')
+        return chr(r.result) if r.result > 0 else None
 
     # Asterisk names the file <path>.<format>: "wav16" -> ".wav16", not ".wav".
     # (2026-09-12: three calls hung up after the beep because converse()
@@ -120,6 +127,7 @@ class Switchboard:
     def __init__(self, settings: Settings) -> None:
         self.s = settings
         self.background: set[asyncio.Task[None]] = set()
+        self.news_pos: dict[str, int] = {}   # call id -> index of the last story read
 
     def prompt(self, name: str) -> str:
         return str(self.s.prompts / name)
@@ -149,6 +157,7 @@ class Switchboard:
             except Hangup:
                 pass
         finally:
+            self.news_pos.pop(call.id, None)
             await call.hangup()
             writer.close()
 
@@ -207,9 +216,15 @@ class Switchboard:
                 else:
                     # Nothing stored (or the sources moved): ask now with the
                     # curated question, and keep the answer for next time.
-                    reply = await self.slow(call, q.ask, store_as=q)
+                    reply = await self.slow(call, q.ask, store_as=q, heard=text, turn=turn)
                     if reply is None:
                         return
+            elif intent == "news":
+                reply = await self.news_headlines(call)
+                if reply is None:
+                    continue      # played through (or stopped and announced); glue already handled
+            elif intent in ("news:more", "news:next", "news:this"):
+                reply = self.news_detail(call, intent, text)
             elif intent == "note":
                 # Note said in the same breath ("take a note: ...")? Use it.
                 # Otherwise prompt and record one with the note's longer window.
@@ -226,14 +241,70 @@ class Switchboard:
             elif intent is not None:
                 reply = await intents.answer(self.s, intent)
             else:
-                reply = await self.slow(call, text)
+                reply = await self.slow(call, text, heard=text, turn=turn)
                 if reply is None:
                     return   # went to call-back mode; the line has been released
-            out = await audio.say(self.s, reply.text, self.s.outbox / f"{call.id}-{turn}", style=reply.style)  # type: ignore[arg-type]
-            await call.play(str(out.with_name(out.name.removesuffix(out.suffix))))
+            if not reply.silent:
+                out = await audio.say(self.s, reply.text, self.s.outbox / f"{call.id}-{turn}", style=reply.style)  # type: ignore[arg-type]
+                await call.play(str(out.with_name(out.name.removesuffix(out.suffix))), escape=Call.ANY_KEY)
             if reply.hangup:
                 return
+            await call.play(self.prompt(f"glue-{random.randrange(len(GLUE))}"))
         await call.play(self.prompt("goodbye"))
+
+    # ------------------------------------------------------------ the newsletter
+
+    async def news_headlines(self, call: Call) -> intents.Reply | None:
+        """The headline pass, one story per file, so a key press stops it AT
+        that story: 'Stopped at: <headline>.' — a bare 'more' then reads it."""
+        ed = newsdesk.load(self.s)
+        if ed is None or not ed.items:
+            return intents.Reply(text="I couldn't find a newsdesk edition.")
+        for k, (idx, text) in enumerate(newsdesk.segments(ed)):
+            out = await audio.say(self.s, text, self.s.outbox / f"{call.id}-news{k}")
+            key = await call.play(str(out.with_name(out.name.removesuffix(out.suffix))), escape=Call.ANY_KEY)
+            if key is not None:
+                if idx is not None:
+                    self.news_pos[call.id] = idx
+                    stop = await audio.say(self.s, f"Stopped at: {ed.items[idx].headline} Say more for the detail, or next.", self.s.outbox / f"{call.id}-newsstop")
+                    await call.play(str(stop.with_name(stop.name.removesuffix(stop.suffix))))
+                else:
+                    await call.play(self.prompt(f"glue-{random.randrange(len(GLUE))}"))
+                return None
+        self.news_pos[call.id] = -1
+        await call.play(self.prompt(f"glue-{random.randrange(len(GLUE))}"))
+        return None
+
+    def news_detail(self, call: Call, intent: str, text: str) -> intents.Reply:
+        """'more about X' finds the item; 'next' steps from the last one read.
+        Position is per call (self.news_pos[call.id])."""
+        ed = newsdesk.load(self.s)
+        if ed is None or not ed.items:
+            return intents.Reply(text="I couldn't find a newsdesk edition.")
+        pos = self.news_pos.get(call.id, -1)
+        if intent == "news:next":
+            pos += 1
+            if pos >= len(ed.items):
+                self.news_pos[call.id] = -1
+                return intents.Reply(text="That was the last story.")
+            item = ed.items[pos]
+        elif intent == "news:this":
+            if pos < 0:
+                return intents.Reply(text="Which story? Say more about and a topic, or what's new for the headlines.")
+            item = ed.items[pos]
+        else:
+            query = newsdesk.more_query(text) or text
+            item, close = newsdesk.find(ed, query)
+            if item is None:
+                return intents.Reply(text="I don't have a story about that in this edition.")
+            if close:
+                # Ambiguous: name the contenders and let the caller pick (their next "more about" narrows it).
+                names = " Or: ".join([item.headline] + [c.headline for c in close])
+                return intents.Reply(text=f"A couple of stories match. {names} Which one?")
+            pos = ed.items.index(item)
+        self.news_pos[call.id] = pos
+        lane = f"{item.lane}. " if intent == "news:next" else ""
+        return intents.Reply(text=f"{lane}{item.spoken_detail}")
 
     # ------------------------------------------------------------ notes
 
@@ -270,11 +341,39 @@ class Switchboard:
             await call.play(self.prompt("note-again"))
         await call.play(self.prompt("goodbye"))
 
-    async def slow(self, call: Call, question: str, store_as: "standing.StandingQuestion | None" = None) -> intents.Reply | None:
+    _YES = re.compile(r"\b(yes|yeah|yep|yup|sure|go ahead|do it|please|okay|ok|find out|look it up)\b", re.IGNORECASE)
+
+    async def confirm_agent(self, call: Call, heard: str, turn: int) -> bool:
+        """Read back what was heard and ask before spending an agent call
+        (Chris, 2026-09-13: mishears were re-triggering model calls). Yes or
+        a 1 proceeds; no, silence, or anything else drops it."""
+        ask = await audio.say(self.s, f"I heard: {heard}", self.s.outbox / f"{call.id}-{turn}c")
+        key = await call.play(str(ask.with_name(ask.name.removesuffix(ask.suffix))), escape="1")
+        if key is None:
+            key = await call.play(self.prompt("confirm-agent"), escape="1")
+        if key == "1":
+            return True
+        rec = self.s.inbox / f"{call.id}-{turn}y"
+        why = await call.record(str(rec), max_ms=4000, silence_s=1)
+        wav = rec.with_name(f"{rec.name}.{call.RECORD_FORMAT}")
+        if why == "dtmf":            # a 1 pressed during the recording window
+            wav.unlink(missing_ok=True)
+            return True
+        answer = await audio.transcribe(self.s, wav) if wav.exists() else ""
+        wav.unlink(missing_ok=True)
+        yes = bool(self._YES.search(answer)) and not re.search(r"\b(no|nope|don't|never mind|cancel)\b", answer, re.IGNORECASE)
+        log.info("confirm: %r -> %s", answer, "yes" if yes else "no")
+        return yes
+
+    async def slow(self, call: Call, question: str, store_as: "standing.StandingQuestion | None" = None,
+                   heard: str | None = None, turn: int = 0) -> intents.Reply | None:
         """Ask the agent while keeping the caller company. Past hold_max_s,
         release the line and deliver the answer by calling back. Every slow
         answer is logged (standing.log_slow) so repeat questions surface as
-        candidates for pre-answering."""
+        candidates for pre-answering. Always confirmed first (confirm_agent)."""
+        if not await self.confirm_agent(call, heard or question, turn):
+            await call.play(self.prompt("okay-dropped"))
+            return intents.Reply(text="", hangup=False, style="conversational", silent=True)
         # Kick the agent off FIRST; the filler plays while it is already working.
         task = asyncio.create_task(agent.ask(self.s, question))
         started = time.monotonic()
@@ -310,6 +409,24 @@ class Switchboard:
         t.add_done_callback(self.background.discard)
 
 
+# Verbal glue after each answer, before the next turn (Chris, 2026-09-13:
+# "say something nice like is there anything else"). Rotated at random;
+# rendered once as prompts glue-0..N.
+GLUE: list[str] = [
+    "Anything else?",
+    "What else would you like to know?",
+    "Is there anything else I can look up?",
+    "What else can I help with?",
+    "Anything else on your mind?",
+    "What's next?",
+    "Anything more?",
+    "Is there something else?",
+    "What else?",
+    "Anything else you'd like to check?",
+    "What else can I tell you?",
+    "Is there anything else you need?",
+]
+
 # The static prompt set, rendered once at service start (cli render-prompts).
 # The greeting comes from Settings (see cli.render_prompts).
 PROMPTS: dict[str, str] = {
@@ -326,6 +443,9 @@ PROMPTS: dict[str, str] = {
     "note-go-ahead": "Go ahead.",
     "note-again":    "Another note? Say it after the tone, or just hang up.",
     "note-empty":    "I didn't get a note. Goodbye.",
+    "acknowledged":  "Acknowledged. I won't call again about this one. Goodbye.",
+    "confirm-agent": "I'm not sure about that one. Should I find out? Say yes, or press 1.",
+    "okay-dropped":  "Okay, I'll leave it.",
 }
 
 
