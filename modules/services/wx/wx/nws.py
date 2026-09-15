@@ -35,6 +35,16 @@ CRITICAL_EVENTS = {
 WARNING_EVENTS = {
     "Severe Thunderstorm Warning",
     "Flash Flood Warning",
+    # ⚠️ The SLOW kind — a DIFFERENT product from Flash Flood Warning, and easy
+    # to omit by accident, which is exactly what happened: the original list had
+    # the flash variety only, so a river flood warning classified as `info` and
+    # was never pushed at all. Owen County has the Kentucky River through it; a
+    # crest is rarely urgent and always worth knowing, which is what the
+    # `warning` class is for — visible, held to 07:00 overnight, never wakes him.
+    # Found by running REAL live NWS alerts through the classifier, not by
+    # reading the list. Chris approved the reclassification 2026-09-15.
+    "Flood Warning",
+    "River Flood Warning",
     "Ice Storm Warning",
     "Winter Storm Warning",
     "Blizzard Warning",

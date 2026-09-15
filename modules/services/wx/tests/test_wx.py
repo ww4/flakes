@@ -110,9 +110,27 @@ class TestNwsClassify(unittest.TestCase):
         self.assertEqual(nws.classify(alert("Odd Product", "a", severity="Extreme")),
                          "critical")
 
+    def test_slow_river_flooding_is_a_warning_not_info(self):
+        # 2026-09-15: the list carried Flash Flood Warning only, so a Kentucky
+        # River crest classified as `info` and was never pushed at all. Found by
+        # running REAL live NWS alerts through the classifier, not by reading it.
+        self.assertEqual(nws.classify(alert("Flood Warning", "a")), "warning")
+        self.assertEqual(nws.classify(alert("River Flood Warning", "a")), "warning")
+
+    def test_flood_warning_still_never_wakes_him(self):
+        # Worth knowing, never worth waking for — unless it escalates to a Flash
+        # Flood Emergency, which classify() catches from the TEXT, not the event.
+        self.assertNotEqual(nws.classify(alert("Flood Warning", "a")), "critical")
+        self.assertEqual(
+            nws.classify(alert("Flood Warning", "a",
+                               description="...FLASH FLOOD EMERGENCY...")), "critical")
+
     def test_advisories_are_info(self):
         self.assertEqual(nws.classify(alert("Heat Advisory", "a")), "info")
         self.assertEqual(nws.classify(alert("Special Weather Statement", "a")), "info")
+        # Flood WATCH stays info — a watch is a maybe, and the whole point of the
+        # info class is that maybes do not generate pushes.
+        self.assertEqual(nws.classify(alert("Flood Watch", "a")), "info")
 
     def test_family(self):
         self.assertEqual(nws.family("Tornado Warning"), "Tornado")

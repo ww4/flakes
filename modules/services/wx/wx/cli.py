@@ -63,6 +63,7 @@ def cmd_alerts(args) -> int:
         state = notify.deliver(
             con, layer=1, key=item["key"], title=item["title"],
             body=item["body"], alert_class=item["class"],
+            click=os.environ.get("WX_ALERT_URL", ""),
             notifier=args.notifier)
         print(f"wx: [{item['class']}] {item['event']} -> {state}")
     return 0
@@ -175,7 +176,8 @@ def cmd_ryan(args) -> int:
                 title=title,
                 body=f"{fields['summary']}\n\n{decision.reason}\n"
                      f"https://www.youtube.com/watch?v={vid}",
-                alert_class="warning", notifier=args.notifier, tags="cloud_tornado")
+                alert_class="warning", notifier=args.notifier, tags="cloud_tornado",
+                click=f"https://www.youtube.com/watch?v={vid}")
             print(f"wx: trend push -> {state}")
 
     db.set_meta(con, "last_ryan_run", db.now())

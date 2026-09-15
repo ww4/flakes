@@ -56,6 +56,7 @@ let
     WX_CORPUS_DIR = cfg.corpusDir;
     WX_PROMPT = "${wx}/share/wx/extract-prompt.md";
     WX_USER_AGENT = cfg.userAgent;
+    WX_ALERT_URL = cfg.alertUrl;
     WX_LOCATION_FILE = cfg.locationFile;
   };
 in
@@ -102,6 +103,24 @@ in
         ⚠️ PII — his home coordinates, used to match the actual NWS warning
         POLYGON rather than the county. Owen County is large and a warning over
         its eastern third is not about his house.
+      '';
+    };
+
+    alertUrl = lib.mkOption {
+      type = lib.types.str;
+      default = "https://forecast.weather.gov/showsigwx.php?warnzone=KYZ094";
+      description = ''
+        Where a layer-1 notification goes when tapped. Defaults to the NWS
+        significant-weather page for his forecast ZONE.
+
+        ⚠️ Deliberately zone-scoped and not point-scoped: a zone covers a whole
+        county, so this URL carries no coordinates. A notification body and its
+        click target both end up on a lock screen and in notification history —
+        neither may contain PII. `forecast.weather.gov/MapClick.php?lat=..&lon=..`
+        would be a better page and is exactly what must not be used.
+
+        NWS `alert.properties.web` is useless for this — it is the literal
+        string "http://www.weather.gov" on every alert (checked 2026-09-15).
       '';
     };
 
