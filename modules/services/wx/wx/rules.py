@@ -29,10 +29,36 @@ import json
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 
-SEVERE_HAZARDS = {
-    "tornado", "derecho", "damaging wind", "flash flood", "hail",
-    "ice storm", "significant snow",
-}
+# Most dangerous first. This ORDER is load-bearing, not decoration: the push
+# title has room for two hazards, and which two it picks is decided here.
+#
+# ⚠️ The bug this replaces: hazards were stored sorted alphabetically and the
+# title took the first two, so a push about "damaging wind, hail, tornado" was
+# titled "damaging wind, hail" and DROPPED THE WORD TORNADO — and one about
+# "cold, flash flood" led with "cold", which is not even a severe hazard. Both
+# shipped to Chris's phone (2026-09-10 and 09-14). The most severe hazard is
+# the one a glanced-at notification has to carry.
+HAZARD_SEVERITY = [
+    "tornado",
+    "derecho",
+    "flash flood",
+    "ice storm",
+    "damaging wind",
+    "significant snow",
+    "hail",
+]
+SEVERE_HAZARDS = set(HAZARD_SEVERITY)
+
+
+def by_severity(hazards) -> list[str]:
+    """Hazards most-dangerous first; anything unranked keeps its order, last.
+
+    An unknown hazard sorts after every known one rather than being dropped —
+    the model can return a word this list has never seen, and silently losing
+    it would be worse than ranking it low.
+    """
+    ranked = {h: i for i, h in enumerate(HAZARD_SEVERITY)}
+    return sorted(hazards or [], key=lambda h: (ranked.get(h, len(ranked)), str(h)))
 
 MAX_LEAD_DAYS = 7
 # SPC's categorical outlook only reaches day 3. Anything past it is, by

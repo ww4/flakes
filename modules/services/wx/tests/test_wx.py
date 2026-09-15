@@ -271,6 +271,65 @@ class TestThreshold(unittest.TestCase):
         self.assertFalse(d.push)
 
 
+class TestHazardOrdering(unittest.TestCase):
+    """The two titles that actually reached Chris's phone are the test cases."""
+
+    def test_tornado_is_never_truncated_away(self):
+        # 2026-09-10 shipped as "damaging wind, hail" — it dropped the tornado.
+        stored = sorted(["damaging wind", "hail", "tornado"])   # alphabetical, as stored
+        self.assertEqual(rules.by_severity(stored)[:2], ["tornado", "damaging wind"])
+
+    def test_a_non_severe_hazard_never_leads(self):
+        # 2026-09-14 shipped as "cold, flash flood" — it led with "cold".
+        stored = sorted(["cold", "flash flood"])
+        self.assertEqual(rules.by_severity(stored)[0], "flash flood")
+
+    def test_full_ordering_is_most_dangerous_first(self):
+        hz = ["hail", "significant snow", "tornado", "flash flood"]
+        self.assertEqual(rules.by_severity(hz),
+                         ["tornado", "flash flood", "significant snow", "hail"])
+
+    def test_unknown_hazards_sort_last_but_are_not_dropped(self):
+        out = rules.by_severity(["waterspout", "tornado"])
+        self.assertEqual(out[0], "tornado")
+        self.assertIn("waterspout", out)
+
+    def test_empty(self):
+        self.assertEqual(rules.by_severity([]), [])
+        self.assertEqual(rules.by_severity(None), [])
+
+
+class TestLayer2Visibility(unittest.TestCase):
+    """`wx ryan` exits 0 on an external block, so this string is the only signal."""
+
+    def setUp(self):
+        from wx import cli
+        self.con = mkcon()
+        self.cli = cli
+
+    def test_never_run(self):
+        self.assertEqual(self.cli.layer2_state(self.con), "never run")
+
+    def test_quiet_day_is_not_an_alarm(self):
+        db.set_meta(self.con, "last_ryan_result", "0/0/0")
+        self.assertIn("ok", self.cli.layer2_state(self.con))
+
+    def test_wanted_but_fetched_nothing_is_loud(self):
+        # The exact 2026-09-09 shape: 2 videos wanted, both 429'd, unit exit 0.
+        db.set_meta(self.con, "last_ryan_result", "2/0/2")
+        state = self.cli.layer2_state(self.con)
+        self.assertIn("FETCHED NOTHING", state)
+        self.assertIn("never", state)          # no prior productive run
+
+    def test_a_productive_run_reads_as_ok(self):
+        db.set_meta(self.con, "last_ryan_result", "2/2/0")
+        self.assertIn("ok", self.cli.layer2_state(self.con))
+
+    def test_corrupt_meta_does_not_crash_status(self):
+        db.set_meta(self.con, "last_ryan_result", "garbage")
+        self.assertIn("unparseable", self.cli.layer2_state(self.con))
+
+
 # ------------------------------------------------------------------------- ryan
 
 JSON3 = json.dumps({"events": [

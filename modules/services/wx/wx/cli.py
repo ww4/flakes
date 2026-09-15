@@ -118,15 +118,23 @@ def cmd_ryan(args) -> int:
     prompt_base = _prompt_path().read_text(encoding="utf-8")
     titles = {v["id"]: v for v in videos}
 
-    for row in ryan.pending_videos(con):
+    # A run that fetched nothing and a run with nothing to fetch are DIFFERENT
+    # facts, and exiting 0 for both is how layer 2 sat dead for a day looking
+    # healthy. Counted here, reported in the summary below and in `wx status`.
+    wanted = ryan.pending_videos(con)
+    got = blocked = 0
+
+    for row in wanted:
         vid = row["id"]
         try:
             transcript = ryan.fetch_transcript(vid, ytdlp=args.ytdlp)
         except Exception as exc:                  # noqa: BLE001
             state = ryan.record_failure(con, vid, str(exc))
+            blocked += 1
             print(f"wx: {vid} transcript {state}: {str(exc)[:120]}", file=sys.stderr)
             continue
         ryan.store_transcript(con, vid, transcript)
+        got += 1
 
         video = {"id": vid, "title": row["title"], "duration": row["duration"],
                  "published": titles.get(vid, {}).get("published")}
@@ -158,7 +166,10 @@ def cmd_ryan(args) -> int:
         decision = rules.decide(con, fields, drawn=drawn, known=known)
         print(f"wx: layer 3 -> {'PUSH' if decision.push else 'quiet'}: {decision.reason}")
         if decision.push:
-            title = f"Ryan Hall: {', '.join(fields['hazards'][:2])} — {fields['window_start'] or 'soon'}"
+            # Most severe first — a glanced-at notification has to carry the
+            # word that matters, and there is only room for two.
+            lead = rules.by_severity(fields["hazards"])[:2]
+            title = f"Ryan Hall: {', '.join(lead)} — {fields['window_start'] or 'soon'}"
             state = notify.deliver(
                 con, layer=3, key=f"ryan:{fields.get('system_id') or 'unknown'}",
                 title=title,
@@ -166,6 +177,22 @@ def cmd_ryan(args) -> int:
                      f"https://www.youtube.com/watch?v={vid}",
                 alert_class="warning", notifier=args.notifier, tags="cloud_tornado")
             print(f"wx: trend push -> {state}")
+
+    db.set_meta(con, "last_ryan_run", db.now())
+    db.set_meta(con, "last_ryan_result", f"{len(wanted)}/{got}/{blocked}")
+    if got:
+        db.set_meta(con, "last_ryan_productive", db.now())
+
+    # The summary line is the point: "0 wanted" is a quiet day, "N wanted, 0
+    # fetched" is layer 2 being dead while the unit exits 0.
+    print(f"wx: run summary — {len(wanted)} wanted, {got} transcribed, {blocked} blocked")
+    if wanted and not got:
+        print(f"wx: LAYER 2 FETCHED NOTHING — {blocked} video(s) wanted a transcript and"
+              " every attempt failed; extractions, corpus posts and trend alerts are all"
+              " stalled until this clears", file=sys.stderr)
+    # Deliberately still exit 0: the cause is upstream and not something this
+    # box can clear, and a unit that fails every run on an external block is a
+    # false-alarm generator. The state is carried by `wx status` instead.
     return 0
 
 
@@ -197,6 +224,30 @@ def cmd_morning(args) -> int:
     return 0
 
 
+def layer2_state(con) -> str:
+    """Whether layer 2 is actually producing, or only exiting 0.
+
+    `wx ryan` deliberately returns 0 even when every transcript fetch failed —
+    the cause is upstream and a unit that fails on an external block is a false
+    alarm. That makes this string the only place a dead layer 2 is visible, so
+    it must distinguish "nothing to do" from "could not do it".
+    """
+    last = db.get_meta(con, "last_ryan_result")
+    if last is None:
+        return "never run"
+    try:
+        wanted, got, blocked = (int(x) for x in last.split("/"))
+    except ValueError:
+        return f"unparseable last result: {last!r}"
+    if wanted and not got:
+        since = db.get_meta(con, "last_ryan_productive") or "never"
+        return (f"FETCHED NOTHING — {blocked} blocked, 0 transcribed"
+                f" (last productive: {since[:16] if since != 'never' else 'never'})")
+    if not wanted:
+        return "ok — nothing new to fetch"
+    return f"ok — {got} transcribed, {blocked} blocked"
+
+
 def cmd_status(args) -> int:
     con = db.connect()
     ready = layer1_ready()
@@ -204,6 +255,7 @@ def cmd_status(args) -> int:
         # First field on purpose: /health reads this, and "layer 1 is not
         # running" is the single most important thing this command can say.
         "layer1": "ready" if ready else "NOT RUNNING — secrets/wx-location.json missing",
+        "layer2": layer2_state(con),
         "active_alerts_seen": con.execute(
             "SELECT COUNT(*) c FROM nws_alert").fetchone()["c"],
         "notified": con.execute(
