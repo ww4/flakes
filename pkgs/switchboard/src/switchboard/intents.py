@@ -40,6 +40,9 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("note",      re.compile(r"^(please )?((take|make|leave|save) a note|note to self|remind me|remember (that|to))\b")),
     ("hello",     re.compile(r"^(hi|hello|hey|hey there|good (morning|afternoon|evening))( there)?( gromit| switchboard)?$")),
     ("help",      re.compile(r"\b(help|what can (you|i) (do|ask|say)|what do you know|what are (my|the) options|options|menu|commands|list (the )?(phrases|commands|options))\b")),
+    # Recipes (Tandoor). Search / ingredients / steps / a pick — all handled in
+    # the AGI because they need the caller's words and per-call state.
+    ("recipe",     re.compile(r"\brecipes?\b|\bingredients?\b|^something (with|using) |\b(steps|instructions|directions) (for|of)\b|^(the |read (me )?the )?(steps|instructions|directions)$")),
     # The newsletter. "more about X" / "next" are handled in the AGI (they
     # need the caller's words and per-call position); route() only names them.
     ("news:next",  re.compile(r"^(next|next (one|story|item)|skip|go on|keep going)$")),
@@ -385,6 +388,7 @@ async def _time(s: Settings) -> str:
 HELP_GROUPS: list[tuple[str, str]] = [
     ("The box", "status, any issues, notifications, temperatures, disk space, or incidents"),
     ("The newsletter", "what's new, more about and a topic, more, or next"),
+    ("Recipes", "do I have a recipe for chili, something with eggplant, then a number, ingredients, steps, or next step"),
     ("Bitcoin", "the price, all-time high, difficulty, nodes, block height, fees, or bitcoin statistics"),
     ("Weather", "the weather today, tomorrow, or just the weather for both"),
     ("Standing questions", "did the backups run, what's on my schedule, what happened recently, or Ryan Hall's latest"),

@@ -167,6 +167,15 @@ in
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [ switchboard ];   # `switchboard ask/say/hear/turn/call` from a shell
 
+    # Tandoor API token (read scope) for the recipes intents. Value via
+    # ~/secrets-inbox -> sops; the AGI unit reads it as an EnvironmentFile.
+    sops.secrets."tandoor-api-token" = {
+      sopsFile = ../../secrets/tandoor-api-token.yaml;
+      key = "tandoor-api-token";
+      owner = "claude";
+      mode = "0400";
+    };
+
     systemd.tmpfiles.rules = [
       "d ${stateDir}          0755 claude asterisk -"
       "d ${stateDir}/in       2775 claude asterisk 1d"   # recordings are deleted after transcription; 1d is the safety net
@@ -334,7 +343,7 @@ in
         # on disk; read by systemd before the drop to `claude` — the same way
         # homepage.nix gets it). "-": absent on a fresh box until provisioning
         # runs; the notifications intent then says it couldn't read ntfy.
-        EnvironmentFile = [ "-/var/lib/ntfy-sh/homepage-ntfy.env" ];
+        EnvironmentFile = [ "-/var/lib/ntfy-sh/homepage-ntfy.env" "-${config.sops.secrets."tandoor-api-token".path}" ];
         ExecStartPre = "${switchboard}/bin/switchboard render-prompts";
         TimeoutStartSec = "5min";
         ExecStart = "${switchboard}/bin/switchboard agi";
