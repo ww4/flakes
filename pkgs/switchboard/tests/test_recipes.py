@@ -84,3 +84,45 @@ def test_spoken_name_drops_slashes() -> None:
 
 def test_hits_text_says_when_it_matched_by_ingredient() -> None:
     assert recipes.hits_text([recipes.Hit(1, "Tacos", True)], "venison") == "One with venison in the ingredients: Tacos. Say ingredients or steps."
+
+
+def test_pick_then_and_closest() -> None:
+    assert recipes.parse("Three ingredients.") == ("pick-then", "3:ingredients")
+    assert recipes.parse("number two, steps") == ("pick-then", "2:steps")
+    assert recipes.parse("Number three.") == ("pick", "3")
+    assert recipes.parse("Next.") == ("next-step", "")
+    hits = [recipes.Hit(1, "Cincinnati, Skyline, 5 Way Chili"), recipes.Hit(2, "Grandma's Chili"), recipes.Hit(3, "Southwest White Chili")]
+    assert recipes.closest(hits, "White Chicken Chili").id == 3
+    assert recipes.closest(hits, "Skyline Chili").id == 1
+    assert recipes.closest(hits, "Killy") is None          # too mangled: falls back to a real search
+    assert recipes.closest(hits, "chili") is None          # a tie across all three: not a pick
+    assert recipes.closest([], "chili") is None
+
+
+def test_live_recipe_context_owns_picks(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """After a search, 'Number three.' / 'three ingredients' must reach the recipe flow, not the agent."""
+    book = {1: recipes.Recipe(1, "Alpha Chili", 1, "", [recipes.Ingredient(1, "cup", "beans")], ["Cook."]),
+            2: recipes.Recipe(2, "Bravo Chili", 1, "", [], ["Stir."]), 3: recipes.Recipe(3, "Charlie Chili", 1, "", [recipes.Ingredient(2, "", "eggs")], ["Fry."])}
+
+    async def fake_search(settings, q, limit=5):
+        return [recipes.Hit(i, r.name) for i, r in book.items()]
+
+    async def fake_get(settings, rid):
+        return book[rid]
+
+    monkeypatch.setattr(recipes, "search", fake_search)
+    monkeypatch.setattr(recipes, "get", fake_get)
+    board = agi_mod.Switchboard(Settings(state_dir=tmp_path))
+
+    class C:
+        id = "k"
+
+    say = lambda t: asyncio.run(board.recipe_turn(C(), t)).text   # noqa: E731
+    say("do I have a recipe for chili")
+    assert say("Three ingredients.") == "Charlie Chili. Serves 1. 1 ingredients: 2 eggs."
+    assert say("Number two.") == "Bravo Chili. Say ingredients or steps."
+    assert say("ingredients for charlie chili") == "Charlie Chili. Serves 1. 1 ingredients: 2 eggs."   # closest hit, no new search
+    # and the router-level rule: with hits live, a bare pick is a recipe intent
+    assert intents.route("Number three.") is None                      # the pure router still doesn't know...
+    rs = board.recipe_state["k"]
+    assert rs["hits"] and recipes.parse("Number three.") is not None    # ...but the AGI's guard does

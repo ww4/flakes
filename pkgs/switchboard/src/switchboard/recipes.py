@@ -185,15 +185,26 @@ _SEARCH = re.compile(
     r"|something (?:with|using)|recipes? (?:for|with|using))\s+(.+?)[.?!]?$", re.IGNORECASE)
 _INGREDIENTS = re.compile(r"^(?:(?:the |what are the )?ingredients?(?: list)?(?: for| of| in)?)\s*(.*?)[.?!]?$", re.IGNORECASE)
 _STEPS = re.compile(r"^(?:(?:the |read (?:me )?the )?(?:steps|instructions|directions|method|recipe steps)(?: for| of)?)\s*(.*?)[.?!]?$", re.IGNORECASE)
-_PICK = re.compile(r"^(?:number |option |the )?(one|two|three|four|five|first|second|third|fourth|fifth|1|2|3|4|5)(?:st|nd|rd|th)?(?: one)?$", re.IGNORECASE)
+_NUM = r"(one|two|three|four|five|first|second|third|fourth|fifth|1|2|3|4|5)(?:st|nd|rd|th)?"
+_PICK = re.compile(rf"^(?:number |option |the )?{_NUM}(?: one)?[.?!]?$", re.IGNORECASE)
+# "three, ingredients" / "number two steps" — a pick and an action in one breath
+_PICK_THEN = re.compile(rf"^(?:number |option |the )?{_NUM}(?: one)?[,.]?\s+(ingredients?|steps|instructions|directions)[.?!]?$", re.IGNORECASE)
 _WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5}
 
 
+def _num(w: str) -> str:
+    return str(_WORDS.get(w.lower(), w))
+
+
 def parse(transcript: str) -> tuple[str, str] | None:
-    """('search'|'ingredients'|'steps'|'pick'|'next-step', argument) or None."""
+    """('search'|'ingredients'|'steps'|'pick'|'pick-then'|'next-step', argument) or None.
+    pick-then's argument is 'N:ingredients' or 'N:steps'."""
     t = transcript.strip()
-    if re.fullmatch(r"next step|next", t, re.IGNORECASE):
+    if re.fullmatch(r"next step|next[.?!]?", t, re.IGNORECASE):
         return ("next-step", "")
+    if m := _PICK_THEN.match(t):
+        action = "steps" if m.group(2).lower().startswith(("step", "instr", "direc")) else "ingredients"
+        return ("pick-then", f"{_num(m.group(1))}:{action}")
     if m := _SEARCH.match(t):
         return ("search", m.group(1).strip())
     if m := _INGREDIENTS.match(t):
@@ -201,6 +212,17 @@ def parse(transcript: str) -> tuple[str, str] | None:
     if m := _STEPS.match(t):
         return ("steps", m.group(1).strip())
     if m := _PICK.match(t):
-        w = m.group(1).lower()
-        return ("pick", str(_WORDS.get(w, w)))
+        return ("pick", _num(m.group(1)))
     return None
+
+
+def closest(hits: list[Hit], name: str) -> Hit | None:
+    """The hit whose name best overlaps the caller's words — for "ingredients
+    for Killy" when whisper mangled "chili" but three chilis are on the table."""
+    q = {w[:5] for w in re.findall(r"[a-z0-9]+", name.lower()) if len(w) > 2}
+    if not q or not hits:
+        return None
+    scored = sorted(((len(q & {w[:5] for w in re.findall(r"[a-z0-9]+", h.name.lower())}), h) for h in hits), key=lambda s: -s[0])
+    if scored[0][0] == 0 or (len(scored) > 1 and scored[1][0] == scored[0][0]):
+        return None      # no overlap, or a tie ("chili" matches all three): let a real search decide
+    return scored[0][1]
