@@ -25,7 +25,8 @@ from pathlib import Path
 
 import datetime as dt
 
-from . import agent, audio, intents, issues, newsdesk, notes, outbound, standing
+from . import agent, audio, intents, issues, newsdesk, notes, outbound, recipes, standing
+from .sources import SourceError
 from .config import Settings
 
 log = logging.getLogger(__name__)
@@ -128,6 +129,7 @@ class Switchboard:
         self.s = settings
         self.background: set[asyncio.Task[None]] = set()
         self.news_pos: dict[str, int] = {}   # call id -> index of the last story read
+        self.recipe_state: dict[str, dict] = {}   # call id -> {hits, recipe, step, mode}
 
     def prompt(self, name: str) -> str:
         return str(self.s.prompts / name)
@@ -158,6 +160,7 @@ class Switchboard:
                 pass
         finally:
             self.news_pos.pop(call.id, None)
+            self.recipe_state.pop(call.id, None)
             await call.hangup()
             writer.close()
 
@@ -224,7 +227,14 @@ class Switchboard:
                 if reply is None:
                     continue      # played through (or stopped and announced); glue already handled
             elif intent in ("news:more", "news:next", "news:this"):
-                reply = self.news_detail(call, intent, text)
+                # "next" is ambiguous between the newsletter and recipe steps:
+                # it belongs to whichever the caller was last in.
+                if intent == "news:next" and self.recipe_state.get(call.id, {}).get("mode") == "steps":
+                    reply = await self.recipe_turn(call, "next step")
+                else:
+                    reply = self.news_detail(call, intent, text)
+            elif intent == "recipe":
+                reply = await self.recipe_turn(call, text)
             elif intent == "note":
                 # Note said in the same breath ("take a note: ...")? Use it.
                 # Otherwise prompt and record one with the note's longer window.
@@ -251,6 +261,60 @@ class Switchboard:
                 return
             await call.play(self.prompt(f"glue-{random.randrange(len(GLUE))}"))
         await call.play(self.prompt("goodbye"))
+
+    # ------------------------------------------------------------ recipes
+
+    async def recipe_turn(self, call: Call, text: str) -> intents.Reply:
+        """Per-call state: the last search's hits, the chosen recipe, the step
+        position. Any lookup failure is spoken, never silently empty."""
+        st = self.recipe_state.setdefault(call.id, {"hits": [], "recipe": None, "step": -1, "mode": ""})
+        parsed = recipes.parse(text)
+        if parsed is None:
+            return intents.Reply(text="Say do I have a recipe for, and a dish. Then ingredients or steps.")
+        kind, arg = parsed
+        try:
+            if kind == "search":
+                hits = await recipes.search(self.s, arg)
+                st.update(hits=hits, recipe=None, step=-1, mode="search")
+                if len(hits) == 1:
+                    st["recipe"] = await recipes.get(self.s, hits[0].id)
+                return intents.Reply(text=recipes.hits_text(hits, arg))
+            if kind == "pick":
+                n = int(arg)
+                if not st["hits"] or n < 1 or n > len(st["hits"]):
+                    return intents.Reply(text="Search for a recipe first, then pick a number.")
+                st["recipe"] = await recipes.get(self.s, st["hits"][n - 1].id)
+                st["step"] = -1
+                return intents.Reply(text=f"{st['recipe'].name}. Say ingredients or steps.")
+            # ingredients / steps: with a name, search for it first; else the current recipe
+            if arg:
+                hits = await recipes.search(self.s, arg)
+                if not hits:
+                    return intents.Reply(text=recipes.hits_text(hits, arg))
+                st.update(hits=hits, recipe=await recipes.get(self.s, hits[0].id), step=-1)
+            r = st["recipe"]
+            if r is None:
+                return intents.Reply(text="Which recipe? Say do I have a recipe for, and a dish.")
+            if kind == "ingredients":
+                st["mode"] = "ingredients"
+                return intents.Reply(text=recipes.ingredients_text(r))
+            if kind == "steps":
+                st.update(step=0, mode="steps")
+                t = recipes.step_text(r, 0)
+                return intents.Reply(text=t or f"{r.name} has no steps in Tandoor.")
+            if kind == "next-step":
+                if st["mode"] != "steps":
+                    st["mode"] = "steps"
+                st["step"] += 1
+                t = recipes.step_text(r, st["step"])
+                if t is None:
+                    st["step"] = -1
+                    return intents.Reply(text=f"That was the last step of {r.name}.")
+                return intents.Reply(text=t)
+        except SourceError as exc:
+            log.warning("recipes: %s", exc)
+            return intents.Reply(text="I couldn't reach the recipe book right now.")
+        return intents.Reply(text="I didn't follow that.")
 
     # ------------------------------------------------------------ the newsletter
 

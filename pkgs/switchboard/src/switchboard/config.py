@@ -109,6 +109,12 @@ class Settings(BaseSettings):
     newsdesk_edition: Path = Path("/var/lib/newsdesk/edition.reader.md")
     newsdesk_publish: Path = Path("/var/lib/newsdesk/last-publish.json")
 
+    # --- recipes: Tandoor's API on loopback (services: hm.tandoor). Django
+    # wants the vhost's Host header; the token is read-scoped (sops).
+    tandoor_url: str = "http://127.0.0.1:8080"
+    tandoor_host: str = "recipes.rosemaryacres.com"
+    tandoor_token: str = Field(default="", validation_alias=AliasChoices("SWITCHBOARD_TANDOOR_TOKEN", "TANDOOR_API_TOKEN"))
+
     # --- bitcoin: the local mempool.space backend (services/mempool.nix). The
     # node has no fiat price; mempool's backend polls a price feed every few
     # minutes and serves it here along with the tip and fee estimates.
