@@ -114,6 +114,7 @@ class Settings(BaseSettings):
     tandoor_url: str = "http://127.0.0.1:8080"
     tandoor_host: str = "recipes.rosemaryacres.com"
     tandoor_token: str = Field(default="", validation_alias=AliasChoices("SWITCHBOARD_TANDOOR_TOKEN", "TANDOOR_API_TOKEN"))
+    recipes_index_ttl_s: float = 3600.0    # the local name/keyword/food index (recipes.index)
 
     # --- bitcoin: the local mempool.space backend (services/mempool.nix). The
     # node has no fiat price; mempool's backend polls a price feed every few

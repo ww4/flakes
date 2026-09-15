@@ -280,12 +280,13 @@ class Switchboard:
             return intents.Reply(text="Say do I have a recipe for, and a dish. Then ingredients or steps.")
         kind, arg = parsed
         try:
-            if kind == "search":
-                hits = await recipes.search(self.s, arg)
+            if kind in ("search", "search-ingredient"):
+                all_hits = await recipes.search(self.s, arg, limit=50, by_ingredient=(kind == "search-ingredient"))
+                hits = all_hits[:5]
                 st.update(hits=hits, recipe=None, step=-1, mode="search")
                 if len(hits) == 1:
                     st["recipe"] = await recipes.get(self.s, hits[0].id)
-                return intents.Reply(text=recipes.hits_text(hits, arg))
+                return intents.Reply(text=recipes.hits_text(hits, arg, total=len(all_hits)))
             if kind in ("pick", "pick-then"):
                 n_s, _, then = arg.partition(":")
                 n = int(n_s)

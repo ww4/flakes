@@ -9,7 +9,7 @@ from switchboard.config import Settings
 def test_parse_phrasings() -> None:
     assert recipes.parse("Do I have a recipe for white chili?") == ("search", "white chili")
     assert recipes.parse("something with eggplant") == ("search", "eggplant")
-    assert recipes.parse("any recipes with chicken thighs") == ("search", "chicken thighs")
+    assert recipes.parse("any recipes with chicken thighs") == ("search-ingredient", "chicken thighs")   # "with" = by ingredient now
     assert recipes.parse("ingredients for the white chicken chili") == ("ingredients", "the white chicken chili")
     assert recipes.parse("Ingredients.") == ("ingredients", "")
     assert recipes.parse("steps") == ("steps", "")
@@ -43,7 +43,7 @@ def test_recipe_turn_flow(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     book = {1: recipes.Recipe(1, "White Chicken Chili", 6, "", [recipes.Ingredient(2, "lb", "chicken")], ["Brown it.", "Simmer."]),
             2: recipes.Recipe(2, "Green Chili Stew", 4, "", [], ["Stew."])}
 
-    async def fake_search(settings, q, limit=5):
+    async def fake_search(settings, q, limit=5, by_ingredient=False):
         return [recipes.Hit(i, r.name) for i, r in book.items() if q.split()[-1].lower() in r.name.lower()]
 
     async def fake_get(settings, rid):
@@ -104,7 +104,7 @@ def test_live_recipe_context_owns_picks(monkeypatch: pytest.MonkeyPatch, tmp_pat
     book = {1: recipes.Recipe(1, "Alpha Chili", 1, "", [recipes.Ingredient(1, "cup", "beans")], ["Cook."]),
             2: recipes.Recipe(2, "Bravo Chili", 1, "", [], ["Stir."]), 3: recipes.Recipe(3, "Charlie Chili", 1, "", [recipes.Ingredient(2, "", "eggs")], ["Fry."])}
 
-    async def fake_search(settings, q, limit=5):
+    async def fake_search(settings, q, limit=5, by_ingredient=False):
         return [recipes.Hit(i, r.name) for i, r in book.items()]
 
     async def fake_get(settings, rid):
@@ -146,3 +146,42 @@ def test_units_are_spoken_not_spelled() -> None:
     assert I(2, "", "lg onions", "approx").spoken() == "2 large onions, about"
     assert I(1, "medium", "onion").spoken() == "1 medium onion"                 # not a container: no "of"
     assert I(3, "cans", "of diced tomatoes").spoken() == "3 cans of diced tomatoes"   # food entered with its own "of"
+
+
+INDEX = [
+    recipes.Entry(1, "Cincinnati / Skyline / 5 Way Chili", ["soup"], ["ground beef", "cumin", "tomato sauce", "onion"]),
+    recipes.Entry(2, "Grandma's Chili", [], ["kidney beans", "burger", "chili powder"]),
+    recipes.Entry(3, "The BEST Ground Venison Tacos", ["mexican"], ["ground venison", "cumin", "chili powder", "onion"]),
+    recipes.Entry(4, "Hamburger Minestrone Soup", [], ["ground beef", "carrots", "onion"]),
+    recipes.Entry(5, "Amish Chicken", [], ["chicken thighs", "butter"]),
+    recipes.Entry(6, "Best Damn Instant Pot Pulled Pork", [], ["pork shoulder", "chicken broth", "ground cumin"]),
+]
+
+
+def test_index_search_names_then_ingredients() -> None:
+    names = lambda hits: [h.name for h in hits]   # noqa: E731
+    assert names(recipes.search_index(INDEX, "chili")) == ["Cincinnati, Skyline, 5 Way Chili", "Grandma's Chili"]
+    assert names(recipes.search_index(INDEX, "skyline chili"))[0] == "Cincinnati, Skyline, 5 Way Chili"
+    assert names(recipes.search_index(INDEX, "chicken")) == ["Amish Chicken"]                          # by name
+    hits = recipes.search_index(INDEX, "chicken", by_ingredient=True)
+    assert names(hits) == ["Amish Chicken", "Best Damn Instant Pot Pulled Pork"] and all(h.by_ingredient for h in hits)
+    hits = recipes.search_index(INDEX, "cumin")                       # no name match -> foods, 'ground cumin' counts
+    assert names(hits) == ["Best Damn Instant Pot Pulled Pork", "Cincinnati, Skyline, 5 Way Chili", "The BEST Ground Venison Tacos"]
+    assert recipes.search_index(INDEX, "ground beef", by_ingredient=True) and recipes.search_index(INDEX, "lemonade") == []
+    assert names(recipes.search_index(INDEX, "one")) == []            # "ingredients for one" must never find Minestrone
+
+
+def test_ingredient_search_phrasings_and_number_picks() -> None:
+    assert recipes.parse("Recipes that use cumin.") == ("search-ingredient", "cumin")
+    assert recipes.parse("what recipes have chicken thighs") == ("search-ingredient", "chicken thighs")
+    assert recipes.parse("what can I make with venison") == ("search-ingredient", "venison")
+    assert recipes.parse("Recipes with chicken.") == ("search-ingredient", "chicken")
+    assert recipes.parse("ingredients for one.") == ("pick-then", "1:ingredients")
+    assert recipes.parse("steps for the second one") == ("pick-then", "2:steps")
+    assert recipes.parse("ingredients for good gravy") == ("ingredients", "good gravy")
+
+
+def test_hits_text_counts_beyond_the_five_read() -> None:
+    hits = [recipes.Hit(i, f"R{i}", True) for i in range(1, 6)]
+    assert recipes.hits_text(hits, "cumin", total=12).startswith("12 recipes with cumin in the ingredients, the first 5. 1: R1.")
+    assert recipes.hits_text(hits, "cumin", total=5).startswith("5 recipes with cumin in the ingredients. 1: R1.")
