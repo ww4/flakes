@@ -29,8 +29,8 @@ def test_phrasing() -> None:
         recipes.Ingredient(2, "lb", "chicken thighs"), recipes.Ingredient(0.5, "cup", "onion", "diced"),
         recipes.Ingredient(1, "can", "white beans"), recipes.Ingredient(0, "", "salt", "to taste")],
         ["Brown the chicken.", "Add the onion and beans; simmer 30 minutes."])
-    assert recipes.ingredients_text(r) == ("White Chicken Chili. Serves 6 bowls. 4 ingredients: 2 lb chicken thighs. half a cup onion, diced. "
-                                           "1 can white beans. salt, to taste.")
+    assert recipes.ingredients_text(r) == ("White Chicken Chili. Serves 6 bowls. 4 ingredients: 2 pounds of chicken thighs. half a cup of onion, diced. "
+                                           "1 can of white beans. salt, to taste.")
     assert recipes.step_text(r, 0) == "Step 1 of 2. Brown the chicken."
     assert recipes.step_text(r, 2) is None
     assert recipes.hits_text([], "durian") == "Nothing in Tandoor for durian."
@@ -59,7 +59,7 @@ def test_recipe_turn_flow(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     say = lambda t: asyncio.run(board.recipe_turn(C(), t)).text   # noqa: E731
     assert say("do I have a recipe for chili") == "2 recipes. 1: White Chicken Chili. 2: Green Chili Stew. Say a number, then ingredients or steps."
     assert say("number one") == "White Chicken Chili. Say ingredients or steps."
-    assert say("ingredients") == "White Chicken Chili. Serves 6. 1 ingredients: 2 lb chicken."
+    assert say("ingredients") == "White Chicken Chili. Serves 6. 1 ingredients: 2 pounds of chicken."
     assert say("steps") == "Step 1 of 2. Brown it."
     assert say("next step") == "Step 2 of 2. Simmer."
     assert say("next step") == "That was the last step of White Chicken Chili."
@@ -126,3 +126,23 @@ def test_live_recipe_context_owns_picks(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert intents.route("Number three.") is None                      # the pure router still doesn't know...
     rs = board.recipe_state["k"]
     assert rs["hits"] and recipes.parse("Number three.") is not None    # ...but the AGI's guard does
+
+
+def test_units_are_spoken_not_spelled() -> None:
+    I = recipes.Ingredient
+    assert I(2, "lb", "ground beef").spoken() == "2 pounds of ground beef"
+    assert I(1, "lb", "venison").spoken() == "1 pound of venison"
+    assert I(1, "tsp", "salt").spoken() == "1 teaspoon of salt"
+    assert I(2, "tsp", "cumin").spoken() == "2 teaspoons of cumin"
+    assert I(0.5, "tsp", "pepper").spoken() == "half a teaspoon of pepper"
+    assert I(1.5, "cups", "flour").spoken() == "one and a half cups of flour"
+    assert I(32, "oz", "tomato sauce").spoken() == "32 ounces of tomato sauce"
+    assert I(1, "can", "white beans").spoken() == "1 can of white beans"
+    assert I(2, "cans", "beans").spoken() == "2 cans of beans"
+    assert I(1, "qt", "water").spoken() == "1 quart of water"
+    assert I(1, "pkg", "taco seasoning").spoken() == "1 package of taco seasoning"
+    assert I(3, "", "eggs").spoken() == "3 eggs"
+    assert I(1, "lg", "onion, chopped").spoken() == "1 lg onion, chopped"     # unknown unit passes through
+    assert I(2, "", "lg onions", "approx").spoken() == "2 large onions, about"
+    assert I(1, "medium", "onion").spoken() == "1 medium onion"                 # not a container: no "of"
+    assert I(3, "cans", "of diced tomatoes").spoken() == "3 cans of diced tomatoes"   # food entered with its own "of"

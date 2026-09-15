@@ -33,6 +33,48 @@ class Hit:
     by_ingredient: bool = False   # matched via the food index, not the name
 
 
+# Unit abbreviations as Tandoor stores them -> (singular, plural). Kokoro
+# spells "lb" and "tsp" letter by letter otherwise (Chris, 2026-09-15).
+UNITS: dict[str, tuple[str, str]] = {
+    "lb": ("pound", "pounds"), "lbs": ("pound", "pounds"), "pound": ("pound", "pounds"),
+    "oz": ("ounce", "ounces"), "fl oz": ("fluid ounce", "fluid ounces"),
+    "tsp": ("teaspoon", "teaspoons"), "tbsp": ("tablespoon", "tablespoons"), "tbs": ("tablespoon", "tablespoons"), "tbl": ("tablespoon", "tablespoons"),
+    "c": ("cup", "cups"), "cup": ("cup", "cups"), "qt": ("quart", "quarts"), "pt": ("pint", "pints"), "gal": ("gallon", "gallons"),
+    "g": ("gram", "grams"), "kg": ("kilogram", "kilograms"), "ml": ("milliliter", "milliliters"), "l": ("liter", "liters"),
+    "pkg": ("package", "packages"), "pkt": ("packet", "packets"), "env": ("envelope", "envelopes"),
+    "can": ("can", "cans"), "jar": ("jar", "jars"), "bag": ("bag", "bags"), "box": ("box", "boxes"), "bottle": ("bottle", "bottles"),
+    "bunch": ("bunch", "bunches"), "head": ("head", "heads"), "clove": ("clove", "cloves"), "stick": ("stick", "sticks"),
+    "slice": ("slice", "slices"), "piece": ("piece", "pieces"), "pinch": ("pinch", "pinches"), "dash": ("dash", "dashes"),
+    "sprig": ("sprig", "sprigs"), "stalk": ("stalk", "stalks"), "ear": ("ear", "ears"), "sheet": ("sheet", "sheets"),
+}
+# Units that read as "<n> <unit> of <food>" — the "of" is what makes "one can
+# of white beans" a noun phrase instead of "I can".
+_OF_UNITS = {"can", "jar", "bag", "box", "bottle", "bunch", "head", "clove", "stick", "slice", "piece", "pinch", "dash",
+             "sprig", "stalk", "ear", "sheet", "package", "packet", "envelope", "pound", "ounce", "fluid ounce", "cup",
+             "quart", "pint", "gallon", "gram", "kilogram", "milliliter", "liter", "teaspoon", "tablespoon"}
+# Word-level abbreviations inside food names and notes.
+_ABBR = {"lg": "large", "sm": "small", "med": "medium", "approx": "about", "w/": "with", "w/o": "without",
+         "pkg": "package", "tbsp": "tablespoon", "tsp": "teaspoon", "oz": "ounce", "lb": "pound", "lbs": "pounds", "qt": "quart"}
+
+
+def _unit_words(unit: str, amount: float) -> str:
+    u = unit.strip().lower().rstrip(".")
+    if not u:
+        return ""
+    plural = amount > 1 or (amount != 0 and amount != 1 and amount > 0)  # 1.5 cups, 2 cans; 1 can; 0.5 cup
+    if amount and 0 < amount < 1:
+        plural = False
+    key = u if u in UNITS else u.rstrip("s") if u.rstrip("s") in UNITS else None
+    if key is None:
+        return unit.strip()
+    sing, plur = UNITS[key]
+    return plur if plural else sing
+
+
+def _expand_abbr(text: str) -> str:
+    return " ".join(_ABBR.get(w.lower().rstrip("."), w) for w in text.split())
+
+
 @dataclass(frozen=True)
 class Ingredient:
     amount: float
@@ -41,10 +83,18 @@ class Ingredient:
     note: str = ""
 
     def spoken(self) -> str:
+        """'2 pounds of chicken thighs' / 'half a cup of onion, diced' / '2 eggs' / 'salt, to taste'."""
         amt = _spoken_amount(self.amount)
-        parts = [p for p in (amt, self.unit, self.food) if p]
-        text = " ".join(parts)
-        return f"{text}, {self.note}" if self.note else text
+        unit = _unit_words(self.unit, self.amount)
+        food = _expand_abbr(self.food)
+        if unit:
+            joiner = " of " if unit.rstrip("s") in _OF_UNITS or unit in _OF_UNITS else " "
+            if food.lower().startswith("of "):      # "3 cans of of diced tomatoes" (the food was entered with its own "of")
+                joiner = " "
+            text = f"{amt} {unit}{joiner}{food}".strip() if food else f"{amt} {unit}".strip()
+        else:
+            text = f"{amt} {food}".strip()
+        return f"{text}, {_expand_abbr(self.note)}" if self.note else text
 
 
 @dataclass(frozen=True)
