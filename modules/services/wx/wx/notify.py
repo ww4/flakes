@@ -52,7 +52,8 @@ def send(title: str, body: str, *, priority: str = "default", tags: str = "",
 
 def deliver(con: sqlite3.Connection, *, layer: int, key: str, title: str,
             body: str, alert_class: str, when: datetime | None = None,
-            notifier: str = "gromit-notify", tags: str = "") -> str:
+            notifier: str = "gromit-notify", tags: str = "",
+            click: str = "") -> str:
     """Send now, or hold until morning. Returns 'sent' | 'held'.
 
     `critical` is the only class that may pierce quiet hours, and it is the
@@ -68,9 +69,12 @@ def deliver(con: sqlite3.Connection, *, layer: int, key: str, title: str,
     else:
         priority = "default"
 
+    # A tappable alert is worth more than a readable one at 2 a.m. — the click
+    # target must never carry his coordinates, so layer 1 uses the ZONE page
+    # (a whole county, not a point) and layer 3 uses the video itself.
     send(title, body, priority=priority,
          tags=tags or ("rotating_light" if alert_class == "critical" else "cloud"),
-         notifier=notifier)
+         click=click, notifier=notifier)
     record_push(con, layer=layer, key=key, priority=priority, title=title, body=body)
     return "sent"
 
