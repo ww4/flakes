@@ -593,5 +593,18 @@ in
     };
   };
 
+  # --- Last.fm API key (curation plan, phase 2) ------------------------------
+  # Genre tags (beets lastgenre) and similar-artist lookups for the DJ's
+  # artist tranches. Read-only use. Owner netradio; group users so the agent's
+  # catalogue jobs (run as claude) can read it too — a low-value key.
+  # Handed over via the secrets-inbox 2026-09-16; edit with `sops secrets/lastfm-env.yaml`.
+  sops.secrets."lastfm-env" = {
+    sopsFile = ../../../secrets/lastfm-env.yaml;
+    key = "lastfm-env";
+    owner = user;
+    group = "users";
+    mode = "0440";
+  };
+
   environment.systemPackages = [ netradio ];
 }
