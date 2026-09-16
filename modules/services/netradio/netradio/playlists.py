@@ -39,6 +39,9 @@ class Station:
     name: str
     # None = everything not excluded (the `all` station)
     words: list[str] | None = None
+    # None = any era; else the profiler's era buckets this station plays.
+    # A track not yet profiled for era plays everywhere.
+    eras: list[str] | None = None
     paths: list[str] = field(default_factory=list)
 
 
@@ -53,6 +56,7 @@ def load_stations(path: Path) -> list[Station]:
             mount=s["mount"],
             name=s["name"],
             words=[w.lower() for w in words] if words is not None else None,
+            eras=s.get("era"),
         ))
     return stations
 
@@ -135,12 +139,13 @@ def write_atomic(path: Path, text: str) -> None:
 
 
 def scan(roots: list[Path], stations: list[Station], cache: TagCache,
-         talk: set[str] | None = None) -> dict:
+         talk: set[str] | None = None, eras: dict[str, str] | None = None) -> dict:
     """Fill each station's paths. Returns the counts worth logging. `talk` is
     the set of paths the profiler called talk (netradio profile); they are
-    kept off every station."""
+    kept off every station. `eras` is {path: era} for the era-filtered ones."""
     counts = {"files": 0, "untagged": 0, "excluded": 0, "talk": 0, "unreadable_dirs": 0}
     talk = talk or set()
+    eras = eras or {}
     for root in roots:
         if not root.is_dir():
             log.warning("library root missing or unreadable: %s", root)
@@ -166,7 +171,10 @@ def scan(roots: list[Path], stations: list[Station], cache: TagCache,
                 if str(p) in talk:
                     counts["talk"] += 1
                     continue
+                era = eras.get(str(p), "")
                 for s in stations:
+                    if s.eras and era and era not in s.eras:
+                        continue
                     if s.words is None or any(word_in(w, genres) for w in s.words):
                         s.paths.append(str(p))
     return counts
@@ -201,10 +209,13 @@ def main(argv: list[str] | None = None) -> int:
     stations = load_stations(args.stations)
     cache = TagCache(args.cache)
     talk: set[str] = set()
+    eras: dict[str, str] = {}
     if args.profile:
         from netradio.profile import Profile
-        talk = {p for p, v in Profile.load_verdicts(args.profile, args.overrides).items() if v.talk}
-    counts = scan(args.root, stations, cache, talk)
+        verdicts = Profile.load_verdicts(args.profile, args.overrides)
+        talk = {p for p, v in verdicts.items() if v.talk}
+        eras = {p: v.era for p, v in verdicts.items() if v.era}
+    counts = scan(args.root, stations, cache, talk, eras)
     cache.save()
     write_playlists(stations, args.out)
 
