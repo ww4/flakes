@@ -52,6 +52,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -111,9 +112,14 @@ class Facts:
     end_l1_db: float | None = None   # mean level of the last second of sound
     end_l3_db: float | None = None   # the second ending 3 s before the sound ends
     end_drop_s: float | None = None  # seconds from "still at level" to "gone"
+    # loudness (phase 4): EBU R128 over the whole track, for a per-track gain
+    # at playback (the Sound Check idea: nothing written back to the files)
+    loudness_lufs: float | None = None   # integrated loudness
+    true_peak_db: float | None = None    # dBTP
+    loudness_range_lu: float | None = None
 
 
-PROFILE_VERSION = 3   # bump when Facts gains a field: entries without it are re-measured
+PROFILE_VERSION = 4   # bump when Facts gains a field: entries without it are re-measured
 
 
 # --- listening -----------------------------------------------------------------
@@ -236,6 +242,26 @@ def decode_full(path: str, dur: float):
     return np.frombuffer(raw, np.int16).astype(np.float32).reshape(-1, 2) / 32768.0
 
 
+LOUDNESS_RE = re.compile(r"^\s*(I|LRA|Peak):\s+(-?[\d.]+|-inf)\s+(LUFS|LU|dBFS)", re.M)
+
+
+def loudness_of(path: str) -> dict:
+    """EBU R128 over the whole track via ffmpeg's ebur128 filter (~1 s of
+    CPU per track): integrated loudness, true peak, loudness range. Empty
+    when ffmpeg can't say (a silent or undecodable file)."""
+    cmd = ["ffmpeg", "-v", "info", "-nostdin", "-i", path, "-vn", "-af", "ebur128=peak=true", "-f", "null", "-"]
+    out = subprocess.run(cmd, capture_output=True, text=True, errors="replace").stderr
+    summary = out[out.rfind("Summary:"):]
+    got = {m.group(1): m.group(2) for m in LOUDNESS_RE.finditer(summary)}
+    facts = {}
+    for key, name in (("I", "loudness_lufs"), ("Peak", "true_peak_db"), ("LRA", "loudness_range_lu")):
+        try:
+            facts[name] = round(float(got[key]), 1)
+        except (KeyError, ValueError):
+            pass
+    return facts if "loudness_lufs" in facts else {}
+
+
 def bandwidth_hz(mono, n: int = 4096, floor_db: float = -50.0) -> float:
     """Highest frequency whose long-term spectrum is within floor_db of the
     peak. Shellac transfers stop at 5-7 kHz, tape at 10-15, digital at the
@@ -322,6 +348,7 @@ def analyse(path: str, model: Yamnet) -> Facts:
         date=info["date"], artist=info["artist"], album=info["album"],
         yamnet=model.class_means(head_scores),
         **ending_of(last),
+        **loudness_of(path),
     )
 
 
@@ -564,4 +591,8 @@ def main(argv: list[str] | None = None) -> int:
     stops = sum(1 for v in verdicts if v.hard_stop and not v.talk)
     log.info("done: %d analysed this run, %d cached, %d failed; %d of %d tracks are talk, %d end on a hard stop",
              done, skipped, failed, talk, len(profile.data), stops)
+    lufs = sorted(e["loudness_lufs"] for e in profile.data.values() if e.get("loudness_lufs") is not None)
+    if lufs:
+        log.info("loudness measured for %d tracks: median %.1f LUFS, quietest tenth under %.1f, loudest tenth over %.1f",
+                 len(lufs), lufs[len(lufs) // 2], lufs[len(lufs) // 10], lufs[-len(lufs) // 10])
     return 0

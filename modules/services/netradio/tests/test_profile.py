@@ -159,3 +159,24 @@ class DJUsesProfile(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Loudness(unittest.TestCase):
+    def test_gain_brings_a_track_to_target_without_clipping(self):
+        g = rules.gain_for
+        self.assertEqual(g({"loudness_lufs": -16.0, "true_peak_db": -3.0}), 0.0)
+        self.assertEqual(g({"loudness_lufs": -20.0, "true_peak_db": -8.0}), 4.0)       # a quiet old record comes up
+        self.assertEqual(g({"loudness_lufs": -9.0, "true_peak_db": -0.1}), -7.0)       # a loud master comes down
+        self.assertEqual(g({"loudness_lufs": -24.0, "true_peak_db": -3.0}), 2.0)       # capped by the peak ceiling
+        self.assertEqual(g({"loudness_lufs": -40.0, "true_peak_db": -30.0}), 15.0)     # and by the gain limit
+        self.assertIsNone(g({}))                                                        # unmeasured: play as is
+        self.assertIsNone(g({"loudness_lufs": -70.0}))                                  # silence: don't
+        v = rules.evaluate("x.mp3", {"loudness_lufs": -20.0, "true_peak_db": -8.0})
+        self.assertEqual(v.gain_db, 4.0)
+
+    def test_summary_parses_ffmpeg_ebur128(self):
+        summary = ("[Parsed_ebur128_0 @ 0x1] Summary:\n\n  Integrated loudness:\n    I:         -15.1 LUFS\n"
+                   "    Threshold: -25.4 LUFS\n\n  Loudness range:\n    LRA:         6.3 LU\n\n  True peak:\n"
+                   "    Peak:       -2.2 dBFS\n")
+        got = {m.group(1): m.group(2) for m in profile.LOUDNESS_RE.finditer(summary)}
+        self.assertEqual(got, {"I": "-15.1", "LRA": "6.3", "Peak": "-2.2"})
