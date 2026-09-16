@@ -16,6 +16,11 @@ tag names it asserts, and list it in RULES. Tags are what consumers act on:
   head_talk   starts with chatter: the DJ doesn't fade the previous song in
               over it, and gives the previous song a short exit
   tail_talk   ends with chatter: the DJ lets it finish, no crossfade
+
+and an `era` — an audio-quality bucket, not a date (the library's dates are
+reissue dates): `shellac` (old scratchy records), `vintage` (tape era),
+`hifi` (modern). Stations filter on it. Empty when the track was profiled
+before era facts existed.
 """
 
 from __future__ import annotations
@@ -30,6 +35,10 @@ class Verdict:
     head_talk: bool
     tail_talk: bool
     reason: str
+    era: str = ""      # "", "shellac", "vintage", "hifi"
+
+
+ERAS = ("shellac", "vintage", "hifi")
 
 
 # Thresholds from the labelled set (see the profile.py docstring). Both must
@@ -60,7 +69,65 @@ def rule_edges(path: str, f: dict, title: str) -> list[str]:
     return tags
 
 
-RULES = [rule_talk, rule_edges]
+# --- era ---------------------------------------------------------------------
+# From 35 tracks of certain era (profile.py docstring): shellac sides stop at
+# 5-7 kHz and are mono; tape reaches 10-15 kHz, mostly mono; modern masters
+# reach the codec's lowpass and are stereo. A low-bitrate MP3 caps the band
+# too, so a file whose band ends where its codec ends says nothing about the
+# recording — that is treated as modern unless it is also mono.
+SHELLAC_MAX_HZ = 8000.0
+# Stereo: modern VBR MP3s lowpass anywhere from 11.5 kHz up, and the average
+# bitrate doesn't say where (Skaggs 1997 at 11.8-13.6 kHz, 190 kbps). Tape-era
+# stereo mostly sits at 10-11 (Flatt & Scruggs 10.3); a wide-stereo 60s
+# reissue at 12.0 is the one measured exception and reads as hifi.
+HIFI_MIN_HZ = 11500.0
+HIFI_MONO_MIN_HZ = 15000.0   # a modern mono master (solo guitar) still reaches this
+MONO_CORR = 0.98
+
+
+def codec_cap_hz(f: dict) -> float:
+    """Where the codec's lowpass sits for this file's bitrate (lossy only)."""
+    codec = (f.get("codec") or "").lower()
+    if codec in ("flac", "wave", "aiff", "wavpack", ""):
+        return 22050.0
+    br = int(f.get("bitrate") or 0)
+    if br <= 0:
+        return 22050.0
+    for limit, cap in ((64, 10000.0), (96, 12000.0), (112, 13500.0), (128, 16000.0), (160, 17000.0)):
+        if br <= limit:
+            return cap
+    return 20000.0
+
+
+def tag_year(f: dict) -> int:
+    m = re.match(r"(\d{4})", str(f.get("date") or ""))
+    return int(m.group(1)) if m else 0
+
+
+def era_of(f: dict) -> str:
+    bw = float(f.get("bandwidth_hz") or 0.0)
+    if bw <= 0.0:
+        return ""
+    mono = float(f.get("stereo_corr", 1.0)) >= MONO_CORR
+    cap = codec_cap_hz(f)
+    codec_limited = bw >= 0.8 * cap
+    if bw < SHELLAC_MAX_HZ and mono and cap >= 10000.0:
+        return "shellac"
+    if bw >= HIFI_MONO_MIN_HZ or (bw >= HIFI_MIN_HZ and not mono) or (codec_limited and not mono):
+        # The tag date is a reissue date more often than not, so it can only
+        # ever DEMOTE: a clean stereo file that honestly says 1965 is the
+        # tape era; a modern recording never carries a date like that.
+        year = tag_year(f)
+        return "vintage" if 0 < year <= 1979 else "hifi"
+    return "vintage"
+
+
+def rule_era(path: str, f: dict, title: str) -> list[str]:
+    era = era_of(f)
+    return [f"era:{era}"] if era else []
+
+
+RULES = [rule_talk, rule_edges, rule_era]
 
 
 def evaluate(path: str, facts: dict, title: str = "") -> Verdict:
@@ -74,14 +141,18 @@ def evaluate(path: str, facts: dict, title: str = "") -> Verdict:
             reason += ", title agrees"
     else:
         reason = "music"
+    era = next((t[4:] for t in tags if t.startswith("era:")), "")
     return Verdict(talk=talk, head_talk="head_talk" in tags and not talk,
-                   tail_talk="tail_talk" in tags and not talk, reason=reason)
+                   tail_talk="tail_talk" in tags and not talk, reason=reason, era=era)
 
 
 def apply_overrides(verdicts: dict[str, Verdict], overrides: dict[str, str]) -> dict[str, Verdict]:
-    """A hand-written {path: "talk" | "music"} wins over the rules; the edge
-    hints are kept either way."""
+    """A hand-written {path: "talk" | "music" | "shellac" | "vintage" | "hifi"}
+    wins over the rules; the edge hints are kept either way."""
     for p, kind in overrides.items():
         v = verdicts.get(p, Verdict(False, False, False, ""))
-        verdicts[p] = Verdict(kind == "talk", v.head_talk, v.tail_talk, f"override: {kind}")
+        if kind in ERAS:
+            verdicts[p] = Verdict(v.talk, v.head_talk, v.tail_talk, f"{v.reason}; era override: {kind}", kind)
+        else:
+            verdicts[p] = Verdict(kind == "talk", v.head_talk, v.tail_talk, f"override: {kind}", v.era)
     return verdicts

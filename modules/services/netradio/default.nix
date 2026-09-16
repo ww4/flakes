@@ -18,7 +18,8 @@
 #                                      Icecast to list it, then nginx proxies
 #                                      the listener to Icecast (127.0.0.1:8020)
 #
-# Library stations are genre-tag playlists (netradio-playlists, nightly) fed
+# Library stations are genre-tag playlists, era-filtered by the profiler's
+# audio-quality buckets (netradio-playlists, nightly), fed
 # to Icecast by Liquidsoap, sequenced by a DJ (netradio-dj) that queues the
 # tracks and every 3-4 of them a Kokoro-voiced break naming what just played
 # and what is next. A profiler (netradio-profile, nightly) listens to each
@@ -98,14 +99,23 @@ let
   # Liquidsoap (one output per entry) and the receiver's menu (stations.yml).
   # `genres` are matched as whole words against each track's genre tag,
   # lower-cased with dashes as spaces ("Old-Time" → "old time"); null means
-  # every track. Names show on a 2-line receiver display: keep them short.
+  # every track. `era` restricts a station to the profiler's audio-quality
+  # buckets (shellac = old scratchy records, vintage = the tape era, hifi =
+  # modern; rules.py); absent = any. A track not yet profiled plays anywhere.
+  # Names show on a 2-line receiver display: keep them short.
+  # (Chris, 2026-09-16: tinny 1930s sides and modern masters are both worth
+  # having but not back to back — so the genre stations skip shellac and the
+  # era stations cut across genre.)
   stations = [
     { mount = "all";        name = "Everything";           genres = null; }
-    { mount = "bluegrass";  name = "Bluegrass & Old-Time"; genres = [ "bluegrass" "old time" "oldtime" "newgrass" "string band" "brother duets" "appalachian" ]; }
-    { mount = "country";    name = "Country";              genres = [ "country" "western swing" "honky tonk" "western" ]; }
-    { mount = "folk";       name = "Folk";                 genres = [ "folk" "singer songwriter" "celtic" "traditional" "americana" "acoustic" "irish" ]; }
-    { mount = "rock";       name = "Rock";                 genres = [ "rock" "alternative" "pop" "punk" "metal" "indie" "new wave" ]; }
-    { mount = "blues-jazz"; name = "Blues, Jazz & Soul";   genres = [ "blues" "jazz" "soul" "r&b" "funk" "big band" "swing" "motown" "zydeco" ]; }
+    { mount = "scratchy";   name = "Old Scratchy Records"; genres = null; era = [ "shellac" ]; }
+    { mount = "vintage";    name = "Vintage";              genres = null; era = [ "vintage" ]; }
+    { mount = "modern";     name = "Modern";               genres = null; era = [ "hifi" ]; }
+    { mount = "bluegrass";  name = "Bluegrass & Old-Time"; genres = [ "bluegrass" "old time" "oldtime" "newgrass" "string band" "brother duets" "appalachian" ]; era = [ "vintage" "hifi" ]; }
+    { mount = "country";    name = "Country";              genres = [ "country" "western swing" "honky tonk" "western" ]; era = [ "vintage" "hifi" ]; }
+    { mount = "folk";       name = "Folk";                 genres = [ "folk" "singer songwriter" "celtic" "traditional" "americana" "acoustic" "irish" ]; era = [ "vintage" "hifi" ]; }
+    { mount = "rock";       name = "Rock";                 genres = [ "rock" "alternative" "pop" "punk" "metal" "indie" "new wave" ]; era = [ "vintage" "hifi" ]; }
+    { mount = "blues-jazz"; name = "Blues, Jazz & Soul";   genres = [ "blues" "jazz" "soul" "r&b" "funk" "big band" "swing" "motown" "zydeco" ]; era = [ "vintage" "hifi" ]; }
     { mount = "gospel";     name = "Gospel";               genres = [ "gospel" "religious" "christian" "hymns" "sacred" "spiritual" ]; }
     { mount = "classical";  name = "Classical";            genres = [ "classical" "baroque" "orchestral" "opera" "chamber" ]; }
     { mount = "holiday";    name = "Holiday";              genres = [ "holiday" "christmas" "xmas" ]; }

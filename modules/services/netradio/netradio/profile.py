@@ -21,6 +21,22 @@ The same two signals on the last 20 s say whether a song ENDS in chatter
 (the DJ then lets it finish instead of crossfading over the talk), and on
 the first 20 s whether it starts with it.
 
+Era, as an audio-quality judgement (curation plan phase 1): the tag dates in
+this library are reissue dates, so the sound decides. Measured on 35 tracks
+of certain era (2026-09-16): every 1920s-40s side has bandwidth 5.2-7.3 kHz
+and is mono; 1950s-70s runs 4.7-17.8 kHz (early Stanleys/Hank 5-7, 60s
+stereo Nashville 13-18), mostly mono; 1980s+ 10-21 kHz, mostly stereo. So:
+bandwidth (highest frequency within 50 dB of the peak, 60 s window), the L/R
+correlation, and the file's bitrate (a 96 kbps MP3 lowpasses at ~11 kHz and
+must not read as tape) are stored; rules.py draws the lines.
+
+YAMNet's other classes come for free from the same run: instruments
+(banjo, mandolin, fiddle, steel guitar, accordion, harmonica, guitars,
+piano, organ, drum kit) and genres (bluegrass, country, swing, folk, gospel,
+blues, jazz, rock and roll, R&B, soul, a capella, choir, yodeling). Their
+per-track means are stored so rules can tag instrumentation and style; the
+thresholds get set once a library-wide pass shows the distributions.
+
 profile.json holds only the MEASUREMENTS (cached by size+mtime; a first
 pass over the library is hours at Nice 19, every night after that is
 seconds). What they mean — the thresholds, and any further filter — lives in
@@ -54,6 +70,19 @@ EDGE_SECONDS = 20.0     # the tail/head windows for "ends/starts in chatter"
 SPEECH_CLASSES = [0, 2, 3]      # Speech; Conversation; Narration, monologue
 MUSIC_CLASSES = [132]           # Music
 
+# The classes whose per-track mean is kept as a fact (name -> column).
+KEPT_CLASSES = {
+    "singing": 24, "choir": 25, "yodeling": 26,
+    "guitar": 135, "electric_guitar": 136, "bass_guitar": 137, "acoustic_guitar": 138,
+    "steel_guitar": 139, "banjo": 142, "mandolin": 144, "piano": 148, "organ": 150,
+    "drum_kit": 157, "violin": 186, "harmonica": 203, "accordion": 204,
+    "rock_and_roll": 219, "rhythm_and_blues": 221, "soul": 222, "country": 224,
+    "swing": 225, "bluegrass": 226, "folk": 228, "jazz": 230, "blues": 246,
+    "vocal_music": 249, "a_capella": 250, "christian": 253, "gospel": 254,
+    "traditional": 259,
+}
+FULL_SR = 44100   # the era measurements need the full band, not YAMNet's 16 kHz
+
 @dataclass
 class Facts:
     """What is measured per track. Add a field here (and bump PROFILE_VERSION)
@@ -65,9 +94,20 @@ class Facts:
     head_pitch_stable: float
     tail_talk_frames: float  # last EDGE_SECONDS
     tail_pitch_stable: float
+    # era (phase 1)
+    bandwidth_hz: float = 0.0    # highest frequency within 50 dB of the peak, first HEAD_SECONDS
+    stereo_corr: float = 1.0     # L/R correlation: ~1.0 is mono
+    bitrate: int = 0             # kbps from the container; a codec lowpass looks like tape
+    codec: str = ""
+    # the tags that matter to the rules and the report
+    date: str = ""
+    artist: str = ""
+    album: str = ""
+    # YAMNet class means over the first HEAD_SECONDS, {name: mean}
+    yamnet: dict | None = None
 
 
-PROFILE_VERSION = 1   # bump when Facts gains a field: entries without it are re-measured
+PROFILE_VERSION = 2   # bump when Facts gains a field: entries without it are re-measured
 
 
 # --- listening -----------------------------------------------------------------
@@ -93,14 +133,28 @@ class Yamnet:
         opts.intra_op_num_threads = 2   # a nightly job, not a race
         self.session = ort.InferenceSession(str(model), opts, providers=["CPUExecutionProvider"])
 
-    def talk_frames(self, x) -> float:
+    def scores(self, x):
         import numpy as np
         if len(x) < SR:  # under a second: nothing to say
+            return None
+        return self.session.run(["output_0"], {"waveform": x.astype(np.float32)})[0]
+
+    @staticmethod
+    def talk_frames_of(scores) -> float:
+        if scores is None:
             return 0.0
-        scores = self.session.run(["output_0"], {"waveform": x.astype(np.float32)})[0]
         speech = scores[:, SPEECH_CLASSES].max(axis=1)
         music = scores[:, MUSIC_CLASSES].max(axis=1)
         return float(((speech > 0.5) & (music < 0.5)).mean())
+
+    def talk_frames(self, x) -> float:
+        return self.talk_frames_of(self.scores(x))
+
+    @staticmethod
+    def class_means(scores) -> dict:
+        if scores is None:
+            return {}
+        return {name: round(float(scores[:, col].mean()), 3) for name, col in KEPT_CLASSES.items()}
 
 
 def pitch_stability(x, frame: int = 1024, hop: int = 512, fmin: float = 70.0, fmax: float = 1000.0,
@@ -134,6 +188,60 @@ def pitch_stability(x, frame: int = 1024, hop: int = 512, fmin: float = 70.0, fm
     return float(stable[voiced].mean())
 
 
+def decode_full(path: str, dur: float):
+    """Stereo at the file's own band (resampled to 44.1 kHz) for the era facts."""
+    import numpy as np
+    cmd = ["ffmpeg", "-v", "error", "-nostdin", "-i", path, "-t", f"{dur:.3f}",
+           "-ac", "2", "-ar", str(FULL_SR), "-f", "s16le", "-"]
+    raw = subprocess.run(cmd, capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.int16).astype(np.float32).reshape(-1, 2) / 32768.0
+
+
+def bandwidth_hz(mono, n: int = 4096, floor_db: float = -50.0) -> float:
+    """Highest frequency whose long-term spectrum is within floor_db of the
+    peak. Shellac transfers stop at 5-7 kHz, tape at 10-15, digital at the
+    codec's lowpass."""
+    import numpy as np
+    if len(mono) < n * 4:
+        return 0.0
+    spec = np.zeros(n // 2 + 1)
+    win = np.hanning(n)
+    for i in range(0, len(mono) - n, n):
+        spec += np.abs(np.fft.rfft(mono[i:i + n] * win)) ** 2
+    spec /= spec.max() + 1e-12
+    db = 10 * np.log10(spec + 1e-12)
+    above = np.where(db > floor_db)[0]
+    freqs = np.fft.rfftfreq(n, 1 / FULL_SR)
+    return float(freqs[above[-1]]) if len(above) else 0.0
+
+
+def stereo_corr(x) -> float:
+    import numpy as np
+    l, r = x[:, 0], x[:, 1]
+    if np.std(l) < 1e-6 or np.std(r) < 1e-6:
+        return 1.0
+    return float(np.corrcoef(l, r)[0, 1])
+
+
+def file_info(path: str) -> dict:
+    """bitrate/codec and the tags the rules and report use."""
+    out = {"bitrate": 0, "codec": "", "date": "", "artist": "", "album": ""}
+    try:
+        import mutagen
+        f = mutagen.File(path, easy=True)
+        if f is None:
+            return out
+        out["bitrate"] = int(getattr(f.info, "bitrate", 0) or 0) // 1000
+        out["codec"] = type(f).__name__.replace("Easy", "").lower()
+        t = f.tags or {}
+        for k in ("date", "artist", "album"):
+            v = t.get(k) or (t.get("originaldate") if k == "date" else None)
+            out[k] = str(v[0]) if v else ""
+    except Exception:
+        pass
+    return out
+
+
 def duration_of(path: str) -> float:
     out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                           "-of", "csv=p=0", path], capture_output=True, text=True, check=True).stdout
@@ -146,11 +254,18 @@ def analyse(path: str, model: Yamnet) -> Facts:
     edge = min(EDGE_SECONDS, dur)
     first = head[: int(edge * SR)]
     last = decode(path, start=max(0.0, dur - edge), dur=edge) if dur > EDGE_SECONDS else head
+    head_scores = model.scores(head)
+    full = decode_full(path, min(dur, HEAD_SECONDS))
+    info = file_info(path)
     return Facts(
         duration=dur,
-        talk_frames=model.talk_frames(head), pitch_stable=pitch_stability(head),
+        talk_frames=model.talk_frames_of(head_scores), pitch_stable=pitch_stability(head),
         head_talk_frames=model.talk_frames(first), head_pitch_stable=pitch_stability(first),
         tail_talk_frames=model.talk_frames(last), tail_pitch_stable=pitch_stability(last),
+        bandwidth_hz=round(bandwidth_hz(full.mean(axis=1)), 0), stereo_corr=round(stereo_corr(full), 3),
+        bitrate=info["bitrate"], codec=info["codec"],
+        date=info["date"], artist=info["artist"], album=info["album"],
+        yamnet=model.class_means(head_scores),
     )
 
 
@@ -197,7 +312,7 @@ def load_overrides(path: Path | None) -> dict[str, str]:
         data = json.loads(path.read_text())
     except (OSError, ValueError):
         return {}
-    return {p: k for p, k in data.items() if k in ("talk", "music")}
+    return {p: k for p, k in data.items() if k in ("talk", "music", "shellac", "vintage", "hifi")}
 
 
 def read_title(path: str) -> str:
@@ -212,10 +327,12 @@ def read_title(path: str) -> str:
 def write_report(profile: Profile, report: Path, overrides: dict[str, str]) -> None:
     verdicts = profile.verdicts(overrides)
     rows = [(p, profile.data.get(p, {}), v) for p, v in verdicts.items() if v.talk or v.head_talk or v.tail_talk]
+    eras = {e: sum(1 for v in verdicts.values() if v.era == e) for e in ("shellac", "vintage", "hifi", "")}
     lines = [f"# netradio profile report — {time.strftime('%Y-%m-%d %H:%M')}",
              f"# {len(profile.data)} tracks profiled; {sum(1 for r in rows if r[2].talk)} talk (kept off the stations), "
              f"{sum(1 for r in rows if r[2].tail_talk)} end in chatter, {sum(1 for r in rows if r[2].head_talk)} start with it.",
-             f"# Overrides ({len(overrides)}): a JSON object {{path: \"talk\" | \"music\"}} next to this file wins.", ""]
+             f"# era: {eras['shellac']} shellac, {eras['vintage']} vintage, {eras['hifi']} hifi, {eras['']} not yet measured.",
+             f"# Overrides ({len(overrides)}): a JSON object {{path: \"talk\" | \"music\" | \"shellac\" | \"vintage\" | \"hifi\"}} next to this file wins.", ""]
     for p, e, v in sorted(rows, key=lambda r: (r[0] not in overrides, not r[2].talk, r[0])):
         kind = "TALK " if v.talk else ("tail " if v.tail_talk else "head ")
         ov = " (override)" if p in overrides else ""
