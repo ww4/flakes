@@ -57,11 +57,21 @@ Answer with ONE JSON object and nothing else, of the form:
 
 
 def parse_result(text: str) -> dict:
-    """The first JSON object in the model's answer."""
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        raise ValueError("no JSON object in the result")
-    return json.loads(m.group(0))
+    """The JSON object in the model's answer, wherever it sits — the answer
+    may be wrapped in a code fence or prose with braces of its own, so try
+    to decode at every `{` and take the first object that has a rule."""
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.M)
+    dec = json.JSONDecoder()
+    first_error = None
+    for m in re.finditer(r"\{", text):
+        try:
+            obj, _ = dec.raw_decode(text, m.start())
+        except ValueError as e:
+            first_error = first_error or e
+            continue
+        if isinstance(obj, dict) and ("rule" in obj or "artists" in obj or "genres" in obj):
+            return obj if "rule" in obj else {"rule": obj}
+    raise ValueError(f"no JSON object with a rule in the result ({first_error or 'no braces at all'})")
 
 
 def apply_result(cfg: Config, feed_id: str, result: dict) -> list[str]:

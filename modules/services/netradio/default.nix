@@ -257,14 +257,25 @@ let
     };
   };
 
-  # The radio page (web/): a hand-written page, no framework; admin/ beneath
-  # it. Everything station-shaped the page needs is RUNTIME data the scanner
-  # writes under now/ (catalogue.json, stations.m3u/.pls) — nothing here
-  # depends on the station list.
+  # The radio page and the admin page (web/): Vue 3 (global build, no
+  # bundler) on Pico CSS, both vendored here by hash — the vhost is
+  # Tailscale-only, so nothing loads from a CDN at runtime. Everything
+  # station-shaped the pages need is RUNTIME data (the scanner's now/ files
+  # and the admin API); nothing here depends on the station list.
+  vueJs = pkgs.fetchurl {
+    url = "https://cdn.jsdelivr.net/npm/vue@3.5.13/dist/vue.global.prod.js";
+    hash = "sha256-xFm6fMjbZcmCWJ+l1kx/9HiHfo5bD9dWgyB87GpOieg=";
+  };
+  picoCss = pkgs.fetchurl {
+    url = "https://cdn.jsdelivr.net/npm/@picocss/pico@2.0.6/css/pico.min.css";
+    hash = "sha256-3V/VWRr9ge4h3MEXrYXAFNw/HxncLXt9EB6grMKSdMI=";
+  };
   radioWeb = pkgs.runCommand "netradio-web" { } ''
-    mkdir -p $out/admin
-    cp ${./web}/index.html ${./web}/app.js ${./web}/style.css $out/
-    cp ${./web/admin}/index.html ${./web/admin}/admin.js ${./web/admin}/admin.css $out/admin/
+    mkdir -p $out/admin $out/vendor
+    cp ${./web}/index.html ${./web}/app.js ${./web}/ui.css $out/
+    cp ${./web/admin}/index.html ${./web/admin}/admin.js $out/admin/
+    cp ${vueJs} $out/vendor/vue.global.prod.js
+    cp ${picoCss} $out/vendor/pico.min.css
   '';
 
   # YCast's menu (config/stations.yml) and the Liquidsoap script
@@ -750,9 +761,13 @@ in
           echo "feed $feed compiled"
         else
           echo "feed $feed: compile failed (see above)"
-          # compile-apply marks the feed failed when it ran; if claude itself
-          # failed, say so where the admin page shows it.
-          ${netradio}/bin/netradio compile-apply --config ${configDir} --feed "$feed" --result /dev/null >/dev/null 2>&1 || true
+          # compile-apply marks the feed failed with the real reason when it
+          # ran; only when claude produced nothing at all is there no result
+          # file, and then the page should say that instead.
+          if [ ! -s "$work/result" ]; then
+            printf 'claude -p produced no answer (timeout or failure) — see journalctl -u netradio-apply\n' > "$work/result"
+            ${netradio}/bin/netradio compile-apply --config ${configDir} --feed "$feed" --result "$work/result" >/dev/null 2>&1 || true
+          fi
         fi
         rm -rf "$work"
         need_apply=1

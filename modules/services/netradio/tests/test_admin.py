@@ -132,6 +132,13 @@ class Compile(unittest.TestCase):
             self.assertEqual(cfg.feeds()["ws"]["status"], "failed")
             with self.assertRaises(ValueError):
                 compile_.parse_result("no json here")
+            # prose with braces before the object, a code fence, a bare rule
+            r = compile_.parse_result('Notes {thin} first.\n```json\n{"rule": {"artists": ["A"]}, "family": ["country"]}\n```')
+            self.assertEqual(r["rule"]["artists"], ["A"])
+            r = compile_.parse_result('{"artists": ["A"], "genres": ["x"]}')
+            self.assertEqual(r["rule"]["genres"], ["x"])
+            r = compile_.parse_result('{"note": "x"} then {"rule": {"all": true}}')
+            self.assertTrue(r["rule"]["all"])
 
 
 class Liq(unittest.TestCase):
