@@ -35,6 +35,16 @@
 # URLs to http://. A station that serves HTTPS only will fail to play; the
 # Radiobrowser index still has plenty that don't.
 #
+# Stations, specialty feeds and the schedule are RUNTIME config
+# (${stateDir}/config/, seeded once from this file) edited on
+# radio.rosemaryacres.com/admin. Two kinds of station: CURATED (a broad base
+# rule plus a schedule of segments — themed hours drawn from specialty feeds
+# or artist spotlights with similar artists mixed in; `auto` slots are the
+# DJ's own pick for the day) and SPECIALTY (one feed, listenable on its own).
+# A new feed's rule is written by `claude -p` from its description (the
+# apply path unit runs it as the claude user); the DJ announces segments as
+# they start and the day's schedule at breaks, radio-style.
+#
 # The page at radio.rosemaryacres.com (web/) shows what's playing, the last
 # few played, what the DJ queued next, listener counts and a visualiser, and
 # serves stations.m3u / .pls for radio apps. Every station also has a
@@ -42,6 +52,9 @@
 #
 # Ops:
 #   sudo cat /var/lib/netradio/credentials.env      Icecast passwords (generated)
+#   radio.rosemaryacres.com/admin                   feeds, schedule, stations (the config)
+#   /var/lib/netradio/config/                       feeds.json stations.json schedule.json picks.json
+#   journalctl -u netradio-apply                    what the admin's requests did (rescan / restart / compile)
 #   systemctl start netradio-playlists              rescan the library now
 #   systemctl start netradio-profile                profile new tracks now (first run: hours)
 #   /var/lib/netradio/profile/profile-report.txt    what the profiler flagged; fix in profile-overrides.json beside it
@@ -64,6 +77,7 @@ let
 
   ycastPort = 8010;
   wakePort = 8011;
+  adminPort = 8012;
   icecastPort = 8020; # 8000 is audiobookshelf (icecast SEGVs when the bind fails)
 
   user = "netradio";
@@ -105,32 +119,96 @@ let
   # where Lidarr puts new albums (lidarr.nix).
   libraryRoots = [ "/mnt/fusion/Music" "/mnt/fusion/arr/media/music" ];
 
-  # The station catalogue — ONE definition feeds the scanner (stations.json),
-  # Liquidsoap (one output per entry) and the receiver's menu (stations.yml).
-  # `genres` are matched as whole words against each track's genre tag,
-  # lower-cased with dashes as spaces ("Old-Time" → "old time"); null means
-  # every track. `era` restricts a station to the profiler's audio-quality
-  # buckets (shellac = old scratchy records, vintage = the tape era, hifi =
-  # modern; rules.py); absent = any. A track not yet profiled plays anywhere.
-  # Names show on a 2-line receiver display: keep them short.
-  # (Chris, 2026-09-16: tinny 1930s sides and modern masters are both worth
-  # having but not back to back — so the genre stations skip shellac and the
-  # era stations cut across genre.)
-  stations = [
-    { mount = "all";        name = "Everything";           genres = null; }
-    { mount = "scratchy";   name = "Old Scratchy Records"; genres = null; era = [ "shellac" ]; }
-    { mount = "vintage";    name = "Vintage";              genres = null; era = [ "vintage" ]; }
-    { mount = "modern";     name = "Modern";               genres = null; era = [ "hifi" ]; }
-    { mount = "bluegrass";  name = "Bluegrass & Old-Time"; genres = [ "bluegrass" "old time" "oldtime" "newgrass" "string band" "brother duets" "appalachian" ]; era = [ "vintage" "hifi" ]; }
-    { mount = "country";    name = "Country";              genres = [ "country" "western swing" "honky tonk" "western" ]; era = [ "vintage" "hifi" ]; }
-    { mount = "folk";       name = "Folk";                 genres = [ "folk" "singer songwriter" "celtic" "traditional" "americana" "acoustic" "irish" ]; era = [ "vintage" "hifi" ]; }
-    { mount = "rock";       name = "Rock";                 genres = [ "rock" "alternative" "pop" "punk" "metal" "indie" "new wave" ]; era = [ "vintage" "hifi" ]; }
-    { mount = "blues-jazz"; name = "Blues, Jazz & Soul";   genres = [ "blues" "jazz" "soul" "r&b" "funk" "big band" "swing" "motown" "zydeco" ]; era = [ "vintage" "hifi" ]; }
-    { mount = "gospel";     name = "Gospel";               genres = [ "gospel" "religious" "christian" "hymns" "sacred" "spiritual" ]; }
-    { mount = "classical";  name = "Classical";            genres = [ "classical" "baroque" "orchestral" "opera" "chamber" ]; }
-    { mount = "holiday";    name = "Holiday";              genres = [ "holiday" "christmas" "xmas" ]; }
+  # --- the runtime config and its seeds ---------------------------------------
+  # Stations, specialty feeds and the schedule are RUNTIME config under
+  # ${stateDir}/config/, edited on radio.rosemaryacres.com/admin; the scanner,
+  # the DJ, Liquidsoap (script rendered at start), YCast (menu file) and the
+  # wake service all read it. These seeds are copied in ONCE, on a box that
+  # has no config yet — Chris's edits are never overwritten by a deploy.
+  #
+  # A feed's rule (feeds.py): artists / genres / instruments (YAMNet means)
+  # / era, clauses AND-ed. A station's base is the same shape. Families are
+  # the compatibility vocabulary (config.py): the admin page offers a
+  # station only feeds and artists whose families overlap its own.
+  configDir = "${stateDir}/config";
+  poolsDir = "${stateDir}/pools";
+
+  noShellac = { exclude = [ "shellac" ]; };
+  seedFeeds = {
+    brother-duets = {
+      title = "Brother Duets";
+      description = "Close-harmony duets by brothers and brotherly pairs: the Louvins, Delmores, Blue Sky Boys, Stanleys, Monroe Brothers, Lilly Brothers, Whitsteins, Bailes Brothers, Osbornes.";
+      family = [ "bluegrass" "country" ]; status = "ready"; count = 0;
+      note = "seeded from the library's artist list";
+      rule = { artists = [ "Stanley Brothers" "Louvin Brothers" "Blue Sky Boys" "Delmore Brothers" "Lilly Brothers" "Whitstein Brothers"
+                           "Bailes Brothers" "Osborne Brothers" "Bill and Charlie Monroe" "Monroe Brothers" "Jim & Jesse"
+                           "Bobby Osborne And Jesse McReynolds" "Jesse McReynolds & Charles Whitstein" "Everly Brothers" ];
+               genres = [ "brother duets" ]; };
+    };
+    western-swing = {
+      title = "Western Swing";
+      description = "Dance-hall country with jazz in it: Bob Wills and the Texas Playboys, Milton Brown, Spade Cooley, and the revivalists — Asleep at the Wheel, Hot Club of Cowtown.";
+      family = [ "country" ]; status = "ready"; count = 0; note = "seeded; thin until the metadata pass adds Last.fm genres";
+      rule = { artists = [ "Bob Wills" "Milton Brown" "Spade Cooley" "Asleep At The Wheel" "Hot Club of Cowtown" "Light Crust Doughboys" "Tex Williams" "Hank Thompson" ];
+               genres = [ "western swing" ]; };
+    };
+    honky-tonk = {
+      title = "Honky Tonk";
+      description = "Barroom country of the 1950s and 60s and its keepers: Hank Williams, Lefty Frizzell, Ernest Tubb, Webb Pierce, Ray Price, George Jones, Faron Young, Johnny Bush, Gary Stewart, Moe Bandy.";
+      family = [ "country" ]; status = "ready"; count = 0; note = "seeded from the library's artist list";
+      rule = { artists = [ "Hank Williams" "Lefty Frizzell" "Ernest Tubb" "Webb Pierce" "Ray Price" "George Jones" "Faron Young"
+                           "Johnny Bush" "Gary Stewart" "Moe Bandy" "Hank Thompson" "Johnny Paycheck" "Vern Gosdin" ];
+               genres = [ "honky tonk" ]; };
+    };
+    old-time-fiddle = {
+      title = "Old-Time Fiddle";
+      description = "Fiddle-led old-time tunes: Tommy Jarrell, Art Stamper, Benton Flippen, Bruce Molsky, Clyde Davenport — the tune, not the song.";
+      family = [ "bluegrass" "folk" ]; status = "ready"; count = 0; note = "seeded: old-time tag AND a fiddle in the mix";
+      rule = { genres = [ "old time" "oldtime" "fiddle" ]; artists = [ "Tommy Jarrell" "Art Stamper" "Benton Flippen" "Bruce Molsky" "Clyde Davenport" ];
+               instruments = { violin = [ 0.15 null ]; }; };
+    };
+    banjo-instrumentals = {
+      title = "Banjo Instrumentals";
+      description = "Banjo out front and nobody singing: bluegrass and clawhammer instrumentals.";
+      family = [ "bluegrass" "folk" ]; status = "ready"; count = 0; note = "seeded from the audio measurements";
+      rule = { instruments = { banjo = [ 0.3 null ]; singing = [ null 0.05 ]; }; };
+    };
+    a-cappella = {
+      title = "A Cappella & Lined-Out Singing";
+      description = "Unaccompanied singing: Old Regular Baptist lined-out hymnody, ballad singers, shape-note and quartet singing without instruments.";
+      family = [ "gospel" "folk" ]; status = "ready"; count = 0; note = "seeded from the audio measurements";
+      rule = { instruments = { a_capella = [ 0.15 null ]; }; };
+    };
+    cajun-zydeco = {
+      title = "Cajun & Zydeco";
+      description = "Louisiana dance music: Cajun two-steps and waltzes, zydeco.";
+      family = [ "folk" "country" ]; status = "ready"; count = 0; note = "seeded from the genre tags";
+      rule = { genres = [ "cajun" "zydeco" ]; };
+    };
+  };
+  specialtyStation = id: f: { mount = id; name = f.title; kind = "specialty"; feed = id; inherit (f) family; };
+  seedStations = [
+    { mount = "all";        name = "Everything";           kind = "curated"; family = [ "any" ];                base = { all = true; }; }
+    { mount = "scratchy";   name = "Old Scratchy Records"; kind = "curated"; family = [ "any" ];                base = { all = true; era = { only = [ "shellac" ]; }; }; }
+    { mount = "bluegrass";  name = "Bluegrass & Old-Time"; kind = "curated"; family = [ "bluegrass" "folk" ];   base = { genres = [ "bluegrass" "old time" "oldtime" "newgrass" "string band" "brother duets" "appalachian" ]; era = noShellac; }; }
+    { mount = "country";    name = "Classic Country";      kind = "curated"; family = [ "country" ];            base = { genres = [ "country" "western swing" "honky tonk" "western" "cowboy" ]; era = noShellac; }; }
+    { mount = "folk";       name = "Folk";                 kind = "curated"; family = [ "folk" "bluegrass" ];   base = { genres = [ "folk" "singer songwriter" "celtic" "traditional" "americana" "acoustic" "irish" "cajun" "zydeco" ]; era = noShellac; }; }
+    { mount = "rock";       name = "Rock";                 kind = "curated"; family = [ "rock" ];               base = { genres = [ "rock" "alternative" "pop" "punk" "metal" "indie" "new wave" ]; era = noShellac; }; }
+    { mount = "blues-jazz"; name = "Blues, Jazz & Soul";   kind = "curated"; family = [ "blues-jazz" ];         base = { genres = [ "blues" "jazz" "soul" "r&b" "funk" "big band" "swing" "motown" "zydeco" ]; era = noShellac; }; }
+    { mount = "gospel";     name = "Gospel";               kind = "curated"; family = [ "gospel" ];             base = { genres = [ "gospel" "religious" "christian" "hymns" "sacred" "spiritual" ]; }; }
+    { mount = "classical";  name = "Classical";            kind = "curated"; family = [ "classical" ];          base = { genres = [ "classical" "baroque" "orchestral" "opera" "chamber" ]; }; }
+    { mount = "holiday";    name = "Holiday";              kind = "curated"; family = [ "holiday" ];            base = { genres = [ "holiday" "christmas" "xmas" ]; }; }
+  ] ++ lib.mapAttrsToList specialtyStation seedFeeds;
+  seedSchedule = [
+    { id = "country-sat-swing";  station = "country";   name = "Western Swing Hour";     kind = "feed"; feed = "western-swing";   days = [ "sat" ]; start = "10:00"; minutes = 60; }
+    { id = "country-happy-hour"; station = "country";   name = "Honky Tonk Happy Hour";  kind = "feed"; feed = "honky-tonk";      days = "weekdays"; start = "17:00"; minutes = 60; }
+    { id = "country-spotlight";  station = "country";   kind = "auto"; like = "artist";  days = "daily"; start = "20:00"; minutes = 60; }
+    { id = "bluegrass-duets";    station = "bluegrass"; name = "Brother Duets Hour";     kind = "feed"; feed = "brother-duets";   days = [ "sun" ]; start = "09:00"; minutes = 60; }
+    { id = "bluegrass-banjo";    station = "bluegrass"; name = "Banjo Hour";             kind = "feed"; feed = "banjo-instrumentals"; days = [ "wed" ]; start = "19:00"; minutes = 60; }
+    { id = "folk-fiddle";        station = "folk";      name = "Old-Time Fiddle Hour";   kind = "feed"; feed = "old-time-fiddle"; days = [ "sat" ]; start = "09:00"; minutes = 60; }
   ];
-  stationsJson = pkgs.writeText "netradio-stations.json" (builtins.toJSON stations);
+  seedFile = name: data: pkgs.writeText "netradio-seed-${name}" (builtins.toJSON data);
+  seeds = { feeds = seedFile "feeds.json" seedFeeds; stations = seedFile "stations.json" seedStations; schedule = seedFile "schedule.json" seedSchedule; };
 
   # A few known-good plain-HTTP streams so the input has something to play
   # before any browsing (all verified 2026-09-15). Discovery is Radiobrowser's
@@ -148,6 +226,7 @@ let
     { name = "SomaFM Groove Salad"; url = "http://ice1.somafm.com/groovesalad-128-mp3"; }
     { name = "SomaFM Secret Agent"; url = "http://ice1.somafm.com/secretagent-128-mp3"; }
   ];
+  quickPicksJson = pkgs.writeText "netradio-quick-picks.json" (builtins.toJSON quickPicks);
 
   radioHost = "radio.rosemaryacres.com";
 
@@ -178,105 +257,20 @@ let
     };
   };
 
-  # The radio page (web/): a hand-written page, no framework. The catalogue
-  # is handed to it as stations.json, and the same list becomes the m3u/pls
-  # files a radio app imports. Streams are same-origin so Web Audio may read
-  # them for the visualiser.
-  publicBase = "https://${radioHost}/radio";
-  stationList = builtins.toJSON (map (s: { inherit (s) mount name; era = s.era or null; }) stations);
-  m3u = suffix: "#EXTM3U\n" + lib.concatMapStrings (s: "#EXTINF:-1,${s.name}\n${publicBase}/${s.mount}${suffix}.mp3\n") stations;
-  pls = "[playlist]\n" + lib.concatStrings (lib.imap1 (i: s: "File${toString i}=${publicBase}/${s.mount}.mp3\nTitle${toString i}=${s.name}\nLength${toString i}=-1\n") stations)
-        + "NumberOfEntries=${toString (builtins.length stations)}\nVersion=2\n";
+  # The radio page (web/): a hand-written page, no framework; admin/ beneath
+  # it. Everything station-shaped the page needs is RUNTIME data the scanner
+  # writes under now/ (catalogue.json, stations.m3u/.pls) — nothing here
+  # depends on the station list.
   radioWeb = pkgs.runCommand "netradio-web" { } ''
-    mkdir -p $out
+    mkdir -p $out/admin
     cp ${./web}/index.html ${./web}/app.js ${./web}/style.css $out/
-    cp ${pkgs.writeText "stations.json" stationList} $out/stations.json
-    cp ${pkgs.writeText "stations.m3u" (m3u "")} $out/stations.m3u
-    cp ${pkgs.writeText "stations-lo.m3u" (m3u "-lo")} $out/stations-lo.m3u
-    cp ${pkgs.writeText "stations.pls" pls} $out/stations.pls
+    cp ${./web/admin}/index.html ${./web/admin}/admin.js ${./web/admin}/admin.css $out/admin/
   '';
 
-  # YCast's "My Stations" file. Hand-emitted YAML (not toJSON) so the menu
-  # order is the catalogue order, not alphabetical.
-  yamlLine = name: url: "  ${builtins.toJSON name}: ${builtins.toJSON url}\n";
-  stationsYml = pkgs.writeText "ycast-stations.yml" (
-    "My Library:\n"
-    + lib.concatMapStrings (s: yamlLine s.name "http://${vtunerHost}/radio/${s.mount}.mp3") stations
-    + "\nQuick Picks:\n"
-    + lib.concatMapStrings (s: yamlLine s.name s.url) quickPicks
-  );
-
-  # Liquidsoap: one randomized, crossfaded playlist → Icecast MP3 output per
-  # station, every output created STOPPED. netradio-wake starts/stops them
-  # over the server socket (`<mount>.start` / `<mount>.stop`). Playlists are
-  # reloaded when the scanner rewrites them (inotify).
-  liqScript = pkgs.writeText "netradio.liq" ''
-    settings.log.stdout := true
-    settings.log.file := false
-    settings.log.level := 3
-    settings.server.socket := true
-    settings.server.socket.path := "${liqSocket}"
-    settings.server.socket.permissions := 0o600
-    settings.server.timeout := -1.
-
-    password = environment.get("ICECAST_SOURCE_PASSWORD")
-
-    def station(mount, name) =
-      # The DJ (netradio-dj) feeds q_<mount> two items ahead — tracks it chose,
-      # and every few of them a rendered break. The plain shuffle is the
-      # fallback: it plays whenever the queue is empty (the first track after a
-      # wake, or the DJ being down), and hands back at the next track boundary.
-      pl = playlist(id="pl_" ^ mount, mode="randomize", reload_mode="watch",
-                    "${playlistDir}/" ^ mount ^ ".m3u")
-      q = request.queue(id="q_" ^ mount)
-      s = fallback(id="src_" ^ mount, track_sensitive=true, [q, pl])
-      # Breaks carry liq_amplify (speech renders ~8 dB under the music).
-      s = amplify(1., override="liq_amplify", s)
-      s = crossfade(s)
-      s = mksafe(s)
-      # The first track's metadata is emitted BEFORE the Icecast connection is
-      # up (the log shows "now playing" ahead of "Connecting mount"), so the
-      # ICY title update for it can be lost and the receiver shows no song
-      # until the next track. Keep the last metadata and re-insert it once
-      # the mount is connected; the one log line per track is the record of
-      # what each station played.
-      s = insert_metadata(s)
-      last = ref([])
-      # The last ten things played, as JSON for the radio page. The re-insert
-      # on connect fires this handler a second time for the same track, so
-      # an entry equal to the head is not added twice.
-      history = ref([])
-      s.on_metadata(synchronous=true, fun (m) -> begin
-        last := m
-        log(label=mount, level=3, "now playing: " ^ m["artist"] ^ " - " ^ m["title"])
-        if m["title"] != "" then
-          entry = {artist = m["artist"], title = m["title"],
-                   kind = (if m["dj"] == "true" then "break" else "track" end), at = time()}
-          same = (fun (h) -> h.artist == entry.artist and h.title == entry.title)
-          if not (list.length(history()) > 0 and same(list.hd(default=entry, history()))) then
-            history := list.prefix(10, [entry, ...history()])
-            file.write(data=json.stringify(history()), "${nowDir}/" ^ mount ^ ".json")
-          end
-        end
-      end)
-      # Two encodes of the same program: 192 kbps, and a 96 kbps "-lo" mount
-      # for phones on cellular. Each is an on-demand output of its own.
-      def out(id, mnt, kbps) =
-        output.icecast(%mp3(bitrate=kbps), id=id, start=false,
-                       host="127.0.0.1", port=${toString icecastPort}, password=password,
-                       mount="/" ^ mnt ^ ".mp3", name=name, genre=name,
-                       description="Library station", public=false,
-                       on_connect={ if last() != [] then s.insert_metadata(last()) end },
-                       s)
-      end
-      out(mount, mount, 192)
-      out(mount ^ "-lo", mount ^ "-lo", 96)
-    end
-
-    ${lib.concatMapStrings (s: ''
-      station(${builtins.toJSON s.mount}, ${builtins.toJSON s.name})
-    '') stations}
-  '';
+  # YCast's menu (config/stations.yml) and the Liquidsoap script
+  # (/run/netradio/netradio.liq) are rendered from the runtime station list:
+  # the scanner writes the first, `netradio liq` the second at service start.
+  liqScript = "${runDir}/netradio.liq";
 
   # Icecast config, rendered at start with the generated passwords. The
   # nixpkgs module takes the password as a Nix string, which would put it in
@@ -289,7 +283,7 @@ let
       <hostname>127.0.0.1</hostname>
       <limits>
         <clients>32</clients>
-        <sources>${toString (2 * builtins.length stations + 2)}</sources>
+        <sources>64</sources>   <!-- two encodes per station; the list is runtime config -->
         <queue-size>524288</queue-size>
         <client-timeout>30</client-timeout>
         <header-timeout>15</header-timeout>
@@ -405,6 +399,14 @@ in
           add_header Cache-Control "no-store";
         '';
       };
+      # The admin API (netradio admin, loopback). The page itself is static
+      # under /admin/. The vhost's Tailscale/LAN gate is the perimeter.
+      "/admin/api/" = {
+        proxyPass = "http://127.0.0.1:${toString adminPort}/api/";
+        extraConfig = ''
+          add_header Cache-Control "no-store";
+        '';
+      };
       # Icecast's public status: which mounts are up, titles, listener counts.
       "= /icecast-status" = {
         proxyPass = "http://127.0.0.1:${toString icecastPort}/status-json.xsl";
@@ -435,11 +437,19 @@ in
       install -d -m 0755 -o ${user} -g ${user} ${djDir}
       install -d -m 0755 -o ${user} -g ${user} ${nowDir}
       install -d -m 0755 -o ${user} -g ${user} ${profileDir}
+      install -d -m 0755 -o ${user} -g ${user} ${poolsDir} ${poolsDir}/feeds ${poolsDir}/artists
+      # The runtime config: netradio writes it (admin, scanner, DJ) and the
+      # claude user's compile job writes feeds.json too, so it is group
+      # `users` and setgid. Seeds land only where no file exists.
+      install -d -m 2775 -o ${user} -g users ${configDir} ${configDir}/requests
+      [ -s ${configDir}/feeds.json ]    || install -m 0664 -o ${user} -g users ${seeds.feeds} ${configDir}/feeds.json
+      [ -s ${configDir}/stations.json ] || install -m 0664 -o ${user} -g users ${seeds.stations} ${configDir}/stations.json
+      [ -s ${configDir}/schedule.json ] || install -m 0664 -o ${user} -g users ${seeds.schedule} ${configDir}/schedule.json
       # Liquidsoap watches each playlist FILE (inotify): one that appears
       # after it started is never picked up, but an empty one that is later
       # rewritten is (verified 2026-09-15). So every station's file exists
       # before the first start; the scanner fills them.
-      for m in ${lib.concatMapStringsSep " " (s: s.mount) stations}; do
+      for m in $(${pkgs.jq}/bin/jq -r '.[].mount' ${configDir}/stations.json); do
         f=${playlistDir}/$m.m3u
         [ -e "$f" ] || { printf '#EXTM3U\n' > "$f"; chown ${user}:${user} "$f"; }
       done
@@ -506,6 +516,13 @@ in
       RuntimeDirectory = "netradio";
       RuntimeDirectoryMode = "0700";
       ReadWritePaths = [ nowDir ];
+      # The script is rendered from the runtime station list every start;
+      # a station added on the admin page is one restart away (the apply
+      # path unit does it when the mount list changed).
+      ExecStartPre = lib.concatStringsSep " " [
+        "${netradio}/bin/netradio liq" "--config ${configDir}" "--socket ${liqSocket}"
+        "--playlists ${playlistDir}" "--now-dir ${nowDir}" "--port ${toString icecastPort}" "--out ${liqScript}"
+      ];
       ExecStart = "${lib.getExe pkgs.liquidsoap} ${liqScript}";
       Restart = "always";
       RestartSec = 5;
@@ -527,11 +544,13 @@ in
       User = user;
       Group = user;
       SupplementaryGroups = [ "media" ];   # reads the tracks' tags
-      ReadWritePaths = [ djDir nowDir ];
+      ReadWritePaths = [ djDir nowDir configDir ];   # picks.json / similar.json live in config
+      EnvironmentFile = [ "-/run/secrets/lastfm-env" ];  # similar artists for spotlights; optional
       ExecStart = lib.concatStringsSep " " ([
         "${netradio}/bin/netradio dj"
         "--now-dir ${nowDir}"
-        "--stations ${stationsJson}"
+        "--config ${configDir}"
+        "--pools ${poolsDir}"
         "--playlists ${playlistDir}"
         "--socket ${liqSocket}"
         "--out ${djDir}"
@@ -556,7 +575,7 @@ in
       Group = user;
       ExecStart = lib.concatStringsSep " " [
         "${netradio}/bin/netradio wake"
-        "--stations ${stationsJson}"
+        "--stations ${configDir}/stations.json"
         "--playlists ${playlistDir}"
         "--socket ${liqSocket}"
         "--icecast-status http://127.0.0.1:${toString icecastPort}/status-json.xsl"
@@ -578,15 +597,20 @@ in
       User = user;
       Group = user;
       SupplementaryGroups = [ "media" ];
-      ReadWritePaths = [ playlistDir cacheDir nowDir ];
+      ReadWritePaths = [ playlistDir cacheDir nowDir poolsDir configDir ];
       Nice = 10;
       IOSchedulingClass = "idle";
       ExecStart = lib.concatStringsSep " " ([
         "${netradio}/bin/netradio playlists"
-        "--stations ${stationsJson}"
+        "--config ${configDir}"
         "--out ${playlistDir}"
+        "--pools ${poolsDir}"
         "--cache ${tagCache}"
         "--summary ${nowDir}/stations.json"
+        "--ycast ${configDir}/stations.yml"
+        "--public-base http://${vtunerHost}/radio"
+        "--web-base https://${radioHost}/radio"
+        "--quick-picks ${quickPicksJson}"
         "--profile ${profileJson}"
         "--overrides ${profileOverrides}"
       ] ++ map (r: "--root ${r}") libraryRoots);
@@ -659,6 +683,99 @@ in
     };
   };
 
+  # --- the admin API ------------------------------------------------------------
+  # Edits the runtime config; files requests under config/requests/ for the
+  # privileged side below. Loopback; nginx proxies /admin/api/ to it.
+  systemd.services.netradio-admin = {
+    description = "netradio admin API (feeds, stations, schedule)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "netradio-credentials.service" ];
+    requires = [ "netradio-credentials.service" ];
+    serviceConfig = hardening // {
+      User = user;
+      Group = user;
+      ReadWritePaths = [ configDir ];
+      ExecStart = "${netradio}/bin/netradio admin --config ${configDir} --listen 127.0.0.1 --port ${toString adminPort}";
+      Restart = "always";
+      RestartSec = 5;
+    };
+  };
+
+  # --- the privileged side: apply and compile -----------------------------------
+  # The admin API can't restart units or run the agent, so it drops a request
+  # file and this path unit (root) does the work:
+  #   apply-*.json    rescan (netradio-playlists), then restart Liquidsoap +
+  #                   the wake service ONLY if the station list changed —
+  #                   a restart cuts live listeners for a few seconds.
+  #   compile-*.json  build a feed's rule from its description: the prompt
+  #                   carries the library's artist inventory and the genre
+  #                   words; `claude -p` answers with one JSON object (as the
+  #                   claude user, the way the weekly digest runs); the
+  #                   result is validated and stored, then an apply follows.
+  systemd.paths.netradio-apply = {
+    wantedBy = [ "multi-user.target" ];
+    pathConfig = {
+      PathChanged = "${configDir}/requests";
+      DirectoryNotEmpty = "${configDir}/requests";
+      Unit = "netradio-apply.service";
+    };
+  };
+  systemd.services.netradio-apply = {
+    description = "netradio: act on admin requests (rescan / restart / compile a feed)";
+    path = [ pkgs.coreutils pkgs.jq pkgs.util-linux pkgs.systemd pkgs.gnugrep ];
+    serviceConfig = {
+      Type = "oneshot";
+      TimeoutStartSec = "30min";
+    };
+    script = ''
+      set -uo pipefail
+      req=${configDir}/requests
+      shopt -s nullglob
+      need_apply=0
+      for f in "$req"/compile-*.json; do
+        feed="$(jq -r .feed "$f")"
+        rm -f "$f"
+        [ -n "$feed" ] || continue
+        echo "compiling feed $feed"
+        work="$(mktemp -d /tmp/netradio-compile.XXXXXX)"
+        chown claude "$work"
+        if runuser -u claude -- env HOME=/home/claude CLAUDE_AUTONOMOUS=1 \
+             PATH=/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin:/usr/bin:/bin \
+             bash -c '
+               cd /home/claude/nixos-homelab-improvements || exit 1
+               ${netradio}/bin/netradio compile-prompt --config ${configDir} --feed "$1" --genre-words ${configDir}/genre-words.json > "$2/prompt" || exit 1
+               timeout 10m claude -p "$(cat "$2/prompt")" > "$2/result" 2>/dev/null || exit 1
+               ${netradio}/bin/netradio compile-apply --config ${configDir} --feed "$1" --result "$2/result"
+             ' _ "$feed" "$work"; then
+          echo "feed $feed compiled"
+        else
+          echo "feed $feed: compile failed (see above)"
+          # compile-apply marks the feed failed when it ran; if claude itself
+          # failed, say so where the admin page shows it.
+          ${netradio}/bin/netradio compile-apply --config ${configDir} --feed "$feed" --result /dev/null >/dev/null 2>&1 || true
+        fi
+        rm -rf "$work"
+        need_apply=1
+      done
+      for f in "$req"/apply-*.json; do
+        echo "apply requested: $(jq -r '.reason // ""' "$f")"
+        rm -f "$f"
+        need_apply=1
+      done
+      [ "$need_apply" = 1 ] || exit 0
+      systemctl start netradio-playlists.service
+      # restart the audio chain only if the mount list changed
+      want="$(jq -r '.[].mount' ${configDir}/stations.json | sort)"
+      have="$(grep -oP '^station\("\K[^"]+' ${liqScript} 2>/dev/null | sort || true)"
+      if [ "$want" != "$have" ]; then
+        echo "station list changed: restarting liquidsoap + wake"
+        systemctl restart netradio-liquidsoap.service netradio-wake.service
+      else
+        echo "station list unchanged: no restart"
+      fi
+    '';
+  };
+
   # --- YCast: the vTuner directory ------------------------------------------
   systemd.services.ycast = {
     description = "YCast — vTuner internet radio directory emulation";
@@ -669,7 +786,7 @@ in
     serviceConfig = hardening // {
       DynamicUser = true;
       StateDirectory = "ycast";
-      ExecStart = "${lib.getExe ycast} -l 127.0.0.1 -p ${toString ycastPort} -c ${stationsYml}";
+      ExecStart = "${lib.getExe ycast} -l 127.0.0.1 -p ${toString ycastPort} -c ${configDir}/stations.yml";
       Restart = "always";
       RestartSec = 5;
     };

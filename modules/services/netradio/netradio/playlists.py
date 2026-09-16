@@ -1,74 +1,57 @@
-"""Build one .m3u per station from the library's genre tags.
+"""Turn the library, the profile and the runtime config into pools.
 
-The library is Artist/Album/track with no genre folders, so the only thing
-that says what a track *is* is its tag. Each station in the catalogue names
-the genre words it collects; a track lands on every station whose words
-match its tag (a "Folk Rock" tag goes to both Folk and Rock), and the `all`
-station gets everything except the globally excluded kinds.
+Inputs
+    the library roots (walked; tags cached by size+mtime)
+    profile.json          the profiler's facts (era, instruments, talk)
+    <config>/feeds.json   specialty feeds and their rules
+    <config>/stations.json
+Outputs (all atomic)
+    playlists/library.m3u          every audio file (the profiler's input)
+    playlists/<mount>.m3u          what each station plays outside segments
+    pools/feeds/<feed>.m3u         each feed's pool (segments draw on these)
+    pools/artists/<slug>.m3u       each artist's tracks (spotlights)
+    <config>/artists.json          {artist: {tracks, families, slug}}
+    <config>/stations.yml          YCast's menu: Curated / Specialty
+    now/stations.json              counts for the radio page
+    feeds.json                     `count` refreshed per feed
 
-Tag reads are cached by (size, mtime) so the nightly rescan of ~18k files is
-a stat() per file, not a read. Playlists are written atomically — Liquidsoap
-watches them with inotify and reloads on change, so it must never see a
-half-written one.
+Talk tracks (profiler) are kept out of everything. A curated station's base
+rule and a feed's rule are the same shape (feeds.py); families come from
+the genre words (config.FAMILY_WORDS).
 """
 
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import logging
 import os
 import re
 import sys
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from netradio.config import FAMILY_WORDS, Config, write_atomic
 
 log = logging.getLogger("netradio.playlists")
 
 AUDIO_EXTENSIONS = {".mp3", ".m4a", ".flac", ".ogg", ".opus", ".wav", ".wma", ".aif", ".aiff"}
-
-# Kinds of audio that live in the library but are not music you put on.
-# Matched the same way station words are (whole word within the tag).
 EXCLUDE_WORDS = ("instructional", "audiobook", "spoken", "podcast", "lesson")
+CACHE_VERSION = 2
 
 
 @dataclass
-class Station:
-    mount: str
-    name: str
-    # None = everything not excluded (the `all` station)
-    words: list[str] | None = None
-    # None = any era; else the profiler's era buckets this station plays.
-    # A track not yet profiled for era stays on a GENRE station that also
-    # filters by era (the station keeps its music before the first pass) but
-    # off a station DEFINED by era (words None): that one fills as the
-    # profile does, rather than being "Everything" for a day.
-    eras: list[str] | None = None
-    paths: list[str] = field(default_factory=list)
-
-
-def load_stations(path: Path) -> list[Station]:
-    """The catalogue is authored in Nix and handed over as JSON — one source
-    of truth for the scanner, the Liquidsoap script and the receiver menu."""
-    raw = json.loads(path.read_text())
-    stations = []
-    for s in raw:
-        words = s.get("genres")
-        stations.append(Station(
-            mount=s["mount"],
-            name=s["name"],
-            words=[w.lower() for w in words] if words is not None else None,
-            eras=s.get("era"),
-        ))
-    return stations
+class Track:
+    path: str
+    genre: str
+    artist: str
+    genres: list[str] = field(default_factory=list)   # split words
+    yamnet: dict | None = None
+    era: str = ""
 
 
 def split_genre(tag: str) -> list[str]:
-    """A genre field can hold several genres — 'Folk/Rock', 'Blues; Soul' —
-    and the same genre several ways ('Old-Time', 'Oldtime', 'Old Time').
-    Lower-case, split on the separators, and drop the punctuation so the
-    station words can be plain."""
     parts = re.split(r"[/;,|]+", tag.lower())
     out = []
     for p in parts:
@@ -83,73 +66,55 @@ def word_in(word: str, genres: list[str]) -> bool:
     return any(pat.search(g) for g in genres)
 
 
-def read_genre(path: Path) -> str:
-    """The raw genre tag, '' when there is none or the file cannot be read."""
+def read_tags(path: Path) -> tuple[str, str]:
+    """(genre, artist) from the file's tags; '' when absent or unreadable."""
     import mutagen  # imported here so `--help` and the tests don't need it
 
     try:
         f = mutagen.File(path, easy=True)
-    except Exception as e:  # mutagen raises a zoo of format-specific errors
+    except Exception as e:
         log.debug("unreadable tags: %s (%s)", path, e)
-        return ""
+        return "", ""
     if f is None or not f.tags:
-        return ""
-    genre = f.tags.get("genre") or []
-    return " / ".join(str(g) for g in genre if g)
+        return "", ""
+    g = f.tags.get("genre") or []
+    a = f.tags.get("artist") or f.tags.get("albumartist") or []
+    return " / ".join(str(x) for x in g if x), " ".join(str(x) for x in a[:1] if x)
 
 
 class TagCache:
-    """{path: [size, mtime_ns, genre]} — rewritten whole at the end of a run."""
+    """{path: [size, mtime_ns, genre, artist]} — rewritten whole at the end."""
 
     def __init__(self, path: Path):
         self.path = path
         self.hits = 0
         self.misses = 0
         try:
-            self.data: dict[str, list] = json.loads(path.read_text())
+            raw = json.loads(path.read_text())
+            self.data = raw.get("entries", {}) if isinstance(raw, dict) and raw.get("v") == CACHE_VERSION else {}
         except (OSError, ValueError):
             self.data = {}
         self.seen: dict[str, list] = {}
 
-    def genre(self, path: Path, st: os.stat_result) -> str:
+    def tags(self, path: Path, st: os.stat_result) -> tuple[str, str]:
         key = str(path)
         cached = self.data.get(key)
         if cached and cached[0] == st.st_size and cached[1] == st.st_mtime_ns:
             self.hits += 1
-            genre = cached[2]
+            genre, artist = cached[2], cached[3]
         else:
             self.misses += 1
-            genre = read_genre(path)
-        self.seen[key] = [st.st_size, st.st_mtime_ns, genre]
-        return genre
+            genre, artist = read_tags(path)
+        self.seen[key] = [st.st_size, st.st_mtime_ns, genre, artist]
+        return genre, artist
 
     def save(self) -> None:
-        # Only files seen this run survive, so deletions don't accumulate.
-        write_atomic(self.path, json.dumps(self.seen, separators=(",", ":")))
+        write_atomic(self.path, json.dumps({"v": CACHE_VERSION, "entries": self.seen}, separators=(",", ":")))
 
 
-def write_atomic(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
-    try:
-        with os.fdopen(fd, "w") as fh:
-            fh.write(text)
-        os.chmod(tmp, 0o644)
-        os.replace(tmp, path)
-    except BaseException:
-        os.unlink(tmp)
-        raise
-
-
-def scan(roots: list[Path], stations: list[Station], cache: TagCache,
-         talk: set[str] | None = None, eras: dict[str, str] | None = None) -> dict:
-    """Fill each station's paths. Returns the counts worth logging. `talk` is
-    the set of paths the profiler called talk (netradio profile); they are
-    kept off every station. `eras` is {path: era} for the era-filtered ones."""
-    counts = {"files": 0, "untagged": 0, "excluded": 0, "talk": 0, "unreadable_dirs": 0}
-    talk = talk or set()
-    eras = eras or {}
-    library: list[str] = []   # every audio file seen, before any filter — the profiler's input
+def walk(roots: list[Path], cache: TagCache) -> tuple[list[Track], dict]:
+    counts = {"files": 0, "untagged": 0, "excluded": 0, "unreadable_dirs": 0}
+    tracks: list[Track] = []
     for root in roots:
         if not root.is_dir():
             log.warning("library root missing or unreadable: %s", root)
@@ -166,79 +131,210 @@ def scan(roots: list[Path], stations: list[Station], cache: TagCache,
                 except OSError:
                     continue
                 counts["files"] += 1
-                library.append(str(p))
-                genres = split_genre(cache.genre(p, st))
+                genre, artist = cache.tags(p, st)
+                genres = split_genre(genre)
                 if not genres:
                     counts["untagged"] += 1
                 if any(word_in(w, genres) for w in EXCLUDE_WORDS):
                     counts["excluded"] += 1
                     continue
-                if str(p) in talk:
-                    counts["talk"] += 1
-                    continue
-                era = eras.get(str(p), "")
-                for s in stations:
-                    if s.eras and (era not in s.eras if era else s.words is None):
-                        continue
-                    if s.words is None or any(word_in(w, genres) for w in s.words):
-                        s.paths.append(str(p))
-    counts["library"] = library
-    return counts
+                if not artist:
+                    parts = str(p).split("/")
+                    artist = parts[4] if len(parts) > 5 else ""   # /mnt/fusion/Music/<Artist>/...
+                tracks.append(Track(str(p), genre, artist, genres))
+    return tracks, counts
 
 
 def _walk_error(err: OSError, counts: dict) -> None:
-    # A 0700 directory owned by another user (Jellyfin's metadata folders are
-    # like this) is skipped, counted, and named once in the log.
     counts["unreadable_dirs"] += 1
     log.info("skipping unreadable directory: %s", err.filename)
 
 
-def write_playlists(stations: list[Station], out_dir: Path, library: list[str] | None = None) -> None:
+def families_of(genres: list[str]) -> list[str]:
+    return [fam for fam, words in FAMILY_WORDS.items() if any(word_in(w, genres) for w in words)]
+
+
+def artist_slug(name: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return s or "unknown"
+
+
+def build_artists(tracks: list[Track]) -> dict:
+    """{artist: {tracks, families, slug}} — a family counts when it covers at
+    least a third of the artist's tracks (an artist can have two)."""
+    by = collections.defaultdict(list)
+    for t in tracks:
+        if t.artist:
+            by[t.artist].append(t)
+    out = {}
+    slugs: set[str] = set()
+    for name, ts in by.items():
+        fam_counts = collections.Counter(f for t in ts for f in families_of(t.genres))
+        fams = [f for f, n in fam_counts.items() if n >= max(1, len(ts) / 3)] or ["unknown"]
+        slug = artist_slug(name)
+        while slug in slugs:
+            slug += "-2"
+        slugs.add(slug)
+        out[name] = {"tracks": len(ts), "families": sorted(fams), "slug": slug}
+    return out
+
+
+def write_m3u(path: Path, paths: list[str]) -> None:
+    write_atomic(path, "#EXTM3U\n" + "".join(p + "\n" for p in paths))
+
+
+def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set[str],
+          summary: Path | None = None, ycast: Path | None = None, public_base: str = "",
+          quick_picks: list[dict] | None = None, web_base: str = "") -> dict:
+    """Everything after the walk. Returns {mount: count}."""
+    from netradio import feeds as feedrules
+
+    feeds = cfg.feeds()
+    stations = cfg.stations()
+    playable = [t for t in tracks if t.path not in talk]
+
+    def pool(rule: dict) -> list[str]:
+        return [t.path for t in playable
+                if feedrules.matches(rule, artist=t.artist, path=t.path, genre=t.genre, yamnet=t.yamnet, era=t.era)]
+
+    feed_pools: dict[str, list[str]] = {}
+    for fid, f in feeds.items():
+        if f.get("status") == "ready" and f.get("rule"):
+            feed_pools[fid] = pool(f["rule"])
+            write_m3u(pools / "feeds" / f"{fid}.m3u", feed_pools[fid])
+            log.info("feed %-22s %6d tracks  (%s)", fid, len(feed_pools[fid]), f.get("title", ""))
+        f["count"] = len(feed_pools.get(fid, []))
+    cfg.save_feeds(feeds)
+
+    artists = build_artists(playable)
+    by_artist = collections.defaultdict(list)
+    artist_of = {}
+    for t in playable:
+        if t.artist:
+            by_artist[t.artist].append(t.path)
+            artist_of[t.path] = t.artist
+    # An artist in a feed inherits the feed's families: the Carter Family's
+    # tags say "other", but a feed that holds them says what they are.
+    for fid, paths in feed_pools.items():
+        fams = feeds[fid].get("family") or []
+        if not fams:
+            continue
+        for path in paths:
+            a = artist_of.get(path)
+            if a and a in artists:
+                cur = [f for f in artists[a]["families"] if f != "unknown"]
+                artists[a]["families"] = sorted(set(cur) | set(fams))
+    for name, info in artists.items():
+        write_m3u(pools / "artists" / f"{info['slug']}.m3u", by_artist[name])
+    write_atomic(cfg.root / "artists.json", json.dumps(artists, sort_keys=True))
+    words = sorted({w for t in playable for w in t.genres})
+    write_atomic(cfg.root / "genre-words.json", json.dumps(words))   # for the compile prompt
+
+    counts = {}
     for s in stations:
-        body = "#EXTM3U\n" + "".join(p + "\n" for p in s.paths)
-        write_atomic(out_dir / f"{s.mount}.m3u", body)
-    if library is not None:
-        # The profiler's list of the library. NOT a station playlist: those
-        # are filtered by the profiler's own verdicts, and a profiler reading
-        # one dropped every talk track's facts as "gone" (2026-09-16 11:44).
-        write_atomic(out_dir / "library.m3u", "#EXTM3U\n" + "".join(p + "\n" for p in library))
+        if s.get("kind") == "specialty":
+            paths = feed_pools.get(s.get("feed", ""), [])
+        else:
+            paths = pool(s.get("base") or {"all": True})
+        write_m3u(out / f"{s['mount']}.m3u", paths)
+        counts[s["mount"]] = len(paths)
+        log.info("%-14s %6d tracks  (%s)", s["mount"], len(paths), s.get("name", ""))
+    if summary:
+        write_atomic(summary, json.dumps({m: {"tracks": n} for m, n in counts.items()}))
+        # the radio page's station list and the radio-app playlists, beside it
+        now = summary.parent
+        write_atomic(now / "catalogue.json", json.dumps([{"mount": s["mount"], "name": s["name"], "kind": s.get("kind", "curated")}
+                                                          for s in stations]))
+        if web_base:
+            write_atomic(now / "stations.m3u", m3u(stations, web_base, ""))
+            write_atomic(now / "stations-lo.m3u", m3u(stations, web_base, "-lo"))
+            write_atomic(now / "stations.pls", pls(stations, web_base))
+    if ycast:
+        write_atomic(ycast, ycast_yaml(stations, public_base, quick_picks or []))
+    return counts
+
+
+def m3u(stations: list[dict], base: str, suffix: str) -> str:
+    return "#EXTM3U\n" + "".join(f"#EXTINF:-1,{s['name']}\n{base}/{s['mount']}{suffix}.mp3\n" for s in stations)
+
+
+def pls(stations: list[dict], base: str) -> str:
+    out = "[playlist]\n"
+    for i, s in enumerate(stations, 1):
+        out += f"File{i}={base}/{s['mount']}.mp3\nTitle{i}={s['name']}\nLength{i}=-1\n"
+    return out + f"NumberOfEntries={len(stations)}\nVersion=2\n"
+
+
+def ycast_yaml(stations: list[dict], base: str, quick_picks: list[dict]) -> str:
+    """YCast's stations.yml: category → name → url. Hand-emitted so the order
+    is the catalogue order; values are JSON strings, which is valid YAML."""
+    def line(name, url):
+        return f"  {json.dumps(name)}: {json.dumps(url)}\n"
+    out = "Curated:\n"
+    for s in stations:
+        if s.get("kind") != "specialty":
+            out += line(s["name"], f"{base}/{s['mount']}.mp3")
+    out += "\nSpecialty:\n"
+    for s in stations:
+        if s.get("kind") == "specialty":
+            out += line(s["name"], f"{base}/{s['mount']}.mp3")
+    if quick_picks:
+        out += "\nQuick Picks:\n"
+        for q in quick_picks:
+            out += line(q["name"], q["url"])
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
+    from netradio.profile import Profile, load_overrides
+
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--stations", required=True, type=Path, help="stations.json from the module")
     ap.add_argument("--root", action="append", required=True, type=Path, help="library root (repeatable)")
+    ap.add_argument("--config", required=True, type=Path, help="the runtime config dir")
     ap.add_argument("--out", required=True, type=Path, help="playlist directory")
+    ap.add_argument("--pools", required=True, type=Path, help="pool directory (feeds/, artists/)")
     ap.add_argument("--cache", required=True, type=Path, help="tag cache file")
     ap.add_argument("--profile", type=Path, help="profile.json from `netradio profile`")
     ap.add_argument("--overrides", type=Path, help="profile-overrides.json")
-    ap.add_argument("--summary", type=Path, help="write {mount: {tracks: N}} here (the radio page reads it)")
+    ap.add_argument("--summary", type=Path, help="write counts here (the radio page reads it)")
+    ap.add_argument("--ycast", type=Path, help="write YCast's stations.yml here")
+    ap.add_argument("--public-base", default="http://radioyamaha.vtuner.com/radio", help="stream URL prefix for YCast")
+    ap.add_argument("--web-base", default="", help="stream URL prefix for the page's m3u/pls (https)")
+    ap.add_argument("--quick-picks", type=Path, help="JSON [{name,url}] appended to YCast's menu")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(message)s", stream=sys.stdout)
 
-    stations = load_stations(args.stations)
     cache = TagCache(args.cache)
-    talk: set[str] = set()
-    eras: dict[str, str] = {}
-    if args.profile:
-        from netradio.profile import Profile
-        verdicts = Profile.load_verdicts(args.profile, args.overrides)
-        talk = {p for p, v in verdicts.items() if v.talk}
-        eras = {p: v.era for p, v in verdicts.items() if v.era}
-    counts = scan(args.root, stations, cache, talk, eras)
+    tracks, counts = walk(args.root, cache)
     cache.save()
-    write_playlists(stations, args.out, counts.pop("library"))
+    write_m3u(args.out / "library.m3u", [t.path for t in tracks])
 
-    for s in stations:
-        log.info("%-12s %6d tracks  (%s)", s.mount, len(s.paths), s.name)
-    if args.summary:
-        write_atomic(args.summary, json.dumps({s.mount: {"tracks": len(s.paths)} for s in stations}))
-    log.info("%d audio files, %d untagged, %d excluded, %d talk (profiled), %d unreadable dirs; tag cache %d hits / %d reads",
-             counts["files"], counts["untagged"], counts["excluded"], counts["talk"], counts["unreadable_dirs"],
+    talk: set[str] = set()
+    if args.profile:
+        prof = Profile(args.profile)
+        verdicts = prof.verdicts(load_overrides(args.overrides))
+        talk = {p for p, v in verdicts.items() if v.talk}
+        for t in tracks:
+            e = prof.data.get(t.path)
+            if e:
+                t.yamnet = e.get("yamnet")
+                t.era = verdicts[t.path].era
+
+    quick = []
+    if args.quick_picks:
+        try:
+            quick = json.loads(args.quick_picks.read_text())
+        except (OSError, ValueError):
+            quick = []
+    station_counts = build(tracks, Config(args.config), args.out, args.pools, talk=talk, summary=args.summary,
+                           ycast=args.ycast, public_base=args.public_base, quick_picks=quick, web_base=args.web_base)
+
+    log.info("%d audio files, %d untagged, %d excluded, %d talk, %d unreadable dirs; tag cache %d hits / %d reads",
+             counts["files"], counts["untagged"], counts["excluded"], len(talk), counts["unreadable_dirs"],
              cache.hits, cache.misses)
-    empty = [s.mount for s in stations if not s.paths]
+    empty = [m for m, n in station_counts.items() if not n]
     if empty:
         log.warning("empty stations (their mount will refuse to start): %s", ", ".join(empty))
     if counts["files"] == 0:

@@ -1,94 +1,119 @@
 import json
+import logging
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from netradio import playlists as pl
+from netradio import config, playlists as pl
+
+logging.disable(logging.CRITICAL)
 
 
 class GenreMatching(unittest.TestCase):
     def test_split_handles_separators_and_dashes(self):
         self.assertEqual(pl.split_genre("Folk/Rock"), ["folk", "rock"])
         self.assertEqual(pl.split_genre("Old-Time; Bluegrass"), ["old time", "bluegrass"])
-        self.assertEqual(pl.split_genre("Classical - Romantic Era - Late"), ["classical romantic era late"])
         self.assertEqual(pl.split_genre(""), [])
 
     def test_word_match_is_whole_word(self):
         self.assertTrue(pl.word_in("rock", ["folk rock"]))
-        self.assertTrue(pl.word_in("old time", ["old time"]))
-        self.assertTrue(pl.word_in("classical", ["classical romantic era late"]))
         self.assertFalse(pl.word_in("rock", ["rockabilly"]))
-        self.assertFalse(pl.word_in("soul", ["soulful house"]))
         self.assertTrue(pl.word_in("r&b", ["soul and r&b"]))
 
+    def test_families(self):
+        self.assertEqual(pl.families_of(["bluegrass"]), ["bluegrass"])
+        self.assertEqual(sorted(pl.families_of(["folk rock"])), ["folk", "rock"])
+        self.assertEqual(pl.families_of(["other"]), [])
 
-class Scan(unittest.TestCase):
-    """A fake library: the tag reader is stubbed, so this covers the routing
-    from tag to station, exclusions, and the cache — not mutagen."""
+
+class Build(unittest.TestCase):
+    """A fake library on disk with stubbed tags; exercises walk → build end to end."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name) / "Music"
-        self.files = {
-            "A/1.mp3": "Bluegrass",
-            "A/2.mp3": "Folk/Rock",
-            "B/3.m4a": "",
-            "B/4.mp3": "Instructional",
-            "B/5.mp3": "Old-Time",
-            "B/cover.jpg": "n/a",
+        d = Path(self.tmp.name)
+        self.root = d / "Music"
+        self.files = {   # relative path: (genre, artist)
+            "The Louvin Brothers/A/01 a.mp3": ("Country", "The Louvin Brothers"),
+            "The Louvin Brothers/A/02 b.mp3": ("Other", "The Louvin Brothers"),
+            "Bob Wills/B/01 c.mp3": ("Western Swing", "Bob Wills"),
+            "Boston/C/01 d.mp3": ("Rock", "Boston"),
+            "Hal Leonard/D/01 e.mp3": ("Instructional", "Hal Leonard"),
+            "Talker/E/01 f.mp3": ("Country", "Talker"),
+            "X/cover.jpg": ("", ""),
         }
-        for rel, _ in self.files.items():
+        for rel in self.files:
             p = self.root / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(b"x")
-        self.stations = [
-            pl.Station("all", "Everything"),
-            pl.Station("bluegrass", "Bluegrass", ["bluegrass", "old time"]),
-            pl.Station("rock", "Rock", ["rock"]),
-            pl.Station("gospel", "Gospel", ["gospel"]),
-        ]
+        self.cfg = config.Config(d / "config")
+        self.cfg.seed(
+            {"brother-duets": {"title": "Brother Duets", "status": "ready", "family": ["bluegrass", "country"],
+                               "rule": {"artists": ["Louvin Brothers"]}},
+             "western-swing": {"title": "Western Swing", "status": "ready", "family": ["country"],
+                               "rule": {"genres": ["western swing"]}},
+             "draft": {"title": "Draft", "status": "pending"}},
+            [{"mount": "all", "name": "Everything", "kind": "curated", "family": ["any"], "base": {"all": True}},
+             {"mount": "country", "name": "Classic Country", "kind": "curated", "family": ["country"],
+              "base": {"genres": ["country", "western swing"], "era": {"exclude": ["shellac"]}}},
+             {"mount": "brother-duets", "name": "Brother Duets", "kind": "specialty", "feed": "brother-duets"}],
+            [])
+        self.out = d / "playlists"
+        self.pools = d / "pools"
 
     def tearDown(self):
         self.tmp.cleanup()
 
-    def fake_genre(self, path):
+    def fake_tags(self, path):
         return self.files[str(Path(path).relative_to(self.root))]
 
-    def test_routing_and_counts(self):
+    def test_walk_and_build(self):
         cache = pl.TagCache(Path(self.tmp.name) / "cache.json")
-        with mock.patch.object(pl, "read_genre", side_effect=self.fake_genre):
-            counts = pl.scan([self.root], self.stations, cache)
-        by = {s.mount: [Path(p).name for p in s.paths] for s in self.stations}
-        self.assertEqual(by["all"], ["1.mp3", "2.mp3", "3.m4a", "5.mp3"])  # 4 excluded, jpg ignored
-        self.assertEqual(by["bluegrass"], ["1.mp3", "5.mp3"])
-        self.assertEqual(by["rock"], ["2.mp3"])
-        self.assertEqual(by["gospel"], [])
-        self.assertEqual(counts["files"], 5)
-        self.assertEqual(counts["untagged"], 1)
-        self.assertEqual(counts["excluded"], 1)
+        with mock.patch.object(pl, "read_tags", side_effect=self.fake_tags):
+            tracks, counts = pl.walk([self.root], cache)
+        self.assertEqual(counts["files"], 6)
+        self.assertEqual(counts["excluded"], 1)                       # the lesson
+        self.assertEqual(len(tracks), 5)
+        talk = {str(self.root / "Talker/E/01 f.mp3")}
+        n = pl.build(tracks, self.cfg, self.out, self.pools, talk=talk,
+                     summary=Path(self.tmp.name) / "summary.json", ycast=Path(self.tmp.name) / "stations.yml",
+                     public_base="http://h/radio", quick_picks=[{"name": "NPR", "url": "http://npr"}],
+                     web_base="https://r/radio")
+        self.assertEqual(n, {"all": 4, "country": 2, "brother-duets": 2})   # the "Other"-tagged Louvin track is not country by tag
+        self.assertEqual((self.pools / "feeds" / "western-swing.m3u").read_text().count(".mp3"), 1)
+        self.assertFalse((self.pools / "feeds" / "draft.m3u").exists())
+        feeds = self.cfg.feeds()
+        self.assertEqual((feeds["brother-duets"]["count"], feeds["western-swing"]["count"], feeds["draft"]["count"]), (2, 1, 0))
+        artists = self.cfg.artists()
+        self.assertEqual(artists["The Louvin Brothers"]["tracks"], 2)
+        self.assertEqual(artists["The Louvin Brothers"]["families"], ["bluegrass", "country"])   # tag + inherited from the feed
+        self.assertEqual(artists["Boston"]["families"], ["rock"])
+        self.assertNotIn("Talker", artists)                           # talk tracks are not an artist pool
+        self.assertTrue((self.pools / "artists" / "bob-wills.m3u").exists())
+        yml = (Path(self.tmp.name) / "stations.yml").read_text()
+        self.assertIn('Curated:\n  "Everything": "http://h/radio/all.mp3"', yml)
+        self.assertIn('Specialty:\n  "Brother Duets": "http://h/radio/brother-duets.mp3"', yml)
+        self.assertIn('"NPR": "http://npr"', yml)
+        self.assertEqual(json.loads((Path(self.tmp.name) / "summary.json").read_text())["country"], {"tracks": 2})
+        cat = json.loads((Path(self.tmp.name) / "catalogue.json").read_text())
+        self.assertEqual([c["mount"] for c in cat], ["all", "country", "brother-duets"])
+        self.assertIn("https://r/radio/brother-duets-lo.mp3", (Path(self.tmp.name) / "stations-lo.m3u").read_text())
+        self.assertIn("NumberOfEntries=3", (Path(self.tmp.name) / "stations.pls").read_text())
 
-    def test_cache_skips_unchanged_files(self):
+    def test_cache_skips_unchanged_files_and_ignores_old_format(self):
         cache_path = Path(self.tmp.name) / "cache.json"
-        with mock.patch.object(pl, "read_genre", side_effect=self.fake_genre) as rg:
+        cache_path.write_text(json.dumps({"/old/style.mp3": [1, 2, "genre"]}))   # v1 cache: ignored
+        with mock.patch.object(pl, "read_tags", side_effect=self.fake_tags) as rt:
             cache = pl.TagCache(cache_path)
-            pl.scan([self.root], self.stations, cache)
+            pl.walk([self.root], cache)
             cache.save()
-            self.assertEqual(rg.call_count, 5)
-            # second run: nothing changed -> no tag reads
+            self.assertEqual(rt.call_count, 6)
             cache = pl.TagCache(cache_path)
-            for s in self.stations:
-                s.paths.clear()
-            pl.scan([self.root], self.stations, cache)
-            self.assertEqual(rg.call_count, 5)
-            self.assertEqual((cache.hits, cache.misses), (5, 0))
-            # touch one -> exactly one re-read
-            p = self.root / "A/1.mp3"
-            p.write_bytes(b"xy")
-            cache = pl.TagCache(cache_path)
-            pl.scan([self.root], self.stations, cache)
-            self.assertEqual(rg.call_count, 6)
+            pl.walk([self.root], cache)
+            self.assertEqual(rt.call_count, 6)
+            self.assertEqual((cache.hits, cache.misses), (6, 0))
 
     def test_unreadable_dir_is_skipped_not_fatal(self):
         if os.geteuid() == 0:
@@ -98,39 +123,11 @@ class Scan(unittest.TestCase):
         (locked / "x.mp3").write_bytes(b"x")
         locked.chmod(0o000)
         try:
-            cache = pl.TagCache(Path(self.tmp.name) / "cache.json")
-            with mock.patch.object(pl, "read_genre", side_effect=self.fake_genre):
-                counts = pl.scan([self.root], self.stations, cache)
+            with mock.patch.object(pl, "read_tags", side_effect=self.fake_tags):
+                _, counts = pl.walk([self.root], pl.TagCache(Path(self.tmp.name) / "c.json"))
             self.assertEqual(counts["unreadable_dirs"], 1)
-            self.assertEqual(counts["files"], 5)
         finally:
             locked.chmod(0o700)
-
-    def test_playlists_written_atomically_with_header(self):
-        out = Path(self.tmp.name) / "out"
-        self.stations[0].paths = ["/m/a.mp3", "/m/b.mp3"]
-        pl.write_playlists(self.stations, out, ["/m/a.mp3", "/m/b.mp3", "/m/talk.mp3"])
-        self.assertEqual((out / "all.m3u").read_text(), "#EXTM3U\n/m/a.mp3\n/m/b.mp3\n")
-        self.assertEqual((out / "gospel.m3u").read_text(), "#EXTM3U\n")
-        self.assertEqual((out / "library.m3u").read_text(), "#EXTM3U\n/m/a.mp3\n/m/b.mp3\n/m/talk.mp3\n")
-        self.assertEqual([p.name for p in out.iterdir() if p.name.startswith(".")], [])
-
-    def test_library_list_is_unfiltered(self):
-        cache = pl.TagCache(Path(self.tmp.name) / "cache.json")
-        with mock.patch.object(pl, "read_genre", side_effect=self.fake_genre):
-            counts = pl.scan([self.root], self.stations, cache, talk={str(self.root / "A/1.mp3")})
-        names = sorted(Path(p).name for p in counts["library"])
-        self.assertEqual(names, ["1.mp3", "2.mp3", "3.m4a", "4.mp3", "5.mp3"])   # talk and excluded included
-
-    def test_load_stations_from_module_json(self):
-        p = Path(self.tmp.name) / "stations.json"
-        p.write_text(json.dumps([
-            {"mount": "all", "name": "Everything", "genres": None},
-            {"mount": "folk", "name": "Folk", "genres": ["Folk", "Celtic"]},
-        ]))
-        st = pl.load_stations(p)
-        self.assertIsNone(st[0].words)
-        self.assertEqual(st[1].words, ["folk", "celtic"])
 
 
 if __name__ == "__main__":

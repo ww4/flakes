@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import random
 import re
 import sys
@@ -32,6 +33,10 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
+import datetime as dt
+
+from netradio import schedule as sched
+from netradio.config import Config
 from netradio.profile import Profile
 from netradio.rules import Verdict
 from netradio.wake import Liquidsoap
@@ -188,6 +193,129 @@ def annotate(meta: dict[str, str], path: str) -> str:
     return "annotate:" + ",".join(f"{k}={q(v)}" for k, v in meta.items()) + ":" + path
 
 
+# --- the programme: segments and spotlights of one curated station ------------
+
+class Programme:
+    """What a curated station should be drawing from right now, and what
+    the DJ should say about the day. Reads the runtime config (schedule,
+    feeds, artists) and the pools the scanner wrote; resolves `auto` slots
+    once a day and remembers the pick in picks.json."""
+
+    SPOTLIGHT_WEIGHT = 0.7   # share of tracks by the spotlit artist; the rest similar artists
+
+    def __init__(self, station: dict, cfg: Config | None, pools: Path | None, lastfm_key: str = ""):
+        self.station = station
+        self.cfg = cfg
+        self.pools = pools
+        self.lastfm_key = lastfm_key
+        self.clock = dt.datetime.now          # injectable for tests
+
+    def active(self, now: dt.datetime | None = None) -> dict | None:
+        if not self.cfg or self.station.get("kind") == "specialty":
+            return None
+        now = now or self.clock()
+        slot = sched.active_slot(self.station["mount"], self.cfg.schedule(), now)
+        if slot is None:
+            return None
+        picks = self.cfg.picks()
+        resolved, changed = sched.resolve(slot, now.date(), picks, station=self.station,
+                                          artists=self.cfg.artists(), feeds=self.cfg.feeds())
+        if changed:
+            self.cfg.save_picks(picks)
+            log.info("%s: picked %s for %s", self.station["mount"], resolved.get(resolved["kind"]), slot.get("id"))
+        return resolved if resolved.get("kind") in ("feed", "artist") else None
+
+    def upcoming_text(self, rng: random.Random, now: dt.datetime | None = None) -> str:
+        if not self.cfg or self.station.get("kind") == "specialty":
+            return ""
+        now = now or self.clock()
+        up = sched.upcoming(self.station["mount"], self.cfg.schedule(), now)
+        resolved = []
+        picks = self.cfg.picks()
+        changed_any = False
+        for a, b, s in up:
+            r, changed = sched.resolve(s, now.date(), picks, station=self.station,
+                                       artists=self.cfg.artists(), feeds=self.cfg.feeds())
+            changed_any |= changed
+            if r.get("kind") in ("feed", "artist"):
+                resolved.append((a, b, r))
+        if changed_any:
+            self.cfg.save_picks(picks)
+        return sched.promo(self.station.get("name", ""), resolved, rng)
+
+    def intro_text(self, slot: dict, rng: random.Random) -> str:
+        return sched.intro(self.station.get("name", ""), slot, rng)
+
+    # -- pools
+    def _m3u(self, path: Path) -> list[str]:
+        try:
+            with path.open() as fh:
+                return [l.rstrip("\n") for l in fh if l.strip() and not l.startswith("#")]
+        except OSError:
+            return []
+
+    def pool(self, slot: dict, rng: random.Random) -> list[str]:
+        """The tracks a slot draws from. An artist spotlight is mostly the
+        artist, with similar artists we own filling the rest."""
+        if not self.pools:
+            return []
+        if slot.get("kind") == "feed":
+            return self._m3u(self.pools / "feeds" / f"{slot['feed']}.m3u")
+        if slot.get("kind") == "artist":
+            artists = self.cfg.artists() if self.cfg else {}
+            main = artists.get(slot["artist"], {})
+            own = self._m3u(self.pools / "artists" / f"{main.get('slug', '')}.m3u") if main else []
+            if rng.random() < self.SPOTLIGHT_WEIGHT or not self.lastfm_key:
+                return own
+            sims = self.similar(slot["artist"], artists)
+            pool = [t for a in sims for t in self._m3u(self.pools / "artists" / f"{artists[a]['slug']}.m3u")]
+            return pool or own
+        return []
+
+    def similar(self, artist: str, artists: dict) -> list[str]:
+        """Last.fm similar artists that exist in the library (cached in
+        similar.json; a failed lookup is remembered as empty for the day)."""
+        if not self.cfg:
+            return []
+        cache = self.cfg._read("similar.json", {})
+        entry = cache.get(artist)
+        today = dt.date.today().isoformat()
+        if entry and entry.get("date") == today or (entry and entry.get("names")):
+            names = entry["names"]
+        else:
+            names = lastfm_similar(artist, self.lastfm_key)
+            cache[artist] = {"date": today, "names": names}
+            try:
+                self.cfg._write("similar.json", cache)
+            except OSError:
+                pass
+        from netradio.feeds import norm_artist
+        known = {norm_artist(a): a for a in artists}
+        out = []
+        for n in names:
+            k = norm_artist(n)
+            for kn, real in known.items():
+                if k and (k == kn or k in kn) and real != artist and real not in out:
+                    out.append(real)
+        return out
+
+
+def lastfm_similar(artist: str, key: str, limit: int = 30) -> list[str]:
+    if not key:
+        return []
+    import urllib.parse
+    import urllib.request
+    url = ("https://ws.audioscrobbler.com/2.0/?method=artist.getSimilar&autocorrect=1&format=json"
+           f"&limit={limit}&api_key={key}&artist={urllib.parse.quote(artist)}")
+    try:
+        with urllib.request.urlopen(url, timeout=15) as r:
+            data = json.load(r)
+        return [a["name"] for a in data.get("similarartists", {}).get("artist", [])]
+    except Exception as e:
+        log.warning("Last.fm similar lookup for %r failed: %s", artist, e)
+        return []
+
+
 # --- one station -------------------------------------------------------------
 
 class StationDJ:
@@ -195,7 +323,7 @@ class StationDJ:
                  ls: Liquidsoap, tts: Kokoro, rng: random.Random | None = None,
                  lookahead: int = LOOKAHEAD, breaks_every: tuple[int, int] = (3, 4),
                  voice_gain: str = "1.8", profile: Path | None = None, overrides: Path | None = None,
-                 now_dir: Path | None = None):
+                 now_dir: Path | None = None, programme: Programme | None = None):
         self.mount = mount
         self.name = name
         self.playlist = playlist
@@ -221,6 +349,9 @@ class StationDJ:
         self.now_dir = now_dir              # where the radio page reads "next" from
         self.pushed: list[dict] = []        # what was queued, in order, for that
         self.last_break_text = ""
+        self.programme = programme          # segments/spotlights (curated stations)
+        self.segment: dict | None = None    # the slot the queue is currently drawing from
+        self.promo_next = False             # say the day's schedule at the next break
 
     # -- inputs
     def load_playlist(self) -> None:
@@ -260,15 +391,47 @@ class StationDJ:
     def choose(self) -> Track | None:
         self.load_playlist()
         self.load_profile()
-        if not self.tracks:
+        candidates = self.tracks
+        if self.segment is not None and self.programme is not None:
+            seg = self.programme.pool(self.segment, self.rng)
+            if seg:
+                candidates = seg
+        if not candidates:
             return None
-        playable = [t for t in self.tracks if not self.verdicts.get(t, Verdict(False, False, False, "")).talk]
+        playable = [t for t in candidates if not self.verdicts.get(t, Verdict(False, False, False, "")).talk]
         if not playable:
             return None
         pool = [t for t in playable if t not in self.recent] or playable
         path = self.rng.choice(pool)
         self.recent.append(path)
         return read_tags(path)
+
+    def check_segment(self) -> None:
+        """Notice a segment starting or ending: switch pools, drop the track
+        planned under the old one, and queue an intro before the next track."""
+        if self.programme is None:
+            return
+        try:
+            now = self.programme.active()
+        except Exception:
+            log.exception("%s: schedule lookup failed", self.mount)
+            return
+        key = (now or {}).get("id"), (now or {}).get("kind"), (now or {}).get("feed") or (now or {}).get("artist")
+        old = (self.segment or {}).get("id"), (self.segment or {}).get("kind"), (self.segment or {}).get("feed") or (self.segment or {}).get("artist")
+        if key == old:
+            return
+        self.segment = now
+        self.planned = None
+        if now is not None:
+            text = self.programme.intro_text(now, self.rng)
+            uri = self.render_break(text)
+            if uri:
+                self.push(uri, "segment intro", {"kind": "break", "artist": self.name, "title": now.get("name", "Segment")})
+            log.info("%s: segment %s starts (%s)", self.mount, now.get("name"), now.get("kind"))
+        else:
+            log.info("%s: segment over, back to the base", self.mount)
+        self.since_break = []
+        self.until_break = self.rng.randint(*self.breaks_every)
 
     def next_track(self) -> tuple[Track | None, Track | None]:
         """The track to queue now and the one planned after it."""
@@ -306,7 +469,8 @@ class StationDJ:
             return
         data = {"next": self.pushed[-pending:] if pending > 0 else [],
                 "planned": ({"artist": self.planned.artist, "title": self.planned.title} if self.planned else None),
-                "last_break": self.last_break_text}
+                "last_break": self.last_break_text,
+                "segment": ({"name": self.segment.get("name"), "kind": self.segment.get("kind")} if self.segment else None)}
         try:
             self.now_dir.mkdir(parents=True, exist_ok=True)
             tmp = self.now_dir / f".{self.mount}-next.json.tmp"
@@ -317,6 +481,20 @@ class StationDJ:
 
     def make_break(self, nxt: Track) -> str | None:
         text = compose(self.since_break, nxt, self.name, self.rng)
+        # Every other break carries the day's schedule, radio-style.
+        if self.programme is not None:
+            self.promo_next = not self.promo_next
+            if self.promo_next:
+                try:
+                    promo = self.programme.upcoming_text(self.rng)
+                except Exception:
+                    log.exception("%s: promo failed", self.mount)
+                    promo = ""
+                if promo:
+                    text = f"{text} {promo}"
+        return self.render_break(text)
+
+    def render_break(self, text: str) -> str | None:
         try:
             wav = self.tts.render(text)
         except Exception as e:
@@ -339,6 +517,7 @@ class StationDJ:
     def fill(self) -> None:
         """Top the queue up to `lookahead`. Each step queues one track, with a
         break in front of it when the count says so."""
+        self.check_segment()
         n = self.pending()
         while n < self.lookahead:
             track, following = self.next_track()
@@ -370,8 +549,9 @@ class StationDJ:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--stations", required=True, type=Path)
+    ap.add_argument("--config", required=True, type=Path, help="the runtime config dir (stations, schedule, feeds)")
     ap.add_argument("--playlists", required=True, type=Path)
+    ap.add_argument("--pools", required=True, type=Path, help="feeds/ and artists/ pools from the scanner")
     ap.add_argument("--socket", required=True, type=Path, help="liquidsoap server socket")
     ap.add_argument("--out", required=True, type=Path, help="where rendered breaks go")
     ap.add_argument("--kokoro-url", action="append", required=True, help="tried in order")
@@ -385,20 +565,24 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(message)s", stream=sys.stdout)
     lo, hi = (int(x) for x in args.breaks_every.split("-"))
-    stations = json.loads(args.stations.read_text())
+    cfg = Config(args.config)
+    stations = cfg.stations()
+    lastfm_key = os.environ.get("LASTFM_API_KEY", "")
     ls = Liquidsoap(args.socket)
     tts = Kokoro(args.kokoro_url, args.voice)
     stop = threading.Event()
     threads = []
     for s in stations:
+        prog = Programme(s, cfg, args.pools, lastfm_key)
         dj = StationDJ(s["mount"], s["name"], args.playlists / f"{s['mount']}.m3u",
                        args.out / s["mount"], ls, tts, breaks_every=(lo, hi),
-                       profile=args.profile, overrides=args.overrides, now_dir=args.now_dir)
+                       profile=args.profile, overrides=args.overrides, now_dir=args.now_dir, programme=prog)
         t = threading.Thread(target=dj.run, args=(stop,), name=s["mount"], daemon=True)
         t.start()
         threads.append(t)
-    log.info("DJ on %d stations, a break every %d-%d tracks, voice %s via %s",
-             len(stations), lo, hi, args.voice, ", ".join(args.kokoro_url))
+    log.info("DJ on %d stations, a break every %d-%d tracks, voice %s via %s%s",
+             len(stations), lo, hi, args.voice, ", ".join(args.kokoro_url),
+             "; spotlights with Last.fm similar artists" if lastfm_key else "")
     try:
         while True:
             time.sleep(3600)

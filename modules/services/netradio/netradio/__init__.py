@@ -11,4 +11,9 @@ Two commands, one package:
               does it start or end in chatter (no crossfade over it), what
               era does it sound like
   profile-server  the same listening as an HTTP service, for the fast box
+  admin       the API behind radio.rosemaryacres.com/admin (feeds, stations,
+              schedule); files compile/apply requests for the root side
+  liq         render the Liquidsoap script from the runtime station list
+  compile-prompt / compile-apply
+              the AI step that turns a feed's description into its rule
 """
