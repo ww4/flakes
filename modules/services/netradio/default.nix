@@ -101,6 +101,63 @@ let
     { name = "SomaFM Secret Agent"; url = "http://ice1.somafm.com/secretagent-128-mp3"; }
   ];
 
+  radioHost = "radio.rosemaryacres.com";
+
+  # Library streams, shared by both vhosts. auth_request wakes the encoder
+  # first; then the listener is proxied straight to Icecast, unbuffered, with
+  # the ICY metadata headers passing both ways so the display shows the track.
+  streamLocations = {
+    "/radio/" = {
+      proxyPass = "http://127.0.0.1:${toString icecastPort}/";
+      extraConfig = ''
+        auth_request /_wake;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+        proxy_set_header Icy-MetaData $http_icy_metadata;
+      '';
+    };
+    "= /_wake" = {
+      extraConfig = ''
+        internal;
+        proxy_pass http://127.0.0.1:${toString wakePort}/wake;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-URI $request_uri;
+        proxy_read_timeout 20s;
+      '';
+    };
+  };
+
+  # The phone page. preload="none" matters: a page that pre-fetched nine
+  # streams would wake nine encoders on open.
+  radioIndex = pkgs.writeTextDir "index.html" ''
+    <!doctype html>
+    <html lang="en">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Library radio</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font: 17px/1.4 system-ui, sans-serif; margin: 0 auto; max-width: 34rem; padding: 1.5rem 1rem; }
+      h1 { font-size: 1.3rem; margin: 0 0 .25rem; }
+      p.note { margin: 0 0 1.25rem; opacity: .7; font-size: .9rem; }
+      ul { list-style: none; margin: 0; padding: 0; }
+      li { padding: .6rem 0; border-top: 1px solid rgba(128,128,128,.3); }
+      li b { display: block; margin-bottom: .3rem; }
+      audio { width: 100%; }
+    </style>
+    <h1>Library radio</h1>
+    <p class="note">Shuffled from the music library. A station starts a few seconds after you press play and switches itself off five minutes after the last listener leaves.</p>
+    <ul>
+    ${lib.concatMapStrings (s: ''
+      <li><b>${lib.escapeXML s.name}</b><audio controls preload="none" src="/radio/${s.mount}.mp3"></audio></li>
+    '') stations}
+    </ul>
+    </html>
+  '';
+
   # YCast's "My Stations" file. Hand-emitted YAML (not toJSON) so the menu
   # order is the catalogue order, not alphabetical.
   yamlLine = name: url: "  ${builtins.toJSON name}: ${builtins.toJSON url}\n";
@@ -229,35 +286,30 @@ in
     # vTuner API → YCast. YCast builds the URLs it hands back from the Host
     # header, so it must see radioyamaha.vtuner.com (recommendedProxySettings
     # passes Host through).
-    locations."/" = {
-      proxyPass = "http://127.0.0.1:${toString ycastPort}";
-      recommendedProxySettings = true;
-    };
+    locations = {
+      "/" = {
+        proxyPass = "http://127.0.0.1:${toString ycastPort}";
+        recommendedProxySettings = true;
+      };
+    } // streamLocations;
+  };
 
-    # Library streams. auth_request wakes the encoder first; then the
-    # listener is proxied straight to Icecast, unbuffered, with the ICY
-    # metadata headers passing both ways so the display shows the track.
-    locations."/radio/" = {
-      proxyPass = "http://127.0.0.1:${toString icecastPort}/";
-      extraConfig = ''
-        auth_request /_wake;
-        proxy_http_version 1.1;
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_read_timeout 1h;
-        proxy_set_header Icy-MetaData $http_icy_metadata;
-      '';
-    };
-    locations."= /_wake" = {
-      extraConfig = ''
-        internal;
-        proxy_pass http://127.0.0.1:${toString wakePort}/wake;
-        proxy_pass_request_body off;
-        proxy_set_header Content-Length "";
-        proxy_set_header X-Original-URI $request_uri;
-        proxy_read_timeout 20s;
-      '';
-    };
+  # --- radio.rosemaryacres.com: the same streams for phones and laptops -----
+  # Tailscale-reachable (A record → the Tailscale IP, DNS-01 cert) and
+  # source-gated like every other vhost. Exists because the LAN cannot be
+  # steered to Blocky (the Askey router ignores a LAN forwarder), so the
+  # vtuner name only resolves here for devices given .65 as DNS by hand; this
+  # name resolves everywhere. Index page: the stations, tap to play.
+  services.nginx.virtualHosts.${radioHost} = {
+    forceSSL = true;
+    enableACME = true;
+    acmeRoot = null;
+    locations = {
+      "= /" = {
+        root = radioIndex;
+        tryFiles = "/index.html =404";
+      };
+    } // streamLocations;
   };
 
   # --- Icecast passwords: generated on the box, never in the repo ------------
