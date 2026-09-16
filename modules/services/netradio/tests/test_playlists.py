@@ -22,6 +22,11 @@ class GenreMatching(unittest.TestCase):
         self.assertFalse(pl.word_in("rock", ["rockabilly"]))
         self.assertTrue(pl.word_in("r&b", ["soul and r&b"]))
 
+    def test_feed_rule_shellac_default(self):
+        self.assertEqual(pl.feed_rule({"rule": {"artists": ["A"]}})["era"], {"exclude": ["shellac"]})
+        self.assertNotIn("era", pl.feed_rule({"rule": {"artists": ["A"]}, "shellac": True}))
+        self.assertEqual(pl.feed_rule({"rule": {"artists": ["A"], "era": {"only": ["shellac"]}}})["era"], {"only": ["shellac"]})
+
     def test_families(self):
         self.assertEqual(pl.families_of(["bluegrass"]), ["bluegrass"])
         self.assertEqual(sorted(pl.families_of(["folk rock"])), ["folk", "rock"])
@@ -51,7 +56,7 @@ class Build(unittest.TestCase):
         self.cfg = config.Config(d / "config")
         self.cfg.seed(
             {"brother-duets": {"title": "Brother Duets", "status": "ready", "family": ["bluegrass", "country"],
-                               "rule": {"artists": ["Louvin Brothers"]}},
+                               "shellac": True, "rule": {"artists": ["Louvin Brothers"]}},
              "western-swing": {"title": "Western Swing", "status": "ready", "family": ["country"],
                                "rule": {"genres": ["western swing"]}},
              "draft": {"title": "Draft", "status": "pending"}},

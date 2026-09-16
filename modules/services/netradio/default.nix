@@ -136,6 +136,7 @@ let
   noShellac = { exclude = [ "shellac" ]; };
   seedFeeds = {
     brother-duets = {
+      shellac = true;   # 1930s-40s sides are the point of this feed
       title = "Brother Duets";
       description = "Close-harmony duets by brothers and brotherly pairs: the Louvins, Delmores, Blue Sky Boys, Stanleys, Monroe Brothers, Lilly Brothers, Whitsteins, Bailes Brothers, Osbornes.";
       family = [ "bluegrass" "country" ]; status = "ready"; count = 0;
@@ -146,6 +147,7 @@ let
                genres = [ "brother duets" ]; };
     };
     western-swing = {
+      shellac = true;   # 1930s-40s sides are the point of this feed
       title = "Western Swing";
       description = "Dance-hall country with jazz in it: Bob Wills and the Texas Playboys, Milton Brown, Spade Cooley, and the revivalists — Asleep at the Wheel, Hot Club of Cowtown.";
       family = [ "country" ]; status = "ready"; count = 0; note = "seeded; thin until the metadata pass adds Last.fm genres";
@@ -153,6 +155,7 @@ let
                genres = [ "western swing" ]; };
     };
     honky-tonk = {
+      shellac = true;   # 1930s-40s sides are the point of this feed
       title = "Honky Tonk";
       description = "Barroom country of the 1950s and 60s and its keepers: Hank Williams, Lefty Frizzell, Ernest Tubb, Webb Pierce, Ray Price, George Jones, Faron Young, Johnny Bush, Gary Stewart, Moe Bandy.";
       family = [ "country" ]; status = "ready"; count = 0; note = "seeded from the library's artist list";

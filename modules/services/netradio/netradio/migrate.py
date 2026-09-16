@@ -47,8 +47,23 @@ def split_blues_jazz_soul(cfg: Config) -> str:
     return "split blues-jazz into blues / jazz / soul"
 
 
+def feeds_keep_shellac(cfg: Config) -> str:
+    """Feeds now exclude shellac unless `shellac: true` (2026-09-16). Feeds
+    that exist already keep what they play today: the flag is set on them."""
+    feeds = cfg.feeds()
+    changed = 0
+    for f in feeds.values():
+        if "shellac" not in f:
+            f["shellac"] = True
+            changed += 1
+    if changed:
+        cfg.save_feeds(feeds)
+    return f"kept shellac on {changed} existing feed(s)" if changed else "nothing to do"
+
+
 MIGRATIONS = [
     ("split-blues-jazz-soul", split_blues_jazz_soul),
+    ("feeds-keep-shellac", feeds_keep_shellac),
 ]
 
 

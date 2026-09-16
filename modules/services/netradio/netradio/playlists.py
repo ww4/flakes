@@ -179,6 +179,17 @@ def build_artists(tracks: list[Track]) -> dict:
     return out
 
 
+def feed_rule(feed: dict) -> dict:
+    """A feed's rule as applied: old scratchy records (shellac) stay out
+    unless the feed says `shellac: true` — Chris: fine as a default, but
+    Bill Monroe's discs are legitimately from that period. A rule with its
+    own era clause is left alone."""
+    rule = dict(feed.get("rule") or {})
+    if not feed.get("shellac") and not rule.get("era"):
+        rule["era"] = {"exclude": ["shellac"]}
+    return rule
+
+
 def write_m3u(path: Path, paths: list[str]) -> None:
     write_atomic(path, "#EXTM3U\n" + "".join(p + "\n" for p in paths))
 
@@ -200,7 +211,7 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
     feed_pools: dict[str, list[str]] = {}
     for fid, f in feeds.items():
         if f.get("status") == "ready" and f.get("rule"):
-            feed_pools[fid] = pool(f["rule"])
+            feed_pools[fid] = pool(feed_rule(f))
             write_m3u(pools / "feeds" / f"{fid}.m3u", feed_pools[fid])
             log.info("feed %-22s %6d tracks  (%s)", fid, len(feed_pools[fid]), f.get("title", ""))
         f["count"] = len(feed_pools.get(fid, []))

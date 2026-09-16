@@ -55,7 +55,7 @@ class Migration(unittest.TestCase):
                          {"mount": "gospel", "name": "G", "kind": "curated", "family": ["gospel"], "base": {}}],
                      [{"id": "s1", "station": "blues-jazz", "kind": "auto", "like": "artist", "start": "20:00"}])
             out = migrate.run(cfg)
-            self.assertEqual(len(out), 1)
+            self.assertEqual(len(out), 2)
             mounts = [s["mount"] for s in cfg.stations()]
             self.assertEqual(mounts, ["country", "blues", "jazz", "soul", "gospel"])     # in place, order kept
             jazz = next(s for s in cfg.stations() if s["mount"] == "jazz")
@@ -66,11 +66,19 @@ class Migration(unittest.TestCase):
             self.assertEqual(migrate.run(cfg), [])                                          # recorded: not again
             self.assertIn("split-blues-jazz-soul", cfg._read("migrations.json", {}))
 
+    def test_existing_feeds_keep_shellac(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = config.Config(Path(d))
+            cfg.seed({"a": {"title": "A", "status": "ready"}, "b": {"title": "B", "status": "ready", "shellac": False}}, [], [])
+            migrate.run(cfg)
+            self.assertTrue(cfg.feeds()["a"]["shellac"])
+            self.assertFalse(cfg.feeds()["b"]["shellac"])     # an explicit choice is kept
+
     def test_nothing_to_do_on_a_fresh_seed(self):
         with tempfile.TemporaryDirectory() as d:
             cfg = config.Config(Path(d))
             cfg.seed({}, [{"mount": "blues", "name": "Blues", "kind": "curated"}], [])
-            self.assertEqual(migrate.run(cfg), ["split-blues-jazz-soul: nothing to do"])
+            self.assertEqual(migrate.run(cfg), ["split-blues-jazz-soul: nothing to do", "feeds-keep-shellac: nothing to do"])
 
 
 if __name__ == "__main__":

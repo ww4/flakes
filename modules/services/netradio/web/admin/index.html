@@ -35,6 +35,7 @@
         <label>Description <textarea v-model="edit.description" rows="3"></textarea></label>
         <label>Fits <tag-input v-model="edit.family" :suggestions="state.families" placeholder="add a family…"></tag-input></label>
         <label><input type="checkbox" role="switch" v-model="edit.listenable"> listenable as a station</label>
+        <label><input type="checkbox" role="switch" v-model="edit.shellac"> include old scratchy records <small class="muted">— shellac-era sides stay out otherwise</small></label>
         <details><summary>Rule <small class="muted">— what the description compiled to; editable</small></summary>
           <textarea class="code" v-model="edit.rule" spellcheck="false"></textarea>
           <small class="muted">{{ f.note }}</small></details>
@@ -52,6 +53,7 @@
         <label>Description <textarea v-model="add.description" rows="3" placeholder="Describe it the way you'd describe it to a friend — artists, era, instruments, what it isn't."></textarea></label>
         <label>Fits <small class="muted">(optional; the agent fills it in if empty)</small> <tag-input v-model="add.family" :suggestions="state.families"></tag-input></label>
         <label><input type="checkbox" role="switch" v-model="add.listenable"> listenable as a station</label>
+        <label><input type="checkbox" role="switch" v-model="add.shellac"> include old scratchy records</label>
         <div class="actions"><button @click="addFeed">Add feed</button></div>
       </div>
     </article>
