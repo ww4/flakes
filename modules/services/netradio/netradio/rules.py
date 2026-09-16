@@ -18,6 +18,9 @@ tag names it asserts, and list it in RULES. Tags are what consumers act on:
   tail_talk   ends with chatter: the DJ lets it finish, no crossfade
   hard_stop   ends on a stop, not a fade (the bluegrass ending): the DJ lets
               it land — no fade-out, no overlap, then the next song
+  gain_db     what to amplify the track by so it plays at the station's
+              target loudness (Sound Check, done our way): from the
+              measured EBU R128 loudness, capped so the true peak can't clip
 
 and an `era` — an audio-quality bucket, not a date (the library's dates are
 reissue dates): `shellac` (old scratchy records), `vintage` (tape era),
@@ -39,6 +42,7 @@ class Verdict:
     reason: str
     era: str = ""      # "", "shellac", "vintage", "hifi"
     hard_stop: bool = False
+    gain_db: float | None = None   # None = unmeasured, play as is
 
 
 ERAS = ("shellac", "vintage", "hifi")
@@ -94,6 +98,28 @@ def rule_ending(path: str, f: dict, title: str) -> list[str]:
     if l1 >= HARD_STOP_L1_MIN or (l3 >= HARD_STOP_L3_MIN and drop <= HARD_STOP_DROP_MAX):
         return ["hard_stop"]
     return []
+
+
+# --- loudness ----------------------------------------------------------------
+# Every track is brought to TARGET_LUFS at playback. -16 is where the
+# streaming services and most radio processing sit; old records measured
+# around -18 to -20 get a lift, modern masters at -8 to -10 come down. The
+# gain is capped so the true peak stays under PEAK_CEILING_DB (no clipping
+# for a quiet-but-spiky track), and within ±GAIN_LIMIT_DB — beyond that the
+# measurement is more likely wrong than the mastering.
+TARGET_LUFS = -16.0
+PEAK_CEILING_DB = -1.0
+GAIN_LIMIT_DB = 15.0
+
+
+def gain_for(f: dict) -> float | None:
+    lufs, peak = f.get("loudness_lufs"), f.get("true_peak_db")
+    if lufs is None or lufs < -60:
+        return None
+    gain = TARGET_LUFS - lufs
+    if peak is not None:
+        gain = min(gain, PEAK_CEILING_DB - peak)
+    return round(max(-GAIN_LIMIT_DB, min(GAIN_LIMIT_DB, gain)), 1)
 
 
 # --- era ---------------------------------------------------------------------
@@ -171,7 +197,7 @@ def evaluate(path: str, facts: dict, title: str = "") -> Verdict:
     era = next((t[4:] for t in tags if t.startswith("era:")), "")
     return Verdict(talk=talk, head_talk="head_talk" in tags and not talk,
                    tail_talk="tail_talk" in tags and not talk, reason=reason, era=era,
-                   hard_stop="hard_stop" in tags)
+                   hard_stop="hard_stop" in tags, gain_db=gain_for(facts))
 
 
 def apply_overrides(verdicts: dict[str, Verdict], overrides: dict[str, str]) -> dict[str, Verdict]:
@@ -180,7 +206,7 @@ def apply_overrides(verdicts: dict[str, Verdict], overrides: dict[str, str]) -> 
     for p, kind in overrides.items():
         v = verdicts.get(p, Verdict(False, False, False, ""))
         if kind in ERAS:
-            verdicts[p] = Verdict(v.talk, v.head_talk, v.tail_talk, f"{v.reason}; era override: {kind}", kind, v.hard_stop)
+            verdicts[p] = Verdict(v.talk, v.head_talk, v.tail_talk, f"{v.reason}; era override: {kind}", kind, v.hard_stop, v.gain_db)
         else:
-            verdicts[p] = Verdict(kind == "talk", v.head_talk, v.tail_talk, f"override: {kind}", v.era, v.hard_stop)
+            verdicts[p] = Verdict(kind == "talk", v.head_talk, v.tail_talk, f"override: {kind}", v.era, v.hard_stop, v.gain_db)
     return verdicts

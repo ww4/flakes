@@ -486,13 +486,15 @@ class StationDJ:
         return track, self.planned
 
     def track_uri(self, track: Track, following: Track | None) -> str:
-        """A plain path, unless the profile says the transition needs care:
-        a track that ends in chatter, or on a hard stop (the bluegrass
-        ending), is not crossfaded over — it lands, then the next starts;
-        one that starts with chatter is not faded into under the previous
-        song's tail."""
+        """A plain path, unless the profile has something to say: a gain
+        that brings the track to the target loudness; a track that ends in
+        chatter, or on a hard stop (the bluegrass ending), is not
+        crossfaded over — it lands, then the next starts; one that starts
+        with chatter is not faded into under the previous song's tail."""
         v = self.verdict(track)
         meta: dict[str, str] = {}
+        if v.gain_db is not None and v.gain_db != 0.0:
+            meta["liq_amplify"] = f"{v.gain_db:+.1f} dB"   # to the station's target loudness
         if v.tail_talk or v.hard_stop:
             meta.update({"liq_cross_duration": "0.5", "liq_fade_out": "0"})
         if v.head_talk:
