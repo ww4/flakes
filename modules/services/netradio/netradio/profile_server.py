@@ -44,7 +44,7 @@ def _analyse_bytes(data: bytes, suffix: str) -> dict:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
         f = profile.analyse(tmp, _model)
-        return {"facts": asdict(f), "title": profile.read_title(tmp)}
+        return {"facts": asdict(f), "title": profile.read_title(tmp), "profile_version": profile.PROFILE_VERSION}
     finally:
         os.unlink(tmp)
 

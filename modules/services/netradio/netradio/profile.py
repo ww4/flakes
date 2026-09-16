@@ -105,9 +105,15 @@ class Facts:
     album: str = ""
     # YAMNet class means over the first HEAD_SECONDS, {name: mean}
     yamnet: dict | None = None
+    # the ending (phase 3): levels in dB relative to the song's body, measured
+    # back from the last moment of sound — a fade-out slides down for seconds,
+    # a hard stop stays at level until the last one
+    end_l1_db: float | None = None   # mean level of the last second of sound
+    end_l3_db: float | None = None   # the second ending 3 s before the sound ends
+    end_drop_s: float | None = None  # seconds from "still at level" to "gone"
 
 
-PROFILE_VERSION = 2   # bump when Facts gains a field: entries without it are re-measured
+PROFILE_VERSION = 3   # bump when Facts gains a field: entries without it are re-measured
 
 
 # --- listening -----------------------------------------------------------------
@@ -124,6 +130,39 @@ def decode(path: str, start: float | None = None, dur: float | None = None):
     cmd += ["-ac", "1", "-ar", str(SR), "-f", "s16le", "-"]
     raw = subprocess.run(cmd, capture_output=True, check=True).stdout
     return np.frombuffer(raw, np.int16).astype(np.float32) / 32768.0
+
+
+ENDING_WIN = 0.1   # RMS window for the ending envelope
+
+
+def ending_of(tail) -> dict:
+    """How the sound ends, from the last EDGE_SECONDS: levels relative to the
+    tail's body, in 100 ms RMS windows. The end of sound is the last window
+    within 40 dB of the tail's peak (so a file's trailing silence is skipped);
+    the body is everything up to 2 s before that. Returns the three `end_*`
+    facts, or nothing when the tail is too short to say."""
+    import numpy as np
+    n = int(SR * ENDING_WIN)
+    m = len(tail) // n
+    if m < 30:
+        return {}
+    frames = tail[: m * n].reshape(m, n)
+    db = 20 * np.log10(np.sqrt((frames ** 2).mean(axis=1)) + 1e-9)
+    live = np.where(db > db.max() - 40)[0]
+    end = int(live[-1])
+    body = db[: max(1, end - 20)]
+    ref = float(np.percentile(body, 60))
+
+    def level(t: float) -> float:   # mean level of the second ending t s before the end
+        a, b = max(0, end - int((t + 1) / ENDING_WIN)), max(1, end - int(t / ENDING_WIN))
+        return float(db[a:b].mean() - ref)
+
+    hi = np.where(db[: end + 1] >= ref - 6)[0]
+    t_hi = int(hi[-1]) if len(hi) else 0
+    lo = np.where(db[t_hi:end + 1] <= ref - 25)[0]
+    t_lo = t_hi + int(lo[0]) if len(lo) else end
+    return {"end_l1_db": round(level(1), 1), "end_l3_db": round(level(3), 1),
+            "end_drop_s": round((t_lo - t_hi) * ENDING_WIN, 1)}
 
 
 class Yamnet:
@@ -282,6 +321,7 @@ def analyse(path: str, model: Yamnet) -> Facts:
         bitrate=info["bitrate"], codec=info["codec"],
         date=info["date"], artist=info["artist"], album=info["album"],
         yamnet=model.class_means(head_scores),
+        **ending_of(last),
     )
 
 
@@ -390,7 +430,41 @@ def analyse_remote(track: str, url: str, timeout: float = 300.0) -> tuple[dict, 
                                           "X-Filename": Path(track).name})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         out = json.load(r)
+    if out.get("profile_version") != PROFILE_VERSION:
+        raise RuntimeError(f"profile server is at version {out.get('profile_version')}, this is {PROFILE_VERSION}")
     return out["facts"], out.get("title", "")
+
+
+def remote_ready(url: str) -> tuple[bool, str]:
+    """(usable, why): the profile server answers /health at THIS version."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"{url.rstrip('/')}/health", timeout=10) as r:
+            v = json.load(r).get("profile_version")
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+    if v != PROFILE_VERSION:
+        return False, f"version {v}, this is {PROFILE_VERSION}"
+    return True, "ok"
+
+
+def wait_for_remotes(urls: list[str], wait: float) -> list[str]:
+    """The remotes that are up at this version, giving each up to `wait`
+    seconds to get there — a deploy reaches the fast box a few minutes
+    after this one, and profiling locally instead takes hours."""
+    ready, t0 = [], time.monotonic()
+    for url in urls:
+        while True:
+            ok, why = remote_ready(url)
+            if ok:
+                ready.append(url)
+                break
+            if time.monotonic() - t0 > wait:
+                log.warning("profile server %s not usable (%s); measuring locally", url, why)
+                break
+            log.info("waiting for profile server %s (%s)", url, why)
+            time.sleep(30)
+    return ready
 
 
 def _worker_analyse(track: str) -> tuple[str, dict | None, str]:
@@ -422,6 +496,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--workers", type=int, default=0, help="worker processes (0 = one per core)")
     ap.add_argument("--remote", action="append", default=[],
                     help="profile server URL to try first (repeatable); local analysis is the fallback")
+    ap.add_argument("--remote-wait", type=float, default=900.0,
+                    help="seconds to wait for a remote to be up at this profile version before going local")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -447,6 +523,8 @@ def main(argv: list[str] | None = None) -> int:
             break
     stats = {t: st for t, st in todo}
     workers = args.workers or (os.cpu_count() or 1)
+    if todo and args.remote:
+        args.remote = wait_for_remotes(args.remote, args.remote_wait)
     log.info("%d tracks to analyse (%d cached), %d workers%s", len(todo), skipped, workers,
              f", remote first: {', '.join(args.remote)}" if args.remote else "")
 
@@ -481,7 +559,9 @@ def main(argv: list[str] | None = None) -> int:
     overrides = load_overrides(args.overrides)
     if args.report:
         write_report(profile, args.report, overrides)
-    talk = sum(1 for v in profile.verdicts(overrides).values() if v.talk)
-    log.info("done: %d analysed this run, %d cached, %d failed; %d of %d tracks are talk",
-             done, skipped, failed, talk, len(profile.data))
+    verdicts = profile.verdicts(overrides).values()
+    talk = sum(1 for v in verdicts if v.talk)
+    stops = sum(1 for v in verdicts if v.hard_stop and not v.talk)
+    log.info("done: %d analysed this run, %d cached, %d failed; %d of %d tracks are talk, %d end on a hard stop",
+             done, skipped, failed, talk, len(profile.data), stops)
     return 0

@@ -487,12 +487,13 @@ class StationDJ:
 
     def track_uri(self, track: Track, following: Track | None) -> str:
         """A plain path, unless the profile says the transition needs care:
-        a track that ends in chatter is not crossfaded over (it finishes,
-        then the next starts); one that starts with chatter is not faded
-        into under the previous song's tail."""
+        a track that ends in chatter, or on a hard stop (the bluegrass
+        ending), is not crossfaded over — it lands, then the next starts;
+        one that starts with chatter is not faded into under the previous
+        song's tail."""
         v = self.verdict(track)
         meta: dict[str, str] = {}
-        if v.tail_talk:
+        if v.tail_talk or v.hard_stop:
             meta.update({"liq_cross_duration": "0.5", "liq_fade_out": "0"})
         if v.head_talk:
             meta["liq_fade_in"] = "0"
