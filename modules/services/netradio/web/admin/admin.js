@@ -87,7 +87,8 @@ createApp({
     // -- stations (with their schedule)
     async select(st) {
       this.sel = st.mount;
-      this.edit = { name: st.name, family: [...(st.family || [])], base: JSON.stringify(st.base || {}, null, 1) };
+      this.edit = { name: st.name, family: [...(st.family || [])], base: JSON.stringify(st.base || {}, null, 1),
+                    breaks_every: st.breaks_every === undefined || st.breaks_every === null ? "" : String(st.breaks_every) };
       if (st.kind !== "specialty" && !this.options[st.mount])
         this.options[st.mount] = await api("GET", `/options?station=${encodeURIComponent(st.mount)}`);
     },
@@ -116,6 +117,7 @@ createApp({
       const st = this.selected;
       try {
         const body = { name: this.edit.name };
+        if (this.edit.breaks_every !== "") body.breaks_every = /^\d+-\d+$/.test(this.edit.breaks_every) ? this.edit.breaks_every : Number(this.edit.breaks_every);
         if (st.kind !== "specialty") {
           body.family = this.edit.family;
           body.base = JSON.parse(this.edit.base || "{}");

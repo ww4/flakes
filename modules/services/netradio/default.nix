@@ -194,7 +194,9 @@ let
     { mount = "country";    name = "Classic Country";      kind = "curated"; family = [ "country" ];            base = { genres = [ "country" "western swing" "honky tonk" "western" "cowboy" ]; era = noShellac; }; }
     { mount = "folk";       name = "Folk";                 kind = "curated"; family = [ "folk" "bluegrass" ];   base = { genres = [ "folk" "singer songwriter" "celtic" "traditional" "americana" "acoustic" "irish" "cajun" "zydeco" ]; era = noShellac; }; }
     { mount = "rock";       name = "Rock";                 kind = "curated"; family = [ "rock" ];               base = { genres = [ "rock" "alternative" "pop" "punk" "metal" "indie" "new wave" ]; era = noShellac; }; }
-    { mount = "blues-jazz"; name = "Blues, Jazz & Soul";   kind = "curated"; family = [ "blues-jazz" ];         base = { genres = [ "blues" "jazz" "soul" "r&b" "funk" "big band" "swing" "motown" "zydeco" ]; era = noShellac; }; }
+    { mount = "blues";      name = "Blues";                kind = "curated"; family = [ "blues-jazz" ];         base = { genres = [ "blues" ]; era = noShellac; }; }
+    { mount = "jazz";       name = "Jazz";                 kind = "curated"; family = [ "blues-jazz" ];         base = { genres = [ "jazz" "big band" "swing" "fusion" "bebop" "dixieland" ]; era = noShellac; }; }
+    { mount = "soul";       name = "Soul & R&B";           kind = "curated"; family = [ "blues-jazz" ];         base = { genres = [ "soul and r&b" "soul" "r&b" "funk" "motown" ]; era = noShellac; }; }
     { mount = "gospel";     name = "Gospel";               kind = "curated"; family = [ "gospel" ];             base = { genres = [ "gospel" "religious" "christian" "hymns" "sacred" "spiritual" ]; }; }
     { mount = "classical";  name = "Classical";            kind = "curated"; family = [ "classical" ];          base = { genres = [ "classical" "baroque" "orchestral" "opera" "chamber" ]; }; }
     { mount = "holiday";    name = "Holiday";              kind = "curated"; family = [ "holiday" ];            base = { genres = [ "holiday" "christmas" "xmas" ]; }; }
@@ -456,6 +458,10 @@ in
       [ -s ${configDir}/feeds.json ]    || install -m 0664 -o ${user} -g users ${seeds.feeds} ${configDir}/feeds.json
       [ -s ${configDir}/stations.json ] || install -m 0664 -o ${user} -g users ${seeds.stations} ${configDir}/stations.json
       [ -s ${configDir}/schedule.json ] || install -m 0664 -o ${user} -g users ${seeds.schedule} ${configDir}/schedule.json
+      # One-time changes that should reach an EXISTING config too (a seed
+      # change only reaches a fresh install): netradio/migrate.py, recorded
+      # in config/migrations.json. Runs as the config's owner.
+      ${pkgs.util-linux}/bin/runuser -u ${user} -- ${netradio}/bin/netradio migrate --config ${configDir}
       # Liquidsoap watches each playlist FILE (inotify): one that appears
       # after it started is never picked up, but an empty one that is later
       # rewritten is (verified 2026-09-15). So every station's file exists

@@ -195,6 +195,21 @@ def annotate(meta: dict[str, str], path: str) -> str:
 
 # --- the programme: segments and spotlights of one curated station ------------
 
+def breaks_spec(value, default: tuple[int, int] = (3, 4)) -> tuple[int, int]:
+    """A station's `breaks_every`: an int N (every N songs), "a-b" (a random
+    count in that range), 0 (no breaks). Anything else: the default."""
+    if value is None or value == "":
+        return default
+    try:
+        if isinstance(value, str) and "-" in value:
+            a, b = (int(x) for x in value.split("-", 1))
+            return (min(a, b), max(a, b)) if a > 0 and b > 0 else (0, 0)
+        n = int(value)
+        return (n, n) if n >= 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
 class Programme:
     """What a curated station should be drawing from right now, and what
     the DJ should say about the day. Reads the runtime config (schedule,
@@ -209,6 +224,25 @@ class Programme:
         self.pools = pools
         self.lastfm_key = lastfm_key
         self.clock = dt.datetime.now          # injectable for tests
+        self._stations_mtime = -1.0
+
+    def refresh_station(self) -> dict | None:
+        """The station's current settings from stations.json (edited on the
+        admin page); None when unchanged since the last look."""
+        if not self.cfg:
+            return None
+        try:
+            mtime = (self.cfg.root / "stations.json").stat().st_mtime
+        except OSError:
+            return None
+        if mtime == self._stations_mtime:
+            return None
+        self._stations_mtime = mtime
+        for s in self.cfg.stations():
+            if s.get("mount") == self.station.get("mount"):
+                self.station = s
+                return s
+        return None
 
     def active(self, now: dt.datetime | None = None) -> dict | None:
         if not self.cfg or self.station.get("kind") == "specialty":
@@ -406,6 +440,18 @@ class StationDJ:
         self.recent.append(path)
         return read_tags(path)
 
+    def check_settings(self) -> None:
+        """Pick up a changed break frequency without a restart."""
+        if self.programme is None:
+            return
+        st = self.programme.refresh_station()
+        if st is not None and "breaks_every" in st:
+            spec = breaks_spec(st.get("breaks_every"), self.breaks_every)
+            if spec != self.breaks_every:
+                log.info("%s: breaks every %s songs now", self.mount, "never" if spec == (0, 0) else f"{spec[0]}-{spec[1]}")
+                self.breaks_every = spec
+                self.until_break = self.rng.randint(*spec) if spec != (0, 0) else 10 ** 9
+
     def check_segment(self) -> None:
         """Notice a segment starting or ending: switch pools, drop the track
         planned under the old one, and queue an intro before the next track."""
@@ -431,7 +477,7 @@ class StationDJ:
         else:
             log.info("%s: segment over, back to the base", self.mount)
         self.since_break = []
-        self.until_break = self.rng.randint(*self.breaks_every)
+        self.until_break = self.rng.randint(*self.breaks_every) if self.breaks_every != (0, 0) else 10 ** 9
 
     def next_track(self) -> tuple[Track | None, Track | None]:
         """The track to queue now and the one planned after it."""
@@ -517,6 +563,7 @@ class StationDJ:
     def fill(self) -> None:
         """Top the queue up to `lookahead`. Each step queues one track, with a
         break in front of it when the count says so."""
+        self.check_settings()
         self.check_segment()
         n = self.pending()
         while n < self.lookahead:
@@ -524,7 +571,7 @@ class StationDJ:
             if track is None:
                 log.warning("%s: playlist empty, nothing to queue", self.mount)
                 return
-            if self.until_break <= 0:
+            if self.until_break <= 0 and self.breaks_every != (0, 0):
                 uri = self.make_break(track)
                 if uri:
                     self.push(uri, "break", {"kind": "break", "artist": self.name, "title": "Station break"})
@@ -575,7 +622,7 @@ def main(argv: list[str] | None = None) -> int:
     for s in stations:
         prog = Programme(s, cfg, args.pools, lastfm_key)
         dj = StationDJ(s["mount"], s["name"], args.playlists / f"{s['mount']}.m3u",
-                       args.out / s["mount"], ls, tts, breaks_every=(lo, hi),
+                       args.out / s["mount"], ls, tts, breaks_every=breaks_spec(s.get("breaks_every"), (lo, hi)),
                        profile=args.profile, overrides=args.overrides, now_dir=args.now_dir, programme=prog)
         t = threading.Thread(target=dj.run, args=(stop,), name=s["mount"], daemon=True)
         t.start()
