@@ -16,6 +16,8 @@ tag names it asserts, and list it in RULES. Tags are what consumers act on:
   head_talk   starts with chatter: the DJ doesn't fade the previous song in
               over it, and gives the previous song a short exit
   tail_talk   ends with chatter: the DJ lets it finish, no crossfade
+  hard_stop   ends on a stop, not a fade (the bluegrass ending): the DJ lets
+              it land — no fade-out, no overlap, then the next song
 
 and an `era` — an audio-quality bucket, not a date (the library's dates are
 reissue dates): `shellac` (old scratchy records), `vintage` (tape era),
@@ -36,6 +38,7 @@ class Verdict:
     tail_talk: bool
     reason: str
     era: str = ""      # "", "shellac", "vintage", "hifi"
+    hard_stop: bool = False
 
 
 ERAS = ("shellac", "vintage", "hifi")
@@ -67,6 +70,30 @@ def rule_edges(path: str, f: dict, title: str) -> list[str]:
     if is_talk(f.get("tail_talk_frames", 0.0), f.get("tail_pitch_stable", 1.0)):
         tags.append("tail_talk")
     return tags
+
+
+# --- the ending ----------------------------------------------------------------
+# From 116 tracks (Monroe / Osbornes / Flatt & Scruggs / Martin / Skaggs
+# studio sides against Dire Straits / Eagles / Fleetwood Mac / Krauss
+# fade-outs, 2026-09-16): a hard stop is still at the song's level 3 s
+# before the sound ends and gone within ~2.5 s (a final chord ringing out
+# can pull its last second down to -16 dB); a fade has been sliding for 5 s
+# or longer and is 17 dB or more down by the last second. The thresholds
+# lean toward calling a stop: a fade tagged as a stop only loses a
+# crossfade it had already faded through, a stop tagged as a fade gets the
+# crossfade Chris does not want. Unmeasured tails (pre-v3) say nothing.
+HARD_STOP_L1_MIN = -15.0
+HARD_STOP_L3_MIN = -6.0
+HARD_STOP_DROP_MAX = 3.0
+
+
+def rule_ending(path: str, f: dict, title: str) -> list[str]:
+    l1, l3, drop = f.get("end_l1_db"), f.get("end_l3_db"), f.get("end_drop_s")
+    if l1 is None or l3 is None or drop is None:
+        return []
+    if l1 >= HARD_STOP_L1_MIN or (l3 >= HARD_STOP_L3_MIN and drop <= HARD_STOP_DROP_MAX):
+        return ["hard_stop"]
+    return []
 
 
 # --- era ---------------------------------------------------------------------
@@ -127,7 +154,7 @@ def rule_era(path: str, f: dict, title: str) -> list[str]:
     return [f"era:{era}"] if era else []
 
 
-RULES = [rule_talk, rule_edges, rule_era]
+RULES = [rule_talk, rule_edges, rule_ending, rule_era]
 
 
 def evaluate(path: str, facts: dict, title: str = "") -> Verdict:
@@ -143,7 +170,8 @@ def evaluate(path: str, facts: dict, title: str = "") -> Verdict:
         reason = "music"
     era = next((t[4:] for t in tags if t.startswith("era:")), "")
     return Verdict(talk=talk, head_talk="head_talk" in tags and not talk,
-                   tail_talk="tail_talk" in tags and not talk, reason=reason, era=era)
+                   tail_talk="tail_talk" in tags and not talk, reason=reason, era=era,
+                   hard_stop="hard_stop" in tags)
 
 
 def apply_overrides(verdicts: dict[str, Verdict], overrides: dict[str, str]) -> dict[str, Verdict]:
@@ -152,7 +180,7 @@ def apply_overrides(verdicts: dict[str, Verdict], overrides: dict[str, str]) -> 
     for p, kind in overrides.items():
         v = verdicts.get(p, Verdict(False, False, False, ""))
         if kind in ERAS:
-            verdicts[p] = Verdict(v.talk, v.head_talk, v.tail_talk, f"{v.reason}; era override: {kind}", kind)
+            verdicts[p] = Verdict(v.talk, v.head_talk, v.tail_talk, f"{v.reason}; era override: {kind}", kind, v.hard_stop)
         else:
-            verdicts[p] = Verdict(kind == "talk", v.head_talk, v.tail_talk, f"override: {kind}", v.era)
+            verdicts[p] = Verdict(kind == "talk", v.head_talk, v.tail_talk, f"override: {kind}", v.era, v.hard_stop)
     return verdicts
