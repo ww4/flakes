@@ -761,9 +761,13 @@ in
           echo "feed $feed compiled"
         else
           echo "feed $feed: compile failed (see above)"
-          # compile-apply marks the feed failed when it ran; if claude itself
-          # failed, say so where the admin page shows it.
-          ${netradio}/bin/netradio compile-apply --config ${configDir} --feed "$feed" --result /dev/null >/dev/null 2>&1 || true
+          # compile-apply marks the feed failed with the real reason when it
+          # ran; only when claude produced nothing at all is there no result
+          # file, and then the page should say that instead.
+          if [ ! -s "$work/result" ]; then
+            printf 'claude -p produced no answer (timeout or failure) — see journalctl -u netradio-apply\n' > "$work/result"
+            ${netradio}/bin/netradio compile-apply --config ${configDir} --feed "$feed" --result "$work/result" >/dev/null 2>&1 || true
+          fi
         fi
         rm -rf "$work"
         need_apply=1
