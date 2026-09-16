@@ -172,6 +172,21 @@ class StationDJTests(unittest.TestCase):
         self.dj.fill()
         self.assertEqual(self.ls.pushed, [])
 
+    def test_next_json_for_the_page(self):
+        import json
+        now = Path(self.tmp.name) / "now"
+        self.dj.now_dir = now
+        self.dj.fill()                                   # two tracks queued
+        d = json.loads((now / "x-next.json").read_text())
+        self.assertEqual(len(d["next"]), 2)
+        self.assertEqual(d["next"][0]["kind"], "track")
+        self.assertIn("artist", d["planned"])
+        self.dj.until_break = 0
+        self.ls.play(); self.dj.fill()                   # a break rides in front of the next track
+        d = json.loads((now / "x-next.json").read_text())
+        self.assertEqual([e["kind"] for e in d["next"]], ["track", "break", "track"])
+        self.assertTrue(d["last_break"])
+
     def test_old_breaks_are_pruned(self):
         self.dj.breaks_every = (1, 1)
         self.dj.until_break = 0

@@ -114,6 +114,22 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.ls.log, [])
 
 
+class Qualities(unittest.TestCase):
+    def test_variants_and_base(self):
+        self.assertEqual(wake.all_mounts([{"mount": "rock"}]), {"rock", "rock-lo"})
+        self.assertEqual(wake.base_mount("rock-lo"), "rock")
+        self.assertEqual(wake.base_mount("rock"), "rock")
+
+    def test_lo_mount_wakes_against_the_base_playlist(self):
+        with tempfile.TemporaryDirectory() as d:
+            pl = Path(d)
+            (pl / "rock.m3u").write_text("#EXTM3U\n/m/a.mp3\n")
+            ic = FakeIcecast(); ls = FakeLiquidsoap(ic)
+            ctl = wake.Controller({"rock", "rock-lo"}, ls, ic, pl, idle_after=300, start_timeout=1)
+            self.assertEqual(ctl.wake("rock-lo")[0], 200)
+            self.assertEqual(ls.log, ["rock-lo.start"])
+
+
 class MountRegex(unittest.TestCase):
     def test_paths(self):
         self.assertEqual(wake.MOUNT_RE.match("/radio/blues-jazz.mp3").group(1), "blues-jazz")

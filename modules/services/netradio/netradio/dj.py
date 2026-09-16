@@ -194,7 +194,8 @@ class StationDJ:
     def __init__(self, mount: str, name: str, playlist: Path, out_dir: Path,
                  ls: Liquidsoap, tts: Kokoro, rng: random.Random | None = None,
                  lookahead: int = LOOKAHEAD, breaks_every: tuple[int, int] = (3, 4),
-                 voice_gain: str = "1.8", profile: Path | None = None, overrides: Path | None = None):
+                 voice_gain: str = "1.8", profile: Path | None = None, overrides: Path | None = None,
+                 now_dir: Path | None = None):
         self.mount = mount
         self.name = name
         self.playlist = playlist
@@ -217,6 +218,9 @@ class StationDJ:
         self.verdicts: dict[str, Verdict] = {}
         self.planned: Track | None = None   # chosen one ahead, so a track's
                                             # exit can suit what follows it
+        self.now_dir = now_dir              # where the radio page reads "next" from
+        self.pushed: list[dict] = []        # what was queued, in order, for that
+        self.last_break_text = ""
 
     # -- inputs
     def load_playlist(self) -> None:
@@ -288,9 +292,28 @@ class StationDJ:
         return annotate(meta, track.path) if meta else track.path
 
     # -- outputs
-    def push(self, uri: str, what: str) -> None:
+    def push(self, uri: str, what: str, entry: dict | None = None) -> None:
         reply = self.ls.command(f"q_{self.mount}.push {uri}")
         log.info("%s: queued %s (%s)", self.mount, what, reply.strip() or "ok")
+        if entry:
+            self.pushed.append(entry)
+            self.pushed = self.pushed[-20:]
+
+    def write_next(self, pending: int) -> None:
+        """<now_dir>/<mount>-next.json: what is still waiting in the queue (the
+        last `pending` things pushed) and the DJ's last break, for the page."""
+        if not self.now_dir:
+            return
+        data = {"next": self.pushed[-pending:] if pending > 0 else [],
+                "planned": ({"artist": self.planned.artist, "title": self.planned.title} if self.planned else None),
+                "last_break": self.last_break_text}
+        try:
+            self.now_dir.mkdir(parents=True, exist_ok=True)
+            tmp = self.now_dir / f".{self.mount}-next.json.tmp"
+            tmp.write_text(json.dumps(data))
+            tmp.replace(self.now_dir / f"{self.mount}-next.json")
+        except OSError as e:
+            log.warning("%s: could not write next.json: %s", self.mount, e)
 
     def make_break(self, nxt: Track) -> str | None:
         text = compose(self.since_break, nxt, self.name, self.rng)
@@ -306,6 +329,7 @@ class StationDJ:
         for old in sorted(self.out_dir.glob("break-*.wav"))[:-KEEP_BREAKS]:
             old.unlink(missing_ok=True)
         log.info("%s: break: %s", self.mount, text)
+        self.last_break_text = text
         return annotate({
             "title": "Station break", "artist": self.name, "dj": "true",
             "liq_amplify": self.voice_gain,   # speech renders ~8 dB under the music
@@ -324,13 +348,16 @@ class StationDJ:
             if self.until_break <= 0:
                 uri = self.make_break(track)
                 if uri:
-                    self.push(uri, "break")
+                    self.push(uri, "break", {"kind": "break", "artist": self.name, "title": "Station break"})
+                    n += 1
                 self.since_break = []
                 self.until_break = self.rng.randint(*self.breaks_every)
-            self.push(self.track_uri(track, following), f"{track.artist} - {track.title}")
+            self.push(self.track_uri(track, following), f"{track.artist} - {track.title}",
+                      {"kind": "track", "artist": track.artist, "title": track.title})
             self.since_break.append(track)
             self.until_break -= 1
             n += 1
+        self.write_next(n)
 
     def run(self, stop: threading.Event) -> None:
         while not stop.is_set():
@@ -352,6 +379,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--breaks-every", default="3-4", help="tracks between breaks, min-max")
     ap.add_argument("--profile", type=Path, help="profile.json from `netradio profile`")
     ap.add_argument("--overrides", type=Path, help="profile-overrides.json")
+    ap.add_argument("--now-dir", type=Path, help="where <mount>-next.json goes, for the radio page")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -365,7 +393,7 @@ def main(argv: list[str] | None = None) -> int:
     for s in stations:
         dj = StationDJ(s["mount"], s["name"], args.playlists / f"{s['mount']}.m3u",
                        args.out / s["mount"], ls, tts, breaks_every=(lo, hi),
-                       profile=args.profile, overrides=args.overrides)
+                       profile=args.profile, overrides=args.overrides, now_dir=args.now_dir)
         t = threading.Thread(target=dj.run, args=(stop,), name=s["mount"], daemon=True)
         t.start()
         threads.append(t)
