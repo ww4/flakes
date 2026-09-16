@@ -59,18 +59,26 @@ Answer with ONE JSON object and nothing else, of the form:
 def parse_result(text: str) -> dict:
     """The JSON object in the model's answer, wherever it sits — the answer
     may be wrapped in a code fence or prose with braces of its own, so try
-    to decode at every `{` and take the first object that has a rule."""
+    to decode at every `{` and take the first object that has a rule. When
+    the object carries no note but the model wrote prose around it, that
+    prose becomes the note: what it found should never be lost."""
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.M)
     dec = json.JSONDecoder()
     first_error = None
     for m in re.finditer(r"\{", text):
         try:
-            obj, _ = dec.raw_decode(text, m.start())
+            obj, end = dec.raw_decode(text, m.start())
         except ValueError as e:
             first_error = first_error or e
             continue
         if isinstance(obj, dict) and ("rule" in obj or "artists" in obj or "genres" in obj):
-            return obj if "rule" in obj else {"rule": obj}
+            obj = obj if "rule" in obj else {"rule": obj}
+            if not str(obj.get("note") or "").strip():
+                prose = " ".join((text[:m.start()] + " " + text[end:]).split())
+                prose = re.sub(r"^```\w*\s*|\s*```$", "", prose).strip()
+                if prose:
+                    obj["note"] = prose[:900]
+            return obj
     raise ValueError(f"no JSON object with a rule in the result ({first_error or 'no braces at all'})")
 
 
@@ -91,7 +99,7 @@ def apply_result(cfg: Config, feed_id: str, result: dict) -> list[str]:
         cfg.save_feeds(feeds)
         return errs
     feed.update({"rule": rule, "family": family, "status": "ready",
-                 "note": str(result.get("note") or "")})
+                 "note": str(result.get("note") or "").strip() or "the model returned the rule without a note"})
     cfg.save_feeds(feeds)
     cfg.request("apply", {"reason": f"feed {feed_id} compiled"})
     return []
@@ -118,7 +126,9 @@ def main_apply(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     cfg = Config(args.config)
     try:
-        result = parse_result(args.result.read_text())
+        raw = args.result.read_text()
+        cfg.keep_answer(args.feed, raw)
+        result = parse_result(raw)
     except (OSError, ValueError) as e:
         feeds = cfg.feeds()
         feeds.setdefault(args.feed, {}).update({"status": "failed", "note": f"could not read the model's answer: {e}"})

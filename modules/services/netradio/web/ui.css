@@ -94,3 +94,4 @@ small.note { display: block; margin: -.4rem 0 .8rem; }
 .switches { display: flex; gap: 1.5rem; margin-bottom: var(--pico-spacing); }
 .switches label { margin: 0; }
 .ai-note { margin: -.2rem 0 .6rem; padding: .35rem .6rem; border-left: 3px solid var(--pico-primary); background: var(--pico-card-sectioning-background-color); border-radius: 0 6px 6px 0; }
+.ai-note .answer { white-space: pre-wrap; font-size: .8em; margin: .4rem 0 0; max-height: 18rem; overflow: auto; }

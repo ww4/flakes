@@ -65,6 +65,18 @@ class Config:
     def save_feeds(self, feeds: dict) -> None:
         self._write("feeds.json", feeds)
 
+    def keep_answer(self, feed_id: str, text: str) -> None:
+        """The model's last raw answer for a feed, kept whole so what it
+        said is readable even when the JSON carried no note."""
+        (self.root / "answers").mkdir(exist_ok=True)
+        write_atomic(self.root / "answers" / f"{feed_id}.txt", text)
+
+    def answer(self, feed_id: str) -> str:
+        try:
+            return (self.root / "answers" / f"{feed_id}.txt").read_text()
+        except OSError:
+            return ""
+
     def stations(self) -> list[dict]:
         return self._read("stations.json", [])
 
