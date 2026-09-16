@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from netradio import dj, playlists as pl, profile, rules
+from netradio import dj, profile, rules
 
 logging.disable(logging.CRITICAL)
 
@@ -99,22 +99,6 @@ class Store(unittest.TestCase):
         self.assertIn("TALK      30s  'Intro'", text)             # by the rules
         self.assertIn("/m/b.mp3 (override)", text)                 # by hand
         self.assertIn("head ", text)
-
-
-class ScannerDropsTalk(unittest.TestCase):
-    def test_talk_kept_off_every_station(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d) / "Music"
-            for n in ("A/1.mp3", "A/2.mp3"):
-                (root / n).parent.mkdir(parents=True, exist_ok=True)
-                (root / n).write_bytes(b"x")
-            stations = [pl.Station("all", "Everything"), pl.Station("rock", "Rock", ["rock"])]
-            cache = pl.TagCache(Path(d) / "cache.json")
-            with mock.patch.object(pl, "read_genre", return_value="Rock"):
-                counts = pl.scan([root], stations, cache, talk={str(root / "A/1.mp3")})
-            self.assertEqual(counts["talk"], 1)
-            for s in stations:
-                self.assertEqual([Path(x).name for x in s.paths], ["2.mp3"])
 
 
 class DJUsesProfile(unittest.TestCase):

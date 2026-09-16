@@ -1,0 +1,23 @@
+body { max-width: 62rem; }
+h2 { font-size: 1.1rem; margin: 1.5rem 0 .4rem; }
+section { margin-bottom: 1.5rem; }
+.grid { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.grid th { text-align: left; font-weight: 600; color: var(--muted); font-size: .8rem; padding: .3rem .4rem; border-bottom: 1px solid var(--line); }
+.grid td { padding: .4rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.grid input[type=text], .grid textarea, .row-form input, select, input[type=time], input[type=number] { font: inherit; font-size: .9rem; padding: .25rem .4rem; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.grid textarea { width: 100%; min-height: 3.2rem; }
+.grid input[type=text] { width: 100%; }
+button { font: inherit; font-size: .9rem; padding: .3rem .7rem; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+button.small { font-size: .8rem; padding: .15rem .5rem; }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.row-form { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-top: .6rem; }
+.chips label { display: inline-block; font-size: .78rem; margin: 0 .35rem .2rem 0; white-space: nowrap; }
+.status-ready { color: #2a8a4a; } .status-pending { color: #b58a2a; } .status-failed { color: #b53a2a; }
+.station-block { border: 1px solid var(--line); border-radius: 10px; padding: .6rem .8rem; margin: .6rem 0; }
+.station-block h3 { margin: 0 0 .3rem; font-size: 1rem; text-transform: none; letter-spacing: 0; color: var(--fg); }
+.slot { display: grid; grid-template-columns: 1.2fr 1fr 1.6fr 1.4fr .8fr .6fr auto; gap: .4rem; align-items: center; padding: .3rem 0; border-top: 1px dashed var(--line); font-size: .85rem; }
+.slot .days label { font-size: .75rem; margin-right: .2rem; }
+.today { font-size: .8rem; color: var(--muted); margin: .2rem 0 .4rem; }
+.flash { background: var(--card); border-left: 3px solid var(--accent); padding: .4rem .6rem; border-radius: 6px; }
+code.rule { font-size: .78rem; white-space: pre-wrap; word-break: break-all; display: block; }
+@media (max-width: 720px) { .slot { grid-template-columns: 1fr 1fr; } }

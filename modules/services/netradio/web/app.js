@@ -1,7 +1,7 @@
 // Library radio — the page. No framework, no build step.
 //
 // Sources, all same-origin, all polled every 10 s:
-//   stations.json        the catalogue (name, mount, era filter), static
+//   now/catalogue.json   the station list (name, mount, kind), written by the scanner
 //   now/stations.json    per-station track counts, written by the scanner
 //   icecast-status       Icecast's status-json: which mounts are up, their
 //                        current title, listener counts
@@ -51,7 +51,7 @@ function renderStations() {
     const listeners = (base.listeners | 0) + (lo.listeners | 0);
     const up = !!(state.status[s.mount] || state.status[s.mount + "-lo"]);
     const count = s.tracks != null ? `${s.tracks.toLocaleString()} tracks` : "";
-    const era = s.era ? s.era.join(" + ") : "";
+    const era = s.kind === "specialty" ? "specialty" : "";
     li.innerHTML = `<button class="btn ${state.current === s.mount ? "playing" : ""}" data-mount="${s.mount}" title="Play">${state.current === s.mount ? "■" : "▶"}</button>
       <div class="name"><b>${esc(s.name)}${era ? `<span class="badge">${esc(era)}</span>` : ""}</b>
         <small>${esc(count)}${up ? ` · <span class="live">on air</span>` : ""}${listeners ? ` · ${listeners} listening` : ""}</small></div>
@@ -173,7 +173,7 @@ audio.addEventListener("playing", () => { $("p-status").textContent = ""; });
 (async function init() {
   try { state.quality = localStorage.getItem("radio.quality") || ""; } catch (e) {}
   const q = document.querySelector(`input[name="q"][value="${state.quality}"]`); if (q) q.checked = true;
-  state.stations = (await getJSON("stations.json")) || [];
+  state.stations = (await getJSON("now/catalogue.json")) || [];
   renderStations();
   refreshStatus();
   setInterval(refreshStatus, 10000);

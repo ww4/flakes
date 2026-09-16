@@ -1,0 +1,117 @@
+"""Feed rules: what puts a track into a feed.
+
+A feed's rule is a small structured object — no query language to parse:
+
+    artists      ["Bob Wills", "Asleep at the Wheel"]   name match, normalised
+    genres       ["western swing", "honky tonk"]        whole word in the genre tag
+    instruments  {"banjo": [0.3, null], "singing": [null, 0.05]}
+                                                        YAMNet means, ALL must hold
+    era          {"only": ["shellac"], "exclude": ["shellac"]}
+    all          true                                   everything (era still applies)
+
+Each clause that is present must hold: artists/genres together say WHO or
+WHAT (a track needs to hit one of them), instruments say how it sounds (all
+thresholds), era says when — so "old-time fiddle" is genres [old time] AND
+violin >= 0.15, and "banjo instrumentals" is instruments alone. `all` stands
+in for the who/what clause. Talk tracks are kept out of everything by the
+scanner before rules run. The AI compile step writes rules of exactly this
+shape from a feed's description; Chris can edit them by hand.
+"""
+
+from __future__ import annotations
+
+import re
+
+from netradio.playlists import split_genre, word_in
+
+
+def norm_artist(name: str) -> str:
+    s = name.lower().replace("&", " and ")
+    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+    if s.startswith("the "):
+        s = s[4:]
+    return s
+
+
+def artist_hit(rule_artists: list[str], track_artist: str, track_path: str = "") -> bool:
+    """The rule's name inside the track's artist (so 'george jones' hits
+    'Ralph Stanley & George Jones' too), or the library folder's artist."""
+    if not rule_artists:
+        return False
+    hay = [norm_artist(track_artist)]
+    parts = track_path.split("/")
+    if len(parts) > 4:
+        hay.append(norm_artist(parts[4]))   # /mnt/fusion/Music/<Artist>/...
+    for a in rule_artists:
+        n = norm_artist(a)
+        if n and any(n in h for h in hay):
+            return True
+    return False
+
+
+def instruments_hit(spec: dict, yamnet: dict | None) -> bool:
+    if not spec:
+        return False
+    if not yamnet:
+        return False
+    for name, (lo, hi) in ((k, (v + [None, None])[:2]) for k, v in spec.items()):
+        v = yamnet.get(name)
+        if v is None:
+            return False
+        if lo is not None and v < lo:
+            return False
+        if hi is not None and v > hi:
+            return False
+    return True
+
+
+def era_ok(spec: dict | None, era: str) -> bool:
+    if not spec:
+        return True
+    only = spec.get("only") or []
+    exclude = spec.get("exclude") or []
+    if only and era not in only:      # unmeasured ("") never satisfies an `only`
+        return False
+    if era and era in exclude:
+        return False
+    return True
+
+
+def matches(rule: dict, *, artist: str, path: str, genre: str, yamnet: dict | None, era: str) -> bool:
+    if not era_ok(rule.get("era"), era):
+        return False
+    artists = rule.get("artists") or []
+    genre_words = rule.get("genres") or []
+    instruments = rule.get("instruments") or {}
+    if not (rule.get("all") or artists or genre_words or instruments):
+        return False
+    if (artists or genre_words) and not rule.get("all"):
+        genres = split_genre(genre or "")
+        if not (artist_hit(artists, artist, path) or any(word_in(w.lower(), genres) for w in genre_words)):
+            return False
+    if instruments and not instruments_hit(instruments, yamnet):
+        return False
+    return True
+
+
+def validate(rule: dict) -> list[str]:
+    """Problems with a rule as written (the admin page shows them)."""
+    errs = []
+    for k in ("artists", "genres"):
+        v = rule.get(k)
+        if v is not None and (not isinstance(v, list) or not all(isinstance(x, str) for x in v)):
+            errs.append(f"{k} must be a list of strings")
+    inst = rule.get("instruments")
+    if inst is not None:
+        if not isinstance(inst, dict):
+            errs.append("instruments must be an object of name -> [min, max]")
+        else:
+            for k, v in inst.items():
+                if not (isinstance(v, list) and 1 <= len(v) <= 2 and all(x is None or isinstance(x, (int, float)) for x in v)):
+                    errs.append(f"instruments.{k} must be [min, max] (either may be null)")
+    era = rule.get("era")
+    if era is not None and not isinstance(era, dict):
+        errs.append("era must be {only: [...], exclude: [...]}")
+    if not (rule.get("all") or rule.get("artists") or rule.get("genres") or rule.get("instruments")):
+        errs.append("the rule selects nothing (no artists, genres, instruments, or all)")
+    return errs

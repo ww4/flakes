@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Library radio — admin</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="admin.css">
+<header>
+  <h1>Library radio — admin</h1>
+  <p class="note"><a href="../">← the radio</a> · <span id="now"></span> · <span id="pending" class="muted"></span>
+    <button id="apply" class="small">Apply now</button></p>
+  <p id="flash" class="flash" hidden></p>
+</header>
+
+<section>
+  <h2>Specialty feeds</h2>
+  <p class="note">A feed is a title and a description. Add one and the agent reads the description and builds the rule (artists, genre words, instrument measures) from what the library holds; edit the rule by hand any time. A listenable feed is a station of its own.</p>
+  <table id="feeds" class="grid"><thead><tr><th>Feed</th><th>Description</th><th>Fits</th><th>Status</th><th></th></tr></thead><tbody></tbody></table>
+  <form id="add-feed" class="row-form">
+    <input name="title" placeholder="Title (e.g. Western Swing)" required>
+    <input name="description" placeholder="Describe it the way you'd describe it to a friend" size="60" required>
+    <label><input type="checkbox" name="listenable" checked> listenable</label>
+    <button>Add feed</button>
+  </form>
+</section>
+
+<section>
+  <h2>Schedule</h2>
+  <p class="note">Themed segments and spotlights on the curated stations. A slot plays a feed, an artist (with similar artists we own mixed in), or <em>auto</em> — the DJ picks a compatible feed or artist for the day, a different one each time. Only feeds and artists that fit the station are offered. The DJ announces the day's schedule at breaks.</p>
+  <div id="schedule"></div>
+  <p><button id="save-schedule">Save schedule</button> <span id="schedule-msg" class="muted"></span></p>
+</section>
+
+<section>
+  <h2>Stations</h2>
+  <p class="note">Curated stations: name, which families they are (what the schedule may offer them), and the base rule they play outside segments. Specialty stations come from the feeds above.</p>
+  <table id="stations" class="grid"><thead><tr><th>Station</th><th>Kind</th><th>Family</th><th>Base rule</th><th></th></tr></thead><tbody></tbody></table>
+</section>
+
+<script src="admin.js"></script>
+</html>

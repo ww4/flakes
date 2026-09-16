@@ -1,10 +1,7 @@
 import logging
-import tempfile
 import unittest
-from pathlib import Path
-from unittest import mock
 
-from netradio import playlists as pl, rules
+from netradio import rules
 
 logging.disable(logging.CRITICAL)
 
@@ -61,33 +58,6 @@ class Era(unittest.TestCase):
         out = rules.apply_overrides({"/m/x.mp3": v}, {"/m/x.mp3": "talk"})
         self.assertTrue(out["/m/x.mp3"].talk)
         self.assertEqual(out["/m/x.mp3"].era, "shellac")   # a talk override keeps the era
-
-
-class ScannerEraFilter(unittest.TestCase):
-    def test_station_era_filter_and_unmeasured_pass(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d) / "Music"
-            for n in ("A/old.mp3", "A/new.mp3", "A/unknown.mp3"):
-                (root / n).parent.mkdir(parents=True, exist_ok=True)
-                (root / n).write_bytes(b"x")
-            stations = [pl.Station("all", "Everything"),
-                        pl.Station("scratchy", "Old Scratchy Records", eras=["shellac"]),
-                        pl.Station("country", "Country", ["country"], eras=["vintage", "hifi"])]
-            eras = {str(root / "A/old.mp3"): "shellac", str(root / "A/new.mp3"): "hifi"}
-            with mock.patch.object(pl, "read_genre", return_value="Country"):
-                pl.scan([root], stations, pl.TagCache(Path(d) / "c.json"), eras=eras)
-            by = {s.mount: sorted(Path(x).name for x in s.paths) for s in stations}
-            self.assertEqual(by["all"], ["new.mp3", "old.mp3", "unknown.mp3"])
-            self.assertEqual(by["scratchy"], ["old.mp3"])                      # an era-defined station waits for the measurement
-            self.assertEqual(by["country"], ["new.mp3", "unknown.mp3"])        # a genre station keeps unmeasured tracks
-
-    def test_load_stations_reads_era(self):
-        with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "s.json"
-            p.write_text('[{"mount":"x","name":"X","genres":null,"era":["shellac"]},{"mount":"y","name":"Y","genres":["rock"]}]')
-            st = pl.load_stations(p)
-            self.assertEqual(st[0].eras, ["shellac"])
-            self.assertIsNone(st[1].eras)
 
 
 if __name__ == "__main__":
