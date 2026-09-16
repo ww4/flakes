@@ -204,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cache", required=True, type=Path, help="tag cache file")
     ap.add_argument("--profile", type=Path, help="profile.json from `netradio profile`")
     ap.add_argument("--overrides", type=Path, help="profile-overrides.json")
+    ap.add_argument("--summary", type=Path, help="write {mount: {tracks: N}} here (the radio page reads it)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -224,6 +225,8 @@ def main(argv: list[str] | None = None) -> int:
 
     for s in stations:
         log.info("%-12s %6d tracks  (%s)", s.mount, len(s.paths), s.name)
+    if args.summary:
+        write_atomic(args.summary, json.dumps({s.mount: {"tracks": len(s.paths)} for s in stations}))
     log.info("%d audio files, %d untagged, %d excluded, %d talk (profiled), %d unreadable dirs; tag cache %d hits / %d reads",
              counts["files"], counts["untagged"], counts["excluded"], counts["talk"], counts["unreadable_dirs"],
              cache.hits, cache.misses)

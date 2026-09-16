@@ -243,9 +243,25 @@ def file_info(path: str) -> dict:
 
 
 def duration_of(path: str) -> float:
+    """ffprobe's container duration; some MP3s carry none ("N/A" — no Xing
+    header), then the tag reader's estimate; then a full decode, counted."""
     out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                          "-of", "csv=p=0", path], capture_output=True, text=True, check=True).stdout
-    return float(out.strip() or 0.0)
+                          "-of", "csv=p=0", path], capture_output=True, text=True, check=True).stdout.strip()
+    try:
+        d = float(out)
+        if d > 0:
+            return d
+    except ValueError:
+        pass
+    try:
+        import mutagen
+        f = mutagen.File(path)
+        d = float(getattr(f.info, "length", 0.0) or 0.0) if f else 0.0
+        if d > 0:
+            return d
+    except Exception:
+        pass
+    return len(decode(path)) / SR
 
 
 def analyse(path: str, model: Yamnet) -> Facts:

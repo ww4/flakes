@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Library radio</title>
+<link rel="stylesheet" href="style.css">
+<header>
+  <h1>Library radio</h1>
+  <p class="note">Shuffled from the music library, with a DJ. A station starts a moment after you press play and switches itself off five minutes after the last listener leaves.</p>
+  <p class="links">Radio apps: <a href="stations.m3u">stations.m3u</a> · <a href="stations.pls">stations.pls</a> · <a href="stations-lo.m3u">96 kbps m3u</a></p>
+</header>
+
+<section id="player" hidden>
+  <canvas id="viz" width="900" height="120"></canvas>
+  <div class="row">
+    <button id="stop" class="btn" title="Stop">■</button>
+    <div class="what">
+      <div class="station"><span id="p-station"></span> <span id="p-status" class="muted"></span></div>
+      <div class="title" id="p-title">—</div>
+      <div class="muted" id="p-meta"></div>
+    </div>
+    <div class="quality">
+      <label><input type="radio" name="q" value="" checked> 192k</label>
+      <label><input type="radio" name="q" value="-lo"> 96k</label>
+    </div>
+  </div>
+  <div class="cols">
+    <div><h3>Last played</h3><ol id="p-history" class="list"></ol></div>
+    <div><h3>Up next</h3><ol id="p-next" class="list"></ol><p id="p-break" class="dj"></p></div>
+  </div>
+</section>
+
+<ul id="stations" class="stations"></ul>
+<audio id="audio" preload="none"></audio>
+<script src="app.js"></script>
+</html>

@@ -35,6 +35,11 @@
 # URLs to http://. A station that serves HTTPS only will fail to play; the
 # Radiobrowser index still has plenty that don't.
 #
+# The page at radio.rosemaryacres.com (web/) shows what's playing, the last
+# few played, what the DJ queued next, listener counts and a visualiser, and
+# serves stations.m3u / .pls for radio apps. Every station also has a
+# "-lo" mount at 96 kbps (cellular). Nothing here needs a port opened.
+#
 # Ops:
 #   sudo cat /var/lib/netradio/credentials.env      Icecast passwords (generated)
 #   systemctl start netradio-playlists              rescan the library now
@@ -68,6 +73,7 @@ let
   cacheDir = "${stateDir}/cache";
   tagCache = "${cacheDir}/tags.json";
   djDir = "${stateDir}/dj";
+  nowDir = "${stateDir}/now";   # what's playing / last played / up next, per station — the page reads it via nginx
   # Its own subdir, like playlists/ and dj/: ${stateDir} itself is root-owned
   # (it holds credentials.env), so the netradio user cannot create the
   # profile.json.tmp the atomic save needs there (2026-09-16 first-run failure).
@@ -172,32 +178,22 @@ let
     };
   };
 
-  # The phone page. preload="none" matters: a page that pre-fetched nine
-  # streams would wake nine encoders on open.
-  radioIndex = pkgs.writeTextDir "index.html" ''
-    <!doctype html>
-    <html lang="en">
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Library radio</title>
-    <style>
-      :root { color-scheme: light dark; }
-      body { font: 17px/1.4 system-ui, sans-serif; margin: 0 auto; max-width: 34rem; padding: 1.5rem 1rem; }
-      h1 { font-size: 1.3rem; margin: 0 0 .25rem; }
-      p.note { margin: 0 0 1.25rem; opacity: .7; font-size: .9rem; }
-      ul { list-style: none; margin: 0; padding: 0; }
-      li { padding: .6rem 0; border-top: 1px solid rgba(128,128,128,.3); }
-      li b { display: block; margin-bottom: .3rem; }
-      audio { width: 100%; }
-    </style>
-    <h1>Library radio</h1>
-    <p class="note">Shuffled from the music library. A station starts a few seconds after you press play and switches itself off five minutes after the last listener leaves.</p>
-    <ul>
-    ${lib.concatMapStrings (s: ''
-      <li><b>${lib.escapeXML s.name}</b><audio controls preload="none" src="/radio/${s.mount}.mp3"></audio></li>
-    '') stations}
-    </ul>
-    </html>
+  # The radio page (web/): a hand-written page, no framework. The catalogue
+  # is handed to it as stations.json, and the same list becomes the m3u/pls
+  # files a radio app imports. Streams are same-origin so Web Audio may read
+  # them for the visualiser.
+  publicBase = "https://${radioHost}/radio";
+  stationList = builtins.toJSON (map (s: { inherit (s) mount name; era = s.era or null; }) stations);
+  m3u = suffix: "#EXTM3U\n" + lib.concatMapStrings (s: "#EXTINF:-1,${s.name}\n${publicBase}/${s.mount}${suffix}.mp3\n") stations;
+  pls = "[playlist]\n" + lib.concatStrings (lib.imap1 (i: s: "File${toString i}=${publicBase}/${s.mount}.mp3\nTitle${toString i}=${s.name}\nLength${toString i}=-1\n") stations)
+        + "NumberOfEntries=${toString (builtins.length stations)}\nVersion=2\n";
+  radioWeb = pkgs.runCommand "netradio-web" { } ''
+    mkdir -p $out
+    cp ${./web}/index.html ${./web}/app.js ${./web}/style.css $out/
+    cp ${pkgs.writeText "stations.json" stationList} $out/stations.json
+    cp ${pkgs.writeText "stations.m3u" (m3u "")} $out/stations.m3u
+    cp ${pkgs.writeText "stations-lo.m3u" (m3u "-lo")} $out/stations-lo.m3u
+    cp ${pkgs.writeText "stations.pls" pls} $out/stations.pls
   '';
 
   # YCast's "My Stations" file. Hand-emitted YAML (not toJSON) so the menu
@@ -246,16 +242,35 @@ let
       # what each station played.
       s = insert_metadata(s)
       last = ref([])
+      # The last ten things played, as JSON for the radio page. The re-insert
+      # on connect fires this handler a second time for the same track, so
+      # an entry equal to the head is not added twice.
+      history = ref([])
       s.on_metadata(synchronous=true, fun (m) -> begin
         last := m
         log(label=mount, level=3, "now playing: " ^ m["artist"] ^ " - " ^ m["title"])
+        if m["title"] != "" then
+          entry = {artist = m["artist"], title = m["title"],
+                   kind = (if m["dj"] == "true" then "break" else "track" end), at = time()}
+          same = (fun (h) -> h.artist == entry.artist and h.title == entry.title)
+          if not (list.length(history()) > 0 and same(list.hd(default=entry, history()))) then
+            history := list.prefix(10, [entry, ...history()])
+            file.write(data=json.stringify(history()), "${nowDir}/" ^ mount ^ ".json")
+          end
+        end
       end)
-      output.icecast(%mp3(bitrate=192), id=mount, start=false,
-                     host="127.0.0.1", port=${toString icecastPort}, password=password,
-                     mount="/" ^ mount ^ ".mp3", name=name, genre=name,
-                     description="Library station", public=false,
-                     on_connect={ if last() != [] then s.insert_metadata(last()) end },
-                     s)
+      # Two encodes of the same program: 192 kbps, and a 96 kbps "-lo" mount
+      # for phones on cellular. Each is an on-demand output of its own.
+      def out(id, mnt, kbps) =
+        output.icecast(%mp3(bitrate=kbps), id=id, start=false,
+                       host="127.0.0.1", port=${toString icecastPort}, password=password,
+                       mount="/" ^ mnt ^ ".mp3", name=name, genre=name,
+                       description="Library station", public=false,
+                       on_connect={ if last() != [] then s.insert_metadata(last()) end },
+                       s)
+      end
+      out(mount, mount, 192)
+      out(mount ^ "-lo", mount ^ "-lo", 96)
     end
 
     ${lib.concatMapStrings (s: ''
@@ -274,7 +289,7 @@ let
       <hostname>127.0.0.1</hostname>
       <limits>
         <clients>32</clients>
-        <sources>${toString (builtins.length stations + 2)}</sources>
+        <sources>${toString (2 * builtins.length stations + 2)}</sources>
         <queue-size>524288</queue-size>
         <client-timeout>30</client-timeout>
         <header-timeout>15</header-timeout>
@@ -368,10 +383,28 @@ in
     forceSSL = true;
     enableACME = true;
     acmeRoot = null;
+    root = radioWeb;
     locations = {
-      "= /" = {
-        root = radioIndex;
-        tryFiles = "/index.html =404";
+      "/" = {
+        tryFiles = "$uri $uri/index.html =404";
+        extraConfig = ''
+          types { audio/x-mpegurl m3u; audio/x-scpls pls; }
+        '';
+      };
+      # Per-station "last played" (Liquidsoap) and "up next" (the DJ), plus
+      # the scanner's counts — plain JSON files, rewritten atomically.
+      "/now/" = {
+        alias = "${nowDir}/";
+        extraConfig = ''
+          add_header Cache-Control "no-store";
+        '';
+      };
+      # Icecast's public status: which mounts are up, titles, listener counts.
+      "= /icecast-status" = {
+        proxyPass = "http://127.0.0.1:${toString icecastPort}/status-json.xsl";
+        extraConfig = ''
+          add_header Cache-Control "no-store";
+        '';
       };
     } // streamLocations;
   };
@@ -394,6 +427,7 @@ in
       install -d -m 0755 -o ${user} -g ${user} ${playlistDir}
       install -d -m 0700 -o ${user} -g ${user} ${cacheDir}
       install -d -m 0755 -o ${user} -g ${user} ${djDir}
+      install -d -m 0755 -o ${user} -g ${user} ${nowDir}
       install -d -m 0755 -o ${user} -g ${user} ${profileDir}
       # Liquidsoap watches each playlist FILE (inotify): one that appears
       # after it started is never picked up, but an empty one that is later
@@ -465,6 +499,7 @@ in
       EnvironmentFile = credsEnv;
       RuntimeDirectory = "netradio";
       RuntimeDirectoryMode = "0700";
+      ReadWritePaths = [ nowDir ];
       ExecStart = "${lib.getExe pkgs.liquidsoap} ${liqScript}";
       Restart = "always";
       RestartSec = 5;
@@ -486,9 +521,10 @@ in
       User = user;
       Group = user;
       SupplementaryGroups = [ "media" ];   # reads the tracks' tags
-      ReadWritePaths = [ djDir ];
+      ReadWritePaths = [ djDir nowDir ];
       ExecStart = lib.concatStringsSep " " ([
         "${netradio}/bin/netradio dj"
+        "--now-dir ${nowDir}"
         "--stations ${stationsJson}"
         "--playlists ${playlistDir}"
         "--socket ${liqSocket}"
@@ -536,7 +572,7 @@ in
       User = user;
       Group = user;
       SupplementaryGroups = [ "media" ];
-      ReadWritePaths = [ playlistDir cacheDir ];
+      ReadWritePaths = [ playlistDir cacheDir nowDir ];
       Nice = 10;
       IOSchedulingClass = "idle";
       ExecStart = lib.concatStringsSep " " ([
@@ -544,6 +580,7 @@ in
         "--stations ${stationsJson}"
         "--out ${playlistDir}"
         "--cache ${tagCache}"
+        "--summary ${nowDir}/stations.json"
         "--profile ${profileJson}"
         "--overrides ${profileOverrides}"
       ] ++ map (r: "--root ${r}") libraryRoots);

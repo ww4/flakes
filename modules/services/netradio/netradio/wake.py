@@ -106,7 +106,7 @@ class Controller:
     def wake(self, mount: str) -> tuple[int, str]:
         if mount not in self.mounts:
             return 404, f"no such station: {mount}"
-        playlist = self.playlist_dir / f"{mount}.m3u"
+        playlist = self.playlist_dir / f"{base_mount(mount)}.m3u"
         if not has_tracks(playlist):
             # Silence would be the alternative; an error on the receiver says
             # "run the scan", silence says nothing.
@@ -143,6 +143,20 @@ class Controller:
                     del self.idle_since[mount]
                     stopped.append(mount)
         return stopped
+
+
+QUALITY_SUFFIXES = ("-lo",)   # <mount>-lo is the 96 kbps encode of the same program
+
+
+def base_mount(mount: str) -> str:
+    for suf in QUALITY_SUFFIXES:
+        if mount.endswith(suf):
+            return mount[: -len(suf)]
+    return mount
+
+
+def all_mounts(stations: list[dict]) -> set[str]:
+    return {s["mount"] + suf for s in stations for suf in ("",) + QUALITY_SUFFIXES}
 
 
 def has_tracks(playlist: Path) -> bool:
@@ -212,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(message)s", stream=sys.stdout)
 
-    mounts = {s["mount"] for s in json.loads(args.stations.read_text())}
+    mounts = all_mounts(json.loads(args.stations.read_text()))
     ctl = Controller(mounts, Liquidsoap(args.socket), Icecast(args.icecast_status),
                      args.playlists, idle_after=args.idle_after)
     threading.Thread(target=idle_loop, args=(ctl, args.tick), daemon=True).start()
