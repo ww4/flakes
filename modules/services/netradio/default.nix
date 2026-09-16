@@ -16,7 +16,7 @@
 #                       /radio/X.mp3 → auth_request → netradio-wake (:8011)
 #                                      starts Liquidsoap output X, waits for
 #                                      Icecast to list it, then nginx proxies
-#                                      the listener to Icecast (127.0.0.1:8000)
+#                                      the listener to Icecast (127.0.0.1:8020)
 #
 # Library stations are genre-tag playlists (netradio-playlists, nightly) fed
 # to Icecast by Liquidsoap. Encoders are ON DEMAND: a station's MP3 encoder
@@ -33,7 +33,7 @@
 #   sudo cat /var/lib/netradio/credentials.env      Icecast passwords (generated)
 #   systemctl start netradio-playlists              rescan the library now
 #   journalctl -u netradio-wake                     which station started/stopped
-#   http://127.0.0.1:8000/status.xsl                what Icecast is serving
+#   http://127.0.0.1:8020/status.xsl                what Icecast is serving
 { config, lib, pkgs, ... }:
 
 let
@@ -51,7 +51,7 @@ let
 
   ycastPort = 8010;
   wakePort = 8011;
-  icecastPort = 8000;
+  icecastPort = 8020; # 8000 is audiobookshelf (icecast SEGVs when the bind fails)
 
   user = "netradio";
   stateDir = "/var/lib/netradio";
