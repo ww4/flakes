@@ -449,6 +449,10 @@ in
     wantedBy = [ "multi-user.target" ];
     after = [ "netradio-icecast.service" "netradio-credentials.service" "mnt-fusion.mount" ];
     requires = [ "netradio-icecast.service" "netradio-credentials.service" ];
+    # Liquidsoap restarts whenever the station list changes (its script
+    # does); pull a playlist rebuild along so new stations are populated.
+    # Not `requires`: a scan failure must not take the radio down.
+    wants = [ "netradio-playlists.service" ];
     environment.HOME = stateDir;
     serviceConfig = hardening // {
       User = user;
@@ -545,6 +549,10 @@ in
     wantedBy = [ "timers.target" ];
     timerConfig = {
       OnBootSec = "10min";
+      # A deploy that changes this timer re-activates it: rebuild a minute
+      # later, so a station added in a PR is not empty until 04:30 (the three
+      # era stations shipped empty on 2026-09-16 for exactly that reason).
+      OnActiveSec = "1min";
       OnCalendar = "04:30";
       Persistent = true;
       RandomizedDelaySec = "10min";
@@ -564,6 +572,10 @@ in
     description = "Profile library tracks for talk vs music (YAMNet + pitch)";
     after = [ "netradio-credentials.service" "mnt-fusion.mount" ];
     requires = [ "netradio-credentials.service" ];
+    # The playlists are what act on the profile: rebuild them the moment a
+    # pass finishes rather than at the next 04:30 (the first pass runs past
+    # it), so era stations fill the same morning.
+    onSuccess = [ "netradio-playlists.service" ];
     serviceConfig = hardening // {
       Type = "oneshot";
       User = user;
