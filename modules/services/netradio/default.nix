@@ -398,21 +398,22 @@ in
       "/" = {
         tryFiles = "$uri $uri/index.html =404";
       };
-      # A `types` block REPLACES the inherited MIME map for its location (it
-      # doesn't add to it) — put in "/" it served index.html and app.js as
-      # octet-stream and the browser downloaded the page (2026-09-16 11:37).
-      # So the playlist types live in their own location, nothing else here.
-      "~ \\.(m3u|pls)$" = {
-        extraConfig = ''
-          types { audio/x-mpegurl m3u; audio/x-scpls pls; }
-        '';
-      };
-      # Per-station "last played" (Liquidsoap) and "up next" (the DJ), plus
-      # the scanner's counts — plain JSON files, rewritten atomically.
-      "/now/" = {
-        alias = "${nowDir}/";
+      # Per-station "last played" (Liquidsoap) and "up next" (the DJ), the
+      # scanner's counts, and the radio-app playlists — plain files,
+      # rewritten atomically. `^~` so no regex location can take these URIs
+      # away; the playlist MIME types are a NESTED location, because a
+      # `types` block REPLACES the inherited map for its location (put in
+      # "/" it served the page as octet-stream, 2026-09-16 11:37) and a
+      # top-level regex location outran this prefix and 404'd the m3u
+      # files from the site root (17:25 the same day).
+      "^~ /now/" = {
+        root = stateDir;
         extraConfig = ''
           add_header Cache-Control "no-store";
+          location ~ \.(m3u|pls)$ {
+            types { audio/x-mpegurl m3u; audio/x-scpls pls; }
+            add_header Cache-Control "no-store";
+          }
         '';
       };
       # The admin API (netradio admin, loopback). The page itself is static
