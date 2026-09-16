@@ -5,4 +5,6 @@ Two commands, one package:
   playlists   scan the music library's genre tags into one .m3u per station
   wake        start a station's encoder when a listener asks for it, stop it
               again once nobody has listened for a while
+  dj          sequence each station's tracks and, every few of them, say what
+              just played and what is next (Kokoro)
 """

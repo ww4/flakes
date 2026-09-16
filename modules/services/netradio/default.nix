@@ -19,7 +19,9 @@
 #                                      the listener to Icecast (127.0.0.1:8020)
 #
 # Library stations are genre-tag playlists (netradio-playlists, nightly) fed
-# to Icecast by Liquidsoap. Encoders are ON DEMAND: a station's MP3 encoder
+# to Icecast by Liquidsoap, sequenced by a DJ (netradio-dj) that queues the
+# tracks and every 3-4 of them a Kokoro-voiced break naming what just played
+# and what is next. Encoders are ON DEMAND: a station's MP3 encoder
 # runs only while someone is listening (+5 min grace), so nine stations idle
 # at zero CPU. Nothing here needs a port opened — the receiver only ever
 # touches port 80, which is already open and LAN/Tailscale-gated by
@@ -59,8 +61,14 @@ let
   playlistDir = "${stateDir}/playlists";
   cacheDir = "${stateDir}/cache";
   tagCache = "${cacheDir}/tags.json";
+  djDir = "${stateDir}/dj";
   runDir = "/run/netradio";
   liqSocket = "${runDir}/liquidsoap.sock";
+
+  # The DJ's voice: the switchboard's Kokoro choice and URL order (wallace
+  # first, gromit's own container last) so the house has one voice.
+  kokoroVoice = config.services.switchboard.kokoroVoice;
+  kokoroUrls = config.services.switchboard.remoteKokoroUrls ++ [ "http://127.0.0.1:8880" ];
 
   # Where the music is. The first is the Jellyfin library; the second is
   # where Lidarr puts new albums (lidarr.nix).
@@ -184,14 +192,36 @@ let
     password = environment.get("ICECAST_SOURCE_PASSWORD")
 
     def station(mount, name) =
-      s = playlist(id="pl_" ^ mount, mode="randomize", reload_mode="watch",
-                   "${playlistDir}/" ^ mount ^ ".m3u")
+      # The DJ (netradio-dj) feeds q_<mount> two items ahead — tracks it chose,
+      # and every few of them a rendered break. The plain shuffle is the
+      # fallback: it plays whenever the queue is empty (the first track after a
+      # wake, or the DJ being down), and hands back at the next track boundary.
+      pl = playlist(id="pl_" ^ mount, mode="randomize", reload_mode="watch",
+                    "${playlistDir}/" ^ mount ^ ".m3u")
+      q = request.queue(id="q_" ^ mount)
+      s = fallback(id="src_" ^ mount, track_sensitive=true, [q, pl])
+      # Breaks carry liq_amplify (speech renders ~8 dB under the music).
+      s = amplify(1., override="liq_amplify", s)
       s = crossfade(s)
       s = mksafe(s)
+      # The first track's metadata is emitted BEFORE the Icecast connection is
+      # up (the log shows "now playing" ahead of "Connecting mount"), so the
+      # ICY title update for it can be lost and the receiver shows no song
+      # until the next track. Keep the last metadata and re-insert it once
+      # the mount is connected; the one log line per track is the record of
+      # what each station played.
+      s = insert_metadata(s)
+      last = ref([])
+      s.on_metadata(synchronous=true, fun (m) -> begin
+        last := m
+        log(label=mount, level=3, "now playing: " ^ m["artist"] ^ " - " ^ m["title"])
+      end)
       output.icecast(%mp3(bitrate=192), id=mount, start=false,
                      host="127.0.0.1", port=${toString icecastPort}, password=password,
                      mount="/" ^ mount ^ ".mp3", name=name, genre=name,
-                     description="Library station", public=false, s)
+                     description="Library station", public=false,
+                     on_connect={ if last() != [] then s.insert_metadata(last()) end },
+                     s)
     end
 
     ${lib.concatMapStrings (s: ''
@@ -329,6 +359,7 @@ in
       install -d -m 0755 -o root -g root ${stateDir}
       install -d -m 0755 -o ${user} -g ${user} ${playlistDir}
       install -d -m 0700 -o ${user} -g ${user} ${cacheDir}
+      install -d -m 0755 -o ${user} -g ${user} ${djDir}
       # Liquidsoap watches each playlist FILE (inotify): one that appears
       # after it started is never picked up, but an empty one that is later
       # rewritten is (verified 2026-09-15). So every station's file exists
@@ -398,6 +429,36 @@ in
       ExecStart = "${lib.getExe pkgs.liquidsoap} ${liqScript}";
       Restart = "always";
       RestartSec = 5;
+    };
+  };
+
+  # --- the DJ -------------------------------------------------------------------
+  # Sequences every station's tracks through Liquidsoap's request queue and,
+  # every 3-4 of them, queues a spoken break: what just played, what's next.
+  # Kokoro af_heart, same voice + URL order as the switchboard (wallace first,
+  # gromit's own container as the fallback). Rendered breaks live under
+  # ${djDir}/<mount>/ (last few kept). If it is down, stations shuffle as before.
+  systemd.services.netradio-dj = {
+    description = "Library radio DJ — sequence tracks, announce every few";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "netradio-liquidsoap.service" "docker-open-notebook-kokoro.service" ];
+    bindsTo = [ "netradio-liquidsoap.service" ];
+    serviceConfig = hardening // {
+      User = user;
+      Group = user;
+      SupplementaryGroups = [ "media" ];   # reads the tracks' tags
+      ReadWritePaths = [ djDir ];
+      ExecStart = lib.concatStringsSep " " ([
+        "${netradio}/bin/netradio dj"
+        "--stations ${stationsJson}"
+        "--playlists ${playlistDir}"
+        "--socket ${liqSocket}"
+        "--out ${djDir}"
+        "--voice ${kokoroVoice}"
+        "--breaks-every 3-4"
+      ] ++ map (u: "--kokoro-url ${u}") kokoroUrls);
+      Restart = "always";
+      RestartSec = 10;
     };
   };
 
