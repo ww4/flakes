@@ -3,10 +3,18 @@
 # package.nix records — a let-bound derivation is invisible to sibling
 # modules and to the interactive PATH.
 #
-# mutagen is the only third-party dependency (tag reading); the wake server
-# is stdlib. The tests run in checkPhase against fakes, so the encoder
-# start/stop state machine cannot regress silently into a deploy.
-{ python3, lib, makeWrapper }:
+# Dependencies: mutagen (tags), numpy + onnxruntime (the profiler's YAMNet
+# classifier and pitch tracker), ffmpeg on PATH (the profiler decodes with
+# it). The wake server and the DJ are stdlib. The tests run in checkPhase
+# against fakes, so the encoder start/stop state machine, the DJ's queue
+# logic and the profiler's decision rule cannot regress silently into a
+# deploy; the model itself is exercised only at runtime.
+{ python3, lib, makeWrapper, ffmpeg-headless }:
+
+let
+  pyDeps = ps: [ ps.mutagen ps.numpy ps.onnxruntime ];
+  pyEnv = python3.withPackages pyDeps;
+in
 
 python3.pkgs.buildPythonApplication {
   pname = "netradio";
@@ -16,7 +24,7 @@ python3.pkgs.buildPythonApplication {
   src = ./.;
 
   nativeBuildInputs = [ makeWrapper ];
-  propagatedBuildInputs = [ python3.pkgs.mutagen ];
+  propagatedBuildInputs = pyDeps python3.pkgs;
 
   doCheck = true;
   checkPhase = ''
@@ -29,14 +37,15 @@ python3.pkgs.buildPythonApplication {
     runHook preInstall
     mkdir -p $out/${python3.sitePackages}
     cp -r netradio $out/${python3.sitePackages}/
-    makeWrapper ${python3.interpreter} $out/bin/netradio \
+    makeWrapper ${pyEnv}/bin/python3 $out/bin/netradio \
       --add-flags "-m netradio.cli" \
-      --prefix PYTHONPATH : "$out/${python3.sitePackages}:${python3.pkgs.mutagen}/${python3.sitePackages}"
+      --prefix PYTHONPATH : "$out/${python3.sitePackages}" \
+      --prefix PATH : "${lib.makeBinPath [ ffmpeg-headless ]}"
     runHook postInstall
   '';
 
   meta = with lib; {
-    description = "Library radio stations: genre playlists + on-demand encoder control";
+    description = "Library radio stations: genre playlists, on-demand encoders, the DJ, the talk profiler";
     mainProgram = "netradio";
     platforms = platforms.linux;
   };
