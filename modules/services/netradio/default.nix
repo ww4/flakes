@@ -387,6 +387,12 @@ in
     locations = {
       "/" = {
         tryFiles = "$uri $uri/index.html =404";
+      };
+      # A `types` block REPLACES the inherited MIME map for its location (it
+      # doesn't add to it) — put in "/" it served index.html and app.js as
+      # octet-stream and the browser downloaded the page (2026-09-16 11:37).
+      # So the playlist types live in their own location, nothing else here.
+      "~ \\.(m3u|pls)$" = {
         extraConfig = ''
           types { audio/x-mpegurl m3u; audio/x-scpls pls; }
         '';
