@@ -1,0 +1,284 @@
+"""Listen to every track once and say whether it is talk.
+
+Some albums cut the stage patter, the spoken introduction or the band
+intros into their own tracks, and in a shuffle those are dead air. Duration
+and titles don't settle it: old-time fiddle tunes run 45 seconds, "Talking
+Blues" is a song, and a spoken sermon runs twelve minutes. So the profiler
+listens, with two independent signals that must AGREE before a track is
+called talk (measured on this library, 2026-09-16):
+
+  1. YAMNet (AudioSet classifier, ONNX): the fraction of 0.48 s frames that
+     score Speech > 0.5 and Music < 0.5. Talk tracks: >= 0.53. Songs: <= 0.22.
+     But it hears unaccompanied ballad singing as speech (0.48 on Addie
+     Graham), and this library has a lot of that — hence:
+  2. Pitch stability: the fraction of voiced frames sitting inside a held
+     note (< 35 cents over 190 ms). Speech glides: talk <= 0.10 (a five-
+     minute spoken introduction sat right at 0.10). Anyone singing holds
+     notes: a cappella songs >= 0.22; the songs that measured 0.11-0.13 were
+     instrumentals the classifier already scored as music.
+
+The same two signals on the last 20 s say whether a song ENDS in chatter
+(the DJ then lets it finish instead of crossfading over the talk), and on
+the first 20 s whether it starts with it.
+
+profile.json holds only the MEASUREMENTS (cached by size+mtime; a first
+pass over the library is hours at Nice 19, every night after that is
+seconds). What they mean — the thresholds, and any further filter — lives in
+rules.py and is evaluated when the scanner and the DJ read the profile, so
+a rule change never means listening to the library again. A report of what
+the rules flagged is written next to the profile for review, and an
+overrides file ({path: "talk" | "music"}) wins over them.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import subprocess
+import sys
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+from netradio.rules import Verdict, apply_overrides, evaluate
+
+log = logging.getLogger("netradio.profile")
+
+SR = 16000
+HEAD_SECONDS = 60.0     # enough to know a song is a song
+EDGE_SECONDS = 20.0     # the tail/head windows for "ends/starts in chatter"
+
+# AudioSet class indices (yamnet_class_map.csv): the model's output columns.
+SPEECH_CLASSES = [0, 2, 3]      # Speech; Conversation; Narration, monologue
+MUSIC_CLASSES = [132]           # Music
+
+@dataclass
+class Facts:
+    """What is measured per track. Add a field here (and bump PROFILE_VERSION)
+    when a rule needs something new; rules.py decides what it means."""
+    duration: float
+    talk_frames: float      # first HEAD_SECONDS: fraction of frames speech-and-not-music
+    pitch_stable: float     # first HEAD_SECONDS: fraction of voiced frames in a held note
+    head_talk_frames: float  # first EDGE_SECONDS
+    head_pitch_stable: float
+    tail_talk_frames: float  # last EDGE_SECONDS
+    tail_pitch_stable: float
+
+
+PROFILE_VERSION = 1   # bump when Facts gains a field: entries without it are re-measured
+
+
+# --- listening -----------------------------------------------------------------
+
+def decode(path: str, start: float | None = None, dur: float | None = None):
+    """Mono 16 kHz float32 via ffmpeg; the only decoder the library needs."""
+    import numpy as np
+    cmd = ["ffmpeg", "-v", "error", "-nostdin"]
+    if start is not None:
+        cmd += ["-ss", f"{start:.3f}"]
+    cmd += ["-i", path]
+    if dur is not None:
+        cmd += ["-t", f"{dur:.3f}"]
+    cmd += ["-ac", "1", "-ar", str(SR), "-f", "s16le", "-"]
+    raw = subprocess.run(cmd, capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.int16).astype(np.float32) / 32768.0
+
+
+class Yamnet:
+    def __init__(self, model: Path):
+        import onnxruntime as ort
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 2   # a nightly job, not a race
+        self.session = ort.InferenceSession(str(model), opts, providers=["CPUExecutionProvider"])
+
+    def talk_frames(self, x) -> float:
+        import numpy as np
+        if len(x) < SR:  # under a second: nothing to say
+            return 0.0
+        scores = self.session.run(["output_0"], {"waveform": x.astype(np.float32)})[0]
+        speech = scores[:, SPEECH_CLASSES].max(axis=1)
+        music = scores[:, MUSIC_CLASSES].max(axis=1)
+        return float(((speech > 0.5) & (music < 0.5)).mean())
+
+
+def pitch_stability(x, frame: int = 1024, hop: int = 512, fmin: float = 70.0, fmax: float = 1000.0,
+                    run: int = 6, tol_cents: float = 35.0) -> float:
+    """Fraction of voiced frames inside a held note. Autocorrelation pitch,
+    voiced when periodic (peak > 0.6) and not near-silent."""
+    import numpy as np
+    lo, hi = int(SR / fmax), int(SR / fmin)
+    f0 = []
+    win = np.hanning(frame)
+    for i in range(0, len(x) - frame, hop):
+        w = x[i:i + frame] * win
+        if np.sqrt(np.mean(w ** 2)) < 0.01:
+            f0.append(0.0)
+            continue
+        ac = np.correlate(w, w, mode="full")[frame - 1:]
+        ac = ac / (ac[0] + 1e-9)
+        seg = ac[lo:hi]
+        k = int(np.argmax(seg))
+        f0.append(SR / (lo + k) if seg[k] > 0.6 else 0.0)
+    f0 = np.array(f0)
+    cents = np.where(f0 > 0, 1200 * np.log2(np.maximum(f0, 1.0) / 55.0), np.nan)
+    voiced = ~np.isnan(cents)
+    if voiced.sum() < 10:
+        return 0.0
+    stable = np.zeros(len(cents), bool)
+    for i in range(len(cents) - run):
+        seg = cents[i:i + run]
+        if not np.isnan(seg).any() and (seg.max() - seg.min()) < tol_cents:
+            stable[i:i + run] = True
+    return float(stable[voiced].mean())
+
+
+def duration_of(path: str) -> float:
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                          "-of", "csv=p=0", path], capture_output=True, text=True, check=True).stdout
+    return float(out.strip() or 0.0)
+
+
+def analyse(path: str, model: Yamnet) -> Facts:
+    dur = duration_of(path)
+    head = decode(path, dur=min(dur, HEAD_SECONDS))
+    edge = min(EDGE_SECONDS, dur)
+    first = head[: int(edge * SR)]
+    last = decode(path, start=max(0.0, dur - edge), dur=edge) if dur > EDGE_SECONDS else head
+    return Facts(
+        duration=dur,
+        talk_frames=model.talk_frames(head), pitch_stable=pitch_stability(head),
+        head_talk_frames=model.talk_frames(first), head_pitch_stable=pitch_stability(first),
+        tail_talk_frames=model.talk_frames(last), tail_pitch_stable=pitch_stability(last),
+    )
+
+
+# --- the store -----------------------------------------------------------------
+
+class Profile:
+    """profile.json: {path: {size, mtime_ns, v, title, <Facts fields>}} —
+    measurements only. Read (through rules.py) by the scanner and the DJ."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        try:
+            self.data: dict[str, dict] = json.loads(path.read_text())
+        except (OSError, ValueError):
+            self.data = {}
+
+    def current(self, track: str, st: os.stat_result) -> dict | None:
+        e = self.data.get(track)
+        if (e and e.get("size") == st.st_size and e.get("mtime_ns") == st.st_mtime_ns
+                and e.get("v", 0) >= PROFILE_VERSION):
+            return e
+        return None
+
+    def verdicts(self, overrides: dict[str, str] | None = None) -> dict[str, Verdict]:
+        out = {p: evaluate(p, e, e.get("title", "")) for p, e in self.data.items()}
+        return apply_overrides(out, overrides or {})
+
+    def save(self) -> None:
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(json.dumps(self.data, separators=(",", ":"), sort_keys=True))
+        os.replace(tmp, self.path)
+
+    @staticmethod
+    def load_verdicts(path: Path, overrides: Path | None = None) -> dict[str, Verdict]:
+        """What the scanner and DJ consume: {path: Verdict} — the rules
+        applied to the stored facts, then the overrides."""
+        return Profile(path).verdicts(load_overrides(overrides))
+
+
+def load_overrides(path: Path | None) -> dict[str, str]:
+    if not path:
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return {p: k for p, k in data.items() if k in ("talk", "music")}
+
+
+def read_title(path: str) -> str:
+    try:
+        import mutagen
+        f = mutagen.File(path, easy=True)
+        return " ".join(str(x) for x in (f.tags.get("title") or [])) if f and f.tags else ""
+    except Exception:
+        return ""
+
+
+def write_report(profile: Profile, report: Path, overrides: dict[str, str]) -> None:
+    verdicts = profile.verdicts(overrides)
+    rows = [(p, profile.data.get(p, {}), v) for p, v in verdicts.items() if v.talk or v.head_talk or v.tail_talk]
+    lines = [f"# netradio profile report — {time.strftime('%Y-%m-%d %H:%M')}",
+             f"# {len(profile.data)} tracks profiled; {sum(1 for r in rows if r[2].talk)} talk (kept off the stations), "
+             f"{sum(1 for r in rows if r[2].tail_talk)} end in chatter, {sum(1 for r in rows if r[2].head_talk)} start with it.",
+             f"# Overrides ({len(overrides)}): a JSON object {{path: \"talk\" | \"music\"}} next to this file wins.", ""]
+    for p, e, v in sorted(rows, key=lambda r: (r[0] not in overrides, not r[2].talk, r[0])):
+        kind = "TALK " if v.talk else ("tail " if v.tail_talk else "head ")
+        ov = " (override)" if p in overrides else ""
+        lines.append(f"{kind} {e.get('duration', 0):6.0f}s  {e.get('title', '')[:50]!r:52} {p}{ov}  [{v.reason}]")
+    report.write_text("\n".join(lines) + "\n")
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--playlist", required=True, type=Path, help="the m3u naming every track (all.m3u)")
+    ap.add_argument("--model", required=True, type=Path, help="yamnet.onnx")
+    ap.add_argument("--profile", required=True, type=Path, help="profile.json (read + written)")
+    ap.add_argument("--overrides", type=Path, help="profile-overrides.json")
+    ap.add_argument("--report", type=Path, help="human-readable list of what was flagged")
+    ap.add_argument("--limit", type=int, default=0, help="stop after N new tracks (0 = all)")
+    ap.add_argument("-v", "--verbose", action="store_true")
+    args = ap.parse_args(argv)
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
+                        format="%(levelname)s %(message)s", stream=sys.stdout)
+
+    tracks = [l.rstrip("\n") for l in args.playlist.read_text().splitlines() if l.strip() and not l.startswith("#")]
+    profile = Profile(args.profile)
+    model = None
+    done = skipped = failed = 0
+    t0 = time.monotonic()
+    for i, track in enumerate(tracks):
+        try:
+            st = os.stat(track)
+        except OSError:
+            continue
+        if profile.current(track, st):
+            skipped += 1
+            continue
+        if args.limit and done >= args.limit:
+            break
+        if model is None:
+            model = Yamnet(args.model)
+        try:
+            f = analyse(track, model)
+        except Exception as e:
+            failed += 1
+            log.warning("could not analyse %s: %s", track, e)
+            continue
+        title = read_title(track)
+        profile.data[track] = {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "v": PROFILE_VERSION,
+                               "title": title, **asdict(f)}
+        v = evaluate(track, profile.data[track], title)
+        done += 1
+        if v.talk:
+            log.info("talk: %r %.0fs (%s) %s", title, f.duration, v.reason, track)
+        if done % 200 == 0:
+            profile.save()
+            log.info("%d analysed, %d cached, %d failed, %.1f s/track", done, skipped, failed,
+                     (time.monotonic() - t0) / done)
+    # drop entries for files that no longer exist in the playlist
+    present = set(tracks)
+    for p in [p for p in profile.data if p not in present]:
+        del profile.data[p]
+    profile.save()
+    overrides = load_overrides(args.overrides)
+    if args.report:
+        write_report(profile, args.report, overrides)
+    talk = sum(1 for v in profile.verdicts(overrides).values() if v.talk)
+    log.info("done: %d analysed this run, %d cached, %d failed; %d of %d tracks are talk",
+             done, skipped, failed, talk, len(profile.data))
+    return 0

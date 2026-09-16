@@ -21,7 +21,10 @@
 # Library stations are genre-tag playlists (netradio-playlists, nightly) fed
 # to Icecast by Liquidsoap, sequenced by a DJ (netradio-dj) that queues the
 # tracks and every 3-4 of them a Kokoro-voiced break naming what just played
-# and what is next. Encoders are ON DEMAND: a station's MP3 encoder
+# and what is next. A profiler (netradio-profile, nightly) listens to each
+# track once so spoken intros/stage talk cut as their own tracks stay off the
+# stations, and songs that start or end in chatter aren't crossfaded over.
+# Encoders are ON DEMAND: a station's MP3 encoder
 # runs only while someone is listening (+5 min grace), so nine stations idle
 # at zero CPU. Nothing here needs a port opened — the receiver only ever
 # touches port 80, which is already open and LAN/Tailscale-gated by
@@ -34,6 +37,8 @@
 # Ops:
 #   sudo cat /var/lib/netradio/credentials.env      Icecast passwords (generated)
 #   systemctl start netradio-playlists              rescan the library now
+#   systemctl start netradio-profile                profile new tracks now (first run: hours)
+#   /var/lib/netradio/profile-report.txt            what the profiler flagged; fix in profile-overrides.json
 #   journalctl -u netradio-wake                     which station started/stopped
 #   http://127.0.0.1:8020/status.xsl                what Icecast is serving
 { config, lib, pkgs, ... }:
@@ -62,6 +67,17 @@ let
   cacheDir = "${stateDir}/cache";
   tagCache = "${cacheDir}/tags.json";
   djDir = "${stateDir}/dj";
+  profileJson = "${stateDir}/profile.json";
+  profileOverrides = "${stateDir}/profile-overrides.json";   # {path: "talk"|"music"}, hand-edited
+  profileReport = "${stateDir}/profile-report.txt";
+
+  # YAMNet (Google's AudioSet classifier, 521 classes) as ONNX — a tf2onnx
+  # conversion mirrored on Hugging Face, pinned to a commit. ~16 MB, fetched
+  # at build time; the classifier the profiler listens with.
+  yamnet = pkgs.fetchurl {
+    url = "https://huggingface.co/andrelgomes/yamnet-onnx/resolve/8a03a1572569685c42fdbef54ff36435dbaaf689/yamnet.onnx";
+    hash = "sha256-FRAEHc4kounoTsVGgHrECK5JbabR7UG8PMumSWI/jhk=";
+  };
   runDir = "/run/netradio";
   liqSocket = "${runDir}/liquidsoap.sock";
 
@@ -456,6 +472,8 @@ in
         "--out ${djDir}"
         "--voice ${kokoroVoice}"
         "--breaks-every 3-4"
+        "--profile ${profileJson}"
+        "--overrides ${profileOverrides}"
       ] ++ map (u: "--kokoro-url ${u}") kokoroUrls);
       Restart = "always";
       RestartSec = 10;
@@ -503,6 +521,8 @@ in
         "--stations ${stationsJson}"
         "--out ${playlistDir}"
         "--cache ${tagCache}"
+        "--profile ${profileJson}"
+        "--overrides ${profileOverrides}"
       ] ++ map (r: "--root ${r}") libraryRoots);
     };
   };
@@ -513,6 +533,47 @@ in
       OnCalendar = "04:30";
       Persistent = true;
       RandomizedDelaySec = "10min";
+    };
+  };
+
+  # --- the talk profiler: nightly, incremental -------------------------------
+  # Listens to every track once (YAMNet + a pitch tracker; see profile.py for
+  # the rule and the measurements behind it) and writes profile.json: which
+  # tracks are talk (the scanner keeps them off every station) and which
+  # start or end in chatter (the DJ doesn't crossfade over those). The first
+  # pass over ~17k tracks is a few hours at Nice 19 and idle I/O; after that
+  # only new files are analysed. Review what it flagged in profile-report.txt;
+  # correct it in profile-overrides.json ({"<path>": "music"} or "talk").
+  # Runs before the 04:30 playlist rebuild so exclusions land the same night.
+  systemd.services.netradio-profile = {
+    description = "Profile library tracks for talk vs music (YAMNet + pitch)";
+    after = [ "netradio-credentials.service" "mnt-fusion.mount" ];
+    requires = [ "netradio-credentials.service" ];
+    serviceConfig = hardening // {
+      Type = "oneshot";
+      User = user;
+      Group = user;
+      SupplementaryGroups = [ "media" ];
+      ReadWritePaths = [ stateDir ];
+      Nice = 19;
+      IOSchedulingClass = "idle";
+      CPUWeight = 20;
+      ExecStart = lib.concatStringsSep " " [
+        "${netradio}/bin/netradio profile"
+        "--playlist ${playlistDir}/all.m3u"
+        "--model ${yamnet}"
+        "--profile ${profileJson}"
+        "--overrides ${profileOverrides}"
+        "--report ${profileReport}"
+      ];
+    };
+  };
+  systemd.timers.netradio-profile = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "20min";
+      OnCalendar = "01:00";
+      Persistent = true;
     };
   };
 

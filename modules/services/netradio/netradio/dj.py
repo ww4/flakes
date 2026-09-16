@@ -32,6 +32,8 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
+from netradio.profile import Profile
+from netradio.rules import Verdict
 from netradio.wake import Liquidsoap
 
 log = logging.getLogger("netradio.dj")
@@ -192,7 +194,7 @@ class StationDJ:
     def __init__(self, mount: str, name: str, playlist: Path, out_dir: Path,
                  ls: Liquidsoap, tts: Kokoro, rng: random.Random | None = None,
                  lookahead: int = LOOKAHEAD, breaks_every: tuple[int, int] = (3, 4),
-                 voice_gain: str = "1.8"):
+                 voice_gain: str = "1.8", profile: Path | None = None, overrides: Path | None = None):
         self.mount = mount
         self.name = name
         self.playlist = playlist
@@ -209,7 +211,12 @@ class StationDJ:
         self.since_break: list[Track] = []
         self.until_break = self.rng.randint(*breaks_every)
         self.breaks_made = 0
-        self.queued: list[str] = []  # descriptions, for the log
+        self.profile_path = profile
+        self.overrides_path = overrides
+        self.profile_mtime = -1.0
+        self.verdicts: dict[str, Verdict] = {}
+        self.planned: Track | None = None   # chosen one ahead, so a track's
+                                            # exit can suit what follows it
 
     # -- inputs
     def load_playlist(self) -> None:
@@ -225,6 +232,22 @@ class StationDJ:
         self.playlist_mtime = mtime
         log.info("%s: playlist loaded, %d tracks", self.mount, len(self.tracks))
 
+    def load_profile(self) -> None:
+        if not self.profile_path:
+            return
+        try:
+            mtime = self.profile_path.stat().st_mtime
+        except OSError:
+            return
+        if mtime != self.profile_mtime:
+            self.verdicts = Profile.load_verdicts(self.profile_path, self.overrides_path)
+            self.profile_mtime = mtime
+            log.info("%s: profile loaded, %d talk tracks kept out", self.mount,
+                     sum(1 for v in self.verdicts.values() if v.talk))
+
+    def verdict(self, track: Track) -> Verdict:
+        return self.verdicts.get(track.path, Verdict(False, False, False, ""))
+
     def pending(self) -> int:
         """How many requests wait in the Liquidsoap queue (RIDs, whitespace-separated)."""
         reply = self.ls.command(f"q_{self.mount}.queue")
@@ -232,12 +255,37 @@ class StationDJ:
 
     def choose(self) -> Track | None:
         self.load_playlist()
+        self.load_profile()
         if not self.tracks:
             return None
-        pool = [t for t in self.tracks if t not in self.recent] or self.tracks
+        playable = [t for t in self.tracks if not self.verdicts.get(t, Verdict(False, False, False, "")).talk]
+        if not playable:
+            return None
+        pool = [t for t in playable if t not in self.recent] or playable
         path = self.rng.choice(pool)
         self.recent.append(path)
         return read_tags(path)
+
+    def next_track(self) -> tuple[Track | None, Track | None]:
+        """The track to queue now and the one planned after it."""
+        track = self.planned or self.choose()
+        self.planned = self.choose() if track else None
+        return track, self.planned
+
+    def track_uri(self, track: Track, following: Track | None) -> str:
+        """A plain path, unless the profile says the transition needs care:
+        a track that ends in chatter is not crossfaded over (it finishes,
+        then the next starts); one that starts with chatter is not faded
+        into under the previous song's tail."""
+        v = self.verdict(track)
+        meta: dict[str, str] = {}
+        if v.tail_talk:
+            meta.update({"liq_cross_duration": "0.5", "liq_fade_out": "0"})
+        if v.head_talk:
+            meta["liq_fade_in"] = "0"
+        if following is not None and self.verdict(following).head_talk:
+            meta.setdefault("liq_cross_duration", "0.5")
+        return annotate(meta, track.path) if meta else track.path
 
     # -- outputs
     def push(self, uri: str, what: str) -> None:
@@ -269,7 +317,7 @@ class StationDJ:
         break in front of it when the count says so."""
         n = self.pending()
         while n < self.lookahead:
-            track = self.choose()
+            track, following = self.next_track()
             if track is None:
                 log.warning("%s: playlist empty, nothing to queue", self.mount)
                 return
@@ -279,7 +327,7 @@ class StationDJ:
                     self.push(uri, "break")
                 self.since_break = []
                 self.until_break = self.rng.randint(*self.breaks_every)
-            self.push(track.path, f"{track.artist} - {track.title}")
+            self.push(self.track_uri(track, following), f"{track.artist} - {track.title}")
             self.since_break.append(track)
             self.until_break -= 1
             n += 1
@@ -302,6 +350,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--kokoro-url", action="append", required=True, help="tried in order")
     ap.add_argument("--voice", default="af_heart")
     ap.add_argument("--breaks-every", default="3-4", help="tracks between breaks, min-max")
+    ap.add_argument("--profile", type=Path, help="profile.json from `netradio profile`")
+    ap.add_argument("--overrides", type=Path, help="profile-overrides.json")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -314,7 +364,8 @@ def main(argv: list[str] | None = None) -> int:
     threads = []
     for s in stations:
         dj = StationDJ(s["mount"], s["name"], args.playlists / f"{s['mount']}.m3u",
-                       args.out / s["mount"], ls, tts, breaks_every=(lo, hi))
+                       args.out / s["mount"], ls, tts, breaks_every=(lo, hi),
+                       profile=args.profile, overrides=args.overrides)
         t = threading.Thread(target=dj.run, args=(stop,), name=s["mount"], daemon=True)
         t.start()
         threads.append(t)

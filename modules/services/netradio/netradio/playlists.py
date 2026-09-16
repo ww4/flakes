@@ -134,9 +134,13 @@ def write_atomic(path: Path, text: str) -> None:
         raise
 
 
-def scan(roots: list[Path], stations: list[Station], cache: TagCache) -> dict:
-    """Fill each station's paths. Returns the counts worth logging."""
-    counts = {"files": 0, "untagged": 0, "excluded": 0, "unreadable_dirs": 0}
+def scan(roots: list[Path], stations: list[Station], cache: TagCache,
+         talk: set[str] | None = None) -> dict:
+    """Fill each station's paths. Returns the counts worth logging. `talk` is
+    the set of paths the profiler called talk (netradio profile); they are
+    kept off every station."""
+    counts = {"files": 0, "untagged": 0, "excluded": 0, "talk": 0, "unreadable_dirs": 0}
+    talk = talk or set()
     for root in roots:
         if not root.is_dir():
             log.warning("library root missing or unreadable: %s", root)
@@ -158,6 +162,9 @@ def scan(roots: list[Path], stations: list[Station], cache: TagCache) -> dict:
                     counts["untagged"] += 1
                 if any(word_in(w, genres) for w in EXCLUDE_WORDS):
                     counts["excluded"] += 1
+                    continue
+                if str(p) in talk:
+                    counts["talk"] += 1
                     continue
                 for s in stations:
                     if s.words is None or any(word_in(w, genres) for w in s.words):
@@ -184,6 +191,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--root", action="append", required=True, type=Path, help="library root (repeatable)")
     ap.add_argument("--out", required=True, type=Path, help="playlist directory")
     ap.add_argument("--cache", required=True, type=Path, help="tag cache file")
+    ap.add_argument("--profile", type=Path, help="profile.json from `netradio profile`")
+    ap.add_argument("--overrides", type=Path, help="profile-overrides.json")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -191,14 +200,18 @@ def main(argv: list[str] | None = None) -> int:
 
     stations = load_stations(args.stations)
     cache = TagCache(args.cache)
-    counts = scan(args.root, stations, cache)
+    talk: set[str] = set()
+    if args.profile:
+        from netradio.profile import Profile
+        talk = {p for p, v in Profile.load_verdicts(args.profile, args.overrides).items() if v.talk}
+    counts = scan(args.root, stations, cache, talk)
     cache.save()
     write_playlists(stations, args.out)
 
     for s in stations:
         log.info("%-12s %6d tracks  (%s)", s.mount, len(s.paths), s.name)
-    log.info("%d audio files, %d untagged, %d excluded, %d unreadable dirs; tag cache %d hits / %d reads",
-             counts["files"], counts["untagged"], counts["excluded"], counts["unreadable_dirs"],
+    log.info("%d audio files, %d untagged, %d excluded, %d talk (profiled), %d unreadable dirs; tag cache %d hits / %d reads",
+             counts["files"], counts["untagged"], counts["excluded"], counts["talk"], counts["unreadable_dirs"],
              cache.hits, cache.misses)
     empty = [s.mount for s in stations if not s.paths]
     if empty:

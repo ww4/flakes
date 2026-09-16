@@ -1,8 +1,8 @@
 import sys
 
-from netradio import dj, playlists, wake
+from netradio import dj, playlists, profile, wake
 
-COMMANDS = {"playlists": playlists.main, "wake": wake.main, "dj": dj.main}
+COMMANDS = {"playlists": playlists.main, "wake": wake.main, "dj": dj.main, "profile": profile.main}
 
 
 def main() -> int:
