@@ -188,10 +188,24 @@ let
                    "${playlistDir}/" ^ mount ^ ".m3u")
       s = crossfade(s)
       s = mksafe(s)
+      # The first track's metadata is emitted BEFORE the Icecast connection is
+      # up (the log shows "now playing" ahead of "Connecting mount"), so the
+      # ICY title update for it can be lost and the receiver shows no song
+      # until the next track. Keep the last metadata and re-insert it once
+      # the mount is connected; the one log line per track is the record of
+      # what each station played.
+      s = insert_metadata(s)
+      last = ref([])
+      s.on_metadata(synchronous=true, fun (m) -> begin
+        last := m
+        log(label=mount, level=3, "now playing: " ^ m["artist"] ^ " - " ^ m["title"])
+      end)
       output.icecast(%mp3(bitrate=192), id=mount, start=false,
                      host="127.0.0.1", port=${toString icecastPort}, password=password,
                      mount="/" ^ mount ^ ".mp3", name=name, genre=name,
-                     description="Library station", public=false, s)
+                     description="Library station", public=false,
+                     on_connect={ if last() != [] then s.insert_metadata(last()) end },
+                     s)
     end
 
     ${lib.concatMapStrings (s: ''
