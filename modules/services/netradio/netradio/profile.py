@@ -346,16 +346,49 @@ def write_report(profile: Profile, report: Path, overrides: dict[str, str]) -> N
 # map; the parent owns profile.json and saves as results come in.
 
 _worker_model: Yamnet | None = None
+_worker_model_path = ""
+_worker_remotes: list[str] = []
 
 
-def _worker_init(model_path: str) -> None:
+def _worker_init(model_path: str, remotes: list[str] | None = None) -> None:
+    global _worker_model_path, _worker_remotes
+    _worker_model_path = model_path
+    _worker_remotes = list(remotes or [])
+    if not _worker_remotes:
+        _load_local_model()
+
+
+def _load_local_model() -> None:
     global _worker_model
-    _worker_model = Yamnet(Path(model_path), threads=1)
+    if _worker_model is None:
+        _worker_model = Yamnet(Path(_worker_model_path), threads=1)
+
+
+def analyse_remote(track: str, url: str, timeout: float = 300.0) -> tuple[dict, str]:
+    """POST the file to a profile server (profile_server.py); (facts, title).
+    Raises on any failure — the caller falls back to local."""
+    import urllib.request
+    data = Path(track).read_bytes()
+    req = urllib.request.Request(f"{url.rstrip('/')}/analyse", data=data, method="POST",
+                                 headers={"Content-Type": "application/octet-stream",
+                                          "X-Filename": Path(track).name})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        out = json.load(r)
+    return out["facts"], out.get("title", "")
 
 
 def _worker_analyse(track: str) -> tuple[str, dict | None, str]:
-    """(track, facts-as-dict or None, error-or-title)."""
+    """(track, facts-as-dict or None, error-or-title). A remote server is
+    tried first when configured (the fast box); anything failing there —
+    box off, timeout, 5xx — falls back to measuring here."""
+    for url in _worker_remotes:
+        try:
+            facts, title = analyse_remote(track, url)
+            return track, facts, title
+        except Exception as e:
+            log.debug("remote %s failed for %s: %s", url, track, e)
     try:
+        _load_local_model()
         f = analyse(track, _worker_model)
         return track, asdict(f), read_title(track)
     except Exception as e:  # reported by the parent, the pool keeps going
@@ -371,6 +404,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--report", type=Path, help="human-readable list of what was flagged")
     ap.add_argument("--limit", type=int, default=0, help="stop after N new tracks (0 = all)")
     ap.add_argument("--workers", type=int, default=0, help="worker processes (0 = one per core)")
+    ap.add_argument("--remote", action="append", default=[],
+                    help="profile server URL to try first (repeatable); local analysis is the fallback")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -393,14 +428,15 @@ def main(argv: list[str] | None = None) -> int:
             break
     stats = {t: st for t, st in todo}
     workers = args.workers or (os.cpu_count() or 1)
-    log.info("%d tracks to analyse (%d cached), %d workers", len(todo), skipped, workers)
+    log.info("%d tracks to analyse (%d cached), %d workers%s", len(todo), skipped, workers,
+             f", remote first: {', '.join(args.remote)}" if args.remote else "")
 
     done = failed = 0
     t0 = time.monotonic()
     if todo:
         import multiprocessing as mp
         ctx = mp.get_context("spawn")   # a fresh interpreter per worker: no forked ONNX state
-        with ctx.Pool(workers, initializer=_worker_init, initargs=(str(args.model),)) as pool:
+        with ctx.Pool(workers, initializer=_worker_init, initargs=(str(args.model), args.remote)) as pool:
             for track, facts, extra in pool.imap_unordered(_worker_analyse, [t for t, _ in todo], chunksize=4):
                 if facts is None:
                     failed += 1

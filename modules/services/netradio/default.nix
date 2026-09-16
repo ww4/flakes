@@ -76,13 +76,17 @@ let
   profileOverrides = "${profileDir}/profile-overrides.json";   # {path: "talk"|"music"}, hand-edited
   profileReport = "${profileDir}/profile-report.txt";
 
-  # YAMNet (Google's AudioSet classifier, 521 classes) as ONNX — a tf2onnx
-  # conversion mirrored on Hugging Face, pinned to a commit. ~16 MB, fetched
-  # at build time; the classifier the profiler listens with.
-  yamnet = pkgs.fetchurl {
-    url = "https://huggingface.co/andrelgomes/yamnet-onnx/resolve/8a03a1572569685c42fdbef54ff36435dbaaf689/yamnet.onnx";
-    hash = "sha256-FRAEHc4kounoTsVGgHrECK5JbabR7UG8PMumSWI/jhk=";
-  };
+  yamnet = pkgs.callPackage ./yamnet.nix { };
+
+  # The profiling itself is offloaded to wallace when it is up (the 5900X does
+  # it 4-5x faster; hosts/wallace/netradio-profile-server.nix), same shape as
+  # the switchboard's whisper/Kokoro: gromit's workers try it first and
+  # measure locally when nobody answers. Eight client workers keep twelve
+  # server processes fed over the tailnet (LAN-direct); if wallace is off the
+  # eight fall back to this box's four cores — slower, still correct.
+  profileRemotes = [ "http://100.66.171.120:8790" ];
+  profileWorkers = 8;
+
   runDir = "/run/netradio";
   liqSocket = "${runDir}/liquidsoap.sock";
 
@@ -585,20 +589,25 @@ in
       Nice = 19;
       IOSchedulingClass = "idle";
       CPUWeight = 20;
-      ExecStart = lib.concatStringsSep " " [
+      ExecStart = lib.concatStringsSep " " ([
         "${netradio}/bin/netradio profile"
         "--playlist ${playlistDir}/all.m3u"
         "--model ${yamnet}"
         "--profile ${profileJson}"
         "--overrides ${profileOverrides}"
         "--report ${profileReport}"
-      ];
+        "--workers ${toString profileWorkers}"
+      ] ++ map (u: "--remote ${u}") profileRemotes);
     };
   };
   systemd.timers.netradio-profile = {
     wantedBy = [ "timers.target" ];
     timerConfig = {
       OnBootSec = "20min";
+      # A deploy that changes this timer re-activates it: run shortly after,
+      # so a profiler change (new facts, a new server) is exercised the same
+      # day rather than waiting for 01:00.
+      OnActiveSec = "2min";
       OnCalendar = "01:00";
       Persistent = true;
     };
