@@ -39,7 +39,7 @@ createApp({
   data() {
     return { state: { feeds: {}, stations: [], schedule: [], artists: {}, families: [], today: {}, pending_requests: [] },
              options: {}, tab: "feeds", openId: null, edit: {}, add: { title: "", description: "", family: [], listenable: true, shellac: false },
-             slots: {}, days: DAYS, flash: "", flashErr: false, scheduleMsg: "",
+             slots: {}, days: DAYS, flash: "", flashErr: false, scheduleMsg: "", answers: {},
              sel: null,
              tabs: [{ id: "feeds", title: "Feeds" }, { id: "stations", title: "Stations" }] };
   },
@@ -70,6 +70,11 @@ createApp({
         this.say(r.recompile ? "Saved — the description changed, so the rule will be rebuilt." : "Saved; apply requested.");
         await this.load(); this.openFeed(id);
       } catch (e) { this.say(e.message, true); }
+    },
+    async showAnswer(id) {
+      if (this.answers[id]) { delete this.answers[id]; return; }
+      try { const r = await api("GET", `/feeds/${id}/answer`); this.answers[id] = r.answer || "(no answer kept yet — rebuild the rule once)"; }
+      catch (e) { this.say(e.message, true); }
     },
     async compileFeed(id) { try { await api("POST", `/feeds/${id}/compile`); this.say("Rebuilding the rule from the description — a minute or two."); await this.load(); } catch (e) { this.say(e.message, true); } },
     async deleteFeed(id) {

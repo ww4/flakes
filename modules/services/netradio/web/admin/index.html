@@ -33,7 +33,9 @@
       <div v-if="openId === id" class="details">
         <label>Title <input v-model="edit.title"></label>
         <label>Description <textarea v-model="edit.description" rows="3"></textarea></label>
-        <p v-if="f.note" class="ai-note"><small><strong>What the agent found:</strong> {{ f.note }}</small></p>
+        <p v-if="f.note" class="ai-note"><small><strong>What the agent found:</strong> {{ f.note }}
+          <a href="#" @click.prevent="showAnswer(id)">full answer</a></small>
+          <pre v-if="answers[id]" class="answer">{{ answers[id] }}</pre></p>
         <label>Fits <tag-input v-model="edit.family" :suggestions="state.families" placeholder="add a family…"></tag-input></label>
         <div class="switches">
           <label><input type="checkbox" role="switch" v-model="edit.listenable"> listenable</label>

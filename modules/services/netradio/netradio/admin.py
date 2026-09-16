@@ -275,6 +275,8 @@ def make_handler(admin: Admin):
                             return self._reply(200, admin.delete_feed(parts[2]))
                     if len(parts) == 4 and parts[:2] == ["api", "feeds"] and parts[3] == "compile" and method == "POST":
                         return self._reply(200, admin.compile_feed(parts[2]))
+                    if len(parts) == 4 and parts[:2] == ["api", "feeds"] and parts[3] == "answer" and method == "GET":
+                        return self._reply(200, {"answer": admin.cfg.answer(parts[2])})
                     if len(parts) == 3 and parts[:2] == ["api", "stations"] and method == "PUT":
                         return self._reply(200, admin.update_station(parts[2], self._json()))
                     if parts == ["api", "schedule"] and method == "PUT":
