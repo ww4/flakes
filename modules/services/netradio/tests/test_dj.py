@@ -1,0 +1,185 @@
+import logging
+import random
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from netradio import dj
+
+logging.disable(logging.CRITICAL)
+
+
+def T(title, artist, path=None):
+    return dj.Track(path or f"/m/{artist}/{title}.mp3", title, artist)
+
+
+class Compose(unittest.TestCase):
+    def test_mentions_previous_and_next(self):
+        prev = [T("Sweet Dixie", "Art Stamper"), T("Whoa Mule", "Adam Tanner"), T("Sugar Hill", "Art Stamper")]
+        nxt = T("Double Banjo Blues", "Reno and Smiley")
+        for seed in range(20):
+            text = dj.compose(prev, nxt, "Bluegrass and Old-Time", random.Random(seed))
+            for needle in ("Sugar Hill", "Whoa Mule", "Sweet Dixie", "Double Banjo Blues", "Reno and Smiley"):
+                self.assertIn(needle, text, text)
+            self.assertNotIn("{", text)
+            self.assertNotIn("  ", text)
+
+    def test_varies_wording(self):
+        prev = [T("A", "X"), T("B", "Y"), T("C", "Z")]
+        texts = {dj.compose(prev, T("D", "W"), "Rock", random.Random(s)) for s in range(40)}
+        self.assertGreater(len(texts), 10)
+
+    def test_first_break_with_one_or_no_previous(self):
+        text = dj.compose([], T("D", "W"), "Rock", random.Random(3))
+        self.assertIn("D", text)
+        self.assertIn("W", text)
+        text = dj.compose([T("A", "X")], T("D", "W"), "Rock", random.Random(3))
+        self.assertIn("A", text)
+        self.assertIn("D", text)
+
+    def test_at_most_three_earlier_tracks_named(self):
+        prev = [T(f"T{i}", f"A{i}") for i in range(8)]
+        text = dj.compose(prev, T("N", "B"), "Folk", random.Random(1))
+        self.assertIn("T7", text)                      # the one that just finished
+        self.assertNotIn("T0", text)
+        self.assertNotIn("T3", text)
+        self.assertIn("T4", text)
+
+
+class Cleaning(unittest.TestCase):
+    def test_clean(self):
+        self.assertEqual(dj.clean("Whoa Mule (Live) [Remastered]"), "Whoa Mule")
+        self.assertEqual(dj.clean('  "Sugar Hill" -- '), "Sugar Hill")
+        self.assertEqual(dj.clean("()"), "untitled")
+
+    def test_read_tags_falls_back_to_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "Art Stamper" / "Goodbye Girls" / "03 Hickory Jack.mp3"
+            p.parent.mkdir(parents=True)
+            p.write_bytes(b"not audio")
+            t = dj.read_tags(str(p))
+            self.assertEqual((t.title, t.artist), ("Hickory Jack", "Art Stamper"))
+
+    def test_annotate_escapes(self):
+        uri = dj.annotate({"title": 'Say "hi", now', "dj": "true"}, "/x/a b.wav")
+        self.assertEqual(uri, 'annotate:title="Say \\"hi\\", now",dj="true":/x/a b.wav')
+
+
+class FakeLS:
+    """Liquidsoap's queue commands, minimally: push returns a RID, queue lists
+    pending RIDs; `play()` consumes one, as a track ending would."""
+
+    def __init__(self):
+        self.pending = []
+        self.pushed = []
+        self.rid = 0
+
+    def command(self, cmd):
+        if cmd.startswith("q_x.push "):
+            self.rid += 1
+            uri = cmd[len("q_x.push "):]
+            self.pending.append(self.rid)
+            self.pushed.append(uri)
+            return str(self.rid)
+        if cmd == "q_x.queue":
+            return " ".join(str(r) for r in self.pending)
+        raise AssertionError(cmd)
+
+    def play(self):
+        self.pending.pop(0)
+
+
+class FakeTTS:
+    def __init__(self, fail=False):
+        self.texts = []
+        self.fail = fail
+
+    def render(self, text):
+        self.texts.append(text)
+        if self.fail:
+            raise RuntimeError("kokoro down")
+        return b"RIFF" + text.encode()
+
+
+class StationDJTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.pl = root / "x.m3u"
+        lines = ["#EXTM3U"] + [f"/m/Artist{i}/Album/0{i} Song{i}.mp3" for i in range(12)]
+        self.pl.write_text("\n".join(lines) + "\n")
+        self.ls = FakeLS()
+        self.tts = FakeTTS()
+        self.dj = dj.StationDJ("x", "Test Station", self.pl, root / "breaks", self.ls, self.tts,
+                               rng=random.Random(7), breaks_every=(3, 3))
+        self.read_tags = mock.patch.object(dj, "read_tags", side_effect=lambda p: dj.Track(p, Path(p).stem[3:], Path(p).parent.parent.name))
+        self.read_tags.start()
+
+    def tearDown(self):
+        self.read_tags.stop()
+        self.tmp.cleanup()
+
+    def test_keeps_two_ahead_and_breaks_every_three(self):
+        self.dj.fill()
+        self.assertEqual(len(self.ls.pending), 2)
+        # play items one by one; a break rides in front of its track, so the
+        # queue holds two tracks plus at most one break
+        for _ in range(12):
+            self.ls.play()
+            self.dj.fill()
+            self.assertIn(len(self.ls.pending), (2, 3))
+        kinds = ["break" if u.startswith("annotate:") else "track" for u in self.ls.pushed]
+        # first three are tracks, then a break, then three tracks, ...
+        self.assertEqual(kinds[:8], ["track", "track", "track", "break", "track", "track", "track", "break"])
+        self.assertEqual(kinds.count("break"), 3)
+
+    def test_break_names_the_three_previous_and_the_next(self):
+        for _ in range(6):
+            self.dj.fill()
+            self.ls.play()
+        text = self.tts.texts[0]
+        pushed_tracks = [u for u in self.ls.pushed if not u.startswith("annotate:")]
+        names = [Path(u).stem[3:] for u in pushed_tracks]
+        for n in names[:3]:
+            self.assertIn(n, text, text)
+        self.assertIn(names[3], text, text)          # the one queued right after the break
+        self.assertNotIn(names[4], text, text)
+        break_uri = [u for u in self.ls.pushed if u.startswith("annotate:")][0]
+        self.assertIn('liq_amplify="1.8"', break_uri)
+        self.assertIn('title="Station break"', break_uri)
+        self.assertTrue(break_uri.endswith("break-000001.wav"))
+        self.assertTrue((self.dj.out_dir / "break-000001.wav").exists())
+
+    def test_tts_failure_skips_break_and_keeps_music_going(self):
+        self.tts.fail = True
+        for _ in range(8):
+            self.dj.fill()
+            self.ls.play()
+        self.assertFalse(any(u.startswith("annotate:") for u in self.ls.pushed))
+        self.assertGreaterEqual(len(self.ls.pushed), 8)
+        self.assertGreaterEqual(len(self.tts.texts), 2)  # it kept trying at each break point
+
+    def test_no_repeat_until_pool_exhausted(self):
+        for _ in range(12):
+            self.dj.fill()
+            self.ls.play()
+        tracks = [u for u in self.ls.pushed if not u.startswith("annotate:")]
+        self.assertEqual(len(tracks), len(set(tracks)))
+
+    def test_empty_playlist_queues_nothing(self):
+        self.pl.write_text("#EXTM3U\n")
+        self.dj.fill()
+        self.assertEqual(self.ls.pushed, [])
+
+    def test_old_breaks_are_pruned(self):
+        self.dj.breaks_every = (1, 1)
+        self.dj.until_break = 0
+        for _ in range(10):
+            self.dj.fill()
+            self.ls.play()
+        self.assertLessEqual(len(list(self.dj.out_dir.glob("break-*.wav"))), dj.KEEP_BREAKS)
+
+
+if __name__ == "__main__":
+    unittest.main()
