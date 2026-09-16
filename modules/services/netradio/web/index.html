@@ -3,34 +3,62 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Library radio</title>
-<link rel="stylesheet" href="style.css">
-<header>
-  <h1>Library radio</h1>
-  <p class="note">Shuffled from the music library, with a DJ. A station starts a moment after you press play and switches itself off five minutes after the last listener leaves.</p>
-  <p class="links">Radio apps: <a href="now/stations.m3u">stations.m3u</a> · <a href="now/stations.pls">stations.pls</a> · <a href="now/stations-lo.m3u">96 kbps m3u</a> · <a href="admin/">admin</a></p>
-</header>
+<link rel="stylesheet" href="vendor/pico.min.css">
+<link rel="stylesheet" href="ui.css">
+<main class="container" id="app" v-cloak>
+  <header>
+    <hgroup>
+      <h1>Library radio</h1>
+      <p>Shuffled from the music library, with a DJ. A station starts a moment after you press play and switches itself off five minutes after the last listener leaves.</p>
+    </hgroup>
+    <p class="links"><small>Radio apps: <a href="now/stations.m3u">stations.m3u</a> · <a href="now/stations.pls">stations.pls</a> · <a href="now/stations-lo.m3u">96 kbps m3u</a> · <a href="admin/">admin</a></small></p>
+  </header>
 
-<section id="player" hidden>
-  <canvas id="viz" width="900" height="120"></canvas>
-  <div class="row">
-    <button id="stop" class="btn" title="Stop">■</button>
-    <div class="what">
-      <div class="station"><span id="p-station"></span> <span id="p-status" class="muted"></span></div>
-      <div class="title" id="p-title">—</div>
-      <div class="muted" id="p-meta"></div>
+  <article v-if="current" class="player">
+    <canvas ref="viz" width="900" height="120"></canvas>
+    <div class="row">
+      <button class="round" @click="stop" title="Stop">■</button>
+      <div class="what">
+        <strong>{{ currentStation.name }}</strong> <small class="muted">{{ status }}</small>
+        <div class="title">{{ nowTitle || "—" }}</div>
+        <small class="muted">{{ listenersOf(currentStation.mount) ? listenersOf(currentStation.mount) + " listening" : "" }}<span v-if="curNext.segment"> · {{ curNext.segment.name }}</span></small>
+      </div>
+      <fieldset class="quality">
+        <label><input type="radio" value="" v-model="quality" @change="retune"> 192k</label>
+        <label><input type="radio" value="-lo" v-model="quality" @change="retune"> 96k</label>
+      </fieldset>
     </div>
-    <div class="quality">
-      <label><input type="radio" name="q" value="" checked> 192k</label>
-      <label><input type="radio" name="q" value="-lo"> 96k</label>
+    <div class="grid">
+      <div><h6>Last played</h6><ol><li v-for="h in curHistory.slice(1, 7)" :class="{break: h.kind === 'break'}">{{ label(h) }}</li><li v-if="curHistory.length < 2" class="muted">—</li></ol></div>
+      <div><h6>Up next</h6><ol><li v-for="n in (curNext.next || [])" :class="{break: n.kind === 'break'}">{{ label(n) }}</li><li v-if="!(curNext.next || []).length" class="muted">—</li></ol>
+        <p v-if="curNext.last_break" class="dj"><small>DJ: “{{ curNext.last_break }}”</small></p></div>
     </div>
-  </div>
-  <div class="cols">
-    <div><h3>Last played</h3><ol id="p-history" class="list"></ol></div>
-    <div><h3>Up next</h3><ol id="p-next" class="list"></ol><p id="p-break" class="dj"></p></div>
-  </div>
-</section>
+  </article>
 
-<ul id="stations" class="stations"></ul>
-<audio id="audio" preload="none"></audio>
+  <p v-if="scanning"><small class="muted">The library scan is still running — stations appear when it finishes (a few minutes after a change).</small></p>
+
+  <section v-for="group in groups" :key="group.kind">
+    <h5>{{ group.title }}</h5>
+    <article v-for="s in group.stations" :key="s.mount" class="station" :class="{open: open === s.mount, playing: current === s.mount}">
+      <header @click="toggle(s.mount)">
+        <button class="round" @click.stop="current === s.mount ? stop() : play(s.mount)" :title="current === s.mount ? 'Stop' : 'Play'">{{ current === s.mount ? "■" : "▶" }}</button>
+        <div class="name">
+          <strong>{{ s.name }}</strong>
+          <small class="muted">{{ countOf(s.mount) }}<span v-if="isUp(s.mount)"> · <span class="live">on air</span></span><span v-if="listenersOf(s.mount)"> · {{ listenersOf(s.mount) }} listening</span></small>
+        </div>
+        <div class="now"><small>{{ isUp(s.mount) ? titleOf(s.mount) : "" }}</small></div>
+      </header>
+      <div v-if="open === s.mount" class="details">
+        <div class="grid">
+          <div><h6>Last played</h6><ol><li v-for="h in (histories[s.mount] || []).slice(0, 6)" :class="{break: h.kind === 'break'}">{{ label(h) }}</li><li v-if="!(histories[s.mount] || []).length" class="muted">nothing yet</li></ol></div>
+          <div><h6>Up next</h6><ol><li v-for="n in ((nexts[s.mount] || {}).next || [])" :class="{break: n.kind === 'break'}">{{ label(n) }}</li><li v-if="!((nexts[s.mount] || {}).next || []).length" class="muted">—</li></ol>
+            <p v-if="(nexts[s.mount] || {}).segment"><small>Now: {{ nexts[s.mount].segment.name }}</small></p></div>
+        </div>
+      </div>
+    </article>
+  </section>
+  <audio ref="audio" preload="none"></audio>
+</main>
+<script src="vendor/vue.global.prod.js"></script>
 <script src="app.js"></script>
 </html>

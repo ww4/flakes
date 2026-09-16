@@ -1,6 +1,5 @@
-// Library radio — admin. Talks to /admin/api (netradio admin). No framework.
-const $ = (id) => document.getElementById(id);
-const S = { state: null, options: {} };
+// Library radio — admin, as a Vue 3 app. Talks to /admin/api (netradio admin).
+const { createApp } = Vue;
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
 async function api(method, path, body) {
@@ -10,178 +9,127 @@ async function api(method, path, body) {
   if (!r.ok) throw new Error(j.error || `${r.status}`);
   return j;
 }
-function flash(msg, isErr) { const f = $("flash"); f.textContent = msg; f.hidden = false; f.style.borderLeftColor = isErr ? "#b53a2a" : ""; clearTimeout(f._t); f._t = setTimeout(() => f.hidden = true, 6000); }
-function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
-function chips(name, chosen, fams) {
-  return `<span class="chips">${fams.map(f => `<label><input type="checkbox" name="${name}" value="${f}" ${chosen.includes(f) ? "checked" : ""}> ${f}</label>`).join("")}</span>`;
-}
-function chosen(container, name) { return [...container.querySelectorAll(`input[name="${name}"]:checked`)].map(i => i.value); }
 
-async function load() {
-  S.state = await api("GET", "/state");
-  $("now").textContent = S.state.now;
-  $("pending").textContent = S.state.pending_requests.length ? `${S.state.pending_requests.length} request(s) waiting for the box` : "";
-  renderFeeds(); await renderSchedule(); renderStations();
-}
+// A tag field: chips + an input with suggestions (datalist). Enter or comma
+// adds; only suggested values are accepted when suggestions are given.
+const TagInput = {
+  props: { modelValue: { type: Array, default: () => [] }, suggestions: { type: Array, default: () => [] }, placeholder: { type: String, default: "add…" } },
+  emits: ["update:modelValue"],
+  data() { return { text: "", id: "dl" + Math.random().toString(36).slice(2) }; },
+  methods: {
+    add() {
+      const v = this.text.trim().replace(/,$/, "").toLowerCase();
+      this.text = "";
+      if (!v || this.modelValue.includes(v)) return;
+      if (this.suggestions.length && !this.suggestions.includes(v)) return;
+      this.$emit("update:modelValue", [...this.modelValue, v]);
+    },
+    remove(v) { this.$emit("update:modelValue", this.modelValue.filter(x => x !== v)); },
+    key(e) { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); this.add(); } else if (e.key === "Backspace" && !this.text && this.modelValue.length) this.remove(this.modelValue[this.modelValue.length - 1]); },
+  },
+  template: `<span class="tags">
+    <span v-for="t in modelValue" class="tag">{{ t }}<button type="button" @click="remove(t)" title="remove">✕</button></span>
+    <input :list="id" v-model="text" :placeholder="placeholder" @keydown="key" @change="add" @blur="add">
+    <datalist :id="id"><option v-for="s in suggestions.filter(s => !modelValue.includes(s))" :value="s"></option></datalist>
+  </span>`,
+};
 
-// --- feeds ---------------------------------------------------------------------
-function renderFeeds() {
-  const tb = $("feeds").querySelector("tbody");
-  tb.innerHTML = "";
-  const fams = S.state.families;
-  for (const [id, f] of Object.entries(S.state.feeds).sort((a, b) => a[1].title.localeCompare(b[1].title))) {
-    const tr = document.createElement("tr");
-    tr.dataset.id = id;
-    tr.innerHTML = `
-      <td><input type="text" name="title" value="${esc(f.title)}"><br><small class="muted">${id}</small><br>
-          <label><input type="checkbox" name="listenable" ${f.listenable ? "checked" : ""}> listenable</label></td>
-      <td><textarea name="description">${esc(f.description)}</textarea>
-          <details><summary class="muted">rule</summary><textarea name="rule" spellcheck="false">${esc(JSON.stringify(f.rule || {}, null, 1))}</textarea></details></td>
-      <td>${chips("family", f.family || [], fams)}</td>
-      <td><span class="status-${f.status}">${f.status}</span> · ${f.count ?? 0} tracks<br><small class="muted">${esc(f.note || "")}</small></td>
-      <td><button class="small" data-act="save">Save</button> <button class="small" data-act="compile">Recompile</button> <button class="small" data-act="delete">Delete</button></td>`;
-    tb.appendChild(tr);
-  }
-}
-$("feeds").addEventListener("click", async (e) => {
-  const b = e.target.closest("button[data-act]"); if (!b) return;
-  const tr = b.closest("tr"), id = tr.dataset.id;
-  try {
-    if (b.dataset.act === "delete") { if (!confirm(`Delete feed "${S.state.feeds[id].title}"?`)) return; await api("DELETE", `/feeds/${id}`); flash("Feed removed; apply requested."); }
-    else if (b.dataset.act === "compile") { await api("POST", `/feeds/${id}/compile`); flash("Compile requested — the agent will build the rule from the description (a minute or two)."); }
-    else {
-      const body = { title: tr.querySelector('[name=title]').value, description: tr.querySelector('[name=description]').value,
-                     family: chosen(tr, "family"), listenable: tr.querySelector('[name=listenable]').checked };
-      const ruleText = tr.querySelector('[name=rule]').value.trim();
-      const before = JSON.stringify(S.state.feeds[id].rule || {}, null, 1);
-      if (ruleText && ruleText !== before) body.rule = JSON.parse(ruleText);
-      const r = await api("PUT", `/feeds/${id}`, body);
-      flash(r.recompile ? "Saved — description changed, so the rule will be rebuilt." : "Saved; apply requested.");
-    }
-    await load();
-  } catch (err) { flash(err.message, true); }
-});
-$("add-feed").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const f = e.target;
-  try {
-    const r = await api("POST", "/feeds", { title: f.title.value, description: f.description.value, listenable: f.listenable.checked });
-    flash(`Feed "${f.title.value}" added as ${r.id}; the agent is building its rule.`);
-    f.reset(); f.listenable.checked = true;
-    await load();
-  } catch (err) { flash(err.message, true); }
-});
-
-// --- schedule ------------------------------------------------------------------
-async function renderSchedule() {
-  const root = $("schedule");
-  root.innerHTML = "";
-  const curated = S.state.stations.filter(s => s.kind !== "specialty");
-  for (const st of curated) {
-    if (!S.options[st.mount]) S.options[st.mount] = await api("GET", `/options?station=${encodeURIComponent(st.mount)}`);
-    const block = document.createElement("div");
-    block.className = "station-block"; block.dataset.mount = st.mount;
-    const today = (S.state.today[st.mount] || []).map(t => `${t.start}–${t.end} ${esc(t.name || "")}${t.kind === "artist" ? " (spotlight)" : ""}`).join(" · ");
-    block.innerHTML = `<h3>${esc(st.name)} <small class="muted">${(st.family || []).join(", ")}</small></h3>
-      <div class="today">Today: ${today || "no segments — the base all day"}</div>
-      <div class="slots"></div>
-      <button class="small" data-act="add">Add slot</button>`;
-    const slots = block.querySelector(".slots");
-    for (const s of S.state.schedule.filter(s => s.station === st.mount)) slots.appendChild(slotRow(st, s));
-    root.appendChild(block);
-  }
-}
-function slotRow(st, s) {
-  const o = S.options[st.mount];
-  const row = document.createElement("div");
-  row.className = "slot";
-  const daysSpec = s.days || "daily";
-  const custom = Array.isArray(daysSpec);
-  row.innerHTML = `
-    <input type="text" name="name" placeholder="Name (as announced)" value="${esc(s.name || "")}">
-    <select name="kind"><option value="feed">feed</option><option value="artist">artist spotlight</option><option value="auto">auto (DJ picks)</option></select>
-    <span class="what">
-      <select name="feed">${o.feeds.map(f => `<option value="${f.id}">${esc(f.title)} (${f.count})</option>`).join("")}</select>
-      <select name="artist">${o.artists.map(a => `<option value="${esc(a.name)}">${esc(a.name)} (${a.tracks})</option>`).join("")}</select>
-      <select name="like"><option value="artist">a different artist each time</option><option value="feed">a different feed each time</option></select>
-    </span>
-    <span class="days">
-      <select name="dayspec"><option value="daily">daily</option><option value="weekdays">weekdays</option><option value="weekends">weekends</option><option value="custom">days…</option></select>
-      <span class="custom">${DAYS.map(d => `<label><input type="checkbox" name="day" value="${d}" ${custom && daysSpec.includes(d) ? "checked" : ""}>${d}</label>`).join("")}</span>
-    </span>
-    <input type="time" name="start" value="${esc(s.start || "20:00")}">
-    <input type="number" name="minutes" min="15" max="720" step="15" value="${s.minutes || 60}" title="minutes">
-    <button class="small" data-act="remove" title="Remove">✕</button>`;
-  row.dataset.id = s.id || "";
-  row.querySelector('[name=kind]').value = s.kind || "feed";
-  if (s.feed) row.querySelector('[name=feed]').value = s.feed;
-  if (s.artist) row.querySelector('[name=artist]').value = s.artist;
-  row.querySelector('[name=like]').value = s.like || "artist";
-  row.querySelector('[name=dayspec]').value = custom ? "custom" : daysSpec;
-  const sync = () => {
-    const k = row.querySelector('[name=kind]').value;
-    row.querySelector('[name=feed]').hidden = k !== "feed";
-    row.querySelector('[name=artist]').hidden = k !== "artist";
-    row.querySelector('[name=like]').hidden = k !== "auto";
-    row.querySelector(".custom").hidden = row.querySelector('[name=dayspec]').value !== "custom";
-  };
-  row.querySelector('[name=kind]').addEventListener("change", sync);
-  row.querySelector('[name=dayspec]').addEventListener("change", sync);
-  sync();
-  return row;
-}
-$("schedule").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-act]"); if (!b) return;
-  const block = b.closest(".station-block");
-  const st = S.state.stations.find(s => s.mount === block.dataset.mount);
-  if (b.dataset.act === "add") block.querySelector(".slots").appendChild(slotRow(st, { kind: "feed", days: "daily", start: "20:00", minutes: 60 }));
-  if (b.dataset.act === "remove") b.closest(".slot").remove();
-});
-$("save-schedule").addEventListener("click", async () => {
-  const slots = [];
-  for (const block of $("schedule").querySelectorAll(".station-block")) {
-    for (const row of block.querySelectorAll(".slot")) {
-      const v = (n) => row.querySelector(`[name=${n}]`).value;
-      const dayspec = v("dayspec");
-      const s = { id: row.dataset.id || undefined, station: block.dataset.mount, name: v("name"), kind: v("kind"),
-                  days: dayspec === "custom" ? chosen(row, "day") : dayspec, start: v("start"), minutes: Number(v("minutes")) };
-      if (s.kind === "feed") s.feed = v("feed");
-      if (s.kind === "artist") s.artist = v("artist");
-      if (s.kind === "auto") s.like = v("like");
-      slots.push(s);
-    }
-  }
-  try { const r = await api("PUT", "/schedule", slots); $("schedule-msg").textContent = `saved ${r.count} slot(s)`; await load(); }
-  catch (err) { flash(err.message, true); }
-});
-
-// --- stations ------------------------------------------------------------------
-function renderStations() {
-  const tb = $("stations").querySelector("tbody");
-  tb.innerHTML = "";
-  for (const st of S.state.stations) {
-    const tr = document.createElement("tr"); tr.dataset.mount = st.mount;
-    const spec = st.kind === "specialty";
-    tr.innerHTML = `<td><input type="text" name="name" value="${esc(st.name)}"><br><small class="muted">${st.mount}</small></td>
-      <td>${spec ? `specialty<br><small class="muted">feed ${esc(st.feed)}</small>` : "curated"}</td>
-      <td>${spec ? (st.family || []).join(", ") : chips("family", st.family || [], S.state.families)}</td>
-      <td>${spec ? "" : `<textarea name="base" spellcheck="false">${esc(JSON.stringify(st.base || {}, null, 1))}</textarea>`}</td>
-      <td><button class="small" data-act="save">Save</button></td>`;
-    tb.appendChild(tr);
-  }
-}
-$("stations").addEventListener("click", async (e) => {
-  const b = e.target.closest("button[data-act]"); if (!b) return;
-  const tr = b.closest("tr"), st = S.state.stations.find(s => s.mount === tr.dataset.mount);
-  try {
-    const body = { name: tr.querySelector('[name=name]').value };
-    if (st.kind !== "specialty") { body.family = chosen(tr, "family"); body.base = JSON.parse(tr.querySelector('[name=base]').value || "{}"); }
-    await api("PUT", `/stations/${st.mount}`, body);
-    flash("Station saved; apply requested."); S.options = {}; await load();
-  } catch (err) { flash(err.message, true); }
-});
-
-$("apply").addEventListener("click", async () => { try { await api("POST", "/apply"); flash("Apply requested: rescan, and a Liquidsoap restart if the station list changed."); await load(); } catch (err) { flash(err.message, true); } });
-
-load().catch(err => flash(err.message, true));
-setInterval(() => load().catch(() => {}), 30000);
+createApp({
+  components: { "tag-input": TagInput },
+  data() {
+    return { state: { feeds: {}, stations: [], schedule: [], artists: {}, families: [], today: {}, pending_requests: [] },
+             options: {}, tab: "feeds", openId: null, edit: {}, add: { title: "", description: "", family: [], listenable: true },
+             slots: {}, days: DAYS, flash: "", flashErr: false, scheduleMsg: "",
+             tabs: [{ id: "feeds", title: "Feeds" }, { id: "schedule", title: "Schedule" }, { id: "stations", title: "Stations" }] };
+  },
+  computed: {
+    feedList() { return Object.entries(this.state.feeds).sort((a, b) => a[1].title.localeCompare(b[1].title)); },
+    curated() { return this.state.stations.filter(s => s.kind !== "specialty"); },
+  },
+  methods: {
+    say(msg, err) { this.flash = msg; this.flashErr = !!err; clearTimeout(this._t); this._t = setTimeout(() => this.flash = "", 7000); },
+    async load() {
+      this.state = await api("GET", "/state");
+      this.slots = {};
+      for (const s of this.state.schedule) {
+        const custom = Array.isArray(s.days);
+        (this.slots[s.station] ||= []).push({ ...s, _k: s.id || Math.random(), dayspec: custom ? "custom" : (s.days || "daily"),
+                                               customDays: custom ? [...s.days] : [], minutes: s.minutes || 60, like: s.like || "artist" });
+      }
+    },
+    // -- feeds
+    openFeed(id) { const f = this.state.feeds[id]; this.edit = { title: f.title, description: f.description, family: [...(f.family || [])], listenable: !!f.listenable, rule: JSON.stringify(f.rule || {}, null, 1), _rule0: JSON.stringify(f.rule || {}, null, 1) }; },
+    async saveFeed(id) {
+      try {
+        const body = { title: this.edit.title, description: this.edit.description, family: this.edit.family, listenable: this.edit.listenable };
+        if (this.edit.rule.trim() !== this.edit._rule0.trim()) body.rule = JSON.parse(this.edit.rule);
+        const r = await api("PUT", `/feeds/${id}`, body);
+        this.say(r.recompile ? "Saved — the description changed, so the rule will be rebuilt." : "Saved; apply requested.");
+        await this.load(); this.openFeed(id);
+      } catch (e) { this.say(e.message, true); }
+    },
+    async compileFeed(id) { try { await api("POST", `/feeds/${id}/compile`); this.say("Rebuilding the rule from the description — a minute or two."); await this.load(); } catch (e) { this.say(e.message, true); } },
+    async deleteFeed(id) {
+      if (!confirm(`Delete feed "${this.state.feeds[id].title}"?`)) return;
+      try { await api("DELETE", `/feeds/${id}`); this.openId = null; this.say("Feed removed; apply requested."); await this.load(); } catch (e) { this.say(e.message, true); }
+    },
+    async addFeed() {
+      try {
+        const r = await api("POST", "/feeds", this.add);
+        this.say(`Feed added as ${r.id}; the agent is building its rule.`);
+        this.add = { title: "", description: "", family: [], listenable: true }; this.openId = r.id;
+        await this.load(); this.openFeed(r.id);
+      } catch (e) { this.say(e.message, true); }
+    },
+    // -- schedule
+    async toggleStation(mount) {
+      const key = "sch:" + mount;
+      this.openId = this.openId === key ? null : key;
+      if (this.openId && !this.options[mount]) this.options[mount] = await api("GET", `/options?station=${encodeURIComponent(mount)}`);
+    },
+    slotsOf(mount) { return this.slots[mount] ||= []; },
+    addSlot(mount) {
+      const o = this.options[mount] || { feeds: [], artists: [] };
+      this.slotsOf(mount).push({ _k: Math.random(), station: mount, name: "", kind: "feed", feed: (o.feeds[0] || {}).id, artist: (o.artists[0] || {}).name,
+                                 like: "artist", dayspec: "daily", customDays: [], start: "20:00", minutes: 60 });
+    },
+    removeSlot(mount, i) { this.slotsOf(mount).splice(i, 1); },
+    todayLine(mount) { const t = this.state.today[mount] || []; return t.length ? t.map(x => `${x.start} ${x.name}`).join(" · ") : "the base all day"; },
+    async saveSchedule() {
+      const out = [];
+      for (const [mount, list] of Object.entries(this.slots)) {
+        for (const s of list) {
+          const slot = { id: s.id, station: mount, name: s.name, kind: s.kind, days: s.dayspec === "custom" ? s.customDays : s.dayspec, start: s.start, minutes: s.minutes };
+          if (s.kind === "feed") slot.feed = s.feed;
+          if (s.kind === "artist") slot.artist = s.artist;
+          if (s.kind === "auto") slot.like = s.like;
+          out.push(slot);
+        }
+      }
+      try { const r = await api("PUT", "/schedule", out); this.scheduleMsg = `saved ${r.count} slot(s)`; await this.load(); }
+      catch (e) { this.say(e.message, true); }
+    },
+    // -- stations
+    toggleStationEdit(st) {
+      const key = "st:" + st.mount;
+      this.openId = this.openId === key ? null : key;
+      if (this.openId) this.edit = { name: st.name, family: [...(st.family || [])], base: JSON.stringify(st.base || {}, null, 1) };
+    },
+    async saveStation(st) {
+      try {
+        const body = { name: this.edit.name };
+        if (st.kind !== "specialty") { body.family = this.edit.family; body.base = JSON.parse(this.edit.base || "{}"); }
+        await api("PUT", `/stations/${st.mount}`, body);
+        this.say("Station saved; apply requested."); this.options = {}; await this.load();
+      } catch (e) { this.say(e.message, true); }
+    },
+    async apply() { try { await api("POST", "/apply"); this.say("Apply requested: rescan, and a Liquidsoap restart if the station list changed."); await this.load(); } catch (e) { this.say(e.message, true); } },
+  },
+  watch: {
+    openId(id) { if (id && this.tab === "feeds" && this.state.feeds[id]) this.openFeed(id); },
+  },
+  mounted() {
+    this.load().catch(e => this.say(e.message, true));
+    setInterval(() => { if (!this.openId) this.load().catch(() => {}); }, 30000);   // don't clobber an open edit
+  },
+}).mount("#app");
