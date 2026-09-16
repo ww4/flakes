@@ -5,6 +5,7 @@
 <title>Library radio — admin</title>
 <link rel="stylesheet" href="../vendor/pico.min.css">
 <link rel="stylesheet" href="../ui.css">
+<script>document.documentElement.classList.add("admin");</script>
 <main class="container" id="app" v-cloak>
   <header>
     <hgroup>
@@ -24,7 +25,7 @@
     <small class="note muted">A feed is a title and a description. Add one and the agent reads the description and builds the rule from what the library holds; edit the rule by hand any time. A listenable feed is a station of its own.</small>
     <article v-for="[id, f] in feedList" :key="id" :class="{open: openId === id}">
       <div class="card-head" @click="openId = openId === id ? null : id">
-        <span class="chev">▶</span>
+        <span class="chev">›</span>
         <div class="grow"><strong>{{ f.title }}</strong>
           <small><span :class="'status-' + f.status">{{ f.status }}</span> · {{ f.count || 0 }} tracks<span v-if="f.listenable"> · listenable</span> · <span class="muted">{{ id }}</span></small></div>
         <span class="tags static"><span v-for="t in (f.family || [])" class="tag">{{ t }}</span></span>
@@ -45,7 +46,7 @@
       </div>
     </article>
     <article :class="{open: openId === '+'}">
-      <div class="card-head" @click="openId = openId === '+' ? null : '+'"><span class="chev">▶</span><div class="grow"><strong>Add a feed</strong></div></div>
+      <div class="card-head" @click="openId = openId === '+' ? null : '+'"><span class="chev">›</span><div class="grow"><strong>Add a feed</strong></div></div>
       <div v-if="openId === '+'" class="details">
         <label>Title <input v-model="add.title" placeholder="Western Swing"></label>
         <label>Description <textarea v-model="add.description" rows="3" placeholder="Describe it the way you'd describe it to a friend — artists, era, instruments, what it isn't."></textarea></label>
@@ -56,55 +57,55 @@
     </article>
   </section>
 
-  <!-- ===== Schedule ===== -->
-  <section v-if="tab === 'schedule'">
-    <small class="note muted">Themed segments and spotlights on the curated stations. A slot plays a feed, an artist (similar artists we own mixed in), or <em>auto</em> — the DJ picks a compatible feed or artist for the day, a different one each time. Only feeds and artists that fit the station are offered. The DJ announces the day's schedule at breaks.</small>
-    <article v-for="st in curated" :key="st.mount" :class="{open: openId === 'sch:' + st.mount}">
-      <div class="card-head" @click="toggleStation(st.mount)">
-        <span class="chev">▶</span>
-        <div class="grow"><strong>{{ st.name }}</strong>
-          <small class="muted">{{ (state.schedule || []).filter(s => s.station === st.mount).length }} slot(s) · today: {{ todayLine(st.mount) }}</small></div>
-        <span class="tags static"><span v-for="t in (st.family || [])" class="tag">{{ t }}</span></span>
+  <!-- ===== Stations (with their schedule) ===== -->
+  <section v-if="tab === 'stations'" class="split">
+    <aside class="selector">
+      <h6>Curated</h6>
+      <a v-for="st in curated" href="#" :class="{active: sel === st.mount}" @click.prevent="select(st)">
+        <strong>{{ st.name }}</strong><small>{{ slotCount(st.mount) }} slot(s)</small></a>
+      <h6>Specialty</h6>
+      <a v-for="st in specialty" href="#" :class="{active: sel === st.mount}" @click.prevent="select(st)">
+        <strong>{{ st.name }}</strong><small>{{ (state.feeds[st.feed] || {}).count || 0 }} tracks</small></a>
+    </aside>
+    <article v-if="selected" class="station-card">
+      <div class="card-head">
+        <div class="grow"><strong>{{ selected.name }}</strong>
+          <small class="muted">{{ selected.kind }} · {{ selected.mount }}<span v-if="selected.feed"> · feed {{ selected.feed }}</span></small></div>
+        <span class="tags static"><span v-for="t in (selected.family || [])" class="tag">{{ t }}</span></span>
       </div>
-      <div v-if="openId === 'sch:' + st.mount" class="details">
-        <div v-for="(s, i) in slotsOf(st.mount)" :key="s._k" class="slot">
-          <label>Name <input v-model="s.name" placeholder="as announced"></label>
-          <label>Kind <select v-model="s.kind"><option value="feed">feed</option><option value="artist">artist spotlight</option><option value="auto">auto (DJ picks)</option></select></label>
-          <label v-if="s.kind === 'feed'">Feed <select v-model="s.feed"><option v-for="f in (options[st.mount] || {feeds: []}).feeds" :value="f.id">{{ f.title }} ({{ f.count }})</option></select></label>
-          <label v-else-if="s.kind === 'artist'">Artist <select v-model="s.artist"><option v-for="a in (options[st.mount] || {artists: []}).artists" :value="a.name">{{ a.name }} ({{ a.tracks }})</option></select></label>
-          <label v-else>Pick <select v-model="s.like"><option value="artist">a different artist each time</option><option value="feed">a different feed each time</option></select></label>
-          <div class="days"><label>Days <select v-model="s.dayspec"><option value="daily">daily</option><option value="weekdays">weekdays</option><option value="weekends">weekends</option><option value="custom">days…</option></select></label>
-            <span v-if="s.dayspec === 'custom'"><label v-for="d in days"><input type="checkbox" :value="d" v-model="s.customDays">{{ d }}</label></span></div>
-          <label>Start <input type="time" v-model="s.start"></label>
-          <label>Minutes <input type="number" min="15" max="720" step="15" v-model.number="s.minutes"></label>
-          <button class="secondary outline" @click="removeSlot(st.mount, i)" title="Remove">✕</button>
+      <div class="details">
+        <div class="grid">
+          <label>Name <input v-model="edit.name"></label>
+          <label v-if="selected.kind !== 'specialty'">Family <small class="muted">— what the schedule may offer it</small>
+            <tag-input v-model="edit.family" :suggestions="state.families"></tag-input></label>
         </div>
+        <template v-if="selected.kind !== 'specialty'">
+          <details><summary>Base rule <small class="muted">— what it plays outside segments</small></summary>
+            <textarea class="code" v-model="edit.base" spellcheck="false"></textarea></details>
+
+          <h6>Schedule</h6>
+          <small class="note muted">A slot plays a feed, an artist (similar artists we own mixed in), or <em>auto</em> — the DJ picks a compatible feed or artist for the day, a different one each time. Only feeds and artists that fit this station are offered; the DJ announces the day's schedule at breaks.</small>
+          <div v-for="(s, i) in slotsOf(selected.mount)" :key="s._k" class="slot">
+            <label>Name <input v-model="s.name" placeholder="as announced"></label>
+            <label>Kind <select v-model="s.kind"><option value="feed">feed</option><option value="artist">artist spotlight</option><option value="auto">auto (DJ picks)</option></select></label>
+            <label v-if="s.kind === 'feed'">Feed <select v-model="s.feed"><option v-for="f in (options[selected.mount] || {feeds: []}).feeds" :value="f.id">{{ f.title }} ({{ f.count }})</option></select></label>
+            <label v-else-if="s.kind === 'artist'">Artist <select v-model="s.artist"><option v-for="a in (options[selected.mount] || {artists: []}).artists" :value="a.name">{{ a.name }} ({{ a.tracks }})</option></select></label>
+            <label v-else>Pick <select v-model="s.like"><option value="artist">a different artist each time</option><option value="feed">a different feed each time</option></select></label>
+            <div class="days"><label>Days <select v-model="s.dayspec"><option value="daily">daily</option><option value="weekdays">weekdays</option><option value="weekends">weekends</option><option value="custom">days…</option></select></label>
+              <span v-if="s.dayspec === 'custom'" class="picks"><label v-for="d in days"><input type="checkbox" :value="d" v-model="s.customDays">{{ d }}</label></span></div>
+            <label>Start <input type="time" v-model="s.start"></label>
+            <label>Minutes <input type="number" min="15" max="720" step="15" v-model.number="s.minutes"></label>
+            <button class="secondary outline" @click="removeSlot(selected.mount, i)" title="Remove">✕</button>
+          </div>
+          <p v-if="!slotsOf(selected.mount).length"><small class="muted">No segments — the base all day.</small></p>
+          <p v-if="(state.today[selected.mount] || []).length"><small><strong>Today:</strong> <span v-for="t in state.today[selected.mount]">{{ t.start }}–{{ t.end }} {{ t.name }}<span v-if="t.kind === 'artist'"> (spotlight)</span> · </span></small></p>
+        </template>
+        <p v-else><small class="muted">A specialty station plays its feed, nothing else. Edit the feed on the Feeds tab.</small></p>
         <div class="actions">
-          <button class="secondary" @click="addSlot(st.mount)">Add slot</button>
-          <button @click="saveSchedule">Save schedule</button>
+          <button class="secondary" v-if="selected.kind !== 'specialty'" @click="addSlot(selected.mount)">Add slot</button>
+          <button @click="saveStation">Save</button>
           <small class="muted">{{ scheduleMsg }}</small>
         </div>
-        <p v-if="(state.today[st.mount] || []).length"><small><strong>Today:</strong> <span v-for="t in state.today[st.mount]">{{ t.start }}–{{ t.end }} {{ t.name }}<span v-if="t.kind === 'artist'"> (spotlight)</span> · </span></small></p>
-      </div>
-    </article>
-  </section>
-
-  <!-- ===== Stations ===== -->
-  <section v-if="tab === 'stations'">
-    <small class="note muted">Curated stations: name, which families they are (what the schedule may offer them), and the base rule they play outside segments. Specialty stations come from the feeds.</small>
-    <article v-for="st in state.stations" :key="st.mount" :class="{open: openId === 'st:' + st.mount}">
-      <div class="card-head" @click="toggleStationEdit(st)">
-        <span class="chev">▶</span>
-        <div class="grow"><strong>{{ st.name }}</strong> <small class="muted">{{ st.kind }} · {{ st.mount }}<span v-if="st.feed"> · feed {{ st.feed }}</span></small></div>
-        <span class="tags static"><span v-for="t in (st.family || [])" class="tag">{{ t }}</span></span>
-      </div>
-      <div v-if="openId === 'st:' + st.mount" class="details">
-        <label>Name <input v-model="edit.name"></label>
-        <template v-if="st.kind !== 'specialty'">
-          <label>Family <tag-input v-model="edit.family" :suggestions="state.families"></tag-input></label>
-          <label>Base rule <textarea class="code" v-model="edit.base" spellcheck="false"></textarea></label>
-        </template>
-        <div class="actions"><button @click="saveStation(st)">Save</button></div>
       </div>
     </article>
   </section>

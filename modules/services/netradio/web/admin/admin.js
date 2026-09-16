@@ -40,11 +40,14 @@ createApp({
     return { state: { feeds: {}, stations: [], schedule: [], artists: {}, families: [], today: {}, pending_requests: [] },
              options: {}, tab: "feeds", openId: null, edit: {}, add: { title: "", description: "", family: [], listenable: true },
              slots: {}, days: DAYS, flash: "", flashErr: false, scheduleMsg: "",
-             tabs: [{ id: "feeds", title: "Feeds" }, { id: "schedule", title: "Schedule" }, { id: "stations", title: "Stations" }] };
+             sel: null,
+             tabs: [{ id: "feeds", title: "Feeds" }, { id: "stations", title: "Stations" }] };
   },
   computed: {
     feedList() { return Object.entries(this.state.feeds).sort((a, b) => a[1].title.localeCompare(b[1].title)); },
     curated() { return this.state.stations.filter(s => s.kind !== "specialty"); },
+    specialty() { return this.state.stations.filter(s => s.kind === "specialty"); },
+    selected() { return this.state.stations.find(s => s.mount === this.sel) || null; },
   },
   methods: {
     say(msg, err) { this.flash = msg; this.flashErr = !!err; clearTimeout(this._t); this._t = setTimeout(() => this.flash = "", 7000); },
@@ -81,21 +84,22 @@ createApp({
         await this.load(); this.openFeed(r.id);
       } catch (e) { this.say(e.message, true); }
     },
-    // -- schedule
-    async toggleStation(mount) {
-      const key = "sch:" + mount;
-      this.openId = this.openId === key ? null : key;
-      if (this.openId && !this.options[mount]) this.options[mount] = await api("GET", `/options?station=${encodeURIComponent(mount)}`);
+    // -- stations (with their schedule)
+    async select(st) {
+      this.sel = st.mount;
+      this.edit = { name: st.name, family: [...(st.family || [])], base: JSON.stringify(st.base || {}, null, 1) };
+      if (st.kind !== "specialty" && !this.options[st.mount])
+        this.options[st.mount] = await api("GET", `/options?station=${encodeURIComponent(st.mount)}`);
     },
     slotsOf(mount) { return this.slots[mount] ||= []; },
+    slotCount(mount) { return this.slotsOf(mount).length; },
     addSlot(mount) {
       const o = this.options[mount] || { feeds: [], artists: [] };
       this.slotsOf(mount).push({ _k: Math.random(), station: mount, name: "", kind: "feed", feed: (o.feeds[0] || {}).id, artist: (o.artists[0] || {}).name,
                                  like: "artist", dayspec: "daily", customDays: [], start: "20:00", minutes: 60 });
     },
     removeSlot(mount, i) { this.slotsOf(mount).splice(i, 1); },
-    todayLine(mount) { const t = this.state.today[mount] || []; return t.length ? t.map(x => `${x.start} ${x.name}`).join(" · ") : "the base all day"; },
-    async saveSchedule() {
+    allSlots() {
       const out = [];
       for (const [mount, list] of Object.entries(this.slots)) {
         for (const s of list) {
@@ -106,21 +110,21 @@ createApp({
           out.push(slot);
         }
       }
-      try { const r = await api("PUT", "/schedule", out); this.scheduleMsg = `saved ${r.count} slot(s)`; await this.load(); }
-      catch (e) { this.say(e.message, true); }
+      return out;
     },
-    // -- stations
-    toggleStationEdit(st) {
-      const key = "st:" + st.mount;
-      this.openId = this.openId === key ? null : key;
-      if (this.openId) this.edit = { name: st.name, family: [...(st.family || [])], base: JSON.stringify(st.base || {}, null, 1) };
-    },
-    async saveStation(st) {
+    async saveStation() {
+      const st = this.selected;
       try {
         const body = { name: this.edit.name };
-        if (st.kind !== "specialty") { body.family = this.edit.family; body.base = JSON.parse(this.edit.base || "{}"); }
+        if (st.kind !== "specialty") {
+          body.family = this.edit.family;
+          body.base = JSON.parse(this.edit.base || "{}");
+          const r = await api("PUT", "/schedule", this.allSlots());
+          this.scheduleMsg = `schedule: ${r.count} slot(s)`;
+        }
         await api("PUT", `/stations/${st.mount}`, body);
-        this.say("Station saved; apply requested."); this.options = {}; await this.load();
+        this.say("Saved; apply requested."); this.options = {};
+        await this.load(); await this.select(this.selected);
       } catch (e) { this.say(e.message, true); }
     },
     async apply() { try { await api("POST", "/apply"); this.say("Apply requested: rescan, and a Liquidsoap restart if the station list changed."); await this.load(); } catch (e) { this.say(e.message, true); } },
@@ -129,7 +133,7 @@ createApp({
     openId(id) { if (id && this.tab === "feeds" && this.state.feeds[id]) this.openFeed(id); },
   },
   mounted() {
-    this.load().catch(e => this.say(e.message, true));
-    setInterval(() => { if (!this.openId) this.load().catch(() => {}); }, 30000);   // don't clobber an open edit
+    this.load().then(() => { if (this.curated.length) this.select(this.curated[0]); }).catch(e => this.say(e.message, true));
+    setInterval(() => { if (!this.openId && this.tab === "feeds") this.load().catch(() => {}); }, 30000);   // don't clobber an open edit
   },
 }).mount("#app");
