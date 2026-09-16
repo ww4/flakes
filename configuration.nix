@@ -56,6 +56,7 @@ let hm = homelab-modules.nixosModules; in
     hm.nginx-log-paths-check                # eval-time guard: an nginx log outside its writable set = every vhost down
     ./modules/services/blocky.nix           # local split-horizon DNS: rosemaryacres.com -> LAN IP so hostnames resolve with the WAN down
     hm.jellyfin
+    ./modules/services/netradio             # Yamaha Net Radio: vTuner stand-in (YCast) + library stations (Icecast/Liquidsoap, on demand)
     hm.audiobookshelf
     hm.tandoor
     hm.pinchflat                            # mediaDir in homelab-values
