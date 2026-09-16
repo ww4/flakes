@@ -77,3 +77,16 @@ textarea.code { font-family: ui-monospace, monospace; font-size: .78rem; min-hei
 .actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 .actions button { width: auto; margin: 0; }
 small.note { display: block; margin: -.4rem 0 .8rem; }
+/* stations: a selector on the left, the station's card on the right */
+.split { display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 1rem; align-items: start; }
+.selector { position: sticky; top: .5rem; }
+.selector h6 { margin: .6rem 0 .25rem; }
+.selector a { display: block; padding: .3rem .55rem; border-radius: var(--pico-border-radius); text-decoration: none; color: inherit; line-height: 1.2; }
+.selector a small { display: block; color: var(--pico-muted-color); font-size: .72rem; }
+.selector a:hover { background: var(--pico-secondary-background); color: var(--pico-secondary-inverse); }
+.selector a:hover small { color: inherit; opacity: .85; }
+.selector a.active { background: var(--pico-primary-background); color: var(--pico-primary-inverse); }
+.selector a.active small { color: inherit; opacity: .85; }
+.station-card .card-head { cursor: default; }
+.station-card .grid { grid-template-columns: 1fr 1fr; }
+@media (max-width: 760px) { .split { grid-template-columns: 1fr; } .selector { position: static; } }
