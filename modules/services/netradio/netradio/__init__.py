@@ -8,5 +8,7 @@ Two commands, one package:
   dj          sequence each station's tracks and, every few of them, say what
               just played and what is next (Kokoro)
   profile     listen to each track once: is it talk (kept off the stations),
-              does it start or end in chatter (no crossfade over it)
+              does it start or end in chatter (no crossfade over it), what
+              era does it sound like
+  profile-server  the same listening as an HTTP service, for the fast box
 """
