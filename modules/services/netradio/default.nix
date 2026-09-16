@@ -38,7 +38,7 @@
 #   sudo cat /var/lib/netradio/credentials.env      Icecast passwords (generated)
 #   systemctl start netradio-playlists              rescan the library now
 #   systemctl start netradio-profile                profile new tracks now (first run: hours)
-#   /var/lib/netradio/profile-report.txt            what the profiler flagged; fix in profile-overrides.json
+#   /var/lib/netradio/profile/profile-report.txt    what the profiler flagged; fix in profile-overrides.json beside it
 #   journalctl -u netradio-wake                     which station started/stopped
 #   http://127.0.0.1:8020/status.xsl                what Icecast is serving
 { config, lib, pkgs, ... }:
@@ -67,9 +67,13 @@ let
   cacheDir = "${stateDir}/cache";
   tagCache = "${cacheDir}/tags.json";
   djDir = "${stateDir}/dj";
-  profileJson = "${stateDir}/profile.json";
-  profileOverrides = "${stateDir}/profile-overrides.json";   # {path: "talk"|"music"}, hand-edited
-  profileReport = "${stateDir}/profile-report.txt";
+  # Its own subdir, like playlists/ and dj/: ${stateDir} itself is root-owned
+  # (it holds credentials.env), so the netradio user cannot create the
+  # profile.json.tmp the atomic save needs there (2026-09-16 first-run failure).
+  profileDir = "${stateDir}/profile";
+  profileJson = "${profileDir}/profile.json";
+  profileOverrides = "${profileDir}/profile-overrides.json";   # {path: "talk"|"music"}, hand-edited
+  profileReport = "${profileDir}/profile-report.txt";
 
   # YAMNet (Google's AudioSet classifier, 521 classes) as ONNX — a tf2onnx
   # conversion mirrored on Hugging Face, pinned to a commit. ~16 MB, fetched
@@ -376,6 +380,7 @@ in
       install -d -m 0755 -o ${user} -g ${user} ${playlistDir}
       install -d -m 0700 -o ${user} -g ${user} ${cacheDir}
       install -d -m 0755 -o ${user} -g ${user} ${djDir}
+      install -d -m 0755 -o ${user} -g ${user} ${profileDir}
       # Liquidsoap watches each playlist FILE (inotify): one that appears
       # after it started is never picked up, but an empty one that is later
       # rewritten is (verified 2026-09-15). So every station's file exists
