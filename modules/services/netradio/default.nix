@@ -634,7 +634,10 @@ in
       CPUWeight = 20;
       ExecStart = lib.concatStringsSep " " ([
         "${netradio}/bin/netradio profile"
-        "--playlist ${playlistDir}/all.m3u"
+        # library.m3u is every audio file the scanner found, unfiltered. Never
+        # a station playlist: those exclude what the profiler flagged, and a
+        # profiler fed one drops those tracks' facts as "gone" (11:44 today).
+        "--playlist ${playlistDir}/library.m3u"
         "--model ${yamnet}"
         "--profile ${profileJson}"
         "--overrides ${profileOverrides}"

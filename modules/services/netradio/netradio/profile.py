@@ -427,6 +427,9 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(message)s", stream=sys.stdout)
 
+    if not args.playlist.exists():
+        log.warning("%s does not exist yet (the scanner writes it) — nothing to profile", args.playlist)
+        return 0
     tracks = [l.rstrip("\n") for l in args.playlist.read_text().splitlines() if l.strip() and not l.startswith("#")]
     profile = Profile(args.profile)
     todo: list[tuple[str, os.stat_result]] = []

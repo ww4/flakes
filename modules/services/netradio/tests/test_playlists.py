@@ -109,10 +109,18 @@ class Scan(unittest.TestCase):
     def test_playlists_written_atomically_with_header(self):
         out = Path(self.tmp.name) / "out"
         self.stations[0].paths = ["/m/a.mp3", "/m/b.mp3"]
-        pl.write_playlists(self.stations, out)
+        pl.write_playlists(self.stations, out, ["/m/a.mp3", "/m/b.mp3", "/m/talk.mp3"])
         self.assertEqual((out / "all.m3u").read_text(), "#EXTM3U\n/m/a.mp3\n/m/b.mp3\n")
         self.assertEqual((out / "gospel.m3u").read_text(), "#EXTM3U\n")
+        self.assertEqual((out / "library.m3u").read_text(), "#EXTM3U\n/m/a.mp3\n/m/b.mp3\n/m/talk.mp3\n")
         self.assertEqual([p.name for p in out.iterdir() if p.name.startswith(".")], [])
+
+    def test_library_list_is_unfiltered(self):
+        cache = pl.TagCache(Path(self.tmp.name) / "cache.json")
+        with mock.patch.object(pl, "read_genre", side_effect=self.fake_genre):
+            counts = pl.scan([self.root], self.stations, cache, talk={str(self.root / "A/1.mp3")})
+        names = sorted(Path(p).name for p in counts["library"])
+        self.assertEqual(names, ["1.mp3", "2.mp3", "3.m4a", "4.mp3", "5.mp3"])   # talk and excluded included
 
     def test_load_stations_from_module_json(self):
         p = Path(self.tmp.name) / "stations.json"

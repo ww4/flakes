@@ -149,6 +149,7 @@ def scan(roots: list[Path], stations: list[Station], cache: TagCache,
     counts = {"files": 0, "untagged": 0, "excluded": 0, "talk": 0, "unreadable_dirs": 0}
     talk = talk or set()
     eras = eras or {}
+    library: list[str] = []   # every audio file seen, before any filter — the profiler's input
     for root in roots:
         if not root.is_dir():
             log.warning("library root missing or unreadable: %s", root)
@@ -165,6 +166,7 @@ def scan(roots: list[Path], stations: list[Station], cache: TagCache,
                 except OSError:
                     continue
                 counts["files"] += 1
+                library.append(str(p))
                 genres = split_genre(cache.genre(p, st))
                 if not genres:
                     counts["untagged"] += 1
@@ -180,6 +182,7 @@ def scan(roots: list[Path], stations: list[Station], cache: TagCache,
                         continue
                     if s.words is None or any(word_in(w, genres) for w in s.words):
                         s.paths.append(str(p))
+    counts["library"] = library
     return counts
 
 
@@ -190,10 +193,15 @@ def _walk_error(err: OSError, counts: dict) -> None:
     log.info("skipping unreadable directory: %s", err.filename)
 
 
-def write_playlists(stations: list[Station], out_dir: Path) -> None:
+def write_playlists(stations: list[Station], out_dir: Path, library: list[str] | None = None) -> None:
     for s in stations:
         body = "#EXTM3U\n" + "".join(p + "\n" for p in s.paths)
         write_atomic(out_dir / f"{s.mount}.m3u", body)
+    if library is not None:
+        # The profiler's list of the library. NOT a station playlist: those
+        # are filtered by the profiler's own verdicts, and a profiler reading
+        # one dropped every talk track's facts as "gone" (2026-09-16 11:44).
+        write_atomic(out_dir / "library.m3u", "#EXTM3U\n" + "".join(p + "\n" for p in library))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -221,7 +229,7 @@ def main(argv: list[str] | None = None) -> int:
         eras = {p: v.era for p, v in verdicts.items() if v.era}
     counts = scan(args.root, stations, cache, talk, eras)
     cache.save()
-    write_playlists(stations, args.out)
+    write_playlists(stations, args.out, counts.pop("library"))
 
     for s in stations:
         log.info("%-12s %6d tracks  (%s)", s.mount, len(s.paths), s.name)
