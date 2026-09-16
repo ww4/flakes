@@ -40,7 +40,10 @@ class Station:
     # None = everything not excluded (the `all` station)
     words: list[str] | None = None
     # None = any era; else the profiler's era buckets this station plays.
-    # A track not yet profiled for era plays everywhere.
+    # A track not yet profiled for era stays on a GENRE station that also
+    # filters by era (the station keeps its music before the first pass) but
+    # off a station DEFINED by era (words None): that one fills as the
+    # profile does, rather than being "Everything" for a day.
     eras: list[str] | None = None
     paths: list[str] = field(default_factory=list)
 
@@ -173,7 +176,7 @@ def scan(roots: list[Path], stations: list[Station], cache: TagCache,
                     continue
                 era = eras.get(str(p), "")
                 for s in stations:
-                    if s.eras and era and era not in s.eras:
+                    if s.eras and (era not in s.eras if era else s.words is None):
                         continue
                     if s.words is None or any(word_in(w, genres) for w in s.words):
                         s.paths.append(str(p))

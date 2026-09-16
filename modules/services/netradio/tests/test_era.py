@@ -78,8 +78,8 @@ class ScannerEraFilter(unittest.TestCase):
                 pl.scan([root], stations, pl.TagCache(Path(d) / "c.json"), eras=eras)
             by = {s.mount: sorted(Path(x).name for x in s.paths) for s in stations}
             self.assertEqual(by["all"], ["new.mp3", "old.mp3", "unknown.mp3"])
-            self.assertEqual(by["scratchy"], ["old.mp3", "unknown.mp3"])       # unmeasured plays everywhere
-            self.assertEqual(by["country"], ["new.mp3", "unknown.mp3"])
+            self.assertEqual(by["scratchy"], ["old.mp3"])                      # an era-defined station waits for the measurement
+            self.assertEqual(by["country"], ["new.mp3", "unknown.mp3"])        # a genre station keeps unmeasured tracks
 
     def test_load_stations_reads_era(self):
         with tempfile.TemporaryDirectory() as d:

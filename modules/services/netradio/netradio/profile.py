@@ -127,10 +127,10 @@ def decode(path: str, start: float | None = None, dur: float | None = None):
 
 
 class Yamnet:
-    def __init__(self, model: Path):
+    def __init__(self, model: Path, threads: int = 1):
         import onnxruntime as ort
         opts = ort.SessionOptions()
-        opts.intra_op_num_threads = 2   # a nightly job, not a race
+        opts.intra_op_num_threads = threads   # one core per worker process; parallelism is across tracks
         self.session = ort.InferenceSession(str(model), opts, providers=["CPUExecutionProvider"])
 
     def scores(self, x):
@@ -340,6 +340,28 @@ def write_report(profile: Profile, report: Path, overrides: dict[str, str]) -> N
     report.write_text("\n".join(lines) + "\n")
 
 
+# --- the worker pool -----------------------------------------------------------
+# One process per core, each with its own model session (the session is not
+# shareable across processes). Tracks are independent, so this is a plain
+# map; the parent owns profile.json and saves as results come in.
+
+_worker_model: Yamnet | None = None
+
+
+def _worker_init(model_path: str) -> None:
+    global _worker_model
+    _worker_model = Yamnet(Path(model_path), threads=1)
+
+
+def _worker_analyse(track: str) -> tuple[str, dict | None, str]:
+    """(track, facts-as-dict or None, error-or-title)."""
+    try:
+        f = analyse(track, _worker_model)
+        return track, asdict(f), read_title(track)
+    except Exception as e:  # reported by the parent, the pool keeps going
+        return track, None, f"{type(e).__name__}: {e}"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--playlist", required=True, type=Path, help="the m3u naming every track (all.m3u)")
@@ -348,6 +370,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--overrides", type=Path, help="profile-overrides.json")
     ap.add_argument("--report", type=Path, help="human-readable list of what was flagged")
     ap.add_argument("--limit", type=int, default=0, help="stop after N new tracks (0 = all)")
+    ap.add_argument("--workers", type=int, default=0, help="worker processes (0 = one per core)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -355,10 +378,9 @@ def main(argv: list[str] | None = None) -> int:
 
     tracks = [l.rstrip("\n") for l in args.playlist.read_text().splitlines() if l.strip() and not l.startswith("#")]
     profile = Profile(args.profile)
-    model = None
-    done = skipped = failed = 0
-    t0 = time.monotonic()
-    for i, track in enumerate(tracks):
+    todo: list[tuple[str, os.stat_result]] = []
+    skipped = 0
+    for track in tracks:
         try:
             st = os.stat(track)
         except OSError:
@@ -366,27 +388,36 @@ def main(argv: list[str] | None = None) -> int:
         if profile.current(track, st):
             skipped += 1
             continue
-        if args.limit and done >= args.limit:
+        todo.append((track, st))
+        if args.limit and len(todo) >= args.limit:
             break
-        if model is None:
-            model = Yamnet(args.model)
-        try:
-            f = analyse(track, model)
-        except Exception as e:
-            failed += 1
-            log.warning("could not analyse %s: %s", track, e)
-            continue
-        title = read_title(track)
-        profile.data[track] = {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "v": PROFILE_VERSION,
-                               "title": title, **asdict(f)}
-        v = evaluate(track, profile.data[track], title)
-        done += 1
-        if v.talk:
-            log.info("talk: %r %.0fs (%s) %s", title, f.duration, v.reason, track)
-        if done % 200 == 0:
-            profile.save()
-            log.info("%d analysed, %d cached, %d failed, %.1f s/track", done, skipped, failed,
-                     (time.monotonic() - t0) / done)
+    stats = {t: st for t, st in todo}
+    workers = args.workers or (os.cpu_count() or 1)
+    log.info("%d tracks to analyse (%d cached), %d workers", len(todo), skipped, workers)
+
+    done = failed = 0
+    t0 = time.monotonic()
+    if todo:
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")   # a fresh interpreter per worker: no forked ONNX state
+        with ctx.Pool(workers, initializer=_worker_init, initargs=(str(args.model),)) as pool:
+            for track, facts, extra in pool.imap_unordered(_worker_analyse, [t for t, _ in todo], chunksize=4):
+                if facts is None:
+                    failed += 1
+                    log.warning("could not analyse %s: %s", track, extra)
+                    continue
+                st = stats[track]
+                title = extra
+                profile.data[track] = {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "v": PROFILE_VERSION,
+                                       "title": title, **facts}
+                v = evaluate(track, profile.data[track], title)
+                done += 1
+                if v.talk:
+                    log.info("talk: %r %.0fs (%s) %s", title, facts["duration"], v.reason, track)
+                if done % 200 == 0:
+                    profile.save()
+                    log.info("%d analysed, %d cached, %d failed, %.2f s/track wall", done, skipped, failed,
+                             (time.monotonic() - t0) / done)
     # drop entries for files that no longer exist in the playlist
     present = set(tracks)
     for p in [p for p in profile.data if p not in present]:
