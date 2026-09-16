@@ -17,7 +17,7 @@
   <article v-if="current" class="player">
     <canvas ref="viz" width="900" height="120"></canvas>
     <div class="row">
-      <button class="round" @click="stop" title="Stop">■</button>
+      <button class="round" @click="stop" title="Stop"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg></button>
       <div class="what">
         <strong>{{ currentStation.name }}</strong> <small class="muted">{{ status }}</small>
         <div class="title">{{ nowTitle || "—" }}</div>
@@ -41,7 +41,7 @@
     <h5>{{ group.title }}</h5>
     <article v-for="s in group.stations" :key="s.mount" class="station" :class="{open: open === s.mount, playing: current === s.mount}">
       <header @click="toggle(s.mount)">
-        <button class="round" @click.stop="current === s.mount ? stop() : play(s.mount)" :title="current === s.mount ? 'Stop' : 'Play'">{{ current === s.mount ? "■" : "▶" }}</button>
+        <button class="round" @click.stop="current === s.mount ? stop() : play(s.mount)" :title="current === s.mount ? 'Stop' : 'Play'"><template v-if="current === s.mount"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg></template><template v-else><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg></template></button>
         <div class="name">
           <strong>{{ s.name }}</strong>
           <small class="muted">{{ countOf(s.mount) }}<span v-if="isUp(s.mount)"> · <span class="live">on air</span></span><span v-if="listenersOf(s.mount)"> · {{ listenersOf(s.mount) }} listening</span></small>

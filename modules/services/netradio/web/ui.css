@@ -1,6 +1,26 @@
-/* On top of Pico: the radio's cards, player, tags, tabs. */
+/* On top of Pico: the radio's cards, player, tags, tabs.
+   Compact and desktop-first: Pico grows its base font with the viewport
+   (up to 118% on wide screens) and pads everything for touch; this is
+   managed from a desktop, so pin the size and tighten the spacing. */
+:root {
+  --pico-font-size: 87.5%;
+  --pico-line-height: 1.4;
+  --pico-spacing: .6rem;
+  --pico-typography-spacing-vertical: .6rem;
+  --pico-block-spacing-vertical: .6rem;
+  --pico-block-spacing-horizontal: .9rem;
+  --pico-form-element-spacing-vertical: .3rem;
+  --pico-form-element-spacing-horizontal: .55rem;
+  --pico-border-radius: .35rem;
+}
+h1 { font-size: 1.6rem; margin-bottom: .1rem; }
+hgroup > :last-child { margin-bottom: .4rem; }
+label { font-size: .85rem; }
+input, select, textarea { font-size: .9rem; }
+button { font-size: .85rem; padding: .3rem .8rem; width: auto; }
 [v-cloak] { display: none; }
 .container { max-width: 46rem; }
+html.admin .container { max-width: 72rem; }
 .muted { color: var(--pico-muted-color); }
 .live { color: var(--pico-primary); }
 .links { margin-top: -.5rem; }
@@ -9,42 +29,50 @@ h6 { text-transform: uppercase; letter-spacing: .06em; font-size: .75rem; color:
 ol { margin: 0; padding-left: 1.2rem; font-size: .9rem; }
 ol li { margin: .1rem 0; }
 li.break, .dj { color: var(--pico-primary); }
-article { padding: .8rem 1rem; margin-bottom: .6rem; }
+article { padding: .55rem .85rem; margin-bottom: .45rem; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
 article header { margin: 0; padding: 0; background: none; border: none; display: flex; align-items: center; gap: .8rem; cursor: pointer; }
-article .details { margin-top: .8rem; padding-top: .6rem; border-top: 1px solid var(--pico-muted-border-color); }
-button.round { width: 2.5rem; height: 2.5rem; padding: 0; border-radius: 50%; margin: 0; flex: none; font-size: 1rem; line-height: 1; }
+article .details { margin-top: .6rem; padding-top: .5rem; border-top: 1px solid var(--pico-muted-border-color); }
+button.round { width: 2rem; height: 2rem; padding: 0; border-radius: 50%; margin: 0; flex: none; display: inline-flex; align-items: center; justify-content: center; }
+button.round svg { width: .8rem; height: .8rem; fill: currentColor; }
 .station .name { flex: 1; min-width: 0; }
 .station .name strong { display: block; }
 .station .now { max-width: 40%; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .station.playing { border: 1px solid var(--pico-primary); }
 .player canvas { width: 100%; height: 72px; display: block; border-radius: 8px; margin-bottom: .6rem; }
 .player .row { display: flex; align-items: center; gap: .8rem; margin-bottom: .6rem; }
-.player .what { flex: 1; min-width: 0; }
+.player .what { flex: 1 1 auto; min-width: 0; overflow: hidden; }
 .player .title { font-size: 1.05rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.player .quality { margin: 0; display: flex; flex-direction: column; gap: .1rem; font-size: .8rem; flex: none; }
-.player .quality label { margin: 0; }
+/* Pico makes a fieldset 100% wide; as a flex item that crushed the name
+   column to one letter per line (2026-09-16). Size it to its content. */
+.player .quality { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: .1rem; font-size: .8rem; flex: 0 0 auto; width: auto; max-width: 5rem; }
+.player .quality label { margin: 0; white-space: nowrap; }
+.player .quality input { margin-right: .3rem; }
 /* admin */
 nav.tabs ul { display: flex; gap: .2rem; margin: 0 0 1rem; padding: 0; }
 nav.tabs li { list-style: none; }
-nav.tabs a { padding: .4rem .9rem; border-radius: 8px 8px 0 0; border-bottom: 2px solid transparent; text-decoration: none; }
+nav.tabs a { padding: .3rem .8rem; border-radius: 6px 6px 0 0; border-bottom: 2px solid transparent; text-decoration: none; }
 nav.tabs a.active { border-bottom-color: var(--pico-primary); font-weight: 600; }
 .card-head { display: flex; align-items: center; gap: .8rem; }
 .card-head .grow { flex: 1; min-width: 0; }
 .card-head .grow strong { display: block; }
-.chev { transition: transform .15s; opacity: .6; }
+.chev { transition: transform .15s; opacity: .6; font-size: 1.4rem; line-height: 1; width: 1rem; text-align: center; }
 article.open .chev { transform: rotate(90deg); }
 .tags { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; border: 1px solid var(--pico-form-element-border-color); border-radius: var(--pico-border-radius); padding: .25rem .4rem; background: var(--pico-form-element-background-color); margin-bottom: var(--pico-spacing); }
-.tags .tag { background: var(--pico-primary-background); color: var(--pico-primary-inverse); border-radius: 999px; padding: .05rem .55rem; font-size: .8rem; }
+.tags .tag { background: var(--pico-primary-background); color: var(--pico-primary-inverse); border-radius: 999px; padding: 0 .5rem; font-size: .75rem; line-height: 1.5; }
 .tags .tag button { all: unset; cursor: pointer; margin-left: .35rem; opacity: .8; }
-.tags input { border: none; background: none; box-shadow: none; margin: 0; padding: .15rem .3rem; min-width: 8rem; flex: 1; height: auto; }
+.tags input { border: none; background: none; box-shadow: none; margin: 0; padding: .1rem .3rem; min-width: 8rem; flex: 1; height: auto; font-size: .85rem; }
 .tags.static { border: none; background: none; padding: 0; margin: 0; }
 .status-ready { color: #2a8a4a; } .status-pending { color: #b58a2a; } .status-failed { color: #b53a2a; }
-.slot { display: grid; grid-template-columns: 1.3fr 1fr 1.6fr 1.5fr .9fr .7fr auto; gap: .4rem; align-items: end; padding: .4rem 0; border-top: 1px dashed var(--pico-muted-border-color); }
-.slot label, .slot select, .slot input { margin: 0; font-size: .85rem; }
-.slot .days label { display: inline; margin-right: .3rem; font-size: .75rem; }
-.slot .days input { display: inline; width: auto; }
-@media (max-width: 760px) { .slot { grid-template-columns: 1fr 1fr; } }
-textarea.code { font-family: ui-monospace, monospace; font-size: .8rem; min-height: 7rem; }
+.slot { display: grid; grid-template-columns: minmax(9rem, 1.2fr) minmax(8rem, .9fr) minmax(12rem, 1.6fr) minmax(11rem, 1.4fr) 9rem 5rem 2.2rem;
+        gap: .5rem; align-items: end; padding: .45rem 0; border-top: 1px dashed var(--pico-muted-border-color); }
+.slot label { margin: 0; font-size: .75rem; color: var(--pico-muted-color); display: block; }
+.slot select, .slot input:not([type=checkbox]) { margin: 0; width: 100%; min-width: 0; }
+.slot .days .picks { display: flex; flex-wrap: wrap; gap: .1rem .4rem; margin-top: .2rem; }
+.slot .days .picks label { display: inline-flex; align-items: center; gap: .15rem; font-size: .72rem; margin: 0; }
+.slot .days .picks input { width: .9rem; height: .9rem; margin: 0; flex: none; }
+.slot button { padding: .25rem .5rem; margin: 0; }
+@media (max-width: 900px) { .slot { grid-template-columns: 1fr 1fr 1fr; } }
+textarea.code { font-family: ui-monospace, monospace; font-size: .78rem; min-height: 6rem; }
 .flash { position: sticky; top: .5rem; z-index: 5; }
 .actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 .actions button { width: auto; margin: 0; }
