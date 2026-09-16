@@ -211,6 +211,13 @@ class Switchboard:
                 await call.play(self.prompt("didnt-catch" if empty == 1 else "still-here"))
                 continue
             empty = 0
+            # A recipe conversation in progress owns "number three", "steps",
+            # "three, ingredients" etc. — the generic router doesn't know them
+            # (2026-09-15: "Number three." went to the agent confirm instead).
+            rs = self.recipe_state.get(call.id)
+            if rs and (rs["hits"] or rs["recipe"]) and intent not in ("goodbye", "help", "recipe") \
+                    and recipes.parse(text) is not None and not (intent == "news:next" and rs.get("mode") != "steps"):
+                intent = "recipe"
             if intent is not None and intent.startswith("standing:"):
                 q = next(q for q in intents.standing_questions() if q.name == intent.split(":", 1)[1])
                 stored = standing.load(self.s, q.name)
@@ -273,25 +280,34 @@ class Switchboard:
             return intents.Reply(text="Say do I have a recipe for, and a dish. Then ingredients or steps.")
         kind, arg = parsed
         try:
-            if kind == "search":
-                hits = await recipes.search(self.s, arg)
+            if kind in ("search", "search-ingredient"):
+                all_hits = await recipes.search(self.s, arg, limit=50, by_ingredient=(kind == "search-ingredient"))
+                hits = all_hits[:5]
                 st.update(hits=hits, recipe=None, step=-1, mode="search")
                 if len(hits) == 1:
                     st["recipe"] = await recipes.get(self.s, hits[0].id)
-                return intents.Reply(text=recipes.hits_text(hits, arg))
-            if kind == "pick":
-                n = int(arg)
+                return intents.Reply(text=recipes.hits_text(hits, arg, total=len(all_hits)))
+            if kind in ("pick", "pick-then"):
+                n_s, _, then = arg.partition(":")
+                n = int(n_s)
                 if not st["hits"] or n < 1 or n > len(st["hits"]):
                     return intents.Reply(text="Search for a recipe first, then pick a number.")
                 st["recipe"] = await recipes.get(self.s, st["hits"][n - 1].id)
                 st["step"] = -1
-                return intents.Reply(text=f"{st['recipe'].name}. Say ingredients or steps.")
-            # ingredients / steps: with a name, search for it first; else the current recipe
+                if not then:
+                    return intents.Reply(text=f"{st['recipe'].name}. Say ingredients or steps.")
+                kind, arg = then, ""      # fall through to ingredients / steps
+            # ingredients / steps with a name: the current hits first (whisper
+            # mangles names — "Killy" for chili), then a fresh search.
             if arg:
-                hits = await recipes.search(self.s, arg)
-                if not hits:
-                    return intents.Reply(text=recipes.hits_text(hits, arg))
-                st.update(hits=hits, recipe=await recipes.get(self.s, hits[0].id), step=-1)
+                pick = recipes.closest(st["hits"], arg)
+                if pick is not None:
+                    st.update(recipe=await recipes.get(self.s, pick.id), step=-1)
+                else:
+                    hits = await recipes.search(self.s, arg)
+                    if not hits:
+                        return intents.Reply(text=recipes.hits_text(hits, arg))
+                    st.update(hits=hits, recipe=await recipes.get(self.s, hits[0].id), step=-1)
             r = st["recipe"]
             if r is None:
                 return intents.Reply(text="Which recipe? Say do I have a recipe for, and a dish.")

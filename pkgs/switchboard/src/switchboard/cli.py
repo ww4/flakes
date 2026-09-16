@@ -30,7 +30,7 @@ from pathlib import Path
 
 import httpx
 
-from . import agent, agi, audio, escalation, intents, newsdesk, outbound, standing
+from . import agent, agi, audio, escalation, intents, newsdesk, outbound, recipes, standing
 from .config import Settings
 
 
@@ -121,6 +121,13 @@ async def _main(argv: list[str]) -> int:
             ed = newsdesk.load(settings)
             if ed is not None:
                 phrases.extend(it.spoken_detail for it in ed.items)
+            # The recipe index (names/keywords/foods): refreshed here when its
+            # hour is up, so a call never pays the ~250 GETs.
+            if settings.tandoor_token:
+                try:
+                    await recipes.index(settings, allow_stale=False)
+                except Exception as exc:  # noqa: BLE001 — never let the recipe book block the pre-warm
+                    print(f"recipes index: {exc}", file=sys.stderr)
         rendered = 0
         for i, phrase in enumerate(phrases):
             before = sum(1 for _ in settings.cache_dir.rglob("*.sln16"))
