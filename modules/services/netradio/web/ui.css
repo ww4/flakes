@@ -89,4 +89,5 @@ small.note { display: block; margin: -.4rem 0 .8rem; }
 .selector a.active small { color: inherit; opacity: .85; }
 .station-card .card-head { cursor: default; }
 .station-card .grid { grid-template-columns: 1fr 1fr; }
+.station-card .grid.three { grid-template-columns: 1.2fr 1.4fr .9fr; }
 @media (max-width: 760px) { .split { grid-template-columns: 1fr; } .selector { position: static; } }

@@ -91,7 +91,7 @@ class Admin:
         fid = new_id(title, set(feeds))
         feeds[fid] = {"title": title, "description": str(body.get("description") or "").strip(),
                       "family": body.get("family") or [], "status": "pending", "rule": None, "count": 0,
-                      "note": "waiting for the compile step"}
+                      "shellac": bool(body.get("shellac", False)), "note": "waiting for the compile step"}
         self.cfg.save_feeds(feeds)
         self.cfg.request("compile", {"feed": fid})
         if body.get("listenable", True):
@@ -114,6 +114,8 @@ class Admin:
             if any(x not in FAMILIES for x in fam):
                 raise ValueError(f"family must be from {FAMILIES}")
             f["family"] = fam
+        if "shellac" in body:
+            f["shellac"] = bool(body["shellac"])
         if "rule" in body and body["rule"] is not None:
             errs = feedrules.validate(body["rule"])
             if errs:
@@ -179,6 +181,18 @@ class Admin:
             if any(x not in FAMILIES for x in fam):
                 raise ValueError(f"family must be from {FAMILIES}")
             st["family"] = fam
+        if "breaks_every" in body:
+            v = body["breaks_every"]
+            if isinstance(v, str) and re.match(r"^\d+-\d+$", v):
+                st["breaks_every"] = v
+            else:
+                try:
+                    n = int(v)
+                except (TypeError, ValueError):
+                    raise ValueError("breaks_every must be a whole number (0 = never) or a range like 3-4")
+                if n < 0 or n > 50:
+                    raise ValueError("breaks_every must be 0..50")
+                st["breaks_every"] = n
         if "base" in body and st.get("kind") != "specialty":
             errs = feedrules.validate(body["base"] or {})
             if errs:

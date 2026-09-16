@@ -38,7 +38,7 @@ createApp({
   components: { "tag-input": TagInput },
   data() {
     return { state: { feeds: {}, stations: [], schedule: [], artists: {}, families: [], today: {}, pending_requests: [] },
-             options: {}, tab: "feeds", openId: null, edit: {}, add: { title: "", description: "", family: [], listenable: true },
+             options: {}, tab: "feeds", openId: null, edit: {}, add: { title: "", description: "", family: [], listenable: true, shellac: false },
              slots: {}, days: DAYS, flash: "", flashErr: false, scheduleMsg: "",
              sel: null,
              tabs: [{ id: "feeds", title: "Feeds" }, { id: "stations", title: "Stations" }] };
@@ -61,10 +61,10 @@ createApp({
       }
     },
     // -- feeds
-    openFeed(id) { const f = this.state.feeds[id]; this.edit = { title: f.title, description: f.description, family: [...(f.family || [])], listenable: !!f.listenable, rule: JSON.stringify(f.rule || {}, null, 1), _rule0: JSON.stringify(f.rule || {}, null, 1) }; },
+    openFeed(id) { const f = this.state.feeds[id]; this.edit = { title: f.title, description: f.description, family: [...(f.family || [])], listenable: !!f.listenable, shellac: !!f.shellac, rule: JSON.stringify(f.rule || {}, null, 1), _rule0: JSON.stringify(f.rule || {}, null, 1) }; },
     async saveFeed(id) {
       try {
-        const body = { title: this.edit.title, description: this.edit.description, family: this.edit.family, listenable: this.edit.listenable };
+        const body = { title: this.edit.title, description: this.edit.description, family: this.edit.family, listenable: this.edit.listenable, shellac: this.edit.shellac };
         if (this.edit.rule.trim() !== this.edit._rule0.trim()) body.rule = JSON.parse(this.edit.rule);
         const r = await api("PUT", `/feeds/${id}`, body);
         this.say(r.recompile ? "Saved — the description changed, so the rule will be rebuilt." : "Saved; apply requested.");
@@ -80,14 +80,15 @@ createApp({
       try {
         const r = await api("POST", "/feeds", this.add);
         this.say(`Feed added as ${r.id}; the agent is building its rule.`);
-        this.add = { title: "", description: "", family: [], listenable: true }; this.openId = r.id;
+        this.add = { title: "", description: "", family: [], listenable: true, shellac: false }; this.openId = r.id;
         await this.load(); this.openFeed(r.id);
       } catch (e) { this.say(e.message, true); }
     },
     // -- stations (with their schedule)
     async select(st) {
       this.sel = st.mount;
-      this.edit = { name: st.name, family: [...(st.family || [])], base: JSON.stringify(st.base || {}, null, 1) };
+      this.edit = { name: st.name, family: [...(st.family || [])], base: JSON.stringify(st.base || {}, null, 1),
+                    breaks_every: st.breaks_every === undefined || st.breaks_every === null ? "" : String(st.breaks_every) };
       if (st.kind !== "specialty" && !this.options[st.mount])
         this.options[st.mount] = await api("GET", `/options?station=${encodeURIComponent(st.mount)}`);
     },
@@ -116,6 +117,7 @@ createApp({
       const st = this.selected;
       try {
         const body = { name: this.edit.name };
+        if (this.edit.breaks_every !== "") body.breaks_every = /^\d+-\d+$/.test(this.edit.breaks_every) ? this.edit.breaks_every : Number(this.edit.breaks_every);
         if (st.kind !== "specialty") {
           body.family = this.edit.family;
           body.base = JSON.parse(this.edit.base || "{}");
