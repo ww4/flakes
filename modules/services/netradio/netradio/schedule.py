@@ -13,19 +13,39 @@ A slot (schedule.json):
 the station that hasn't been picked for that slot recently (picks.json
 remembers), so a spotlight Chris set up once keeps happening with a
 different artist each time even when he sets nothing.
+
+An auto artist spotlight goes to someone quintessential — Chris, after a
+country spotlight landed on Michael Martin Murphey's one Christmas album:
+"choose artists which are quintessential and good representatives of the
+genre and the station — and something we have plenty of". So the pick is
+weighted by how much of the artist we own (tracks, across several albums),
+how much of it is tagged into the station's family, and how much of it the
+audio classifier hears as that family; the top of that list is drawn from,
+not the whole roster.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import math
 import random
+import re
 
 from netradio.config import compatible
 
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
-MIN_TRACKS_FOR_SPOTLIGHT = 8
+MIN_TRACKS_FOR_SPOTLIGHT = 8      # to be offered on the admin page at all
 RECENT_PICKS = 6
+# an AUTO spotlight wants more: plenty of them, across albums, mostly this family
+AUTO_MIN_TRACKS = 24
+AUTO_MIN_ALBUMS = 2
+AUTO_MIN_SHARE = 0.5
+AUTO_FULL_MARKS_TRACKS = 80       # depth stops counting past this
+AUTO_SOUND_FULL = 0.15            # a classifier mean this high is unmistakably the family
+AUTO_SHORTLIST = 25               # the pool the day's pick is drawn from
+# a folder that is not an artist: a year, a label sampler, an unknown
+NOT_AN_ARTIST = re.compile(r"\b(19|20)\d\d\b|various|unknown|compilation|soundtrack|sampler", re.I)
 
 
 def slot_days(spec) -> set[str]:
@@ -74,6 +94,40 @@ def spotlight_candidates(artists: dict, families: list[str] | None) -> list[str]
                   if info.get("tracks", 0) >= MIN_TRACKS_FOR_SPOTLIGHT and compatible(families, info.get("families")))
 
 
+def spotlight_score(info: dict, families: list[str] | None) -> float:
+    """How good a spotlight this artist makes for a station of these
+    families, 0..1: depth (how much we own, log-scaled to full marks at
+    AUTO_FULL_MARKS_TRACKS) times representativeness — mostly the share
+    of their tracks tagged as the family (for an untagged artist, the
+    share a feed vouches for: the Delmores are a brother duet), with
+    what the classifier hears as a small bonus (its genre classes are
+    weak: Hank Williams hears as "country" 0.03). 0 when they don't clear
+    the bar. An inventory from before `share`/`sound` existed falls back
+    to the family list alone."""
+    n = info.get("tracks", 0)
+    if n < AUTO_MIN_TRACKS or info.get("albums", AUTO_MIN_ALBUMS) < AUTO_MIN_ALBUMS:
+        return 0.0
+    fams = [f for f in (families or []) if f != "any"] or [f for f in info.get("families", []) if f != "unknown"]
+    if "share" not in info:
+        share = {f: 1.0 for f in info.get("families", [])}
+    else:   # the tags; a feed's word only for an artist whose tags say nothing
+        share = info["share"] or info.get("feed_share") or {}
+    purity = max((share.get(f, 0.0) for f in fams), default=0.0)
+    if purity < AUTO_MIN_SHARE:
+        return 0.0
+    sound = info.get("sound") or {}
+    heard = max((min(1.0, sound.get(f, 0.0) / AUTO_SOUND_FULL) for f in fams if f in sound), default=0.0)
+    depth = min(1.0, math.log(n / (AUTO_MIN_TRACKS / 2)) / math.log(AUTO_FULL_MARKS_TRACKS / (AUTO_MIN_TRACKS / 2)))
+    return round(depth * (0.85 * purity + 0.15 * heard), 3)
+
+
+def spotlight_ranked(artists: dict, families: list[str] | None) -> list[tuple[str, float]]:
+    """[(artist, score)] best first — the auto chooser's view of the roster."""
+    scored = [(a, spotlight_score(info, families)) for a, info in artists.items()
+              if compatible(families, info.get("families")) and not NOT_AN_ARTIST.search(a)]
+    return sorted(((a, sc) for a, sc in scored if sc > 0), key=lambda x: (-x[1], x[0]))
+
+
 def feed_candidates(feeds: dict, families: list[str] | None) -> list[str]:
     return sorted(fid for fid, f in feeds.items()
                   if f.get("status") == "ready" and (f.get("count") or 0) >= MIN_TRACKS_FOR_SPOTLIGHT
@@ -96,13 +150,22 @@ def resolve(slot: dict, date: dt.date, picks: dict, *, station: dict, artists: d
                     "name": slot.get("name") or default_name(h["kind"], h["value"], feeds)}, False
     like = slot.get("like") or "artist"
     fam = station.get("family")
-    pool = spotlight_candidates(artists, fam) if like == "artist" else feed_candidates(feeds, fam)
     recent = [h["value"] for h in history[-RECENT_PICKS:]]
-    fresh = [p for p in pool if p not in recent] or pool
-    if not fresh:
-        return slot, False
     rng = random.Random(hashlib.sha256(f"{key}:{today}".encode()).hexdigest())
-    value = rng.choice(fresh)
+    if like == "artist":
+        ranked = spotlight_ranked(artists, fam)[:AUTO_SHORTLIST]
+        fresh = [(a, sc) for a, sc in ranked if a not in recent] or ranked
+        if not fresh:
+            return slot, False
+        # weighted by score squared: the quintessential names come round often,
+        # the merely qualified now and then
+        value = rng.choices([a for a, _ in fresh], weights=[sc * sc for _, sc in fresh])[0]
+    else:
+        pool = feed_candidates(feeds, fam)
+        fresh = [p for p in pool if p not in recent] or pool
+        if not fresh:
+            return slot, False
+        value = rng.choice(fresh)
     history.append({"date": today, "kind": like, "value": value})
     picks[key] = history[-30:]
     return {**slot, "kind": like, like: value, "name": slot.get("name") or default_name(like, value, feeds)}, True
