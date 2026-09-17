@@ -235,7 +235,8 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
 
     feeds = cfg.feeds()
     stations = cfg.stations()
-    everything = [t for t in tracks if t.path not in talk]
+    never = set((cfg.dislikes().get("tracks") or {}))    # listener "never again" (2026-09-17)
+    everything = [t for t in tracks if t.path not in talk and t.path not in never]
     # Chris: no holiday music outside the holiday station, ever. A track
     # tagged holiday reaches a pool only when the rule asks for it by name —
     # so the "all" base, the feeds, and the artist spotlights never see it.

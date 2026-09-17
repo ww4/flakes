@@ -156,6 +156,13 @@ class Kokoro:
         raise RuntimeError(f"no Kokoro answered: {last}")
 
 
+def artist_of_path(path: str) -> str:
+    """The library folder's artist (/mnt/…/Music/<Artist>/…), normalised the
+    way dislikes.json keys artists."""
+    parts = path.split("/")
+    return parts[4].strip().lower() if len(parts) > 5 else ""
+
+
 def read_tags(path: str) -> Track:
     """Title/artist from the tags; the filename and folder names when a tag
     is missing (Artist/Album/NN Title.ext is how the library is laid out)."""
@@ -381,6 +388,9 @@ class StationDJ:
         self.planned: Track | None = None   # chosen one ahead, so a track's
                                             # exit can suit what follows it
         self.now_dir = now_dir              # where the radio page reads "next" from
+        self.inbox = out_dir / "inbox"      # skip / request files from the admin API
+        self.dislikes: dict = {"tracks": {}, "artists": {}}
+        self.dislikes_mtime = 0.0
         self.pushed: list[dict] = []        # what was queued, in order, for that
         self.last_break_text = ""
         self.programme = programme          # segments/spotlights (curated stations)
@@ -432,13 +442,73 @@ class StationDJ:
                 candidates = seg
         if not candidates:
             return None
-        playable = [t for t in candidates if not self.verdicts.get(t, Verdict(False, False, False, "")).talk]
+        self.load_dislikes()
+        never = self.dislikes.get("tracks") or {}
+        playable = [t for t in candidates if t not in never and not self.verdicts.get(t, Verdict(False, False, False, "")).talk]
         if not playable:
             return None
         pool = [t for t in playable if t not in self.recent] or playable
-        path = self.rng.choice(pool)
+        less = self.dislikes.get("artists") or {}
+        for _ in range(8):   # an artist marked "less" gets a quarter of the plays it would have had
+            path = self.rng.choice(pool)
+            if not less or artist_of_path(path) not in less or self.rng.random() < 0.25:
+                break
         self.recent.append(path)
         return read_tags(path)
+
+    def load_dislikes(self) -> None:
+        cfg = self.programme.cfg if self.programme is not None else None
+        if cfg is None:
+            return
+        try:
+            mtime = (cfg.root / "dislikes.json").stat().st_mtime
+        except OSError:
+            return
+        if mtime != self.dislikes_mtime:
+            self.dislikes = cfg.dislikes()
+            self.dislikes_mtime = mtime
+            log.info("%s: dislikes loaded: %d tracks never, %d artists less", self.mount,
+                     len(self.dislikes.get("tracks") or {}), len(self.dislikes.get("artists") or {}))
+
+    # -- listener feedback: the admin API drops a JSON file per action into
+    # <out>/inbox/<mount>-<n>.json; the fill loop acts on them in order.
+    def handle_inbox(self) -> None:
+        try:
+            files = sorted(self.inbox.glob(f"{self.mount}-*.json"))
+        except OSError:
+            return
+        for f in files:
+            try:
+                req = json.loads(f.read_text())
+            except (OSError, ValueError):
+                f.unlink(missing_ok=True)
+                continue
+            try:
+                if req.get("action") == "skip":
+                    self.ls.command(f"src_{self.mount}.skip")
+                    log.info("%s: skipped on request", self.mount)
+                elif req.get("action") == "request" and req.get("path"):
+                    self.play_request(req["path"], req.get("who", ""))
+            except Exception:
+                log.exception("%s: inbox %s failed", self.mount, f.name)
+            f.unlink(missing_ok=True)
+
+    def play_request(self, path: str, who: str = "") -> None:
+        """Queue a listener's request to play NEXT: the tracks already waiting
+        are dropped from Liquidsoap's queue (they were the shuffle's choice,
+        nothing is lost) and re-chosen after; a short "by request" line is
+        rendered in front of it."""
+        track = read_tags(path)
+        for rid in self.ls.command(f"q_{self.mount}.queue").split():
+            self.ls.command(f"q_{self.mount}.ignore {rid}")
+        self.pushed = []
+        intro = self.render_break(f"{'By request' if not who else 'By request from ' + who}: {track.artist}, {track.title}.")
+        if intro:
+            self.push(intro, "request intro", {"kind": "break", "artist": self.name, "title": "By request"})
+        self.push(self.track_uri(track, None), f"request {track.artist} - {track.title}",
+                  {"kind": "track", "artist": track.artist, "title": track.title, "request": True})
+        self.since_break = []
+        log.info("%s: request queued next: %s - %s", self.mount, track.artist, track.title)
 
     def check_settings(self) -> None:
         """Pick up a changed break frequency without a restart."""
@@ -568,6 +638,7 @@ class StationDJ:
         break in front of it when the count says so."""
         self.check_settings()
         self.check_segment()
+        self.handle_inbox()
         n = self.pending()
         while n < self.lookahead:
             track, following = self.next_track()

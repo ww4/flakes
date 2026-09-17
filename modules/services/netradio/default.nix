@@ -455,7 +455,7 @@ in
       install -d -m 0755 -o root -g root ${stateDir}
       install -d -m 0755 -o ${user} -g ${user} ${playlistDir}
       install -d -m 0700 -o ${user} -g ${user} ${cacheDir}
-      install -d -m 0755 -o ${user} -g ${user} ${djDir}
+      install -d -m 0755 -o ${user} -g ${user} ${djDir} ${djDir}/inbox   # inbox: skip/request files from the admin API
       install -d -m 0755 -o ${user} -g ${user} ${nowDir}
       install -d -m 0755 -o ${user} -g ${user} ${profileDir}
       install -d -m 0755 -o ${user} -g ${user} ${poolsDir} ${poolsDir}/feeds ${poolsDir}/artists
@@ -727,8 +727,8 @@ in
     serviceConfig = hardening // {
       User = user;
       Group = user;
-      ReadWritePaths = [ configDir ];
-      ExecStart = "${netradio}/bin/netradio admin --config ${configDir} --listen 127.0.0.1 --port ${toString adminPort}";
+      ReadWritePaths = [ configDir "${djDir}/inbox" ];
+      ExecStart = "${netradio}/bin/netradio admin --config ${configDir} --listen 127.0.0.1 --port ${toString adminPort} --dj-dir ${djDir} --playlists ${playlistDir}";
       Restart = "always";
       RestartSec = 5;
     };

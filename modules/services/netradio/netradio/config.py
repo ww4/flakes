@@ -71,6 +71,15 @@ class Config:
     def _write(self, name: str, data) -> None:
         write_atomic(self.root / name, json.dumps(data, indent=1, sort_keys=True))
 
+    # -- listener feedback (2026-09-17): what never plays again, and whose
+    # tracks play less. Written by the admin API, read by the scanner (track
+    # dislikes leave every pool) and the DJ (artist dislikes are weighted).
+    def dislikes(self) -> dict:
+        return self._read("dislikes.json", {"tracks": {}, "artists": {}})
+
+    def save_dislikes(self, data: dict) -> None:
+        self._write("dislikes.json", data)
+
     def feeds(self) -> dict:
         return self._read("feeds.json", {})
 

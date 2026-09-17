@@ -166,3 +166,42 @@ class CompileParse(unittest.TestCase):
         self.assertEqual(r["note"], "Built from what is owned.")
         r = parse_result('```json\n{"rule": {"genres": ["western swing"]}, "family": ["country"], "note": "x"}\n```')
         self.assertEqual(r["family"], ["country"])
+
+
+class Feedback(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        self.tmp = tempfile.TemporaryDirectory(); root = Path(self.tmp.name)
+        (root / "config").mkdir(); (root / "dj").mkdir(); (root / "pl").mkdir()
+        (root / "pl" / "library.m3u").write_text("#EXTM3U\n/mnt/fusion/Music/Bill Monroe/Bluegrass 1950/03 Uncle Pen.mp3\n/mnt/fusion/Music/The Who/Tommy/01 Overture.mp3\n")
+        self.admin = admin.Admin(config.Config(root / "config"), root / "dj", root / "pl")
+        self.root = root
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_skip_and_request_land_in_the_inbox(self):
+        self.admin.skip("bluegrass")
+        self.admin.request("bluegrass", {"path": "/mnt/fusion/Music/Bill Monroe/Bluegrass 1950/03 Uncle Pen.mp3", "who": "Chris"})
+        files = sorted((self.root / "dj" / "inbox").glob("bluegrass-*.json"))
+        self.assertEqual([json.loads(f.read_text())["action"] for f in files], ["skip", "request"])
+        with self.assertRaises(ValueError):
+            self.admin.request("bluegrass", {"path": "/nowhere.mp3"})
+
+    def test_search_matches_every_word(self):
+        hits = self.admin.search("monroe pen")
+        self.assertEqual([h["title"] for h in hits], ["Uncle Pen"])
+        self.assertEqual(hits[0]["artist"], "Bill Monroe")
+        self.assertEqual(self.admin.search("who overture")[0]["title"], "Overture")
+        self.assertEqual(self.admin.search(""), [])
+
+    def test_dislike_track_and_artist(self):
+        r = self.admin.dislike({"path": "/mnt/fusion/Music/The Who/Tommy/01 Overture.mp3", "scope": "track", "title": "Overture", "mount": "rock"})
+        self.assertEqual((r["tracks"], r["artists"]), (1, 0))
+        self.assertTrue(list((self.root / "dj" / "inbox").glob("rock-*.json")))      # a disliked track is skipped now
+        self.admin.dislike({"scope": "artist", "artist": "The Who"})
+        d = self.admin.cfg.dislikes()
+        self.assertIn("the who", d["artists"]) and self.assertIn("/mnt/fusion/Music/The Who/Tommy/01 Overture.mp3", d["tracks"])
+        self.admin.undislike({"scope": "artist", "key": "the who"})
+        self.assertNotIn("the who", self.admin.cfg.dislikes()["artists"])
