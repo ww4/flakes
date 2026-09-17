@@ -61,9 +61,28 @@ def feeds_keep_shellac(cfg: Config) -> str:
     return f"kept shellac on {changed} existing feed(s)" if changed else "nothing to do"
 
 
+def country_excludes_bluegrass(cfg: Config) -> str:
+    """The catalogue's genres (beets + Last.fm, 2026-09-17) tag Monroe, the
+    Stanleys and Sparks "Country" as well as "Bluegrass"; without a negative
+    clause 1,545 bluegrass tracks walked into Classic Country. Chris drew
+    that line on purpose, so the Country base keeps bluegrass words out."""
+    from netradio.config import FAMILY_WORDS
+    stations = cfg.stations()
+    for s in stations:
+        if s.get("mount") == "country" and s.get("kind") == "curated":
+            base = s.setdefault("base", {})
+            if "exclude_genres" in base:
+                return "nothing to do"
+            base["exclude_genres"] = list(FAMILY_WORDS["bluegrass"])
+            cfg.save_stations(stations)
+            return "Classic Country now excludes bluegrass words"
+    return "no curated country station"
+
+
 MIGRATIONS = [
     ("split-blues-jazz-soul", split_blues_jazz_soul),
     ("feeds-keep-shellac", feeds_keep_shellac),
+    ("country-excludes-bluegrass", country_excludes_bluegrass),
 ]
 
 

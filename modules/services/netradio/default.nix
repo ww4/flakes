@@ -194,7 +194,7 @@ let
     { mount = "all";        name = "Everything";           kind = "curated"; family = [ "any" ];                base = { all = true; }; }
     { mount = "scratchy";   name = "Old Scratchy Records"; kind = "curated"; family = [ "any" ];                base = { all = true; era = { only = [ "shellac" ]; }; }; }
     { mount = "bluegrass";  name = "Bluegrass & Old-Time"; kind = "curated"; family = [ "bluegrass" "folk" ];   base = { genres = [ "bluegrass" "old time" "oldtime" "newgrass" "string band" "brother duets" "appalachian" ]; era = noShellac; }; }
-    { mount = "country";    name = "Classic Country";      kind = "curated"; family = [ "country" ];            base = { genres = [ "country" "western swing" "honky tonk" "western" "cowboy" ]; era = noShellac; }; }
+    { mount = "country";    name = "Classic Country";      kind = "curated"; family = [ "country" ];            base = { genres = [ "country" "western swing" "honky tonk" "western" "cowboy" ]; exclude_genres = [ "bluegrass" "old time" "oldtime" "newgrass" "string band" "brother duets" "appalachian" ]; era = noShellac; }; }
     { mount = "folk";       name = "Folk";                 kind = "curated"; family = [ "folk" "bluegrass" ];   base = { genres = [ "folk" "singer songwriter" "celtic" "traditional" "americana" "acoustic" "irish" "cajun" "zydeco" ]; era = noShellac; }; }
     { mount = "rock";       name = "Rock";                 kind = "curated"; family = [ "rock" ];               base = { genres = [ "rock" "alternative" "pop" "punk" "metal" "indie" "new wave" ]; era = noShellac; }; }
     { mount = "blues";      name = "Blues";                kind = "curated"; family = [ "blues-jazz" ];         base = { genres = [ "blues" ]; era = noShellac; }; }
@@ -631,6 +631,7 @@ in
         "--out ${playlistDir}"
         "--pools ${poolsDir}"
         "--cache ${tagCache}"
+        "--genres ${configDir}/genres.json"   # optional: the beets + Last.fm catalogue's words per file
         "--summary ${nowDir}/stations.json"
         "--ycast ${configDir}/stations.yml"
         "--public-base http://${vtunerHost}/radio"
