@@ -11,7 +11,7 @@ python3Packages.buildPythonApplication {
 
   src = fetchgit {
     url = "https://git.rosemaryacres.com/ww4/yamaha-ync.git";
-    rev = "3232ac482dd8528a5da6bae71638c37d8fdd9edc";
+    rev = "7c259f572fff77760da030ccca5c7a0b87415afa";
     hash = "sha256-9/GTAX8sVQ3vP18lcWOpbOgzFuhGqz/DTXn2byBkA3U=";
   };
 
