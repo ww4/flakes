@@ -184,3 +184,19 @@ class ExcludeGenres(unittest.TestCase):
         self.assertTrue(fr.matches(rule, genre="Country; Honky Tonk", **kw))
         self.assertFalse(fr.matches({"all": True, "exclude_genres": ["old time"]}, genre="Old Time", **kw))
         self.assertEqual(fr.validate({"genres": ["x"], "exclude_genres": "bluegrass"}), ["exclude_genres must be a list of strings"])
+
+
+class SpotlightFitsTheStation(unittest.TestCase):
+    def test_station_pool_counts_decide(self):
+        score = schedule.spotlight_score
+        martin = {"tracks": 151, "albums": 6, "families": ["bluegrass", "country"], "share": {"bluegrass": 1.0, "country": 1.0},
+                  "sound": {}, "stations": {"bluegrass": 151, "country": 0}}
+        carters = {"tracks": 256, "albums": 12, "families": ["country", "bluegrass"], "share": {"country": 1.0}, "sound": {},
+                   "eras": {"shellac": 154, "vintage": 93, "hifi": 9}, "stations": {"country": 20, "scratchy": 154, "bluegrass": 102}}
+        self.assertEqual(score(martin, ["country"], mount="country"), 0.0)          # its base plays none of him
+        self.assertGreater(score(martin, ["bluegrass"], mount="bluegrass"), 0.8)
+        self.assertEqual(score(carters, ["country"], mount="country"), 0.0)        # 20 playable < the bar
+        self.assertGreater(score(carters, ["any"], mount="scratchy"), 0.5)         # the shellac station wants them
+        # without station counts the era rule still narrows depth
+        self.assertEqual(schedule.playable_count(carters, {"exclude": ["shellac"]}), 102)
+        self.assertEqual(schedule.playable_count(carters, {"only": ["shellac"]}), 154)

@@ -204,7 +204,11 @@ def build_artists(tracks: list[Track]) -> dict:
         out[name] = {"tracks": len(ts), "families": sorted(fams), "slug": slug,
                      "albums": len({str(Path(t.path).parent) for t in ts}),
                      "share": {f: round(n / len(ts), 2) for f, n in fam_counts.items()},
-                     "sound": sound}
+                     "sound": sound,
+                     # how many of their tracks fall in each recording era ("" = unmeasured):
+                     # a station that excludes shellac must not spotlight an artist whose
+                     # catalogue is mostly shellac (the Carter Family on Classic Country, 2026-09-17)
+                     "eras": dict(collections.Counter(t.era or "" for t in ts))}
     return out
 
 
@@ -283,16 +287,24 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
         artists[a]["feed_share"] = {f: round(len(paths) / artists[a]["tracks"], 2) for f, paths in per_family.items()}
     for name, info in artists.items():
         write_m3u(pools / "artists" / f"{info['slug']}.m3u", by_artist[name])
+    # what each curated station's OWN base rule would play of each artist —
+    # the spotlight chooser's measure of fit (genres, exclusions and era in
+    # one number: Jimmy Martin has 0 for Classic Country, the Carter Family
+    # only their non-shellac sides)
+    station_pools = {s["mount"]: (feed_pools.get(s.get("feed", ""), []) if s.get("kind") == "specialty"
+                                  else pool(s.get("base") or {"all": True})) for s in stations}
+    for mount, paths in station_pools.items():
+        for path in paths:
+            a = artist_of.get(path)
+            if a and a in artists:
+                artists[a].setdefault("stations", {})[mount] = artists[a].setdefault("stations", {}).get(mount, 0) + 1
     write_atomic(cfg.root / "artists.json", json.dumps(artists, sort_keys=True))
     words = sorted({w for t in playable for w in t.genres})
     write_atomic(cfg.root / "genre-words.json", json.dumps(words))   # for the compile prompt
 
     counts = {}
     for s in stations:
-        if s.get("kind") == "specialty":
-            paths = feed_pools.get(s.get("feed", ""), [])
-        else:
-            paths = pool(s.get("base") or {"all": True})
+        paths = station_pools[s["mount"]]
         write_m3u(out / f"{s['mount']}.m3u", paths)
         counts[s["mount"]] = len(paths)
         log.info("%-14s %6d tracks  (%s)", s["mount"], len(paths), s.get("name", ""))
