@@ -52,7 +52,9 @@ def station(mount, name) =
     last := m
     log(label=mount, level=3, "now playing: " ^ m["artist"] ^ " - " ^ m["title"])
     if m["title"] != "" then
-      entry = {{artist = m["artist"], title = m["title"],
+      # `filename` is the request's path: the page's never-again / request
+      # buttons need it (a break's filename is its rendered wav — harmless).
+      entry = {{artist = m["artist"], title = m["title"], path = m["filename"],
                kind = (if m["dj"] == "true" then "break" else "track" end), at = time()}}
       same = (fun (h) -> h.artist == entry.artist and h.title == entry.title)
       if not (list.length(history()) > 0 and same(list.hd(default=entry, history()))) then

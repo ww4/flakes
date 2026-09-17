@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import itertools
 import json
 import logging
 import re
@@ -32,7 +33,7 @@ from urllib.parse import parse_qs, urlparse
 
 from netradio import feeds as feedrules
 from netradio import schedule as sched
-from netradio.config import FAMILIES, Config, compatible, new_id
+from netradio.config import write_atomic, FAMILIES, Config, compatible, new_id
 
 log = logging.getLogger("netradio.admin")
 LOCK = threading.Lock()
@@ -40,8 +41,13 @@ MOUNT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 
 
 class Admin:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, dj_dir: Path | None = None, playlists: Path | None = None):
         self.cfg = cfg
+        self.dj_dir = dj_dir            # the DJ's state: inbox/ takes skip + request files
+        self.playlists = playlists      # library.m3u for search
+        self._library: list[str] | None = None
+        self._library_mtime = 0.0
+        self._inbox_n = itertools.count()
 
     # -- reads
     def state(self) -> dict:
@@ -240,6 +246,83 @@ class Admin:
         self.cfg.request("apply", {"reason": "requested from the admin page"})
         return {"ok": True}
 
+    # -- listener feedback (2026-09-17): skip, never again, less of, requests
+    def _inbox(self, mount: str, payload: dict) -> dict:
+        if not self.dj_dir:
+            raise ValueError("no DJ directory configured")
+        inbox = self.dj_dir / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        name = f"{mount}-{int(dt.datetime.now().timestamp() * 1000)}-{next(self._inbox_n):04d}.json"
+        write_atomic(inbox / name, json.dumps(payload))
+        return {"ok": True, "queued": name}
+
+    def skip(self, mount: str) -> dict:
+        return self._inbox(mount, {"action": "skip"})
+
+    def request(self, mount: str, body: dict) -> dict:
+        path = str(body.get("path") or "")
+        if path not in set(self.library()):
+            raise ValueError("not a library track")
+        return self._inbox(mount, {"action": "request", "path": path, "who": str(body.get("who") or "")[:40]})
+
+    def dislike(self, body: dict) -> dict:
+        """{"path": …, "scope": "track"|"artist", "title": …, "artist": …}.
+        A track dislike keeps that file off every station from the next scan
+        (and the DJ stops choosing it at once); an artist dislike plays that
+        artist a quarter as often."""
+        d = self.cfg.dislikes()
+        when = dt.datetime.now().isoformat(timespec="minutes")
+        path, scope = str(body.get("path") or ""), body.get("scope", "track")
+        if scope == "artist":
+            artist = str(body.get("artist") or "").strip().lower()
+            if not artist:
+                raise ValueError("artist required")
+            d.setdefault("artists", {})[artist] = {"when": when, "title": body.get("title", "")}
+        else:
+            if not path:
+                raise ValueError("path required")
+            d.setdefault("tracks", {})[path] = {"when": when, "artist": body.get("artist", ""), "title": body.get("title", "")}
+        self.cfg.save_dislikes(d)
+        if scope != "artist" and body.get("mount"):
+            self._inbox(str(body["mount"]), {"action": "skip"})
+        return {"ok": True, "tracks": len(d.get("tracks", {})), "artists": len(d.get("artists", {}))}
+
+    def undislike(self, body: dict) -> dict:
+        d = self.cfg.dislikes()
+        (d.get("artists", {}) if body.get("scope") == "artist" else d.get("tracks", {})).pop(str(body.get("key") or ""), None)
+        self.cfg.save_dislikes(d)
+        return {"ok": True}
+
+    def library(self) -> list[str]:
+        if not self.playlists:
+            return []
+        f = self.playlists / "library.m3u"
+        try:
+            mtime = f.stat().st_mtime
+        except OSError:
+            return []
+        if self._library is None or mtime != self._library_mtime:
+            self._library = [l.strip() for l in f.read_text().splitlines() if l.strip() and not l.startswith("#")]
+            self._library_mtime = mtime
+        return self._library
+
+    def search(self, q: str, limit: int = 30) -> list[dict]:
+        """Library tracks whose artist/album/file name carry every word of q."""
+        words = [w for w in q.lower().split() if w]
+        if not words:
+            return []
+        out = []
+        for path in self.library():
+            rel = path.split("/Music/")[-1] if "/Music/" in path else path
+            low = rel.lower()
+            if all(w in low for w in words):
+                parts = rel.split("/")
+                out.append({"path": path, "artist": parts[0] if len(parts) > 2 else "", "album": parts[-2] if len(parts) > 2 else "",
+                            "title": re.sub(r"^\d+[\s.-]+", "", parts[-1].rsplit(".", 1)[0])})
+                if len(out) >= limit:
+                    break
+        return out
+
 
 def make_handler(admin: Admin):
     class Handler(BaseHTTPRequestHandler):
@@ -281,6 +364,19 @@ def make_handler(admin: Admin):
                         return self._reply(200, admin.update_station(parts[2], self._json()))
                     if parts == ["api", "schedule"] and method == "PUT":
                         return self._reply(200, admin.save_schedule(self._json()))
+                    if len(parts) == 4 and parts[:2] == ["api", "dj"] and parts[3] == "skip" and method == "POST":
+                        return self._reply(200, admin.skip(parts[2]))
+                    if len(parts) == 4 and parts[:2] == ["api", "dj"] and parts[3] == "request" and method == "POST":
+                        return self._reply(200, admin.request(parts[2], self._json()))
+                    if parts == ["api", "dislike"] and method == "POST":
+                        return self._reply(200, admin.dislike(self._json()))
+                    if parts == ["api", "dislike"] and method == "DELETE":
+                        return self._reply(200, admin.undislike(self._json()))
+                    if parts == ["api", "dislikes"] and method == "GET":
+                        return self._reply(200, admin.cfg.dislikes())
+                    if parts == ["api", "search"] and method == "GET":
+                        q = parse_qs(u.query).get("q", [""])[0]
+                        return self._reply(200, admin.search(q))
                     if parts == ["api", "apply"] and method == "POST":
                         return self._reply(200, admin.apply())
                 return self._reply(404, {"error": "not found"})
@@ -308,11 +404,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--config", required=True, type=Path)
     ap.add_argument("--listen", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8012)
+    ap.add_argument("--dj-dir", type=Path, help="the DJ's state dir (inbox/ for skip + request)")
+    ap.add_argument("--playlists", type=Path, help="playlists dir (library.m3u for search)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(message)s", stream=sys.stdout)
-    srv = ThreadingHTTPServer((args.listen, args.port), make_handler(Admin(Config(args.config))))
+    srv = ThreadingHTTPServer((args.listen, args.port), make_handler(Admin(Config(args.config), args.dj_dir, args.playlists)))
     log.info("admin API on %s:%d, config %s", args.listen, args.port, args.config)
     srv.serve_forever()
     return 0

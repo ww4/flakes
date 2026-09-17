@@ -84,6 +84,12 @@ class FakeLS:
             return str(self.rid)
         if cmd == "q_x.queue":
             return " ".join(str(r) for r in self.pending)
+        if cmd.startswith("q_x.ignore "):
+            self.pending.remove(int(cmd.split()[1]))
+            return "OK"
+        if cmd == "src_x.skip":
+            self.skipped = getattr(self, "skipped", 0) + 1
+            return "Done"
         raise AssertionError(cmd)
 
     def play(self):
@@ -198,3 +204,27 @@ class StationDJTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Feedback(unittest.TestCase):
+    """The admin's inbox files: skip, and a request that jumps the queue."""
+    setUp = StationDJTests.setUp
+    tearDown = StationDJTests.tearDown
+
+    def test_skip_and_request(self):
+        import json
+        self.dj.fill()
+        pending_before = list(self.ls.pending)
+        self.assertEqual(len(pending_before), 2)
+        self.tracks = ["/m/Artist3/Album/03 Song3.mp3"]
+        inbox = self.dj.inbox; inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / "x-1.json").write_text(json.dumps({"action": "skip"}))
+        (inbox / "x-2.json").write_text(json.dumps({"action": "request", "path": self.tracks[0], "who": "Chris"}))
+        self.dj.fill()
+        self.assertEqual(self.ls.skipped, 1)
+        self.assertFalse(list(inbox.glob("x-*.json")))                     # consumed
+        for rid in pending_before:
+            self.assertNotIn(rid, self.ls.pending)                          # the shuffle's picks were dropped
+        self.assertIn("By request from Chris", " ".join(self.tts.texts))
+        self.assertTrue(any(self.tracks[0] in u for u in self.ls.pushed[-4:]))  # the request is in the queue
+        self.assertTrue(any(e.get("request") for e in self.dj.pushed))
