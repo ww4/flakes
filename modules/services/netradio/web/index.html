@@ -2,117 +2,144 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#1c1b1a">
+<meta name="theme-color" content="#151413">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Library radio</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="vendor/pico.min.css">
-<link rel="stylesheet" href="ui.css">
-<main class="container" id="app" v-cloak>
-  <header class="top">
-    <h1>Library radio</h1>
-    <nav class="target" role="group" aria-label="Play on">
-      <button :class="{active: target === 'here'}" @click="target = 'here'">This phone</button>
-      <button :class="{active: target === 'room'}" @click="target = 'room'; pollReceiver()" :disabled="receiver.error === 'unreachable'">{{ receiver.name || 'Living room' }}</button>
-    </nav>
+<link rel="stylesheet" href="remote.css">
+<div id="app" v-cloak :class="{desktop: wide}">
+
+  <!-- ===== top: where we're playing ======================================== -->
+  <header class="bar top">
+    <button class="room" @click="pickTarget"><span class="dot" :class="{live: target === 'room' ? receiver.on : !!current}"></span>{{ target === 'room' ? (receiver.name || 'Living room') : 'This phone' }} <span class="chev">⌄</span></button>
+    <span class="status">{{ busy || status || (target === 'room' && receiver.error ? 'receiver unreachable' : '') }}</span>
+    <a class="admin" href="admin/" title="Admin">⚙</a>
   </header>
 
-  <!-- ===== The receiver ===================================================== -->
-  <article v-if="target === 'room'" class="receiver">
-    <div class="row">
-      <button class="round big" :class="{on: receiver.on}" @click="power(!receiver.on)" :title="receiver.on ? 'Standby' : 'Power on'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v6"/><path d="M4.2 4.2a5.4 5.4 0 1 0 7.6 0"/></svg></button>
-      <div class="what">
-        <strong>{{ receiver.name || 'Living room' }}</strong> <small class="muted">{{ receiver.on ? receiver.input : (receiver.error || 'standby') }}</small>
-        <div class="title" v-if="receiver.on">{{ roomTitle || '—' }}</div>
-      </div>
-      <button class="round" :class="{on: receiver.mute}" @click="mute(!receiver.mute)" :title="receiver.mute ? 'Unmute' : 'Mute'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6v4h2.5l3.5 3V3L5 6z"/><path v-if="!receiver.mute" d="M11 5.5a3.5 3.5 0 0 1 0 5"/><path v-else d="M11 6l3 4M14 6l-3 4"/></svg></button>
+  <!-- ===== NOW ============================================================= -->
+  <main v-show="tab === 'now'" class="screen now">
+    <div class="hero" :style="heroStyle">
+      <img v-if="art" :src="art" alt="">
+      <div v-else class="tile-art">{{ initials(nowStation) }}</div>
     </div>
-    <div class="volume" v-if="receiver.on">
-      <button class="round small" @click="volumeStep(-2)" aria-label="Quieter">−</button>
-      <input type="range" min="0" :max="receiver.volume_max || 100" step="1" v-model.number="volumeDraft" @change="setVolume(volumeDraft)" aria-label="Volume">
-      <button class="round small" @click="volumeStep(2)" aria-label="Louder">+</button>
-      <span class="level">{{ volumeDraft }}</span>
+    <div class="meta">
+      <div class="station">{{ nowStation || (target === 'room' ? (receiver.on ? receiver.input : 'Standby') : 'Nothing playing') }}</div>
+      <div class="title">{{ nowLine1 || '—' }}</div>
+      <div class="sub">{{ nowLine2 }}</div>
     </div>
-    <div class="inputs" v-if="receiver.on">
-      <button v-for="i in inputs" :key="i.param" class="chip" :class="{active: receiver.input === i.param}" @click="selectInput(i.param)">{{ i.title || i.param }}</button>
+    <div class="transport" v-if="nowKind === 'library'">
+      <button @click="skip" title="Skip"><svg viewBox="0 0 24 24"><path d="M5 5l9 7-9 7zM16 5h3v14h-3z"/></svg><span>Skip</span></button>
+      <button @click="dislike('track')" title="Never again"><svg viewBox="0 0 24 24"><path d="M15 3H6.5a2 2 0 0 0-2 1.6L3 11.5V13a2 2 0 0 0 2 2h5l-1 4.5a1.5 1.5 0 0 0 2.8 1L15 13zM17 3h4v10h-4z"/></svg><span>Never</span></button>
+      <button @click="dislike('artist')" title="Less of this artist"><svg viewBox="0 0 24 24"><path d="M4 12h16M12 4v16" transform="rotate(45 12 12)"/></svg><span>Less</span></button>
+      <button @click="tab = 'request'" title="Request a song"><svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg><span>Request</span></button>
     </div>
-    <div v-if="receiver.on && receiver.input === 'TUNER' && receiver.tuner" class="tuner">
-      <small class="muted">{{ receiver.tuner.band }} {{ receiver.tuner.frequency.val / (receiver.tuner.band === 'FM' ? 100 : 1) }} {{ receiver.tuner.band === 'FM' ? 'MHz' : 'kHz' }} <span v-if="receiver.tuner.tuned">· tuned</span><span v-if="receiver.tuner.stereo"> · stereo</span></small>
-      <div class="inputs"><button v-for="p in presets" :key="p.number" class="chip" :class="{active: String(receiver.tuner.preset) === String(p.number)}" @click="tunerPreset(p.number)">{{ p.text }}</button></div>
+    <div class="transport" v-else-if="nowKind === 'pandora'">
+      <button @click="feedback(false)" title="Thumbs down"><svg viewBox="0 0 24 24"><path d="M15 3H6.5a2 2 0 0 0-2 1.6L3 11.5V13a2 2 0 0 0 2 2h5l-1 4.5a1.5 1.5 0 0 0 2.8 1L15 13zM17 3h4v10h-4z"/></svg><span>Down</span></button>
+      <button class="main" @click="playback(receiver.now_playing && receiver.now_playing.playback === 'Play' ? 'Pause' : 'Play')"><svg v-if="receiver.now_playing && receiver.now_playing.playback === 'Play'" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg><svg v-else viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg></button>
+      <button @click="playback('Skip Fwd')" title="Skip"><svg viewBox="0 0 24 24"><path d="M5 5l9 7-9 7zM16 5h3v14h-3z"/></svg><span>Skip</span></button>
+      <button @click="feedback(true)" title="Thumbs up"><svg viewBox="0 0 24 24"><path d="M9 21h8.5a2 2 0 0 0 2-1.6l1.5-6.9V11a2 2 0 0 0-2-2h-5l1-4.5a1.5 1.5 0 0 0-2.8-1L9 11zM3 11h4v10H3z"/></svg><span>Up</span></button>
     </div>
-    <p v-if="busy" class="busy"><small>{{ busy }}</small></p>
-  </article>
-
-  <!-- ===== The phone's player =============================================== -->
-  <article v-if="target === 'here' && current" class="player">
-    <canvas ref="viz" width="900" height="120"></canvas>
-    <div class="row">
-      <button class="round" @click="stop" title="Stop"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg></button>
-      <div class="what">
-        <strong>{{ currentStation.name }}</strong> <small class="muted">{{ status }}</small>
-        <div class="title">{{ nowTitle || "—" }}</div>
-        <small class="muted">{{ listenersOf(currentStation.mount) ? listenersOf(currentStation.mount) + " listening" : "" }}<span v-if="curNext.segment"> · {{ curNext.segment.name }}</span></small>
-      </div>
-      <fieldset class="quality">
-        <label><input type="radio" value="" v-model="quality" @change="retune"> 192k</label>
-        <label><input type="radio" value="-lo" v-model="quality" @change="retune"> 96k</label>
-      </fieldset>
+    <div class="transport" v-else-if="nowKind === 'tuner'">
+      <button @click="seek(false)"><svg viewBox="0 0 24 24"><path d="M19 5l-9 7 9 7zM5 5h3v14H5z"/></svg><span>Seek</span></button>
+      <button @click="tuneStep(-1)"><span class="big">−</span><span>0.2</span></button>
+      <button @click="tuneStep(1)"><span class="big">+</span><span>0.2</span></button>
+      <button @click="seek(true)"><svg viewBox="0 0 24 24"><path d="M5 5l9 7-9 7zM16 5h3v14h-3z"/></svg><span>Seek</span></button>
     </div>
-  </article>
-
-  <!-- ===== Feedback on the station being listened to (either target) ======== -->
-  <article v-if="feedbackMount" class="feedback">
-    <div class="row">
-      <div class="what"><small class="muted">On {{ feedbackStation.name }}</small><div class="title">{{ feedbackTitle || '—' }}</div></div>
+    <div class="transport" v-else-if="nowKind === 'stream'">
+      <button @click="playback(receiver.now_playing && receiver.now_playing.playback === 'Play' ? 'Pause' : 'Play')"><svg v-if="receiver.now_playing && receiver.now_playing.playback === 'Play'" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg><svg v-else viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg><span>{{ receiver.now_playing && receiver.now_playing.playback === 'Play' ? 'Pause' : 'Play' }}</span></button>
+      <button @click="playback('Skip Fwd')"><svg viewBox="0 0 24 24"><path d="M5 5l9 7-9 7zM16 5h3v14h-3z"/></svg><span>Skip</span></button>
     </div>
-    <div class="actions">
-      <button class="secondary" @click="skip" title="Skip this track">Skip ⏭</button>
-      <button class="secondary outline" @click="dislike('track')" title="Never play this track again">👎 Never</button>
-      <button class="secondary outline" @click="dislike('artist')" title="Play this artist less">Less of them</button>
-      <button class="secondary outline" @click="requesting = !requesting">Request…</button>
-    </div>
-    <div v-if="requesting" class="request">
-      <input type="search" v-model="query" @input="searchDebounced" placeholder="artist, song, album…" autocomplete="off">
-      <ul v-if="results.length"><li v-for="r in results" :key="r.path"><a href="#" @click.prevent="request(r)"><strong>{{ r.title }}</strong> <small class="muted">{{ r.artist }} · {{ r.album }}</small></a></li></ul>
-      <small v-else-if="query.length > 1" class="muted">nothing in the library matches</small>
-    </div>
-    <div class="grid" v-if="feedbackHistory.length || (feedbackNext.next || []).length">
+    <div class="lists" v-if="feedbackMount">
       <div><h6>Last played</h6><ol><li v-for="h in feedbackHistory.slice(1, 6)" :class="{break: h.kind === 'break'}">{{ label(h) }}</li></ol></div>
       <div><h6>Up next</h6><ol><li v-for="n in (feedbackNext.next || [])" :class="{break: n.kind === 'break', request: n.request}">{{ label(n) }}<span v-if="n.request"> · request</span></li></ol>
-        <p v-if="feedbackNext.last_break" class="dj"><small>DJ: “{{ feedbackNext.last_break }}”</small></p></div>
+        <p v-if="feedbackNext.last_break" class="dj">DJ: “{{ feedbackNext.last_break }}”</p></div>
     </div>
-    <p v-if="toast" class="toast"><small>{{ toast }}</small></p>
-  </article>
+    <p v-if="toast" class="toast">{{ toast }}</p>
+  </main>
 
-  <p v-if="scanning"><small class="muted">The library scan is still running — stations appear when it finishes.</small></p>
-
-  <!-- ===== Stations ========================================================= -->
-  <section v-for="group in groups" :key="group.kind">
-    <h5>{{ group.title }}</h5>
-    <article v-for="s in group.stations" :key="s.mount" class="station" :class="{open: open === s.mount, playing: isPlaying(s)}">
-      <header @click="toggle(s.mount)">
-        <button class="round" @click.stop="isPlaying(s) ? stopTarget() : playTarget(s)" :title="isPlaying(s) ? 'Stop' : 'Play'"><template v-if="isPlaying(s)"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg></template><template v-else><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg></template></button>
-        <div class="name">
-          <strong>{{ s.name }}</strong>
-          <small class="muted">{{ countOf(s.mount) }}<span v-if="isUp(s.mount)"> · <span class="live">on air</span></span><span v-if="listenersOf(s.mount)"> · {{ listenersOf(s.mount) }} listening</span></small>
-        </div>
-        <div class="now"><small>{{ isUp(s.mount) ? titleOf(s.mount) : "" }}</small></div>
-      </header>
-      <div v-if="open === s.mount && s.mount" class="details">
-        <div class="grid">
-          <div><h6>Last played</h6><ol><li v-for="h in (histories[s.mount] || []).slice(0, 6)" :class="{break: h.kind === 'break'}">{{ label(h) }}</li><li v-if="!(histories[s.mount] || []).length" class="muted">nothing yet</li></ol></div>
-          <div><h6>Up next</h6><ol><li v-for="n in ((nexts[s.mount] || {}).next || [])" :class="{break: n.kind === 'break'}">{{ label(n) }}</li><li v-if="!((nexts[s.mount] || {}).next || []).length" class="muted">—</li></ol>
-            <p v-if="(nexts[s.mount] || {}).segment"><small>Now: {{ nexts[s.mount].segment.name }}</small></p></div>
-        </div>
+  <!-- ===== STATIONS (tiles) ================================================= -->
+  <main v-show="tab === 'stations'" class="screen tiles">
+    <section v-for="group in groups" :key="group.kind">
+      <h6>{{ group.title }}</h6>
+      <div class="grid">
+        <button v-for="s in group.stations" :key="group.kind + s.name" class="tile" :class="{playing: isPlaying(s)}" :style="tileStyle(s)" @click="isPlaying(s) ? stopTarget() : playTarget(s)">
+          <span class="ini">{{ initials(s.name) }}</span>
+          <span class="name">{{ s.name }}</span>
+          <span class="sub">{{ s.kind === 'quick' ? 'internet' : s.kind === 'pandora' ? 'Pandora' : s.kind === 'preset' ? s.sub : countOf(s.mount) }}</span>
+          <span v-if="isUp(s.mount)" class="live-dot" title="on air"></span>
+        </button>
       </div>
-    </article>
-  </section>
-  <footer><small class="muted">Radio apps: <a href="now/stations.m3u">stations.m3u</a> · <a href="now/stations.pls">stations.pls</a> · <a href="now/stations-lo.m3u">96 kbps m3u</a> · <a href="admin/">admin</a></small></footer>
+    </section>
+    <p v-if="scanning" class="muted">The library scan is still running — stations appear when it finishes.</p>
+  </main>
+
+  <!-- ===== SOURCES (receiver) ============================================== -->
+  <main v-show="tab === 'sources'" class="screen sources">
+    <section>
+      <h6>Input</h6>
+      <div class="grid inputs">
+        <button v-for="i in inputs" :key="i.param" class="tile small" :class="{playing: receiver.input === i.param}" @click="selectInput(i.param)"><span class="name">{{ i.title || i.param }}</span></button>
+      </div>
+    </section>
+    <section v-if="receiver.input === 'TUNER' && receiver.tuner">
+      <h6>Tuner</h6>
+      <div class="dial">
+        <div class="freq">{{ freqText }}<small>{{ receiver.tuner.band === 'FM' ? 'MHz' : 'kHz' }}</small></div>
+        <div class="flags"><span :class="{on: receiver.tuner.tuned}">tuned</span><span :class="{on: receiver.tuner.stereo}">stereo</span></div>
+        <div class="bands"><button class="chip" :class="{active: receiver.tuner.band === 'FM'}" @click="band('FM')">FM</button><button class="chip" :class="{active: receiver.tuner.band === 'AM'}" @click="band('AM')">AM</button></div>
+        <div class="transport"><button @click="seek(false)"><span>◀◀ seek</span></button><button @click="tuneStep(-1)"><span class="big">−</span></button><button @click="tuneStep(1)"><span class="big">+</span></button><button @click="seek(true)"><span>seek ▶▶</span></button></div>
+        <form class="direct" @submit.prevent="tuneTo"><input type="number" step="0.1" v-model="freqDraft" inputmode="decimal"><button type="submit">Tune</button></form>
+        <p class="muted" v-if="!presets.length">No presets stored — hold MEMORY on the front panel to save one; they show up here.</p>
+        <div class="grid inputs" v-else><button v-for="p in presets" :key="p.number" class="tile small" :class="{playing: String(receiver.tuner.preset) === String(p.number)}" @click="tunerPreset(p.number)"><span class="name">{{ p.text }}</span></button></div>
+      </div>
+    </section>
+    <section v-if="menuSource">
+      <h6>{{ menuSource === 'SERVER' ? 'Media server' : menuSource === 'Pandora' ? 'Pandora' : 'Menu' }} <small class="muted" v-if="menu.name">· {{ menu.name }}</small></h6>
+      <div class="menu">
+        <button class="row" v-if="menu.layer > 1" @click="menuBack">‹ back</button>
+        <button class="row" v-for="l in menu.lines" :key="l.line" v-show="l.attribute !== 'Unselectable'" @click="menuSelect(l.line)"><span>{{ l.text }}</span><span class="chev" v-if="l.attribute === 'Container'">›</span></button>
+        <div class="pager" v-if="menu.max_line > 8"><button @click="menuPage(false)" :disabled="menu.current_line <= 1">‹ prev</button><span>{{ menu.current_line }}–{{ Math.min(menu.current_line + 7, menu.max_line) }} of {{ menu.max_line }}</span><button @click="menuPage(true)" :disabled="menu.current_line + 8 > menu.max_line">next ›</button></div>
+        <p class="muted" v-if="!menu.lines.some(l => l.attribute !== 'Unselectable') && menu.status === 'Ready'">{{ menuSource === 'SERVER' ? 'No media servers found on the network.' : 'Nothing here.' }}</p>
+      </div>
+    </section>
+    <section v-if="!receiver.on"><p class="muted">The receiver is in standby — power it on with the button below.</p></section>
+  </main>
+
+  <!-- ===== REQUEST ========================================================= -->
+  <main v-show="tab === 'request'" class="screen request">
+    <h6>Request on {{ feedbackStation.name || 'the station' }}</h6>
+    <input type="search" v-model="query" @input="searchDebounced" placeholder="artist, song, album…" autocomplete="off" autofocus>
+    <div class="menu">
+      <button class="row" v-for="r in results" :key="r.path" @click="request(r)"><span><strong>{{ r.title }}</strong><br><small>{{ r.artist }} · {{ r.album }}</small></span><span class="chev">play next</span></button>
+      <p v-if="query.length > 1 && !results.length" class="muted">nothing in the library matches</p>
+      <p v-if="!feedbackMount" class="muted">Start a library station first — a request plays next on it.</p>
+    </div>
+  </main>
+
+  <!-- ===== bottom: volume + power, then the tabs ============================ -->
+  <footer class="bar volume" v-if="target === 'room'">
+    <button class="icon" :class="{on: receiver.on}" @click="power(!receiver.on)" :title="receiver.on ? 'Standby' : 'Power on'"><svg viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/></svg></button>
+    <button class="icon" @click="volumeStep(-2)" :disabled="!receiver.on">−</button>
+    <input type="range" min="0" :max="receiver.volume_max || 100" step="1" v-model.number="volumeDraft" @change="setVolume(volumeDraft)" :disabled="!receiver.on" aria-label="Volume">
+    <button class="icon" @click="volumeStep(2)" :disabled="!receiver.on">+</button>
+    <button class="icon" :class="{on: receiver.mute}" @click="mute(!receiver.mute)" :disabled="!receiver.on" :title="receiver.mute ? 'Unmute' : 'Mute'"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path v-if="!receiver.mute" d="M16 8.5a5 5 0 0 1 0 7"/><path v-else d="M16 9l5 6M21 9l-5 6"/></svg></button>
+  </footer>
+  <footer class="bar volume here" v-else>
+    <button class="icon" v-if="current" @click="stop" title="Stop"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></button>
+    <canvas ref="viz" width="600" height="60"></canvas>
+    <span class="quality"><label><input type="radio" value="" v-model="quality" @change="retune">192k</label><label><input type="radio" value="-lo" v-model="quality" @change="retune">96k</label></span>
+  </footer>
+  <nav class="bar tabs">
+    <button :class="{active: tab === 'now'}" @click="tab = 'now'"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2"/></svg>Now</button>
+    <button :class="{active: tab === 'stations'}" @click="tab = 'stations'"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>Stations</button>
+    <button :class="{active: tab === 'sources'}" @click="tab = 'sources'; pollReceiver()" :disabled="target !== 'room'"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h13"/></svg>Sources</button>
+    <button :class="{active: tab === 'request'}" @click="tab = 'request'"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="M15 15l5 5"/></svg>Request</button>
+  </nav>
   <audio ref="audio" preload="none"></audio>
-</main>
+</div>
 <script src="vendor/vue.global.prod.js"></script>
 <script src="app.js"></script>
 </html>
