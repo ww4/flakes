@@ -281,7 +281,7 @@ let
   };
   radioWeb = pkgs.runCommand "netradio-web" { } ''
     mkdir -p $out/admin $out/vendor
-    cp ${./web}/index.html ${./web}/app.js ${./web}/ui.css $out/
+    cp ${./web}/index.html ${./web}/app.js ${./web}/remote.css ${./web}/ui.css $out/
     cp ${./web}/manifest.webmanifest ${./web}/sw.js ${./web}/icon.svg ${./web}/icon-192.png ${./web}/icon-512.png $out/   # the PWA
     cp ${./web/admin}/index.html ${./web/admin}/admin.js $out/admin/
     cp ${vueJs} $out/vendor/vue.global.prod.js
