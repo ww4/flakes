@@ -668,6 +668,13 @@ in
     # pass finishes rather than at the next 04:30 (the first pass runs past
     # it), so era stations fill the same morning.
     onSuccess = [ "netradio-playlists.service" ];
+    # A deploy must not touch a running pass: switch-to-configuration
+    # RESTARTS a changed unit and, for a oneshot, WAITS for it — the #305
+    # deploy sat in activation for the whole 90-minute re-measure and
+    # queued every deploy behind it (2026-09-16 16:55-18:20). The timer
+    # (OnActiveSec) still fires the new version once the pass is over.
+    restartIfChanged = false;
+    stopIfChanged = false;
     serviceConfig = hardening // {
       Type = "oneshot";
       User = user;
