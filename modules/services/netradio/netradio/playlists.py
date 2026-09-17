@@ -32,7 +32,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from netradio.config import FAMILY_WORDS, Config, write_atomic
+from netradio.config import FAMILY_SOUND, FAMILY_WORDS, Config, write_atomic
 
 log = logging.getLogger("netradio.playlists")
 
@@ -141,8 +141,17 @@ def walk(roots: list[Path], cache: TagCache) -> tuple[list[Track], dict]:
                 if not artist:
                     parts = str(p).split("/")
                     artist = parts[4] if len(parts) > 5 else ""   # /mnt/fusion/Music/<Artist>/...
+                if "holiday" not in genres and HOLIDAY_NAME.search(f"{p.parent.name} {p.stem}"):
+                    # a Christmas album tagged "Cowboy" is still a Christmas album
+                    genre, genres = (genre + "; holiday").strip("; "), genres + ["holiday"]
+                    counts["holiday_by_name"] = counts.get("holiday_by_name", 0) + 1
                 tracks.append(Track(str(p), genre, artist, genres))
     return tracks, counts
+
+
+# Holiday material named rather than tagged: the album folder or the file.
+# Not the bare word "holiday" — Billie Holiday's folder is not a Christmas record.
+HOLIDAY_NAME = re.compile(r"christmas|xmas|noel|santa claus|jingle bells|silent night|nativity|yuletide", re.I)
 
 
 def _walk_error(err: OSError, counts: dict) -> None:
@@ -160,8 +169,13 @@ def artist_slug(name: str) -> str:
 
 
 def build_artists(tracks: list[Track]) -> dict:
-    """{artist: {tracks, families, slug}} — a family counts when it covers at
-    least a third of the artist's tracks (an artist can have two)."""
+    """{artist: {tracks, families, slug, albums, share, sound, holiday}} — a
+    family counts when it covers at least a third of the artist's tracks (an
+    artist can have two). The rest is what the spotlight chooser weighs:
+    `share` is the fraction of their tracks tagged into each family
+    (`feed_share`, added by build(), the fraction the feeds vouch for), `sound`
+    the classifier's mean for each family's classes over their tracks,
+    `albums` how many folders they span. Holiday tracks never get here."""
     by = collections.defaultdict(list)
     for t in tracks:
         if t.artist:
@@ -175,8 +189,18 @@ def build_artists(tracks: list[Track]) -> dict:
         while slug in slugs:
             slug += "-2"
         slugs.add(slug)
-        out[name] = {"tracks": len(ts), "families": sorted(fams), "slug": slug}
+        heard = [t.yamnet for t in ts if t.yamnet]
+        sound = {fam: round(sum(max(y.get(c, 0.0) for c in classes) for y in heard) / len(heard), 3)
+                 for fam, classes in FAMILY_SOUND.items()} if heard else {}
+        out[name] = {"tracks": len(ts), "families": sorted(fams), "slug": slug,
+                     "albums": len({str(Path(t.path).parent) for t in ts}),
+                     "share": {f: round(n / len(ts), 2) for f, n in fam_counts.items()},
+                     "sound": sound}
     return out
+
+
+def wants_holiday(rule: dict) -> bool:
+    return any(word_in(w, [g.lower() for g in rule.get("genres") or []]) for w in FAMILY_WORDS["holiday"])
 
 
 def feed_rule(feed: dict) -> dict:
@@ -202,10 +226,15 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
 
     feeds = cfg.feeds()
     stations = cfg.stations()
-    playable = [t for t in tracks if t.path not in talk]
+    everything = [t for t in tracks if t.path not in talk]
+    # Chris: no holiday music outside the holiday station, ever. A track
+    # tagged holiday reaches a pool only when the rule asks for it by name —
+    # so the "all" base, the feeds, and the artist spotlights never see it.
+    playable = [t for t in everything if "holiday" not in families_of(t.genres)]
 
     def pool(rule: dict) -> list[str]:
-        return [t.path for t in playable
+        source = everything if wants_holiday(rule) else playable
+        return [t.path for t in source
                 if feedrules.matches(rule, artist=t.artist, path=t.path, genre=t.genre, yamnet=t.yamnet, era=t.era)]
 
     feed_pools: dict[str, list[str]] = {}
@@ -226,6 +255,7 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
             artist_of[t.path] = t.artist
     # An artist in a feed inherits the feed's families: the Carter Family's
     # tags say "other", but a feed that holds them says what they are.
+    in_feeds: dict[str, dict[str, set[str]]] = collections.defaultdict(lambda: collections.defaultdict(set))
     for fid, paths in feed_pools.items():
         fams = feeds[fid].get("family") or []
         if not fams:
@@ -235,6 +265,12 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
             if a and a in artists:
                 cur = [f for f in artists[a]["families"] if f != "unknown"]
                 artists[a]["families"] = sorted(set(cur) | set(fams))
+                for f in fams:
+                    in_feeds[a][f].add(path)
+    # the feed-given share: what the feeds vouch for, kept beside the tagged
+    # share (the chooser uses it only for an artist whose tags say nothing)
+    for a, per_family in in_feeds.items():
+        artists[a]["feed_share"] = {f: round(len(paths) / artists[a]["tracks"], 2) for f, paths in per_family.items()}
     for name, info in artists.items():
         write_m3u(pools / "artists" / f"{info['slug']}.m3u", by_artist[name])
     write_atomic(cfg.root / "artists.json", json.dumps(artists, sort_keys=True))

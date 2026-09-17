@@ -38,6 +38,18 @@ FAMILY_WORDS = {
     "holiday": ["holiday", "christmas", "xmas"],
 }
 
+# What the audio classifier hears when a track is quintessentially of a
+# family (YAMNet class means kept in the profile) — the second opinion on
+# an artist beside their genre tags, for choosing spotlights.
+FAMILY_SOUND = {
+    "bluegrass": ["bluegrass"],
+    "country": ["country"],
+    "folk": ["folk"],
+    "rock": ["rock_and_roll"],
+    "blues-jazz": ["blues", "jazz", "swing", "soul", "rhythm_and_blues"],
+    "gospel": ["gospel", "christian"],
+}
+
 
 def compatible(a: list[str] | None, b: list[str] | None) -> bool:
     a = a or ["any"]

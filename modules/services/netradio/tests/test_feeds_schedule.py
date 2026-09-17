@@ -85,9 +85,9 @@ class Slots(unittest.TestCase):
         self.assertEqual([s["id"] for _, _, s in schedule.upcoming("country", self.slots, self.sat.replace(hour=9))], ["sat-swing", "spot"])
 
     def test_auto_resolves_once_per_day_and_avoids_recent(self):
-        artists = {f"Artist {i}": {"tracks": 20, "families": ["country"]} for i in range(10)}
+        artists = {f"Artist {i}": {"tracks": 40, "families": ["country"]} for i in range(10)}
         artists["Rocker"] = {"tracks": 50, "families": ["rock"]}
-        artists["Tiny"] = {"tracks": 2, "families": ["country"]}
+        artists["Tiny"] = {"tracks": 12, "families": ["country"]}          # offered by hand, never auto-picked
         station = {"mount": "country", "family": ["country"]}
         picks = {}
         slot = self.slots[2]
@@ -105,6 +105,33 @@ class Slots(unittest.TestCase):
             r, _ = schedule.resolve(slot, self.wed.date() + dt.timedelta(days=d), picks, station=station, artists=artists, feeds={})
             self.assertNotIn(r["artist"], seen)                          # a different one each day
             seen.add(r["artist"])
+
+    def test_spotlight_score_wants_quintessential_and_plenty(self):
+        score = schedule.spotlight_score
+        jones = {"tracks": 120, "albums": 9, "families": ["country"], "share": {"country": 0.95}, "sound": {"country": 0.31}}
+        untagged = {"tracks": 90, "albums": 4, "families": ["gospel"], "share": {}, "sound": {}}   # a feed gave it the family, nothing vouches
+        delmores = {"tracks": 87, "albums": 4, "families": ["bluegrass", "country"], "share": {},
+                    "feed_share": {"bluegrass": 1.0, "country": 1.0}, "sound": {}}                 # untagged, but the duets feed vouches
+        martin = {"tracks": 151, "albums": 6, "families": ["bluegrass", "country"], "share": {"bluegrass": 0.99},
+                  "feed_share": {"bluegrass": 0.96, "country": 0.96}, "sound": {"bluegrass": 0.14}}  # tagged bluegrass; a feed's country doesn't override
+        murphey = {"tracks": 13, "albums": 1, "families": ["country", "folk"], "share": {"country": 1.0}, "sound": {"country": 0.2}}
+        crossover = {"tracks": 60, "albums": 5, "families": ["rock", "country"], "share": {"rock": 0.6, "country": 0.4}, "sound": {"country": 0.1}}
+        thin_tags = {"tracks": 60, "albums": 5, "families": ["country"], "share": {"country": 0.55}, "sound": {"country": 0.05}}
+        self.assertEqual(score(murphey, ["country"]), 0.0)                # one album, too few tracks
+        self.assertEqual(score(crossover, ["country"]), 0.0)              # mostly not country
+        self.assertEqual(score(untagged, ["gospel"]), 0.0)                # no tags, no feed share: unknown
+        self.assertGreater(score(delmores, ["country"]), 0.7)
+        self.assertEqual(score(martin, ["country"]), 0.0)
+        self.assertGreater(score(martin, ["bluegrass"]), 0.9)
+        self.assertGreater(score(jones, ["country"]), score(thin_tags, ["country"]))
+        self.assertGreater(score(jones, ["country"]), 0.9)
+        self.assertGreater(score(crossover, ["rock"]), 0.0)
+        # an inventory from before share/sound existed still ranks by depth
+        old = {"tracks": 80, "families": ["country"]}
+        self.assertGreater(score(old, ["country"]), 0.8)
+        ranked = schedule.spotlight_ranked({"Jones": jones, "Murphey": murphey, "Thin": thin_tags, "ORB 2007": jones,
+                                            "Various Artists": jones}, ["country"])
+        self.assertEqual([a for a, _ in ranked], ["Jones", "Thin"])       # a year or a sampler is not an artist
 
     def test_auto_feed_pick_needs_ready_feeds(self):
         fds = {"western-swing": {"status": "ready", "count": 40, "family": ["country"]},
