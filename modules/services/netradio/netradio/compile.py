@@ -43,6 +43,7 @@ Produce a RULE that selects the right tracks from this library. A rule is a JSON
 - "artists": list of artist names (matched case-insensitively as substrings of the track's artist, so "Louvin Brothers" hits "The Louvin Brothers"). ONLY use names from the artist inventory below; do not invent artists we do not own.
 - "genres": list of genre words matched as whole words in the track's genre tag. Words in use in this library: {', '.join(sorted(genre_words))}
 - "instruments": object of measured instrument presence -> [min, max] (either may be null). Values are 0..1 means from an audio classifier over the first minute; typical strong presence is 0.2-0.4, near-absence under 0.03. Available: {', '.join(INSTRUMENTS)}. Use these only when the description is about instrumentation (e.g. "banjo instrumentals": {{"banjo": [0.3, null], "singing": [null, 0.05]}}).
+- "exclude_genres": list of genre words that keep a track OUT even when it matches (a country feed that must not drift into bluegrass: {{"exclude_genres": ["bluegrass", "old time", "newgrass"]}}).
 - "era": {{"only": [...]}} or {{"exclude": [...]}} over "shellac" (1920s-40s records), "vintage" (tape era), "hifi" (modern). Omit unless the description is about recording era.
 Clauses combine with AND: a track must hit one of artists/genres (if any are given), AND satisfy every instrument threshold (if given), AND satisfy era. So "old-time fiddle tunes" is {{"genres": ["old time", "oldtime"], "instruments": {{"violin": [0.15, null]}}}}; "brother duets" is just artists (plus "genres": ["brother duets"]).
 

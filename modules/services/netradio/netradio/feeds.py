@@ -7,6 +7,7 @@ A feed's rule is a small structured object — no query language to parse:
     instruments  {"banjo": [0.3, null], "singing": [null, 0.05]}
                                                         YAMNet means, ALL must hold
     era          {"only": ["shellac"], "exclude": ["shellac"]}
+    exclude_genres ["bluegrass", "old time"]           any hit keeps the track OUT
     all          true                                   everything (era still applies)
 
 Each clause that is present must hold: artists/genres together say WHO or
@@ -85,8 +86,12 @@ def matches(rule: dict, *, artist: str, path: str, genre: str, yamnet: dict | No
     instruments = rule.get("instruments") or {}
     if not (rule.get("all") or artists or genre_words or instruments):
         return False
+    genres = split_genre(genre or "")
+    # the negative clause: "Classic Country" is country words but NOT
+    # bluegrass ones — the catalogue tags Monroe "Country" too (2026-09-17)
+    if any(word_in(w.lower(), genres) for w in rule.get("exclude_genres") or []):
+        return False
     if (artists or genre_words) and not rule.get("all"):
-        genres = split_genre(genre or "")
         if not (artist_hit(artists, artist, path) or any(word_in(w.lower(), genres) for w in genre_words)):
             return False
     if instruments and not instruments_hit(instruments, yamnet):
@@ -97,7 +102,7 @@ def matches(rule: dict, *, artist: str, path: str, genre: str, yamnet: dict | No
 def validate(rule: dict) -> list[str]:
     """Problems with a rule as written (the admin page shows them)."""
     errs = []
-    for k in ("artists", "genres"):
+    for k in ("artists", "genres", "exclude_genres"):
         v = rule.get(k)
         if v is not None and (not isinstance(v, list) or not all(isinstance(x, str) for x in v)):
             errs.append(f"{k} must be a list of strings")

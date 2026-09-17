@@ -112,8 +112,13 @@ class TagCache:
         write_atomic(self.path, json.dumps({"v": CACHE_VERSION, "entries": self.seen}, separators=(",", ":")))
 
 
-def walk(roots: list[Path], cache: TagCache) -> tuple[list[Track], dict]:
-    counts = {"files": 0, "untagged": 0, "excluded": 0, "unreadable_dirs": 0}
+def walk(roots: list[Path], cache: TagCache, extra_genres: dict[str, list[str]] | None = None) -> tuple[list[Track], dict]:
+    """Every audio file under the roots as a Track. `extra_genres` is the
+    catalogue's word for each path ({path: [words]}, exported from beets +
+    Last.fm — "honky tonk", "western swing", "delta blues"); it is merged
+    with the file's own genre tag, never replacing it."""
+    extra_genres = extra_genres or {}
+    counts = {"files": 0, "untagged": 0, "excluded": 0, "unreadable_dirs": 0, "catalogue_genres": 0}
     tracks: list[Track] = []
     for root in roots:
         if not root.is_dir():
@@ -133,6 +138,10 @@ def walk(roots: list[Path], cache: TagCache) -> tuple[list[Track], dict]:
                 counts["files"] += 1
                 genre, artist = cache.tags(p, st)
                 genres = split_genre(genre)
+                more = [w for w in split_genre("; ".join(extra_genres.get(str(p), []))) if w not in genres]
+                if more:
+                    genres, genre = genres + more, "; ".join(x for x in [genre, *more] if x)
+                    counts["catalogue_genres"] += 1
                 if not genres:
                     counts["untagged"] += 1
                 if any(word_in(w, genres) for w in EXCLUDE_WORDS):
@@ -341,6 +350,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", required=True, type=Path, help="playlist directory")
     ap.add_argument("--pools", required=True, type=Path, help="pool directory (feeds/, artists/)")
     ap.add_argument("--cache", required=True, type=Path, help="tag cache file")
+    ap.add_argument("--genres", type=Path, help="JSON {path: [genre words]} from the library catalogue (beets + Last.fm); merged with the file tags")
     ap.add_argument("--profile", type=Path, help="profile.json from `netradio profile`")
     ap.add_argument("--overrides", type=Path, help="profile-overrides.json")
     ap.add_argument("--summary", type=Path, help="write counts here (the radio page reads it)")
@@ -354,7 +364,13 @@ def main(argv: list[str] | None = None) -> int:
                         format="%(levelname)s %(message)s", stream=sys.stdout)
 
     cache = TagCache(args.cache)
-    tracks, counts = walk(args.root, cache)
+    extra = {}
+    if args.genres and args.genres.exists():
+        try:
+            extra = json.loads(args.genres.read_text())
+        except ValueError as e:
+            log.warning("ignoring %s: %s", args.genres, e)
+    tracks, counts = walk(args.root, cache, extra)
     cache.save()
     write_m3u(args.out / "library.m3u", [t.path for t in tracks])
 
@@ -378,8 +394,8 @@ def main(argv: list[str] | None = None) -> int:
     station_counts = build(tracks, Config(args.config), args.out, args.pools, talk=talk, summary=args.summary,
                            ycast=args.ycast, public_base=args.public_base, quick_picks=quick, web_base=args.web_base)
 
-    log.info("%d audio files, %d untagged, %d excluded, %d talk, %d unreadable dirs; tag cache %d hits / %d reads",
-             counts["files"], counts["untagged"], counts["excluded"], len(talk), counts["unreadable_dirs"],
+    log.info("%d audio files, %d untagged, %d excluded, %d talk, %d unreadable dirs, %d with catalogue genres; tag cache %d hits / %d reads",
+             counts["files"], counts["untagged"], counts["excluded"], len(talk), counts["unreadable_dirs"], counts["catalogue_genres"],
              cache.hits, cache.misses)
     empty = [m for m, n in station_counts.items() if not n]
     if empty:

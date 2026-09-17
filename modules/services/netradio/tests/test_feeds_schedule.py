@@ -173,3 +173,14 @@ class Store(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExcludeGenres(unittest.TestCase):
+    def test_negative_clause_keeps_bluegrass_out_of_country(self):
+        from netradio import feeds as fr
+        rule = {"genres": ["country"], "exclude_genres": ["bluegrass", "old time"]}
+        kw = dict(artist="Bill Monroe", path="/mnt/fusion/Music/Bill Monroe/x/1.mp3", yamnet=None, era="hifi")
+        self.assertFalse(fr.matches(rule, genre="Country; Bluegrass", **kw))
+        self.assertTrue(fr.matches(rule, genre="Country; Honky Tonk", **kw))
+        self.assertFalse(fr.matches({"all": True, "exclude_genres": ["old time"]}, genre="Old Time", **kw))
+        self.assertEqual(fr.validate({"genres": ["x"], "exclude_genres": "bluegrass"}), ["exclude_genres must be a list of strings"])

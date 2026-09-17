@@ -55,7 +55,7 @@ class Migration(unittest.TestCase):
                          {"mount": "gospel", "name": "G", "kind": "curated", "family": ["gospel"], "base": {}}],
                      [{"id": "s1", "station": "blues-jazz", "kind": "auto", "like": "artist", "start": "20:00"}])
             out = migrate.run(cfg)
-            self.assertEqual(len(out), 2)
+            self.assertEqual(len(out), 3)
             mounts = [s["mount"] for s in cfg.stations()]
             self.assertEqual(mounts, ["country", "blues", "jazz", "soul", "gospel"])     # in place, order kept
             jazz = next(s for s in cfg.stations() if s["mount"] == "jazz")
@@ -78,8 +78,24 @@ class Migration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             cfg = config.Config(Path(d))
             cfg.seed({}, [{"mount": "blues", "name": "Blues", "kind": "curated"}], [])
-            self.assertEqual(migrate.run(cfg), ["split-blues-jazz-soul: nothing to do", "feeds-keep-shellac: nothing to do"])
+            self.assertEqual(migrate.run(cfg)[:2], ["split-blues-jazz-soul: nothing to do", "feeds-keep-shellac: nothing to do"])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CountryExcludesBluegrass(unittest.TestCase):
+    def test_country_base_gains_the_clause_once(self):
+        import tempfile
+        from pathlib import Path
+        from netradio import migrate
+        from netradio.config import Config
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Config(Path(d))
+            cfg.save_stations([{"mount": "country", "kind": "curated", "base": {"genres": ["country"]}},
+                               {"mount": "bluegrass", "kind": "curated", "base": {"genres": ["bluegrass"]}}])
+            self.assertIn("excludes bluegrass", migrate.country_excludes_bluegrass(cfg))
+            self.assertIn("bluegrass", cfg.stations()[0]["base"]["exclude_genres"])
+            self.assertNotIn("exclude_genres", cfg.stations()[1]["base"])
+            self.assertEqual(migrate.country_excludes_bluegrass(cfg), "nothing to do")
