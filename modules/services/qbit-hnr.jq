@@ -13,6 +13,16 @@
 def is_seeding:
   (.state | test("^(uploading|stalledUP|forcedUP|queuedUP)$"));
 
+# A torrent the tracker can see: seeding, OR still downloading. A download
+# in flight announces the whole time — it cannot be a hit-and-run — but it
+# is not `is_seeding`, and on 2026-09-16 a slow 45-minute DarkPeers grab
+# (minProgress 0, so the obligation attached at byte one) sat in at_risk
+# from the moment it started and fired QbitHnRNotSeeding ("has stopped
+# seeding") for a torrent that had never seeded yet. At-risk means
+# INACTIVE: paused, stopped, errored, missing files, mid-recheck, moving.
+def is_active:
+  is_seeding or (.state | test("^(downloading|stalledDL|forcedDL|queuedDL|metaDL|forcedMetaDL)$"));
+
 # Requirement satisfied either by seed time or, where the tracker allows it,
 # by ratio. ratioAlt = 0 means "this tracker has no ratio shortcut".
 def met($r):
@@ -93,11 +103,11 @@ def deadline_hours($r):
           # credit right now. The caller times how long each has been in this
           # set, which is what turns "not seeding" into "N seconds of a 1-hour
           # grace consumed".
-          at_risk: [ $unmet[] | select(is_seeding | not) | .hash ],
-          # THE signal: requirement still outstanding AND not currently earning
-          # credit. This is what was true for 19 h on 2026-08-17 with nothing
-          # watching it.
-          not_seeding: ([ $unmet[] | select(is_seeding | not) ] | length),
+          at_risk: [ $unmet[] | select(is_active | not) | .hash ],
+          # THE signal: requirement still outstanding AND the tracker cannot
+          # see the torrent. This is what was true for 19 h on 2026-08-17 with
+          # nothing watching it. (A download in flight is not this.)
+          not_seeding: ([ $unmet[] | select(is_active | not) ] | length),
           # Deadline already passed with the requirement unmet.
           breached: ([ $unmet[]
                        | select(deadline_hours($r) != null and deadline_hours($r) < 0) ]
