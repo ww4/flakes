@@ -70,7 +70,19 @@ def parse_result(text: str) -> dict:
             obj, end = dec.raw_decode(text, m.start())
         except ValueError as e:
             first_error = first_error or e
-            continue
+            # an answer cut off before its closing brace(s) — seen 2026-09-17,
+            # `{"rule": {...}, "family": [...], "note": "..."` with no final
+            # `}` — is worth more than its inner rule object: try closing it
+            obj = None
+            for tail in ('"}', "}", '"]}', "]}", "}}", '"}}'):
+                try:
+                    obj, end = dec.raw_decode(text[m.start():] + tail, 0)
+                    end += m.start()
+                    break
+                except ValueError:
+                    continue
+            if obj is None:
+                continue
         if isinstance(obj, dict) and ("rule" in obj or "artists" in obj or "genres" in obj):
             obj = obj if "rule" in obj else {"rule": obj}
             if not str(obj.get("note") or "").strip():

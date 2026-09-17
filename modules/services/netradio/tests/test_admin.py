@@ -154,3 +154,15 @@ class Liq(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CompileParse(unittest.TestCase):
+    def test_truncated_answer_keeps_family_and_note(self):
+        from netradio.compile import parse_result
+        cut = '{"rule": {"artists": ["Shania Twain", "George Strait"]}, "family": ["country"], "note": "Built from what is owned."'
+        r = parse_result(cut)
+        self.assertEqual(r["rule"]["artists"], ["Shania Twain", "George Strait"])
+        self.assertEqual(r["family"], ["country"])
+        self.assertEqual(r["note"], "Built from what is owned.")
+        r = parse_result('```json\n{"rule": {"genres": ["western swing"]}, "family": ["country"], "note": "x"}\n```')
+        self.assertEqual(r["family"], ["country"])
