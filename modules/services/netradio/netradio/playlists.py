@@ -302,6 +302,7 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
         now = summary.parent
         write_atomic(now / "catalogue.json", json.dumps([{"mount": s["mount"], "name": s["name"], "kind": s.get("kind", "curated")}
                                                           for s in stations]))
+        write_atomic(now / "quick-picks.json", json.dumps(quick_picks or []))   # the receiver's menu has them too
         if web_base:
             write_atomic(now / "stations.m3u", m3u(stations, web_base, ""))
             write_atomic(now / "stations-lo.m3u", m3u(stations, web_base, "-lo"))

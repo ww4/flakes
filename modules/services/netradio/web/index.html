@@ -1,20 +1,53 @@
 <!doctype html>
 <html lang="en">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1c1b1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Library radio</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="vendor/pico.min.css">
 <link rel="stylesheet" href="ui.css">
 <main class="container" id="app" v-cloak>
-  <header>
-    <hgroup>
-      <h1>Library radio</h1>
-      <p>Shuffled from the music library, with a DJ. A station starts a moment after you press play and switches itself off five minutes after the last listener leaves.</p>
-    </hgroup>
-    <p class="links"><small>Radio apps: <a href="now/stations.m3u">stations.m3u</a> · <a href="now/stations.pls">stations.pls</a> · <a href="now/stations-lo.m3u">96 kbps m3u</a> · <a href="admin/">admin</a></small></p>
+  <header class="top">
+    <h1>Library radio</h1>
+    <nav class="target" role="group" aria-label="Play on">
+      <button :class="{active: target === 'here'}" @click="target = 'here'">This phone</button>
+      <button :class="{active: target === 'room'}" @click="target = 'room'; pollReceiver()" :disabled="receiver.error === 'unreachable'">{{ receiver.name || 'Living room' }}</button>
+    </nav>
   </header>
 
-  <article v-if="current" class="player">
+  <!-- ===== The receiver ===================================================== -->
+  <article v-if="target === 'room'" class="receiver">
+    <div class="row">
+      <button class="round big" :class="{on: receiver.on}" @click="power(!receiver.on)" :title="receiver.on ? 'Standby' : 'Power on'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v6"/><path d="M4.2 4.2a5.4 5.4 0 1 0 7.6 0"/></svg></button>
+      <div class="what">
+        <strong>{{ receiver.name || 'Living room' }}</strong> <small class="muted">{{ receiver.on ? receiver.input : (receiver.error || 'standby') }}</small>
+        <div class="title" v-if="receiver.on">{{ roomTitle || '—' }}</div>
+      </div>
+      <button class="round" :class="{on: receiver.mute}" @click="mute(!receiver.mute)" :title="receiver.mute ? 'Unmute' : 'Mute'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6v4h2.5l3.5 3V3L5 6z"/><path v-if="!receiver.mute" d="M11 5.5a3.5 3.5 0 0 1 0 5"/><path v-else d="M11 6l3 4M14 6l-3 4"/></svg></button>
+    </div>
+    <div class="volume" v-if="receiver.on">
+      <button class="round small" @click="volumeStep(-2)" aria-label="Quieter">−</button>
+      <input type="range" min="0" :max="receiver.volume_max || 100" step="1" v-model.number="volumeDraft" @change="setVolume(volumeDraft)" aria-label="Volume">
+      <button class="round small" @click="volumeStep(2)" aria-label="Louder">+</button>
+      <span class="level">{{ volumeDraft }}</span>
+    </div>
+    <div class="inputs" v-if="receiver.on">
+      <button v-for="i in inputs" :key="i.param" class="chip" :class="{active: receiver.input === i.param}" @click="selectInput(i.param)">{{ i.title || i.param }}</button>
+    </div>
+    <div v-if="receiver.on && receiver.input === 'TUNER' && receiver.tuner" class="tuner">
+      <small class="muted">{{ receiver.tuner.band }} {{ receiver.tuner.frequency.val / (receiver.tuner.band === 'FM' ? 100 : 1) }} {{ receiver.tuner.band === 'FM' ? 'MHz' : 'kHz' }} <span v-if="receiver.tuner.tuned">· tuned</span><span v-if="receiver.tuner.stereo"> · stereo</span></small>
+      <div class="inputs"><button v-for="p in presets" :key="p.number" class="chip" :class="{active: String(receiver.tuner.preset) === String(p.number)}" @click="tunerPreset(p.number)">{{ p.text }}</button></div>
+    </div>
+    <p v-if="busy" class="busy"><small>{{ busy }}</small></p>
+  </article>
+
+  <!-- ===== The phone's player =============================================== -->
+  <article v-if="target === 'here' && current" class="player">
     <canvas ref="viz" width="900" height="120"></canvas>
     <div class="row">
       <button class="round" @click="stop" title="Stop"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg></button>
@@ -28,27 +61,47 @@
         <label><input type="radio" value="-lo" v-model="quality" @change="retune"> 96k</label>
       </fieldset>
     </div>
-    <div class="grid">
-      <div><h6>Last played</h6><ol><li v-for="h in curHistory.slice(1, 7)" :class="{break: h.kind === 'break'}">{{ label(h) }}</li><li v-if="curHistory.length < 2" class="muted">—</li></ol></div>
-      <div><h6>Up next</h6><ol><li v-for="n in (curNext.next || [])" :class="{break: n.kind === 'break'}">{{ label(n) }}</li><li v-if="!(curNext.next || []).length" class="muted">—</li></ol>
-        <p v-if="curNext.last_break" class="dj"><small>DJ: “{{ curNext.last_break }}”</small></p></div>
-    </div>
   </article>
 
-  <p v-if="scanning"><small class="muted">The library scan is still running — stations appear when it finishes (a few minutes after a change).</small></p>
+  <!-- ===== Feedback on the station being listened to (either target) ======== -->
+  <article v-if="feedbackMount" class="feedback">
+    <div class="row">
+      <div class="what"><small class="muted">On {{ feedbackStation.name }}</small><div class="title">{{ feedbackTitle || '—' }}</div></div>
+    </div>
+    <div class="actions">
+      <button class="secondary" @click="skip" title="Skip this track">Skip ⏭</button>
+      <button class="secondary outline" @click="dislike('track')" title="Never play this track again">👎 Never</button>
+      <button class="secondary outline" @click="dislike('artist')" title="Play this artist less">Less of them</button>
+      <button class="secondary outline" @click="requesting = !requesting">Request…</button>
+    </div>
+    <div v-if="requesting" class="request">
+      <input type="search" v-model="query" @input="searchDebounced" placeholder="artist, song, album…" autocomplete="off">
+      <ul v-if="results.length"><li v-for="r in results" :key="r.path"><a href="#" @click.prevent="request(r)"><strong>{{ r.title }}</strong> <small class="muted">{{ r.artist }} · {{ r.album }}</small></a></li></ul>
+      <small v-else-if="query.length > 1" class="muted">nothing in the library matches</small>
+    </div>
+    <div class="grid" v-if="feedbackHistory.length || (feedbackNext.next || []).length">
+      <div><h6>Last played</h6><ol><li v-for="h in feedbackHistory.slice(1, 6)" :class="{break: h.kind === 'break'}">{{ label(h) }}</li></ol></div>
+      <div><h6>Up next</h6><ol><li v-for="n in (feedbackNext.next || [])" :class="{break: n.kind === 'break', request: n.request}">{{ label(n) }}<span v-if="n.request"> · request</span></li></ol>
+        <p v-if="feedbackNext.last_break" class="dj"><small>DJ: “{{ feedbackNext.last_break }}”</small></p></div>
+    </div>
+    <p v-if="toast" class="toast"><small>{{ toast }}</small></p>
+  </article>
 
+  <p v-if="scanning"><small class="muted">The library scan is still running — stations appear when it finishes.</small></p>
+
+  <!-- ===== Stations ========================================================= -->
   <section v-for="group in groups" :key="group.kind">
     <h5>{{ group.title }}</h5>
-    <article v-for="s in group.stations" :key="s.mount" class="station" :class="{open: open === s.mount, playing: current === s.mount}">
+    <article v-for="s in group.stations" :key="s.mount" class="station" :class="{open: open === s.mount, playing: isPlaying(s)}">
       <header @click="toggle(s.mount)">
-        <button class="round" @click.stop="current === s.mount ? stop() : play(s.mount)" :title="current === s.mount ? 'Stop' : 'Play'"><template v-if="current === s.mount"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg></template><template v-else><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg></template></button>
+        <button class="round" @click.stop="isPlaying(s) ? stopTarget() : playTarget(s)" :title="isPlaying(s) ? 'Stop' : 'Play'"><template v-if="isPlaying(s)"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg></template><template v-else><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg></template></button>
         <div class="name">
           <strong>{{ s.name }}</strong>
           <small class="muted">{{ countOf(s.mount) }}<span v-if="isUp(s.mount)"> · <span class="live">on air</span></span><span v-if="listenersOf(s.mount)"> · {{ listenersOf(s.mount) }} listening</span></small>
         </div>
         <div class="now"><small>{{ isUp(s.mount) ? titleOf(s.mount) : "" }}</small></div>
       </header>
-      <div v-if="open === s.mount" class="details">
+      <div v-if="open === s.mount && s.mount" class="details">
         <div class="grid">
           <div><h6>Last played</h6><ol><li v-for="h in (histories[s.mount] || []).slice(0, 6)" :class="{break: h.kind === 'break'}">{{ label(h) }}</li><li v-if="!(histories[s.mount] || []).length" class="muted">nothing yet</li></ol></div>
           <div><h6>Up next</h6><ol><li v-for="n in ((nexts[s.mount] || {}).next || [])" :class="{break: n.kind === 'break'}">{{ label(n) }}</li><li v-if="!((nexts[s.mount] || {}).next || []).length" class="muted">—</li></ol>
@@ -57,6 +110,7 @@
       </div>
     </article>
   </section>
+  <footer><small class="muted">Radio apps: <a href="now/stations.m3u">stations.m3u</a> · <a href="now/stations.pls">stations.pls</a> · <a href="now/stations-lo.m3u">96 kbps m3u</a> · <a href="admin/">admin</a></small></footer>
   <audio ref="audio" preload="none"></audio>
 </main>
 <script src="vendor/vue.global.prod.js"></script>

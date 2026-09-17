@@ -282,6 +282,7 @@ let
   radioWeb = pkgs.runCommand "netradio-web" { } ''
     mkdir -p $out/admin $out/vendor
     cp ${./web}/index.html ${./web}/app.js ${./web}/ui.css $out/
+    cp ${./web}/manifest.webmanifest ${./web}/sw.js ${./web}/icon.svg ${./web}/icon-192.png ${./web}/icon-512.png $out/   # the PWA
     cp ${./web/admin}/index.html ${./web/admin}/admin.js $out/admin/
     cp ${vueJs} $out/vendor/vue.global.prod.js
     cp ${picoCss} $out/vendor/pico.min.css
@@ -418,6 +419,23 @@ in
             types { audio/x-mpegurl m3u; audio/x-scpls pls; }
             add_header Cache-Control "no-store";
           }
+        '';
+      };
+      # nginx's mime.types has no entry for .webmanifest, and Chrome won't
+      # install a PWA whose manifest arrives as octet-stream. An exact-match
+      # location for that one file (a `types` block only reaches this file).
+      "= /manifest.webmanifest" = {
+        extraConfig = ''
+          types { } default_type application/manifest+json;
+        '';
+      };
+      # The receiver's JSON API (yamaha-ync-api, loopback; modules/services/yamaha-ync.nix)
+      # for the page's living-room controls. Same Tailscale/LAN gate as the page.
+      "/receiver/" = {
+        proxyPass = "http://127.0.0.1:${toString config.services.yamaha-ync.apiPort}/";
+        extraConfig = ''
+          add_header Cache-Control "no-store";
+          proxy_read_timeout 90s;   # a menu walk can take a while
         '';
       };
       # The admin API (netradio admin, loopback). The page itself is static

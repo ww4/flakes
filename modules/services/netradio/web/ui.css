@@ -95,3 +95,39 @@ small.note { display: block; margin: -.4rem 0 .8rem; }
 .switches label { margin: 0; }
 .ai-note { margin: -.2rem 0 .6rem; padding: .35rem .6rem; border-left: 3px solid var(--pico-primary); background: var(--pico-card-sectioning-background-color); border-radius: 0 6px 6px 0; }
 .ai-note .answer { white-space: pre-wrap; font-size: .8em; margin: .4rem 0 0; max-height: 18rem; overflow: auto; }
+
+/* ---- the phone remote (2026-09-17) ---------------------------------------- */
+.top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .6rem; }
+.top h1 { margin: 0; font-size: 1.25rem; white-space: nowrap; }
+.target { display: flex; border: 1px solid var(--pico-muted-border-color); border-radius: 999px; overflow: hidden; }
+.target button { margin: 0; padding: .35rem .9rem; border: 0; border-radius: 0; background: transparent; color: var(--pico-muted-color); font-size: .85rem; }
+.target button.active { background: var(--pico-primary); color: var(--pico-primary-inverse); }
+.receiver, .feedback { padding: .8rem 1rem; }
+.receiver .row, .feedback .row { display: flex; align-items: center; gap: .8rem; }
+.round.big { width: 3.2rem; height: 3.2rem; }
+.round.big svg { width: 1.5rem; height: 1.5rem; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.round.on { background: var(--pico-primary); color: var(--pico-primary-inverse); border-color: var(--pico-primary); }
+.round svg path { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.round.small { width: 2.2rem; height: 2.2rem; font-size: 1.1rem; line-height: 1; }
+.volume { display: flex; align-items: center; gap: .6rem; margin: .7rem 0 .4rem; }
+.volume input[type=range] { flex: 1; margin: 0; }
+.volume .level { min-width: 2.2rem; text-align: right; font-variant-numeric: tabular-nums; }
+.inputs { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; }
+button.chip { margin: 0; padding: .3rem .7rem; font-size: .8rem; border-radius: 999px; background: var(--pico-card-sectioning-background-color); color: var(--pico-contrast); border: 1px solid var(--pico-muted-border-color); width: auto; box-shadow: none; }
+button.chip.active { background: var(--pico-primary); color: var(--pico-primary-inverse); border-color: var(--pico-primary); }
+.busy, .toast { margin: .4rem 0 0; color: var(--pico-muted-color); }
+.feedback .actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .6rem; }
+.feedback .actions button { width: auto; margin: 0; padding: .4rem .8rem; font-size: .85rem; }
+.feedback .request { margin-top: .6rem; }
+.feedback .request input { margin-bottom: .3rem; }
+.feedback .request ul { list-style: none; padding: 0; margin: 0; max-height: 14rem; overflow: auto; }
+.feedback .request li { padding: .3rem 0; border-bottom: 1px solid var(--pico-muted-border-color); }
+li.request { color: var(--pico-primary); }
+footer { margin-top: 1.5rem; }
+@media (max-width: 600px) {
+  .container { padding: .6rem; }
+  .station header .now { display: none; }
+  .top h1 { font-size: 1.1rem; }
+  .target button { padding: .35rem .7rem; }
+  .feedback .actions button { flex: 1 1 40%; }
+}
