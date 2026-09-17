@@ -232,6 +232,10 @@ let
     { name = "SomaFM Secret Agent"; url = "http://ice1.somafm.com/secretagent-128-mp3"; }
   ];
   quickPicksJson = pkgs.writeText "netradio-quick-picks.json" (builtins.toJSON quickPicks);
+  # A stations.yml with only the Quick Picks, for YCast to start on before
+  # the scanner has written the real one (JSON is valid YAML).
+  ycastSeedYaml = pkgs.writeText "netradio-stations-seed.yml"
+    (builtins.toJSON { "Quick Picks" = builtins.listToAttrs (map (p: { name = p.name; value = p.url; }) quickPicks); });
 
   radioHost = "radio.rosemaryacres.com";
 
@@ -812,12 +816,23 @@ in
   systemd.services.ycast = {
     description = "YCast — vTuner internet radio directory emulation";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
+    # YCast decides ONCE at startup whether "My Stations" exists (it looks
+    # for stations.yml then, never again). The 2026-09-16 13:04 deploy
+    # started it before anything had written the file at its new path, and
+    # the receiver's menu read "'My Stations' feature not configured." for
+    # the rest of the day. The scanner is the only writer, and it runs on a
+    # timer — so seed the file with the Quick Picks (JSON is YAML) when it
+    # is missing, before YCast looks.
+    after = [ "network-online.target" "netradio-credentials.service" ];
     wants = [ "network-online.target" ];
     environment.HOME = "/var/lib/ycast";  # ~/.ycast/cache: resized station icons
     serviceConfig = hardening // {
       DynamicUser = true;
       StateDirectory = "ycast";
+      ExecStartPre = "+${pkgs.writeShellScript "ycast-seed-stations" ''
+        f=${configDir}/stations.yml
+        [ -s "$f" ] || install -o netradio -g users -m 664 ${ycastSeedYaml} "$f"
+      ''}";
       ExecStart = "${lib.getExe ycast} -l 127.0.0.1 -p ${toString ycastPort} -c ${configDir}/stations.yml";
       Restart = "always";
       RestartSec = 5;
