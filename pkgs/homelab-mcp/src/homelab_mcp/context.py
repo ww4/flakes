@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .paths import PathRejected, resolve_read
-from .space import SKIP_DIRS, MARKDOWN_SUFFIX
+from .space import SKIP_DIRS, MARKDOWN_SUFFIX, _is_readable, resolve_excluded
 
 MAX_OPEN_TASKS = 40
 MAX_PAGE_CHARS = 4000
@@ -65,7 +65,11 @@ def _folder_summary(space_root: Path, folder: str) -> list[str]:
     return out
 
 
-def _open_tasks(space_root: Path, sources: Sequence[str] | None = None) -> list[str]:
+def _open_tasks(
+    space_root: Path,
+    sources: Sequence[str] | None = None,
+    excluded: Sequence[str] | None = None,
+) -> list[str]:
     """Open checkboxes, from an EXPLICIT allowlist of folders and pages.
 
     ⚠️ DEFAULT-DENY. `sources=None` or an empty list returns nothing at all.
@@ -90,6 +94,13 @@ def _open_tasks(space_root: Path, sources: Sequence[str] | None = None) -> list[
     if not sources:
         return []
 
+    # ⚠️ This function does NOT go through _iter_pages -- it builds its own
+    # candidate list by rglob, so the carve-out has to be applied here too.
+    # Threading it into space.py alone would have left the open-task list as an
+    # unexcluded read path, which is the surface that leaked a personal page in
+    # the 2026-09-01 red-team pass in the first place.
+    blocked = resolve_excluded(space_root, excluded)
+
     candidates: list[Path] = []
     for source in sources:
         try:
@@ -107,6 +118,8 @@ def _open_tasks(space_root: Path, sources: Sequence[str] | None = None) -> list[
         if path in seen:
             continue
         seen.add(path)
+        if blocked and not _is_readable(path, [space_root], blocked):
+            continue
         rel_parts = path.relative_to(space_root).parts
         if any(part in SKIP_DIRS for part in rel_parts):
             continue
@@ -178,6 +191,7 @@ def build_context(
     include_service_inventory: bool = True,
     context_page: str | None = None,
     readable_sources: Sequence[str] | None = None,
+    unreadable_paths: Sequence[str] | None = None,
 ) -> str:
     """Assemble the briefing as one markdown document."""
     sections: list[str] = ["# Homelab & knowledgebase context"]
@@ -219,7 +233,7 @@ def build_context(
     if areas:
         sections += ["", "## Areas of responsibility", ""] + areas
 
-    tasks = _open_tasks(space_root, readable_sources)
+    tasks = _open_tasks(space_root, readable_sources, unreadable_paths)
     if tasks:
         sections += ["", f"## Open tasks (first {len(tasks)})", ""] + tasks
 

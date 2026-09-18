@@ -90,16 +90,55 @@ def resolve_sources(space_root: Path, sources: Sequence[str] | None) -> list[Pat
     return out
 
 
-def _is_readable(path: Path, roots: Sequence[Path]) -> bool:
-    """Is `path` inside one of the allowed roots?
+def resolve_excluded(space_root: Path, excluded: Sequence[str] | None) -> list[Path]:
+    """Turn the configured carve-outs into concrete, in-space paths.
+
+    Mirrors resolve_sources, with one deliberate difference: an entry that does
+    not exist is still kept. An allowlist entry that resolves to nothing makes
+    the allowlist NARROWER, which is safe to drop. A carve-out that resolves to
+    nothing would make the readable set WIDER, so it is retained and simply
+    never matches -- the failure stays on the safe side either way.
+    """
+    if not excluded:
+        return []
+    out: list[Path] = []
+    for entry in excluded:
+        try:
+            out.append(resolve_read(space_root, entry))
+        except PathRejected:
+            continue
+    return out
+
+
+def _is_readable(
+    path: Path,
+    roots: Sequence[Path],
+    excluded: Sequence[Path] = (),
+) -> bool:
+    """Is `path` inside one of the allowed roots and outside every carve-out?
 
     Compares resolved paths, so a symlink cannot be used to satisfy the check
     while pointing somewhere else.
+
+    ⚠️ THE CARVE-OUT IS CHECKED FIRST and wins over the allowlist. The allowlist
+    is pure path containment, so naming a folder necessarily exposes everything
+    beneath it -- there is no way to say "Inbox but not Inbox/Log" with roots
+    alone. That gap was live from 2026-09-01 to 2026-09-18: `readable_sources =
+    ["Inbox"]` made the verbatim capture log under `Inbox/Log/` readable from a
+    chat window, while a same-day change emptied the rest of Inbox nightly, so
+    the log was very nearly ALL the connector could see.
     """
     try:
         resolved = path.resolve()
     except OSError:
         return False
+    for blocked in excluded:
+        try:
+            blocked_resolved = blocked.resolve()
+        except OSError:
+            blocked_resolved = blocked
+        if resolved == blocked_resolved or blocked_resolved in resolved.parents:
+            return False
     for root in roots:
         try:
             root_resolved = root.resolve()
@@ -110,7 +149,11 @@ def _is_readable(path: Path, roots: Sequence[Path]) -> bool:
     return False
 
 
-def _iter_pages(space_root: Path, sources: Sequence[str] | None = None):
+def _iter_pages(
+    space_root: Path,
+    sources: Sequence[str] | None = None,
+    excluded: Sequence[str] | None = None,
+):
     """Yield the markdown pages the connector is allowed to see.
 
     ⚠️ ALLOWLIST, NOT DENYLIST, and it governs the READ PATH — not just the
@@ -128,6 +171,7 @@ def _iter_pages(space_root: Path, sources: Sequence[str] | None = None):
     roots = resolve_sources(space_root, sources)
     if not roots:
         return
+    blocked = resolve_excluded(space_root, excluded)
     for path in space_root.rglob(f"*{MARKDOWN_SUFFIX}"):
         if any(part in SKIP_DIRS for part in path.relative_to(space_root).parts):
             continue
@@ -135,7 +179,7 @@ def _iter_pages(space_root: Path, sources: Sequence[str] | None = None):
             # Symlinks are skipped rather than followed: a link could point
             # outside the space, and listing is not worth the escape risk.
             continue
-        if not _is_readable(path, roots):
+        if not _is_readable(path, roots, blocked):
             continue
         yield path
 
@@ -162,6 +206,7 @@ def search_notes(
     query: str,
     limit: int | None = None,
     sources: Sequence[str] | None = None,
+    excluded: Sequence[str] | None = None,
 ) -> list[SearchHit]:
     """Literal, case-insensitive, all-tokens-must-match search across the space.
 
@@ -178,7 +223,7 @@ def search_notes(
     tokens = [t.lower() for t in query.split() if t]
     hits: list[SearchHit] = []
 
-    for path in _iter_pages(space_root, sources):
+    for path in _iter_pages(space_root, sources, excluded):
         try:
             if path.stat().st_size > MAX_SEARCH_FILE_BYTES:
                 continue
@@ -205,7 +250,12 @@ def search_notes(
     return hits
 
 
-def read_note(space_root: Path, rel: str, sources: Sequence[str] | None = None) -> str:
+def read_note(
+    space_root: Path,
+    rel: str,
+    sources: Sequence[str] | None = None,
+    excluded: Sequence[str] | None = None,
+) -> str:
     """Return the full text of one page, if it is inside the allowlist.
 
     This used to permit space-wide reads, which made search+read an unrestricted
@@ -218,7 +268,8 @@ def read_note(space_root: Path, rel: str, sources: Sequence[str] | None = None) 
     path = resolve_read(space_root, rel)
 
     roots = resolve_sources(space_root, sources)
-    if not _is_readable(path, roots):
+    blocked = resolve_excluded(space_root, excluded)
+    if not _is_readable(path, roots, blocked):
         raise PathRejected(f"no such page: {rel}")
 
     if not path.is_file():
@@ -228,7 +279,7 @@ def read_note(space_root: Path, rel: str, sources: Sequence[str] | None = None) 
         # permission error when it is only a spelling one.
         if path.suffix != MARKDOWN_SUFFIX:
             with_suffix = resolve_read(space_root, rel + MARKDOWN_SUFFIX)
-            if _is_readable(with_suffix, roots) and with_suffix.is_file():
+            if _is_readable(with_suffix, roots, blocked) and with_suffix.is_file():
                 path = with_suffix
             else:
                 raise FileNotFoundError(f"no such page: {rel}")

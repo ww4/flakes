@@ -14,6 +14,7 @@ from homelab_mcp.space import (
     save_note,
     search_notes,
     slugify,
+    resolve_excluded,
 )
 
 INBOX = "Inbox"
@@ -224,3 +225,70 @@ def test_rendered_note_does_not_rewrap_multiline_bodies():
     body = "First paragraph on one long line.\n\nSecond paragraph on one long line."
     out = render_note("T", body)
     assert body in out
+
+
+# ---------------------------------------------------------------------------
+# Carve-outs inside the allowlist (unreadable_paths), added 2026-09-18.
+#
+# readable_sources is pure path containment, so "Inbox" necessarily exposed
+# "Inbox/Log" -- the verbatim capture log -- with no way to express the
+# exception. These tests pin the carve-out on EVERY read path, because the
+# open-task list in context.py builds its own candidate list by rglob and does
+# not go through _iter_pages; threading the exclusion into space.py alone left
+# that path unprotected.
+# ---------------------------------------------------------------------------
+
+
+def _space_with_log(tmp_path):
+    (tmp_path / "Inbox").mkdir()
+    (tmp_path / "Inbox" / "Log").mkdir()
+    (tmp_path / "Inbox" / "note.md").write_text("# Note\n\nordinary inbox page\n")
+    (tmp_path / "Inbox" / "Log.md").write_text("# Log\n\ncapture log root page\n")
+    (tmp_path / "Inbox" / "Log" / "2026-09.md").write_text("# Sep\n\nsecretive brain dump\n")
+    return tmp_path
+
+
+def test_excluded_page_is_invisible_to_search(tmp_path):
+    root = _space_with_log(tmp_path)
+    without = {h.path for h in search_notes(root, "capture OR dump", sources=["Inbox"])}
+    hits = search_notes(root, "dump", sources=["Inbox"], excluded=["Inbox/Log"])
+    assert hits == [], f"carve-out did not hide the log: {[h.path for h in hits]}"
+    # positive control: the same query DOES hit without the carve-out
+    assert search_notes(root, "dump", sources=["Inbox"]), "query matched nothing even unexcluded"
+
+
+def test_excluded_page_cannot_be_read(tmp_path):
+    root = _space_with_log(tmp_path)
+    # positive control first: readable without the carve-out
+    assert "brain dump" in read_note(root, "Inbox/Log/2026-09.md", sources=["Inbox"])
+    with pytest.raises(PathRejected):
+        read_note(root, "Inbox/Log/2026-09.md", sources=["Inbox"], excluded=["Inbox/Log"])
+
+
+def test_carve_out_does_not_hide_its_siblings(tmp_path):
+    root = _space_with_log(tmp_path)
+    assert "ordinary inbox page" in read_note(
+        root, "Inbox/note.md", sources=["Inbox"], excluded=["Inbox/Log"]
+    )
+
+
+def test_carve_out_is_a_path_not_a_prefix(tmp_path):
+    """"Inbox/Log" must not also hide "Inbox/Log.md" by string prefix -- or vice
+    versa. They are different pages and the rule is path containment."""
+    root = _space_with_log(tmp_path)
+    assert "capture log root page" in read_note(
+        root, "Inbox/Log.md", sources=["Inbox"], excluded=["Inbox/Log"]
+    )
+
+
+def test_nonexistent_carve_out_is_retained_not_dropped(tmp_path):
+    """An allowlist entry that resolves to nothing is dropped (narrower, safe).
+    A carve-out that resolves to nothing must NOT be dropped, because dropping
+    it would widen the readable set."""
+    root = _space_with_log(tmp_path)
+    assert resolve_excluded(root, ["Inbox/DoesNotExist"]), "carve-out silently dropped"
+
+
+def test_carve_out_cannot_escape_the_space(tmp_path):
+    root = _space_with_log(tmp_path)
+    assert resolve_excluded(root, ["../../etc"]) == []

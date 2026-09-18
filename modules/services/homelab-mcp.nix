@@ -213,7 +213,29 @@ in
       # Widen deliberately, page by page or folder by folder — and remember the
       # audience is a chat window, not this box. JSON, because pydantic-settings
       # parses list fields as JSON.
-      HOMELAB_MCP_READABLE_SOURCES = builtins.toJSON [ "Inbox" ];
+      #
+      # ⚠️ WIDENED 2026-09-18, because "Inbox alone" interacted badly with the
+      # nightly triage that empties Inbox/. Measured on the live space that day:
+      # 713 pages, 3 readable — and those 3 were the capture log. search_notes
+      # and read_note could find essentially nothing, while get_context still
+      # worked (it reads CONVENTIONS/index/Projects/Areas directly, bypassing
+      # this list), so the connector LOOKED healthy and could not answer a
+      # follow-up.
+      #
+      # These four are the curated, homelab-facing parts of the space. Audited
+      # page by page before adding: 51 pages, no credential material — the only
+      # two candidates were a note saying a Django SECRET_KEY sits in cleartext
+      # on a droplet, and a billing line recording that a password was changed.
+      # Deliberately still OUT: Keep/ (556 pages of unreviewed import),
+      # Journal/ (personal), System/ (agent internals), and the space root,
+      # where the 2026-09-01 red team found an email address, the VPN exit IP
+      # and a forwarded port on one untagged page.
+      HOMELAB_MCP_READABLE_SOURCES = builtins.toJSON [ "Inbox" "Projects" "Areas" "Notes" ];
+
+      # Carve-outs inside the allowlist, checked BEFORE it and winning over it.
+      # Inbox/Log is the verbatim capture log; "Inbox" above would otherwise
+      # expose it, and there is no way to express the exception with roots alone.
+      HOMELAB_MCP_UNREADABLE_PATHS = builtins.toJSON [ "Inbox/Log" ];
 
       # HOMELAB_MCP_PATH_PREFIX is deliberately NOT set here — it comes from
       # EnvironmentFile below. Setting it in both places would make which one

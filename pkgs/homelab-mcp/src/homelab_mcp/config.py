@@ -95,6 +95,22 @@ class Settings(BaseSettings):
             "configuration and are read regardless."
         ),
     )
+    unreadable_paths: list[str] = Field(
+        default_factory=lambda: ["Inbox/Log"],
+        description=(
+            "Carve-outs INSIDE the allowlist, checked first and winning over "
+            "readable_sources. The allowlist is pure path containment, so "
+            "naming a folder necessarily exposes everything under it and there "
+            "is no way to say 'Inbox but not Inbox/Log' with roots alone. "
+            "Inbox/Log is the verbatim capture log -- every brain-dump Chris "
+            "has typed, kept so nothing is lost -- and readable_sources=['Inbox'] "
+            "made it readable from a chat window between 2026-09-01 and "
+            "2026-09-18. Unlike an allowlist entry, a carve-out that resolves to "
+            "nothing is KEPT rather than dropped: dropping it would widen the "
+            "readable set, and this field only ever narrows."
+        ),
+    )
+
     context_page: str = Field(
         default="Areas/Agent Context.md",
         description=(
