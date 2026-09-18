@@ -13,6 +13,7 @@
   standing [--force]       refresh the standing questions whose sources changed (the timer)
   slowlog [--days N]       repeated slow-path questions — candidates for a standing question
   agi                      run the FastAGI server (the systemd unit)
+  btc-watch                one bitcoin spike-watch tick (the switchboard-btcwatch timer)
   hook                     run the escalation webhook (Alertmanager -> phone call; systemd unit)
   alert-test               ring the callback handset with a test alert through the hook path
 
@@ -71,6 +72,7 @@ async def _main(argv: list[str]) -> int:
     st = sub.add_parser("standing"); st.add_argument("--force", action="store_true")
     sl = sub.add_parser("slowlog"); sl.add_argument("--days", type=float, default=7.0)
     sub.add_parser("agi")
+    sub.add_parser("btc-watch")
     sub.add_parser("hook")
     sub.add_parser("alert-test")
 
@@ -165,6 +167,10 @@ async def _main(argv: list[str]) -> int:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(f"http://{settings.hook_host}:{settings.hook_port}/alert", json=payload)
         print(resp.status_code, resp.text.strip())
+    elif args.cmd == "btc-watch":
+        from . import btcwatch
+        r = btcwatch.run(settings)
+        print(json.dumps(r))
     elif args.cmd == "agi":
         await agi.serve(settings)
     return 0
