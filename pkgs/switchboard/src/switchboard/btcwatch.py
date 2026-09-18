@@ -219,13 +219,12 @@ def spoken(answer: dict, now_ts: float | None = None) -> str:
 
 # ---------------------------------------------------------------- the timer entry point
 
-def run(settings: Settings, now_ts: float | None = None) -> dict:
+async def run(settings: Settings, now_ts: float | None = None) -> dict:
     """One watch tick. Returns a small status dict (also what the CLI prints)."""
     now_ts = now_ts or time.time()
-    import asyncio
     hist = load_history(settings)
     try:
-        _feed_ts, price = asyncio.run(sample_price(settings))
+        _feed_ts, price = await sample_price(settings)
     except SourceError as exc:
         log.warning("btc-watch: %s", exc)
         return {"ok": False, "error": str(exc)}

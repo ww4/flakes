@@ -24,6 +24,7 @@ Every stage that a call goes through can be exercised here without a phone;
 from __future__ import annotations
 
 import argparse
+import json
 import asyncio
 import logging
 import sys
@@ -169,7 +170,7 @@ async def _main(argv: list[str]) -> int:
         print(resp.status_code, resp.text.strip())
     elif args.cmd == "btc-watch":
         from . import btcwatch
-        r = btcwatch.run(settings)
+        r = await btcwatch.run(settings)
         print(json.dumps(r))
     elif args.cmd == "agi":
         await agi.serve(settings)
