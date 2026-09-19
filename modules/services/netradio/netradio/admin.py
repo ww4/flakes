@@ -293,6 +293,35 @@ class Admin:
         self.cfg.save_dislikes(d)
         return {"ok": True}
 
+    def art(self, path: str) -> tuple[bytes, str] | None:
+        """Cover art for a library track: the file's embedded picture, else a
+        cover/folder image beside it. (bytes, mime) or None."""
+        if path not in set(self.library()):
+            raise ValueError("not a library track")
+        try:
+            import mutagen
+            f = mutagen.File(path)
+        except Exception:
+            f = None
+        if f is not None:
+            tags = getattr(f, "tags", None) or {}
+            for key in list(tags.keys()):
+                if key.startswith("APIC"):                       # mp3
+                    pic = tags[key]
+                    return bytes(pic.data), ("image/jpeg" if (pic.mime or "").lower() in ("", "image/jpg") else pic.mime)
+            covr = tags.get("covr") if hasattr(tags, "get") else None
+            if covr:                                             # m4a
+                data = covr[0]
+                return bytes(data), "image/png" if bytes(data[:4]) == b"\x89PNG" else "image/jpeg"
+            for pic in getattr(f, "pictures", []) or []:         # flac
+                return bytes(pic.data), pic.mime or "image/jpeg"
+        folder = Path(path).parent
+        for name in ("cover.jpg", "Cover.jpg", "folder.jpg", "Folder.jpg", "cover.png", "front.jpg", "Front.jpg", "album.jpg"):
+            fp = folder / name
+            if fp.exists():
+                return fp.read_bytes(), "image/png" if name.endswith(".png") else "image/jpeg"
+        return None
+
     def library(self) -> list[str]:
         if not self.playlists:
             return []
@@ -374,6 +403,19 @@ def make_handler(admin: Admin):
                         return self._reply(200, admin.undislike(self._json()))
                     if parts == ["api", "dislikes"] and method == "GET":
                         return self._reply(200, admin.cfg.dislikes())
+                    if parts == ["api", "art"] and method == "GET":
+                        path = parse_qs(u.query).get("path", [""])[0]
+                        got = admin.art(path)
+                        if not got:
+                            return self._reply(404, {"error": "no art"})
+                        data, mime = got
+                        self.send_response(200)
+                        self.send_header("Content-Type", mime)
+                        self.send_header("Cache-Control", "public, max-age=86400")
+                        self.send_header("Content-Length", str(len(data)))
+                        self.end_headers()
+                        self.wfile.write(data)
+                        return
                     if parts == ["api", "search"] and method == "GET":
                         q = parse_qs(u.query).get("q", [""])[0]
                         return self._reply(200, admin.search(q))

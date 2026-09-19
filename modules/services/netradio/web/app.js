@@ -37,7 +37,7 @@ createApp({
              ctx: null, analyser: null, raf: 0, wide: window.innerWidth > 640,
              target, tab, receiver: { name: "", on: false, input: "", volume: 0, mute: false, error: "" }, inputs: [], presets: [],
              pandora: JSON.parse((() => { try { return localStorage.getItem("radio.pandora") || "[]"; } catch (e) { return "[]"; } })()), menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
-             volumeDraft: 0, freqDraft: "", busy: "", toast: "", query: "", results: [], searchTimer: 0, roomPoll: 0 };
+             volumeDraft: 0, freqDraft: "", busy: "", toast: "", query: "", results: [], searchTimer: 0, roomPoll: 0, artFailed: "" };
   },
   computed: {
     groups() {
@@ -89,7 +89,24 @@ createApp({
       const np = this.np; if (!np) return "";
       return this.nowKind === "pandora" ? [np.artist, np.album].filter(Boolean).join(" · ") : (np.artist || "");
     },
-    art() { const np = this.np; return np && np.album_art_url && /^https?:/.test(np.album_art_url) ? np.album_art_url : ""; },
+    art() {
+      // a library track: its embedded picture / folder cover via the admin API;
+      // Pandora & co: the unit's own album art, relayed by ync-api. The <img>'s
+      // onerror falls back to the coloured tile.
+      if (this.nowKind === "library") {
+        const t = this.nowTrack();
+        return t && t.path ? `admin/api/art?path=${encodeURIComponent(t.path)}` : "";
+      }
+      const np = this.np;
+      if (!np || !np.album_art_url) return "";
+      if (/^https?:/.test(np.album_art_url)) return np.album_art_url;
+      return `receiver/art?url=${encodeURIComponent(np.album_art_url)}`;
+    },
+    segment() { const seg = this.feedbackNext.segment; return seg && seg.name ? seg : null; },
+    segmentLine() {
+      const seg = this.segment; if (!seg) return "";
+      return seg.kind === "artist" ? `${seg.name.replace(/ spotlight$/i, "")} spotlight` : seg.name;
+    },
     heroStyle() { const h = hue(this.nowStation || "radio"); return { background: `linear-gradient(160deg, hsl(${h} 45% 34%), hsl(${(h + 40) % 360} 55% 18%))` }; },
     freqText() { const t = this.receiver.tuner; if (!t) return ""; return t.band === "FM" ? (t.fm.val / 100).toFixed(1) : String(t.am.val); },
     feedbackMount() { return this.target === "room" ? this.roomMount : this.current; },
@@ -111,6 +128,7 @@ createApp({
     listenersOf(m) { return ((this.up[m] || {}).listeners | 0) + ((this.up[m + "-lo"] || {}).listeners | 0); },
     countOf(m) { const c = this.counts[m]; return c ? `${c.tracks.toLocaleString()} tracks` : ""; },
     streamUrl(m) { return `radio/${m}${this.quality}.mp3?t=${Date.now()}`; },
+    artError() { this.artFailed = this.art; },
     say(msg) { this.toast = msg; clearTimeout(this._toastT); this._toastT = setTimeout(() => { this.toast = ""; }, 3500); },
     pickTarget() { this.target = this.target === "room" ? "here" : "room"; this.say(this.target === "room" ? `controlling the ${this.receiver.name || "receiver"}` : "playing on this phone"); },
     isPlaying(s) {

@@ -33,11 +33,11 @@
   <!-- ===== NOW ============================================================= -->
   <main v-show="tab === 'now'" class="screen now">
     <div class="hero" :style="heroStyle">
-      <img v-if="art" :src="art" alt="">
+      <img v-if="art && artFailed !== art" :src="art" alt="" @error="artError">
       <div v-else class="tile-art">{{ initials(nowStation) }}</div>
     </div>
     <div class="meta">
-      <div class="station">{{ nowStation || (target === 'room' ? (receiver.on ? receiver.input : 'Standby') : 'Nothing playing') }}</div>
+      <div class="station">{{ nowStation || (target === 'room' ? (receiver.on ? receiver.input : 'Standby') : 'Nothing playing') }}<span v-if="segmentLine" class="segment"> · {{ segmentLine }}</span></div>
       <div class="title">{{ nowLine1 || '—' }}</div>
       <div class="sub">{{ nowLine2 }}</div>
     </div>

@@ -205,3 +205,19 @@ class Feedback(unittest.TestCase):
         self.assertIn("the who", d["artists"]) and self.assertIn("/mnt/fusion/Music/The Who/Tommy/01 Overture.mp3", d["tracks"])
         self.admin.undislike({"scope": "artist", "key": "the who"})
         self.assertNotIn("the who", self.admin.cfg.dislikes()["artists"])
+
+
+class Art(unittest.TestCase):
+    def test_folder_cover_and_no_art(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); (root / "config").mkdir(); (root / "pl").mkdir()
+            alb = root / "Music" / "A" / "B"; alb.mkdir(parents=True)
+            (alb / "01 x.mp3").write_bytes(b"\x00" * 64); (alb / "cover.jpg").write_bytes(b"\xff\xd8jpeg")
+            (root / "pl" / "library.m3u").write_text(f"#EXTM3U\n{alb / '01 x.mp3'}\n{alb / '02 y.mp3'}\n")
+            a = admin.Admin(config.Config(root / "config"), None, root / "pl")
+            data, mime = a.art(str(alb / "01 x.mp3"))
+            self.assertEqual((data, mime), (b"\xff\xd8jpeg", "image/jpeg"))
+            with self.assertRaises(ValueError):
+                a.art("/nowhere.mp3")

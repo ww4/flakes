@@ -117,7 +117,7 @@ class StationDJTests(unittest.TestCase):
         self.pl.write_text("\n".join(lines) + "\n")
         self.ls = FakeLS()
         self.tts = FakeTTS()
-        self.dj = dj.StationDJ("x", "Test Station", self.pl, root / "breaks", self.ls, self.tts,
+        self.dj = dj.StationDJ("x", "Test Station", self.pl, root / "dj" / "x", self.ls, self.tts,
                                rng=random.Random(7), breaks_every=(3, 3))
         self.read_tags = mock.patch.object(dj, "read_tags", side_effect=lambda p: dj.Track(p, Path(p).stem[3:], Path(p).parent.parent.name))
         self.read_tags.start()
@@ -217,7 +217,9 @@ class Feedback(unittest.TestCase):
         pending_before = list(self.ls.pending)
         self.assertEqual(len(pending_before), 2)
         self.tracks = ["/m/Artist3/Album/03 Song3.mp3"]
-        inbox = self.dj.inbox; inbox.mkdir(parents=True, exist_ok=True)
+        inbox = Path(self.tmp.name) / "dj" / "inbox"        # where the admin API writes: <dj>/inbox, not <dj>/<mount>/inbox
+        self.assertEqual(self.dj.inbox, inbox)
+        inbox.mkdir(parents=True, exist_ok=True)
         (inbox / "x-1.json").write_text(json.dumps({"action": "skip"}))
         (inbox / "x-2.json").write_text(json.dumps({"action": "request", "path": self.tracks[0], "who": "Chris"}))
         self.dj.fill()
