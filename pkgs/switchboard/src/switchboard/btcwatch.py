@@ -236,6 +236,7 @@ def spoken(answer: dict, now_ts: float | None = None) -> str:
 async def run(settings: Settings, now_ts: float | None = None) -> dict:
     """One watch tick. Returns a small status dict (also what the CLI prints)."""
     now_ts = now_ts or time.time()
+    flush_pending(settings)      # release anything deferred overnight, now that it's morning
     hist = load_history(settings)
     try:
         _feed_ts, price = await sample_price(settings)
@@ -291,19 +292,73 @@ def _store_move(settings: Settings, move: Move, text: str, now_ts: float) -> Non
     tmp.replace(p)
 
 
+def _is_quiet(settings: Settings, now_ts: float | None = None) -> bool:
+    hour = int(time.strftime("%H", time.localtime(now_ts)))
+    return hour >= settings.quiet_start_h or hour < settings.quiet_end_h
+
+
+def _pending_path(settings: Settings) -> Path:
+    return settings.state_dir / "btc-pending-ntfy.json"
+
+
+def _post_ntfy(settings: Settings, title: str, text: str) -> bool:
+    try:
+        httpx.post(settings.ntfy_post_url, content=text.encode("ascii", "replace"),
+                   headers={"Title": title.encode("ascii", "replace").decode(),
+                            "Priority": "default", "Tags": "chart_with_upwards_trend"},
+                   timeout=5.0)
+        return True
+    except httpx.HTTPError as exc:
+        log.warning("btc-watch ntfy: %s", exc)
+        return False
+
+
 def _notify(settings: Settings, move: Move, text: str) -> None:
-    """One informational ntfy — never overnight (quiet hours), never wakes anyone."""
+    """One informational push per new move. Overnight it is DEFERRED (Chris'
+    rule: nothing non-critical pierces quiet hours) and flushed by the next
+    waking-hour tick — so a 3 a.m. move's reason still reaches him, at 7 a.m.,
+    without a buzz. Never wakes anyone."""
     if not settings.btc_notify:
-        return
-    hour = int(time.strftime("%H"))
-    if hour >= settings.quiet_start_h or hour < settings.quiet_end_h:
-        log.info("btc-watch: quiet hours, holding the ntfy")
         return
     arrow = "up" if move.direction == "up" else "down"
     title = f"Bitcoin {arrow} {move.pct:.1f}% to ${_dollars(move.now)}"
+    if _is_quiet(settings):
+        _queue_pending(settings, title, text)
+        log.info("btc-watch: quiet hours, deferred the ntfy to morning")
+        return
+    _post_ntfy(settings, title, text)
+
+
+def _queue_pending(settings: Settings, title: str, text: str) -> None:
     try:
-        httpx.post(settings.ntfy_post_url, content=text.encode("ascii", "replace"),
-                   headers={"Title": title.encode("ascii", "replace").decode(), "Priority": "default", "Tags": "chart_with_upwards_trend"},
-                   timeout=5.0)
-    except httpx.HTTPError as exc:
-        log.warning("btc-watch ntfy: %s", exc)
+        pend = json.loads(_pending_path(settings).read_text())
+    except (OSError, ValueError):
+        pend = []
+    pend.append({"title": title, "text": text})
+    _pending_path(settings).parent.mkdir(parents=True, exist_ok=True)
+    tmp = _pending_path(settings).with_suffix(".json.part")
+    tmp.write_text(json.dumps(pend[-10:]))   # cap; an overnight can't queue a flood anyway
+    tmp.replace(_pending_path(settings))
+
+
+def flush_pending(settings: Settings) -> int:
+    """Send any deferred notifications, once it's a humane hour. Returns count."""
+    if _is_quiet(settings):
+        return 0
+    try:
+        pend = json.loads(_pending_path(settings).read_text())
+    except (OSError, ValueError):
+        return 0
+    if not pend:
+        return 0
+    sent = 0
+    for n in pend:
+        pre = "Overnight: " if not n["title"].startswith("Overnight") else ""
+        if _post_ntfy(settings, pre + n["title"], n["text"]):
+            sent += 1
+    try:
+        _pending_path(settings).unlink()
+    except OSError:
+        pass
+    log.info("btc-watch: flushed %d deferred ntfy(s)", sent)
+    return sent

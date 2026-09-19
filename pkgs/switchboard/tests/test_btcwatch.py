@@ -101,3 +101,31 @@ def test_clean_answer_strips_sources_and_urls():
     assert out == "Bitcoin rose on a short squeeze after the Fed. It was a broad rally."
     assert "http" not in out and "Sources" not in out
     assert btcwatch._clean_answer("See [here](http://x) for **details**.") == "See here for details."
+
+
+def test_notify_defers_overnight_and_flushes_in_morning(tmp_path, monkeypatch):
+    posted = []
+    from switchboard import btcwatch as bw
+    monkeypatch.setattr(bw, "_post_ntfy", lambda settings, title, text: posted.append((title, text)) or True)
+    s = Settings(state_dir=tmp_path, quiet_start_h=22, quiet_end_h=7)
+    m = bw.Move("up", 3.7, 77993, 80896, 80896, 180)
+    # 3 a.m. -> deferred, nothing posted
+    monkeypatch.setattr(bw, "_is_quiet", lambda settings, now_ts=None: True)
+    bw._notify(s, m, "Bitcoin rose on ETF inflows.")
+    assert posted == [] and (tmp_path / "btc-pending-ntfy.json").exists()
+    assert bw.flush_pending(s) == 0            # still quiet -> held
+    # 8 a.m. -> flush releases it once, prefixed Overnight
+    monkeypatch.setattr(bw, "_is_quiet", lambda settings, now_ts=None: False)
+    assert bw.flush_pending(s) == 1
+    assert posted[0][0].startswith("Overnight: Bitcoin up 3.7%")
+    assert not (tmp_path / "btc-pending-ntfy.json").exists()
+    assert bw.flush_pending(s) == 0            # nothing left
+
+
+def test_notify_posts_immediately_in_daytime(tmp_path, monkeypatch):
+    posted = []
+    from switchboard import btcwatch as bw
+    monkeypatch.setattr(bw, "_post_ntfy", lambda settings, title, text: posted.append(title) or True)
+    monkeypatch.setattr(bw, "_is_quiet", lambda settings, now_ts=None: False)
+    bw._notify(Settings(state_dir=tmp_path), bw.Move("down", 4.0, 78000, 81000, 78000, 120), "x")
+    assert len(posted) == 1 and posted[0].startswith("Bitcoin down 4.0%")
