@@ -161,10 +161,24 @@ def is_new_leg(move: Move, last: dict | None, *, threshold_pct: float, reexplain
 _PROMPT = """\
 Bitcoin has moved {dir_word} {pct:.1f} percent, from about {lo} dollars to about \
 {now} dollars, over roughly the last {minutes} minutes (as of {when}). Search the \
-web and recent news for the most likely reason. Answer in two or three short \
-spoken sentences, plain prose, no markdown or URLs: lead with the catalyst, then \
-any confirming detail. If you genuinely cannot find a reason, say the move \
-happened and that there's no clear catalyst in the news yet."""
+web and recent news and explain WHY, for someone who will hear this over the phone.
+
+Rules for a credible answer:
+- LEAD with the underlying catalyst: a specific news, regulatory, macro, or flow \
+event (name it concretely, e.g. an SEC/CFTC action, an ETF flow, a CPI or Fed \
+decision, a large buyer). Not a vague "risk-on mood".
+- Liquidations, a short squeeze, or a long squeeze are AMPLIFIERS, not causes. \
+Mention them only after the catalyst, and say so plainly ("a short squeeze \
+amplified it"). Never present a squeeze as the root cause.
+- State macro events by their real direction. A rate HIKE is a hike (bearish); do \
+not imply a bearish event drove a rally — if the market rose despite bad news, say \
+that.
+- If there is genuinely no fundamental catalyst and it looks purely technical (a \
+liquidation cascade with no news), say exactly that — that is a valid, useful answer.
+- Two or three short spoken sentences. Plain prose, no markdown, no URLs, no \
+"Sources" list. Lead sentence = the cause.
+
+"""
 
 
 def _dollars(n: float) -> str:
