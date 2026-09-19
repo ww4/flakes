@@ -12,7 +12,7 @@
 { python3, lib, makeWrapper, ffmpeg-headless }:
 
 let
-  pyDeps = ps: [ ps.mutagen ps.numpy ps.onnxruntime ];
+  pyDeps = ps: [ ps.mutagen ps.numpy ps.onnxruntime ps.pillow ];   # pillow: cover thumbnails for the station tiles
   pyEnv = python3.withPackages pyDeps;
 in
 

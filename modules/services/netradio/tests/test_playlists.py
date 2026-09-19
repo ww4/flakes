@@ -137,3 +137,31 @@ class Build(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Tiles(unittest.TestCase):
+    def test_covers_are_unique_across_stations_and_all_gets_a_glyph(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            def track(artist, album, n):
+                p = root / artist / album / f"{n:02d} x.mp3"; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b"\x00"); return str(p)
+            # five artists with one album each, all with a cover file; A shared by two stations
+            paths = {a: track(a, "Album", 1) for a in "ABCDE"}
+            for a in "ABCDE":
+                (root / a / "Album" / "cover.jpg").write_bytes(b"jpg")
+            artist_of = {p: a for a, p in paths.items()}
+            stations = [{"mount": "all", "kind": "curated", "base": {"all": True}},
+                        {"mount": "x", "kind": "curated", "base": {"genres": ["x"]}},
+                        {"mount": "y", "kind": "curated", "base": {"genres": ["y"]}}]
+            pools = {"all": list(paths.values()), "x": [paths[a] for a in "ABCD"], "y": [paths[a] for a in "AE"]}
+            from netradio import playlists
+            with mock.patch.object(playlists, "has_art", return_value=True):
+                tiles = playlists.station_tiles(stations, pools, {}, artist_of)
+            self.assertEqual(tiles["all"], {"icon": "radio", "covers": []})
+            self.assertEqual(len(tiles["y"]["covers"]), 2)                     # the smaller station picks first: A and E
+            self.assertEqual(len(tiles["x"]["covers"]), 3)                     # so x gets B, C, D — a hero, not a mosaic — rather than reuse A
+            used = [Path(p).parent for t in tiles.values() for p in t["covers"]]
+            self.assertEqual(len(used), len(set(used)))                        # no album folder on two tiles

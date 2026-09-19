@@ -353,6 +353,21 @@ class Admin:
         return out
 
 
+def thumbnail(data: bytes, size: int) -> tuple[bytes, str]:
+    """Square-ish JPEG thumbnail, `size` px on the long edge; the original
+    if Pillow can't read it."""
+    try:
+        from io import BytesIO
+        from PIL import Image
+        im = Image.open(BytesIO(data))
+        im.thumbnail((max(64, min(size, 1024)),) * 2)
+        out = BytesIO()
+        im.convert("RGB").save(out, "JPEG", quality=82, optimize=True)
+        return out.getvalue(), "image/jpeg"
+    except Exception:
+        return data, "image/jpeg"
+
+
 def make_handler(admin: Admin):
     class Handler(BaseHTTPRequestHandler):
         def _json(self):
@@ -404,7 +419,8 @@ def make_handler(admin: Admin):
                     if parts == ["api", "dislikes"] and method == "GET":
                         return self._reply(200, admin.cfg.dislikes())
                     if parts == ["api", "art"] and method == "GET":
-                        path = parse_qs(u.query).get("path", [""])[0]
+                        qs = parse_qs(u.query)
+                        path = qs.get("path", [""])[0]
                         try:
                             got = admin.art(path)
                         except OSError as e:       # unreadable file or cover: no art, not a 500
@@ -413,6 +429,9 @@ def make_handler(admin: Admin):
                         if not got:
                             return self._reply(404, {"error": "no art"})
                         data, mime = got
+                        size = qs.get("size", [""])[0]
+                        if size.isdigit():          # a thumbnail for the tiles (a full cover can be 600 KB)
+                            data, mime = thumbnail(data, int(size))
                         self.send_response(200)
                         self.send_header("Content-Type", mime)
                         self.send_header("Cache-Control", "public, max-age=86400")
