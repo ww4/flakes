@@ -41,7 +41,8 @@ createApp({
              options: {}, tab: "feeds", openId: null, edit: {}, add: { title: "", description: "", family: [], listenable: true, shellac: false },
              slots: {}, days: DAYS, flash: "", flashErr: false, scheduleMsg: "", answers: {},
              sel: null,
-             tabs: [{ id: "feeds", title: "Feeds" }, { id: "stations", title: "Stations" }] };
+             pandora: { stations: {}, plays: 0 },
+             tabs: [{ id: "feeds", title: "Feeds" }, { id: "stations", title: "Stations" }, { id: "pandora", title: "Heard on Pandora" }] };
   },
   computed: {
     feedList() { return Object.entries(this.state.feeds).sort((a, b) => a[1].title.localeCompare(b[1].title)); },
@@ -53,6 +54,7 @@ createApp({
     say(msg, err) { this.flash = msg; this.flashErr = !!err; clearTimeout(this._t); this._t = setTimeout(() => this.flash = "", 7000); },
     async load() {
       this.state = await api("GET", "/state");
+      try { this.pandora = await api("GET", "/pandora"); } catch (e) {}
       this.slots = {};
       for (const s of this.state.schedule) {
         const custom = Array.isArray(s.days);

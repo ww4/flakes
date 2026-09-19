@@ -15,6 +15,7 @@ dir; the scanner and the DJ read those.
   PUT    /api/stations/<mount>           {name?, family?, base?, breaks_every?, excursion?}
   PUT    /api/schedule                   the whole list of slots
   POST   /api/apply                      rescan now (and restart Liquidsoap if mounts changed)
+  GET    /api/pandora                    what the receiver played on Pandora: artists per station, in-library flags
 """
 
 from __future__ import annotations
@@ -50,6 +51,14 @@ class Admin:
         self._inbox_n = itertools.count()
 
     # -- reads
+    def pandora(self) -> dict:
+        """What the receiver has played on Pandora (netradio pandora writes
+        <config>/pandora.jsonl): artists per station, thumbed first, marked
+        by whether the library has them. The list to grow the library from."""
+        from netradio.pandora import read_log, summarise
+        records = read_log(self.cfg.root / "pandora.jsonl")
+        return {"stations": summarise(records, set(self.cfg.artists())), "plays": len(records)}
+
     def state(self) -> dict:
         feeds = self.cfg.feeds()
         stations = self.cfg.stations()
@@ -426,6 +435,8 @@ def make_handler(admin: Admin):
                         return self._reply(200, admin.undislike(self._json()))
                     if parts == ["api", "dislikes"] and method == "GET":
                         return self._reply(200, admin.cfg.dislikes())
+                    if parts == ["api", "pandora"] and method == "GET":
+                        return self._reply(200, admin.pandora())
                     if parts == ["api", "art"] and method == "GET":
                         qs = parse_qs(u.query)
                         path = qs.get("path", [""])[0]

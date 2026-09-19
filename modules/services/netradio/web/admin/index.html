@@ -121,6 +121,25 @@
       </div>
     </article>
   </section>
+
+  <!-- ===== Heard on Pandora ===== -->
+  <section v-if="tab === 'pandora'">
+    <p class="muted" v-if="!pandora.plays">Nothing logged yet — play a Pandora station on the receiver; every track it plays for 20 s or more is written down here.</p>
+    <article v-for="(st, name) in pandora.stations" :key="name">
+      <header><strong>{{ name }}</strong> <small class="muted">— {{ st.plays }} plays, {{ st.artists.length }} artists; <span class="tag in-library">in library</span> means the scanner already has the artist</small></header>
+      <table>
+        <thead><tr><th>artist</th><th>plays</th><th>👍</th><th></th><th>heard</th></tr></thead>
+        <tbody>
+          <tr v-for="a in st.artists" :key="a.name">
+            <td>{{ a.name }}</td><td>{{ a.plays }}</td><td>{{ a.thumbs || '' }}</td>
+            <td><span v-if="a.in_library" class="tag in-library">in library</span></td>
+            <td><small class="muted">{{ a.tracks.slice(0, 4).join(' · ') }}<span v-if="a.tracks.length > 4"> · …</span></small></td>
+          </tr>
+        </tbody>
+      </table>
+      <p><small class="muted">Not in the library yet: <code>{{ st.artists.filter(a => !a.in_library).map(a => a.name).join(', ') }}</code></small></p>
+    </article>
+  </section>
 </main>
 <script src="../vendor/vue.global.prod.js"></script>
 <script src="admin.js"></script>

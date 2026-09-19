@@ -363,6 +363,25 @@ def lastfm_similar(artist: str, key: str, limit: int = 30) -> list[str]:
 
 # --- one station -------------------------------------------------------------
 
+_VERDICTS: dict[tuple[str, float], dict[str, Verdict]] = {}
+_VERDICTS_LOCK = threading.Lock()
+
+
+def shared_verdicts(path: Path, overrides: Path | None, mtime: float) -> dict[str, Verdict]:
+    """One verdict table per profile file, shared by every station's DJ.
+    Each of 25 stations parsing the 24 MB profile into its own 20k
+    Verdicts put the DJ at 2.2 GB RSS (2026-09-19); the table is read-only
+    once built, so one copy serves all."""
+    key = (str(path), mtime)
+    with _VERDICTS_LOCK:
+        table = _VERDICTS.get(key)
+        if table is None:
+            table = Profile.load_verdicts(path, overrides)
+            _VERDICTS.clear()          # an older profile's table is not wanted by anyone now
+            _VERDICTS[key] = table
+        return table
+
+
 class StationDJ:
     def __init__(self, mount: str, name: str, playlist: Path, out_dir: Path,
                  ls: Liquidsoap, tts: Kokoro, rng: random.Random | None = None,
@@ -443,7 +462,7 @@ class StationDJ:
         except OSError:
             return
         if mtime != self.profile_mtime:
-            self.verdicts = Profile.load_verdicts(self.profile_path, self.overrides_path)
+            self.verdicts = shared_verdicts(self.profile_path, self.overrides_path, mtime)
             self.profile_mtime = mtime
             log.info("%s: profile loaded, %d talk tracks kept out", self.mount,
                      sum(1 for v in self.verdicts.values() if v.talk))
