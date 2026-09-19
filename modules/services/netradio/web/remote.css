@@ -34,8 +34,8 @@ h6 { margin: 1rem 0 .5rem; font-size: .72rem; letter-spacing: .08em; text-transf
 .bar.volume .icon.on { background: var(--accent); color: #1a0f08; }
 .bar.volume .icon:disabled { opacity: .35; }
 .bar.volume input[type=range] { flex: 1; margin: 0; accent-color: var(--accent); height: 2.4rem; }
-.bar.volume canvas { flex: 1; height: 2.2rem; width: 100%; }
-.bar.volume .quality { display: flex; gap: .4rem; font-size: .75rem; color: var(--muted); }
+.bar.volume canvas { flex: 1; min-width: 0; height: 2.2rem; width: 100%; }
+.bar.volume .quality { display: flex; flex: none; gap: .4rem; white-space: nowrap; font-size: .75rem; color: var(--muted); }
 .bar.volume .quality input { accent-color: var(--accent); margin-right: .2rem; }
 .bar.tabs button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: .15rem; font-size: .68rem; color: var(--muted); padding: .4rem 0; }
 .bar.tabs button svg { width: 1.5rem; height: 1.5rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -59,6 +59,7 @@ h6 { margin: 1rem 0 .5rem; font-size: .72rem; letter-spacing: .08em; text-transf
 .transport button svg { width: 1.7rem; height: 1.7rem; fill: currentColor; stroke: currentColor; stroke-width: 1.2; stroke-linejoin: round; }
 .transport button .big { font-size: 1.6rem; line-height: 1; color: var(--fg); }
 .transport button.main { background: var(--accent); color: #1a0f08; max-width: 5rem; }
+.transport button.resume { background: var(--accent); color: #1a0f08; max-width: 16rem; flex-direction: row; gap: .5rem; padding: .7rem 1.3rem; font-size: .9rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .transport button:active { background: var(--panel-2); }
 .lists { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: .8rem; font-size: .85rem; }
 .lists ol { margin: 0; padding-left: 1.2rem; color: var(--muted); }

@@ -31,9 +31,9 @@ function hue(name) { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt
 
 createApp({
   data() {
-    let quality = "", target = "here", tab = "now";
-    try { quality = localStorage.getItem("radio.quality") || ""; target = localStorage.getItem("radio.target") || "here"; tab = localStorage.getItem("radio.tab") || "now"; } catch (e) {}
-    return { tiles: {}, stations: [], quick: [], counts: {}, up: {}, histories: {}, nexts: {}, current: null, status: "", quality, scanning: false,
+    let quality = "", target = "here", tab = "now", last = { here: "", room: null };
+    try { quality = localStorage.getItem("radio.quality") || ""; target = localStorage.getItem("radio.target") || "here"; tab = localStorage.getItem("radio.tab") || "now"; last = { ...last, ...JSON.parse(localStorage.getItem("radio.last") || "{}") }; } catch (e) {}
+    return { tiles: {}, stations: [], quick: [], counts: {}, up: {}, histories: {}, nexts: {}, current: null, status: "", quality, scanning: false, last,
              ctx: null, analyser: null, raf: 0, wide: window.innerWidth > 640,
              target, tab, receiver: { name: "", on: false, input: "", volume: 0, mute: false, error: "" }, inputs: [], presets: [],
              pandora: JSON.parse((() => { try { return localStorage.getItem("radio.pandora") || "[]"; } catch (e) { return "[]"; } })()), menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
@@ -109,6 +109,18 @@ createApp({
     },
     heroStyle() { const h = hue(this.nowStation || "radio"); return { background: `linear-gradient(160deg, hsl(${h} 45% 34%), hsl(${(h + 40) % 360} 55% 18%))` }; },
     freqText() { const t = this.receiver.tuner; if (!t) return ""; return t.band === "FM" ? (t.fm.val / 100).toFixed(1) : String(t.am.val); },
+    // --- nothing chosen yet: the play button starts what played last on this target
+    idle() {
+      if (this.target === "here") return !this.current;
+      const np = this.np;
+      return this.receiver.on && this.receiver.input === "NET RADIO" && !!np && np.playback === "Stop" && !np.station;
+    },
+    lastStation() {
+      if (this.target === "here") return this.stations.find(s => s.mount === this.last.here) || null;
+      const l = this.last.room; if (!l) return null;
+      for (const g of this.groups) { const s = g.stations.find(s => s.kind === l.kind && s.name === l.name); if (s) return s; }
+      return l.kind ? l : null;   // not in today's lists (a Pandora station since removed, say): still worth a try
+    },
     feedbackMount() { return this.target === "room" ? this.roomMount : this.current; },
     feedbackStation() { return this.stations.find(s => s.mount === this.feedbackMount) || { name: "" }; },
     feedbackHistory() { return this.histories[this.feedbackMount] || []; },
@@ -159,8 +171,14 @@ createApp({
     },
 
     // ---- this phone ----------------------------------------------------------
+    remember(s) {
+      this.last = { ...this.last, [this.target]: this.target === "here" ? s.mount : { kind: s.kind, name: s.name, mount: s.mount, number: s.number } };
+      try { localStorage.setItem("radio.last", JSON.stringify(this.last)); } catch (e) {}
+    },
+    resume() { const s = this.lastStation; if (s) this.playTarget(s); else this.tab = "stations"; },
     play(m) {
       const audio = this.$refs.audio;
+      const s = this.stations.find(s => s.mount === m); if (s) this.remember(s);
       this.current = m; this.status = "tuning…"; this.tab = "now";
       audio.src = this.streamUrl(m);
       audio.play().then(() => { this.status = ""; this.$nextTick(() => this.startViz()); }).catch(err => { this.status = `couldn't start (${err.message})`; });
@@ -170,6 +188,7 @@ createApp({
     retune() { try { localStorage.setItem("radio.quality", this.quality); } catch (e) {} if (this.current) this.play(this.current); },
     playTarget(s) {
       if (this.target !== "room") return this.play(s.mount);
+      this.remember(s);
       if (s.kind === "preset") return this.receiverAction("tuning…", async () => { if (this.receiver.input !== "TUNER") await call("POST", "receiver/input", { name: "TUNER" }); return call("POST", "receiver/tuner", { preset: s.number }); });
       if (s.kind === "pandora") return this.receiverAction(`starting ${s.name}…`, () => call("POST", "receiver/menu/path", { source: "Pandora", path: [s.name] }));
       const category = s.kind === "quick" ? "Quick Picks" : s.kind === "specialty" ? "Specialty" : "Curated";
