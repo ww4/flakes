@@ -215,6 +215,21 @@
    "role": "read"
   },
   {
+   "name": "Gromit BTC Watch",
+   "lane": "bitcoin",
+   "url": "https://digest.rosemaryacres.com/btc-moves.xml",
+   "tier": "core",
+   "cap": 2,
+   "insecure_tls": false,
+   "note": "Local: the switchboard's spike watcher. Fires only on a sustained, volatility-relative BTC move and web-searches the 'why'; each explained move lands here as one entry. Bursty by design, so quiet.",
+   "dormant": false,
+   "longform": false,
+   "kind": "feed",
+   "evergreen": false,
+   "role": "read",
+   "quiet": true
+  },
+  {
    "name": "0xB10C",
    "lane": "bitcoin",
    "url": "https://b10c.me/feed.xml",
