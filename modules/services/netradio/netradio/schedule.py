@@ -94,7 +94,18 @@ def spotlight_candidates(artists: dict, families: list[str] | None) -> list[str]
                   if info.get("tracks", 0) >= MIN_TRACKS_FOR_SPOTLIGHT and compatible(families, info.get("families")))
 
 
-def spotlight_score(info: dict, families: list[str] | None) -> float:
+def playable_count(info: dict, era_rule: dict | None) -> int:
+    """How many of an artist's tracks a station with this era rule may play.
+    An inventory without era counts, or a station without an era rule,
+    counts everything."""
+    eras = info.get("eras")
+    if not era_rule or not eras:
+        return info.get("tracks", 0)
+    from netradio.feeds import era_ok
+    return sum(n for era, n in eras.items() if era_ok(era_rule, era))
+
+
+def spotlight_score(info: dict, families: list[str] | None, era_rule: dict | None = None, mount: str = "") -> float:
     """How good a spotlight this artist makes for a station of these
     families, 0..1: depth (how much we own, log-scaled to full marks at
     AUTO_FULL_MARKS_TRACKS) times representativeness — mostly the share
@@ -104,15 +115,22 @@ def spotlight_score(info: dict, families: list[str] | None) -> float:
     weak: Hank Williams hears as "country" 0.03). 0 when they don't clear
     the bar. An inventory from before `share`/`sound` existed falls back
     to the family list alone."""
-    n = info.get("tracks", 0)
+    fams = [f for f in (families or []) if f != "any"] or [f for f in info.get("families", []) if f != "unknown"]
+    if mount and "stations" in info:
+        # the station's own base rule already judged every track: how many it
+        # would play is the depth, and what fraction of the artist that is,
+        # the purity (Jimmy Martin: 0 of 151 for Classic Country)
+        n = info["stations"].get(mount, 0)
+        purity = n / max(1, info.get("tracks", 0))
+    else:
+        n = playable_count(info, era_rule)
+        if "share" not in info:
+            share = {f: 1.0 for f in info.get("families", [])}
+        else:   # the tags; a feed's word only for an artist whose tags say nothing
+            share = info["share"] or info.get("feed_share") or {}
+        purity = max((share.get(f, 0.0) for f in fams), default=0.0)
     if n < AUTO_MIN_TRACKS or info.get("albums", AUTO_MIN_ALBUMS) < AUTO_MIN_ALBUMS:
         return 0.0
-    fams = [f for f in (families or []) if f != "any"] or [f for f in info.get("families", []) if f != "unknown"]
-    if "share" not in info:
-        share = {f: 1.0 for f in info.get("families", [])}
-    else:   # the tags; a feed's word only for an artist whose tags say nothing
-        share = info["share"] or info.get("feed_share") or {}
-    purity = max((share.get(f, 0.0) for f in fams), default=0.0)
     if purity < AUTO_MIN_SHARE:
         return 0.0
     sound = info.get("sound") or {}
@@ -121,9 +139,11 @@ def spotlight_score(info: dict, families: list[str] | None) -> float:
     return round(depth * (0.85 * purity + 0.15 * heard), 3)
 
 
-def spotlight_ranked(artists: dict, families: list[str] | None) -> list[tuple[str, float]]:
-    """[(artist, score)] best first — the auto chooser's view of the roster."""
-    scored = [(a, spotlight_score(info, families)) for a, info in artists.items()
+def spotlight_ranked(artists: dict, families: list[str] | None, era_rule: dict | None = None, mount: str = "") -> list[tuple[str, float]]:
+    """[(artist, score)] best first — the auto chooser's view of the roster
+    for a station: by what its base rule plays of each artist when the
+    inventory knows (`stations`), else by family and era."""
+    scored = [(a, spotlight_score(info, families, era_rule, mount)) for a, info in artists.items()
               if compatible(families, info.get("families")) and not NOT_AN_ARTIST.search(a)]
     return sorted(((a, sc) for a, sc in scored if sc > 0), key=lambda x: (-x[1], x[0]))
 
@@ -153,7 +173,7 @@ def resolve(slot: dict, date: dt.date, picks: dict, *, station: dict, artists: d
     recent = [h["value"] for h in history[-RECENT_PICKS:]]
     rng = random.Random(hashlib.sha256(f"{key}:{today}".encode()).hexdigest())
     if like == "artist":
-        ranked = spotlight_ranked(artists, fam)[:AUTO_SHORTLIST]
+        ranked = spotlight_ranked(artists, fam, (station.get("base") or {}).get("era"), station.get("mount", ""))[:AUTO_SHORTLIST]
         fresh = [(a, sc) for a, sc in ranked if a not in recent] or ranked
         if not fresh:
             return slot, False

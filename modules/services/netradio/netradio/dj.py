@@ -38,6 +38,7 @@ import datetime as dt
 from netradio import schedule as sched
 from netradio.config import Config
 from netradio.profile import Profile
+from netradio.feeds import era_ok
 from netradio.rules import Verdict
 from netradio.wake import Liquidsoap
 
@@ -427,6 +428,9 @@ class StationDJ:
     def verdict(self, track: Track) -> Verdict:
         return self.verdicts.get(track.path, Verdict(False, False, False, ""))
 
+    def verdict_of(self, path: str) -> Verdict:
+        return self.verdicts.get(path, Verdict(False, False, False, ""))
+
     def pending(self) -> int:
         """How many requests wait in the Liquidsoap queue (RIDs, whitespace-separated)."""
         reply = self.ls.command(f"q_{self.mount}.queue")
@@ -438,6 +442,12 @@ class StationDJ:
         candidates = self.tracks
         if self.segment is not None and self.programme is not None:
             seg = self.programme.pool(self.segment, self.rng)
+            # a segment draws from a feed's or an artist's whole pool; the
+            # station's own era rule still applies (no shellac sides in a
+            # Classic Country spotlight, 2026-09-17)
+            era_rule = (self.programme.station.get("base") or {}).get("era")
+            if seg and era_rule:
+                seg = [t for t in seg if era_ok(era_rule, self.verdict_of(t).era)]
             if seg:
                 candidates = seg
         if not candidates:
