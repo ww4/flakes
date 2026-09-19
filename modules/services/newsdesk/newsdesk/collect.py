@@ -181,9 +181,12 @@ def collect(con: sqlite3.Connection, profile: dict, *, only: str | None = None) 
     # what stops the stale list growing without bound.
     dormant_cutoff = (datetime.now(timezone.utc)
                       - timedelta(days=DORMANT_AFTER_DAYS)).isoformat()
+    # A 'quiet' source is exempt from the SILENCE arm (its long gaps are normal
+    # and it never went on the stale list to begin with) but not from the
+    # FAILING arm — a quiet feed that stops fetching is still broken.
     stats["newly_dormant"] = con.execute(
         "UPDATE sources SET dormant=1 WHERE enabled=1 AND dormant=0"
-        " AND ((last_item_at IS NOT NULL AND last_item_at < ?)"
+        " AND ((quiet=0 AND last_item_at IS NOT NULL AND last_item_at < ?)"
         "      OR fail_streak >= ?)",
         (dormant_cutoff, FAIL_DORMANT_STREAK)).rowcount
 
@@ -221,6 +224,12 @@ def stale_sources(con: sqlite3.Connection) -> list[dict]:
             })
             continue
         if row["lane"] in NO_SILENCE_CHECK_LANES:
+            continue
+        # Per-source form of the same rule: a 'quiet' source publishes only when
+        # its event happens (the BTC-watch feed fires only on a real spike), so
+        # its silence carries no information. The failing-poll check above still
+        # applies, so a genuinely broken quiet source is still surfaced.
+        if row["quiet"]:
             continue
         last = feeds.parse_date(row["last_item_at"])
         if last is None:

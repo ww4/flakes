@@ -17,9 +17,12 @@ Flow (cli `btc-watch`, on switchboard-btcwatch.timer):
   3. fire only if it's a new leg vs the last explained reference (a further
      threshold move in the same direction, a direction flip, or the prior
      explanation aged out) -> one claude -p call -> store as the "btc-move"
-     standing answer + one quiet-hours-respecting ntfy.
+     standing answer + one quiet-hours-respecting ntfy + one entry appended to
+     a small rolling Atom feed on disk (btc_feed_path, served by the digest
+     vhost) that newsdesk polls as a bitcoin-lane source.
 
-The phone reads it back via the "btc-move" intent ("why did bitcoin move").
+The phone reads it back via the "btc-move" intent ("why did bitcoin move");
+the digest picks it up via the feed, so no second model call is ever made.
 """
 
 from __future__ import annotations
@@ -28,7 +31,9 @@ import json
 import logging
 import subprocess
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -37,6 +42,8 @@ from .config import Settings
 from .sources import SourceError
 
 log = logging.getLogger(__name__)
+
+ATOM_NS = "http://www.w3.org/2005/Atom"
 
 
 # ---------------------------------------------------------------- price log
@@ -236,6 +243,7 @@ def spoken(answer: dict, now_ts: float | None = None) -> str:
 async def run(settings: Settings, now_ts: float | None = None) -> dict:
     """One watch tick. Returns a small status dict (also what the CLI prints)."""
     now_ts = now_ts or time.time()
+    flush_pending(settings)      # release anything deferred overnight, now that it's morning
     hist = load_history(settings)
     try:
         _feed_ts, price = await sample_price(settings)
@@ -266,6 +274,7 @@ async def run(settings: Settings, now_ts: float | None = None) -> dict:
         log.warning("btc-watch explain: %s", exc)
         return {"ok": False, "error": str(exc), "move": f"{move.direction} {move.pct}%"}
     _store_move(settings, move, text, now_ts)
+    write_feed(settings, move, text, now_ts)
     _notify(settings, move, text)
     return {"ok": True, "price": price, "move": f"{move.direction} {move.pct}%", "explained": "new", "text": text[:120]}
 
@@ -291,19 +300,151 @@ def _store_move(settings: Settings, move: Move, text: str, now_ts: float) -> Non
     tmp.replace(p)
 
 
-def _notify(settings: Settings, move: Move, text: str) -> None:
-    """One informational ntfy — never overnight (quiet hours), never wakes anyone."""
-    if not settings.btc_notify:
+# ---------------------------------------------------------------- rolling feed
+
+def _moves_path(settings: Settings) -> Path:
+    return settings.state_dir / "btc-moves.json"
+
+
+def _load_moves(settings: Settings) -> list[dict]:
+    try:
+        data = json.loads(_moves_path(settings).read_text())
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _entry_title(rec: dict) -> str:
+    arrow = "up" if rec["direction"] == "up" else "down"
+    return f"Bitcoin {arrow} {float(rec['pct']):.1f}% to ${_dollars(float(rec['now']))}"
+
+
+def render_atom(records: list[dict], base_url: str) -> str:
+    """Render the rolling move list as an Atom 1.0 feed. Newest entry first.
+
+    The default namespace is Atom so newsdesk's parser (which keys on
+    `{http://www.w3.org/2005/Atom}feed`) recognises it; each entry gets a
+    stable, unique id/link (base_url#move-<ts>) so INSERT OR IGNORE de-dupes on
+    the guid and an explanation is never ingested twice."""
+    ET.register_namespace("", ATOM_NS)
+    feed = ET.Element(f"{{{ATOM_NS}}}feed")
+    ET.SubElement(feed, f"{{{ATOM_NS}}}title").text = "Gromit BTC Watch"
+    ET.SubElement(feed, f"{{{ATOM_NS}}}id").text = base_url
+    ET.SubElement(feed, f"{{{ATOM_NS}}}link", {"href": base_url, "rel": "self"})
+    ordered = sorted(records, key=lambda r: float(r.get("ts", 0)), reverse=True)
+    updated = ordered[0]["ts"] if ordered else time.time()
+    ET.SubElement(feed, f"{{{ATOM_NS}}}updated").text = _rfc3339(updated)
+    for rec in ordered:
+        ts = float(rec.get("ts", 0))
+        e = ET.SubElement(feed, f"{{{ATOM_NS}}}entry")
+        ET.SubElement(e, f"{{{ATOM_NS}}}title").text = _entry_title(rec)
+        ET.SubElement(e, f"{{{ATOM_NS}}}id").text = f"{base_url}#move-{int(ts)}"
+        ET.SubElement(e, f"{{{ATOM_NS}}}link",
+                      {"href": f"{base_url}#move-{int(ts)}", "rel": "alternate"})
+        ET.SubElement(e, f"{{{ATOM_NS}}}published").text = _rfc3339(ts)
+        ET.SubElement(e, f"{{{ATOM_NS}}}updated").text = _rfc3339(ts)
+        ET.SubElement(e, f"{{{ATOM_NS}}}content", {"type": "text"}).text = rec.get("text", "")
+    return '<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(feed, encoding="unicode")
+
+
+def _rfc3339(ts: float) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def write_feed(settings: Settings, move: Move, text: str, now_ts: float) -> None:
+    """Append this explained move to the rolling on-disk record and re-render
+    the Atom feed. Best-effort: the digest is a secondary consumer, so a write
+    failure (e.g. the digest dir absent on a host that has no digest) is logged,
+    never fatal to the watch tick."""
+    if str(settings.btc_feed_path) in ("", "."):   # empty path disables the feed
         return
-    hour = int(time.strftime("%H"))
-    if hour >= settings.quiet_start_h or hour < settings.quiet_end_h:
-        log.info("btc-watch: quiet hours, holding the ntfy")
+    recs = _load_moves(settings)
+    recs.append({"ts": now_ts, "direction": move.direction, "pct": move.pct,
+                 "now": move.now, "lo": move.lo, "hi": move.hi, "text": text})
+    recs = recs[-settings.btc_feed_keep:]
+    try:
+        mp = _moves_path(settings)
+        mp.parent.mkdir(parents=True, exist_ok=True)
+        tmp = mp.with_suffix(".json.part")
+        tmp.write_text(json.dumps(recs))
+        tmp.replace(mp)
+        xml = render_atom(recs, settings.btc_feed_base_url)
+        fp = settings.btc_feed_path
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        ftmp = fp.with_suffix(".xml.part")
+        ftmp.write_text(xml)
+        ftmp.replace(fp)
+    except OSError as exc:
+        log.warning("btc-watch feed: %s", exc)
+
+
+def _is_quiet(settings: Settings, now_ts: float | None = None) -> bool:
+    hour = int(time.strftime("%H", time.localtime(now_ts)))
+    return hour >= settings.quiet_start_h or hour < settings.quiet_end_h
+
+
+def _pending_path(settings: Settings) -> Path:
+    return settings.state_dir / "btc-pending-ntfy.json"
+
+
+def _post_ntfy(settings: Settings, title: str, text: str) -> bool:
+    try:
+        httpx.post(settings.ntfy_post_url, content=text.encode("ascii", "replace"),
+                   headers={"Title": title.encode("ascii", "replace").decode(),
+                            "Priority": "default", "Tags": "chart_with_upwards_trend"},
+                   timeout=5.0)
+        return True
+    except httpx.HTTPError as exc:
+        log.warning("btc-watch ntfy: %s", exc)
+        return False
+
+
+def _notify(settings: Settings, move: Move, text: str) -> None:
+    """One informational push per new move. Overnight it is DEFERRED (Chris'
+    rule: nothing non-critical pierces quiet hours) and flushed by the next
+    waking-hour tick — so a 3 a.m. move's reason still reaches him, at 7 a.m.,
+    without a buzz. Never wakes anyone."""
+    if not settings.btc_notify:
         return
     arrow = "up" if move.direction == "up" else "down"
     title = f"Bitcoin {arrow} {move.pct:.1f}% to ${_dollars(move.now)}"
+    if _is_quiet(settings):
+        _queue_pending(settings, title, text)
+        log.info("btc-watch: quiet hours, deferred the ntfy to morning")
+        return
+    _post_ntfy(settings, title, text)
+
+
+def _queue_pending(settings: Settings, title: str, text: str) -> None:
     try:
-        httpx.post(settings.ntfy_post_url, content=text.encode("ascii", "replace"),
-                   headers={"Title": title.encode("ascii", "replace").decode(), "Priority": "default", "Tags": "chart_with_upwards_trend"},
-                   timeout=5.0)
-    except httpx.HTTPError as exc:
-        log.warning("btc-watch ntfy: %s", exc)
+        pend = json.loads(_pending_path(settings).read_text())
+    except (OSError, ValueError):
+        pend = []
+    pend.append({"title": title, "text": text})
+    _pending_path(settings).parent.mkdir(parents=True, exist_ok=True)
+    tmp = _pending_path(settings).with_suffix(".json.part")
+    tmp.write_text(json.dumps(pend[-10:]))   # cap; an overnight can't queue a flood anyway
+    tmp.replace(_pending_path(settings))
+
+
+def flush_pending(settings: Settings) -> int:
+    """Send any deferred notifications, once it's a humane hour. Returns count."""
+    if _is_quiet(settings):
+        return 0
+    try:
+        pend = json.loads(_pending_path(settings).read_text())
+    except (OSError, ValueError):
+        return 0
+    if not pend:
+        return 0
+    sent = 0
+    for n in pend:
+        pre = "Overnight: " if not n["title"].startswith("Overnight") else ""
+        if _post_ntfy(settings, pre + n["title"], n["text"]):
+            sent += 1
+    try:
+        _pending_path(settings).unlink()
+    except OSError:
+        pass
+    log.info("btc-watch: flushed %d deferred ntfy(s)", sent)
+    return sent

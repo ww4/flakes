@@ -355,6 +355,40 @@ class TestStale(Base):
         self.add_source("A", "macro")
         self.assertEqual(collect_mod.stale_sources(self.con), [])
 
+    def test_quiet_source_is_never_called_silent(self):
+        """A 'quiet' source (the BTC-watch feed) publishes only when its event
+        happens; a long gap is normal, not a fault — the per-source form of the
+        release-radar rule, but staying in its own lane."""
+        self.add_source("A", "bitcoin")
+        self.con.execute(
+            "UPDATE sources SET quiet=1, last_item_at=?, median_gap_h=48"
+            " WHERE name='A'", (_iso(400),))
+        self.con.commit()
+        self.assertEqual(collect_mod.stale_sources(self.con), [])
+
+    def test_a_failing_quiet_source_is_still_reported(self):
+        """Silence is meaningless for a quiet source; a broken poll is not."""
+        self.add_source("A", "bitcoin")
+        self.con.execute("UPDATE sources SET quiet=1, fail_streak=4,"
+                         " last_error='404' WHERE name='A'")
+        self.con.commit()
+        stale = collect_mod.stale_sources(self.con)
+        self.assertEqual(len(stale), 1)
+        self.assertEqual(stale[0]["kind"], "failing")
+
+    def test_quiet_source_exempt_from_silence_dormancy(self):
+        """A quiet source silent past DORMANT_AFTER_DAYS must NOT be auto-slept
+        (its gaps are normal), but a failing one still decays."""
+        self.add_source("A", "bitcoin")
+        self.con.execute(
+            "UPDATE sources SET quiet=1, last_item_at=? WHERE name='A'",
+            (_iso(collect_mod.DORMANT_AFTER_DAYS + 30),))
+        self.con.commit()
+        collect_mod.collect(self.con, PROFILE)
+        self.assertEqual(
+            self.con.execute("SELECT dormant FROM sources WHERE name='A'")
+            .fetchone()[0], 0)
+
 
 # ---------------------------------------------------------------------------
 # ranking
@@ -860,6 +894,18 @@ class TestSeed(Base):
         seed_sources(self.con, self._catalogue(cap=2))
         row = self.con.execute("SELECT cap, weight FROM sources WHERE name='A'").fetchone()
         self.assertEqual((row["cap"], row["weight"]), (5, 1.6))
+
+    def test_seed_carries_quiet_flag(self):
+        """The 'quiet' fact (bursty-by-design source) is seeded and refreshed
+        like url/lane/role — it is a property of the source, not tuning."""
+        p = self.dir / "q.json"
+        p.write_text(json.dumps({"sources": [
+            {"name": "Q", "lane": "bitcoin", "url": "https://q.invalid",
+             "tier": "core", "cap": 2, "quiet": True}]}))
+        seed_sources(self.con, p)
+        self.assertEqual(
+            self.con.execute("SELECT quiet FROM sources WHERE name='Q'")
+            .fetchone()[0], 1)
 
 
 if __name__ == "__main__":

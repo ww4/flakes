@@ -136,6 +136,15 @@ class Settings(BaseSettings):
     btc_sample_min_gap_s: float = 480       # record a sample at least this often even if price is flat
     btc_explain_timeout_s: float = 150.0
     btc_notify: bool = True                 # one ntfy when a new move is explained (quiet-hours-gated)
+    # Each explained move is also appended to a small rolling Atom feed on disk,
+    # which the digest vhost already serves (/var/lib/digest is claude-owned and
+    # published at digest.rosemaryacres.com). Newsdesk polls that URL as one
+    # bitcoin-lane source and the judge curates the moves like any other feed —
+    # so the "why" reaches the digest without a second model call or a DB write.
+    # Empty btc_feed_path disables feed writing (tests, hosts without the digest).
+    btc_feed_path: Path = Path("/var/lib/digest/btc-moves.xml")
+    btc_feed_base_url: str = "https://digest.rosemaryacres.com/btc-moves.xml"
+    btc_feed_keep: int = 20                  # entries retained in the rolling feed
     quiet_start_h: int = 22
     quiet_end_h: int = 7
 
