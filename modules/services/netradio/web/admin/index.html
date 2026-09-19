@@ -88,6 +88,8 @@
             <tag-input v-model="edit.family" :suggestions="state.families"></tag-input></label>
           <label>DJ break every <small class="muted">— songs; 0 = never, or a range like 3-4</small>
             <input v-model="edit.breaks_every" placeholder="3-4"></label>
+          <label v-if="selected.kind !== 'specialty'">Excursion <small class="muted">— % of picks from the fringe (neighbouring genres); default 10</small>
+            <input v-model="edit.excursion" placeholder="10" inputmode="numeric"></label>
         </div>
         <template v-if="selected.kind !== 'specialty'">
           <details><summary>Base rule <small class="muted">— what it plays outside segments</small></summary>

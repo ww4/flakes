@@ -55,11 +55,13 @@ class Migration(unittest.TestCase):
                          {"mount": "gospel", "name": "G", "kind": "curated", "family": ["gospel"], "base": {}}],
                      [{"id": "s1", "station": "blues-jazz", "kind": "auto", "like": "artist", "start": "20:00"}])
             out = migrate.run(cfg)
-            self.assertEqual(len(out), 3)
+            self.assertEqual(len(out), 4)
             mounts = [s["mount"] for s in cfg.stations()]
             self.assertEqual(mounts, ["country", "blues", "jazz", "soul", "gospel"])     # in place, order kept
             jazz = next(s for s in cfg.stations() if s["mount"] == "jazz")
             self.assertEqual(jazz["base"]["era"], {"exclude": ["shellac"]})
+            self.assertEqual(jazz["base"]["fringe_genres"], migrate.FRINGE_GENRES["jazz"])   # yields to its neighbours
+            self.assertIn("rock", next(s for s in cfg.stations() if s["mount"] == "country")["base"]["fringe_genres"])
             self.assertEqual(jazz["breaks_every"], 5)
             self.assertEqual(cfg.schedule()[0]["station"], "blues")
             self.assertTrue(list((Path(d) / "requests").glob("apply-*.json")))               # and an apply follows

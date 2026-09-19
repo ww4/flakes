@@ -272,3 +272,25 @@ class Feedback(unittest.TestCase):
             logging.disable(logging.CRITICAL)
         self.assertTrue(any("skip refused" in line for line in cm.output))
         self.assertFalse(list(inbox.glob("x-*.json")))
+
+
+class Excursion(unittest.TestCase):
+    """The fringe list beside the playlist: a small share of base picks, none
+    while a segment is on, none when the station sets excursion 0."""
+    setUp = StationDJTests.setUp
+    tearDown = StationDJTests.tearDown
+
+    def test_fringe_share(self):
+        (Path(self.tmp.name) / "x-fringe.m3u").write_text("#EXTM3U\n/m/Fringe/Album/01 Edge.mp3\n")
+        self.dj.rng = random.Random(3)
+        picks = [self.dj.choose().path for _ in range(300)]
+        fringe = sum("Fringe" in p for p in picks)
+        self.assertEqual(len(self.dj.fringe), 1)
+        self.assertTrue(15 <= fringe <= 50, fringe)            # ~10% of 300
+        self.dj.excursion = 0.0
+        self.assertFalse(any("Fringe" in self.dj.choose().path for _ in range(100)))
+
+    def test_no_fringe_file_means_no_excursion(self):
+        self.dj.load_playlist()
+        self.assertEqual(self.dj.fringe, [])
+        self.assertFalse(any("Fringe" in self.dj.choose().path for _ in range(50)))

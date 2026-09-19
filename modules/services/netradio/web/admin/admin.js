@@ -93,7 +93,8 @@ createApp({
     async select(st) {
       this.sel = st.mount;
       this.edit = { name: st.name, family: [...(st.family || [])], base: JSON.stringify(st.base || {}, null, 1),
-                    breaks_every: st.breaks_every === undefined || st.breaks_every === null ? "" : String(st.breaks_every) };
+                    breaks_every: st.breaks_every === undefined || st.breaks_every === null ? "" : String(st.breaks_every),
+                    excursion: typeof st.excursion === "number" ? String(Math.round(st.excursion * 100)) : "" };
       if (st.kind !== "specialty" && !this.options[st.mount])
         this.options[st.mount] = await api("GET", `/options?station=${encodeURIComponent(st.mount)}`);
     },
@@ -125,6 +126,7 @@ createApp({
         if (this.edit.breaks_every !== "") body.breaks_every = /^\d+-\d+$/.test(this.edit.breaks_every) ? this.edit.breaks_every : Number(this.edit.breaks_every);
         if (st.kind !== "specialty") {
           body.family = this.edit.family;
+          if (this.edit.excursion !== "") body.excursion = Number(this.edit.excursion);
           body.base = JSON.parse(this.edit.base || "{}");
           const r = await api("PUT", "/schedule", this.allSlots());
           this.scheduleMsg = `schedule: ${r.count} slot(s)`;

@@ -12,7 +12,7 @@ dir; the scanner and the DJ read those.
   PUT    /api/feeds/<id>                 {title?, description?, rule?, family?, listenable?}
   POST   /api/feeds/<id>/compile         (re)compile from the description
   DELETE /api/feeds/<id>
-  PUT    /api/stations/<mount>           {name?, family?, base?}
+  PUT    /api/stations/<mount>           {name?, family?, base?, breaks_every?, excursion?}
   PUT    /api/schedule                   the whole list of slots
   POST   /api/apply                      rescan now (and restart Liquidsoap if mounts changed)
 """
@@ -199,6 +199,14 @@ class Admin:
                 if n < 0 or n > 50:
                     raise ValueError("breaks_every must be 0..50")
                 st["breaks_every"] = n
+        if "excursion" in body and st.get("kind") != "specialty":
+            try:
+                pct = float(body["excursion"])
+            except (TypeError, ValueError):
+                raise ValueError("excursion must be a percentage, 0-50")
+            if not 0 <= pct <= 50:
+                raise ValueError("excursion must be 0..50 (percent of base picks from the fringe)")
+            st["excursion"] = round(pct / 100, 3)
         if "base" in body and st.get("kind") != "specialty":
             errs = feedrules.validate(body["base"] or {})
             if errs:

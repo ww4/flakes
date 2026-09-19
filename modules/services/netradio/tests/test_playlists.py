@@ -17,6 +17,9 @@ class GenreMatching(unittest.TestCase):
         self.assertEqual(pl.split_genre("Old-Time; Bluegrass"), ["old time", "bluegrass"])
         self.assertEqual(pl.split_genre(""), [])
 
+    def test_singer_songwriter_is_one_genre(self):
+        self.assertEqual(pl.split_genre("Singer/Songwriter; Folk"), ["singer songwriter", "folk"])
+
     def test_word_match_is_whole_word(self):
         self.assertTrue(pl.word_in("rock", ["folk rock"]))
         self.assertFalse(pl.word_in("rock", ["rockabilly"]))
@@ -55,6 +58,9 @@ class Build(unittest.TestCase):
             "Boston/C/01 d.mp3": ("Rock", "Boston"),
             "Hal Leonard/D/01 e.mp3": ("Instructional", "Hal Leonard"),
             "Talker/E/01 f.mp3": ("Country", "Talker"),
+            "Byrds/F/01 g.mp3": ("Folk Rock; Country", "Byrds"),          # country by a later tag only: fringe
+            "Dan Gellert/G/01 h.mp3": ("Country", "Dan Gellert"),        # tagged Country, but the old-time feed holds him
+            "Dan Gellert/G/02 i.mp3": ("Country", "Dan Gellert"),
             "X/cover.jpg": ("", ""),
         }
         for rel in self.files:
@@ -67,10 +73,13 @@ class Build(unittest.TestCase):
                                "shellac": True, "rule": {"artists": ["Louvin Brothers"]}},
              "western-swing": {"title": "Western Swing", "status": "ready", "family": ["country"],
                                "rule": {"genres": ["western swing"]}},
+             "old-time": {"title": "Old-Time", "status": "ready", "family": ["bluegrass"],
+                          "rule": {"artists": ["Dan Gellert"]}},
              "draft": {"title": "Draft", "status": "pending"}},
             [{"mount": "all", "name": "Everything", "kind": "curated", "family": ["any"], "base": {"all": True}},
              {"mount": "country", "name": "Classic Country", "kind": "curated", "family": ["country"],
-              "base": {"genres": ["country", "western swing"], "era": {"exclude": ["shellac"]}}},
+              "base": {"genres": ["country", "western swing"], "era": {"exclude": ["shellac"]},
+                       "exclude_genres": ["bluegrass", "old time"], "fringe_genres": ["rock"]}},
              {"mount": "brother-duets", "name": "Brother Duets", "kind": "specialty", "feed": "brother-duets"}],
             [])
         self.out = d / "playlists"
@@ -86,15 +95,22 @@ class Build(unittest.TestCase):
         cache = pl.TagCache(Path(self.tmp.name) / "cache.json")
         with mock.patch.object(pl, "read_tags", side_effect=self.fake_tags):
             tracks, counts = pl.walk([self.root], cache)
-        self.assertEqual(counts["files"], 6)
+        self.assertEqual(counts["files"], 9)
         self.assertEqual(counts["excluded"], 1)                       # the lesson
-        self.assertEqual(len(tracks), 5)
+        self.assertEqual(len(tracks), 8)
         talk = {str(self.root / "Talker/E/01 f.mp3")}
         n = pl.build(tracks, self.cfg, self.out, self.pools, talk=talk,
                      summary=Path(self.tmp.name) / "summary.json", ycast=Path(self.tmp.name) / "stations.yml",
                      public_base="http://h/radio", quick_picks=[{"name": "NPR", "url": "http://npr"}],
                      web_base="https://r/radio")
-        self.assertEqual(n, {"all": 4, "country": 2, "brother-duets": 2})   # the "Other"-tagged Louvin track is not country by tag
+        # country's core: the "Other"-tagged Louvin track is not country by tag; the
+        # Byrds are country by a later tag only (fringe); Dan Gellert says Country
+        # but the old-time feed vouches for him (out — the exclusion's intent)
+        self.assertEqual(n, {"all": 7, "country": 2, "brother-duets": 2})
+        self.assertEqual((self.out / "country-fringe.m3u").read_text().count(".mp3"), 1)
+        self.assertIn("Byrds", (self.out / "country-fringe.m3u").read_text())
+        self.assertNotIn("Gellert", (self.out / "country.m3u").read_text() + (self.out / "country-fringe.m3u").read_text())
+        self.assertEqual((self.out / "all-fringe.m3u").read_text().count(".mp3"), 0)
         self.assertEqual((self.pools / "feeds" / "western-swing.m3u").read_text().count(".mp3"), 1)
         self.assertFalse((self.pools / "feeds" / "draft.m3u").exists())
         feeds = self.cfg.feeds()
@@ -109,7 +125,7 @@ class Build(unittest.TestCase):
         self.assertIn('Curated:\n  "Everything": "http://h/radio/all.mp3"', yml)
         self.assertIn('Specialty:\n  "Brother Duets": "http://h/radio/brother-duets.mp3"', yml)
         self.assertIn('"NPR": "http://npr"', yml)
-        self.assertEqual(json.loads((Path(self.tmp.name) / "summary.json").read_text())["country"], {"tracks": 2})
+        self.assertEqual(json.loads((Path(self.tmp.name) / "summary.json").read_text())["country"], {"tracks": 2, "fringe": 1})
         cat = json.loads((Path(self.tmp.name) / "catalogue.json").read_text())
         self.assertEqual([c["mount"] for c in cat], ["all", "country", "brother-duets"])
         self.assertIn("https://r/radio/brother-duets-lo.mp3", (Path(self.tmp.name) / "stations-lo.m3u").read_text())
@@ -122,11 +138,11 @@ class Build(unittest.TestCase):
             cache = pl.TagCache(cache_path)
             pl.walk([self.root], cache)
             cache.save()
-            self.assertEqual(rt.call_count, 6)
+            self.assertEqual(rt.call_count, 9)
             cache = pl.TagCache(cache_path)
             pl.walk([self.root], cache)
-            self.assertEqual(rt.call_count, 6)
-            self.assertEqual((cache.hits, cache.misses), (6, 0))
+            self.assertEqual(rt.call_count, 9)
+            self.assertEqual((cache.hits, cache.misses), (9, 0))
 
     def test_unreadable_dir_is_skipped_not_fatal(self):
         if os.geteuid() == 0:

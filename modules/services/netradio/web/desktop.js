@@ -90,7 +90,7 @@ createApp({
     isUp(m) { return !!(this.up[m] || this.up[m + "-lo"]); },
     titleOf(m) { return (this.up[m] || this.up[m + "-lo"] || {}).title || ""; },
     listenersOf(m) { return ((this.up[m] || {}).listeners | 0) + ((this.up[m + "-lo"] || {}).listeners | 0); },
-    countOf(m) { const c = this.counts[m]; return c ? `${c.tracks.toLocaleString()} tracks` : ""; },
+    countOf(m) { const c = this.counts[m]; return c ? `${c.tracks.toLocaleString()} tracks${c.fringe ? " +" + c.fringe.toLocaleString() + " fringe" : ""}` : ""; },
     streamUrl(m) { return `radio/${m}${this.quality}.mp3?t=${Date.now()}`; },
     isPlaying(s) {
       if (this.target === "room") return this.receiver.on && this.receiver.now_playing && this.receiver.now_playing.station === s.name;

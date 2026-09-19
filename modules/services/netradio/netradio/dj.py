@@ -49,6 +49,8 @@ NO_REPEAT = 300         # tracks remembered to avoid replaying too soon
 POLL = 5.0              # seconds between queue checks
 KEEP_BREAKS = 4         # rendered break files kept per station
 INBOX_RETRY_S = 60      # a skip/request press is retried this long if Liquidsoap is down, then dropped
+EXCURSION = 0.1         # share of base-programme picks from the station's fringe (<mount>-fringe.m3u);
+                        # a station's `excursion` setting overrides it
 
 
 @dataclass
@@ -378,7 +380,10 @@ class StationDJ:
         self.breaks_every = breaks_every
         self.voice_gain = voice_gain
         self.tracks: list[str] = []
+        self.fringe: list[str] = []         # matched by a later tag only: played a little (EXCURSION)
         self.playlist_mtime = -1.0
+        self.fringe_mtime = -1.0
+        self.excursion = EXCURSION
         self.recent: deque[str] = deque(maxlen=NO_REPEAT)
         self.since_break: list[Track] = []
         self.until_break = self.rng.randint(*breaks_every)
@@ -414,7 +419,21 @@ class StationDJ:
         with self.playlist.open() as fh:
             self.tracks = [l.rstrip("\n") for l in fh if l.strip() and not l.startswith("#")]
         self.playlist_mtime = mtime
-        log.info("%s: playlist loaded, %d tracks", self.mount, len(self.tracks))
+        self.load_fringe()
+        log.info("%s: playlist loaded, %d tracks, %d fringe", self.mount, len(self.tracks), len(self.fringe))
+
+    def load_fringe(self) -> None:
+        fringe = self.playlist.with_name(self.playlist.stem + "-fringe.m3u")
+        try:
+            mtime = fringe.stat().st_mtime
+        except OSError:
+            self.fringe = []
+            return
+        if mtime == self.fringe_mtime:
+            return
+        with fringe.open() as fh:
+            self.fringe = [l.rstrip("\n") for l in fh if l.strip() and not l.startswith("#")]
+        self.fringe_mtime = mtime
 
     def load_profile(self) -> None:
         if not self.profile_path:
@@ -454,6 +473,10 @@ class StationDJ:
                 seg = [t for t in seg if era_ok(era_rule, self.verdict_of(t).era)]
             if seg:
                 candidates = seg
+        elif self.fringe and self.rng.random() < self.excursion:
+            # the base programme's excursion: a track of a neighbouring
+            # genre now and then, never the bulk (Chris, 2026-09-19)
+            candidates = self.fringe
         if not candidates:
             return None
         self.load_dislikes()
@@ -540,6 +563,9 @@ class StationDJ:
         if self.programme is None:
             return
         st = self.programme.refresh_station()
+        if st is not None and isinstance(st.get("excursion"), (int, float)) and st["excursion"] != self.excursion:
+            self.excursion = max(0.0, min(1.0, float(st["excursion"])))
+            log.info("%s: excursion %.0f%% now", self.mount, self.excursion * 100)
         if st is not None and "breaks_every" in st:
             spec = breaks_spec(st.get("breaks_every"), self.breaks_every)
             if spec != self.breaks_every:
