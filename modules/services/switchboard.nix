@@ -230,6 +230,33 @@ in
         UMask = "0022";
       };
     };
+    # Bitcoin spike watch: cheap price sampling + arithmetic detector every 10
+    # min; a claude -p call (which web-searches) fires ONLY on a sustained new
+    # move, so this is near-free most ticks. Chris, 2026-09-18.
+    systemd.services.switchboard-btcwatch = {
+      description = "Watch bitcoin for a sustained spike and explain it";
+      after = [ "switchboard-agi.service" "docker-mempool-api.service" ];
+      environment = env // {
+        HOME = "/home/claude";
+        PATH = lib.mkForce "/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin";
+        CLAUDE_AUTONOMOUS = "1";
+      };
+      serviceConfig = {
+        Type = "oneshot";
+        User = "claude";
+        SupplementaryGroups = [ "asterisk" ];
+        WorkingDirectory = "/home/claude/nixos-homelab-improvements";
+        ExecStart = "${switchboard}/bin/switchboard btc-watch";
+        TimeoutStartSec = "5min";
+        Nice = 10;
+        UMask = "0022";
+      };
+    };
+    systemd.timers.switchboard-btcwatch = {
+      wantedBy = [ "timers.target" ];
+      timerConfig = { OnBootSec = "4min"; OnUnitActiveSec = "10min"; RandomizedDelaySec = "45s"; };
+    };
+
     systemd.timers.switchboard-standing = {
       wantedBy = [ "timers.target" ];
       timerConfig = {

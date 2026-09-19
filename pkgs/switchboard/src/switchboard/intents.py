@@ -60,6 +60,7 @@ _RULES: list[tuple[str, re.Pattern[str]]] = [
     ("disk",      re.compile(r"\b(disk|storage|space|room|full|free|capacity|pool)\b")),
     ("time",      re.compile(r"\b(what time|the time|what day|the date|today'?s date)\b")),
     # Bitcoin: the specific questions before the general price rule; "stats" first.
+    ("btc-move",  re.compile(r"\b((why|what'?s|whats|what is) (.*)?(bitcoin|btc|it|the price) (mov|jump|spik|surg|drop|up|down|doing|rall)|why (is|did) (bitcoin|btc|it) (up|down|move|jump|spike|drop|surge|rally)|what'?s (moving|driving) (bitcoin|btc)|bitcoin news)\b")),
     ("btc-stats", re.compile(r"\b(bitcoin|btc) (stat(istic)?s|summary|rundown|numbers|report|overview)\b|\b(all|everything) (about|on) bitcoin\b")),
     ("btc-ath",   re.compile(r"\b(all[- ]time high|ath|record high|highest (ever|price))\b")),
     ("btc-diff",  re.compile(r"\bdifficulty\b|\bretarget\b")),
@@ -356,6 +357,23 @@ async def _btc_nodes(s: Settings) -> str:
     return _nodes_sentence(await sources.bitcoin_stats(s))
 
 
+async def _btc_move(s: Settings) -> str:
+    import json, time as _t
+    try:
+        d = json.loads((s.answers_dir / "btc-move.json").read_text())
+    except (OSError, ValueError):
+        d = None
+    b = await sources.bitcoin(s)
+    price = f"Bitcoin is {_dollars(b.usd)}"
+    if b.change_24h_pct is not None:
+        price += f", {'up' if b.change_24h_pct >= 0 else 'down'} {abs(b.change_24h_pct):.1f} percent on the day"
+    price += "."
+    if d is None:
+        return f"{price} I haven't caught a notable move to explain recently."
+    from . import btcwatch
+    return f"{price} {btcwatch.spoken(d, _t.time())}"
+
+
 async def _btc_stats(s: Settings) -> str:
     """Everything, in the order Chris asked: price and 24 h move, ATH, difficulty, nodes, then block height and fees."""
     b, st = await asyncio.gather(sources.bitcoin(s), sources.bitcoin_stats(s))
@@ -389,7 +407,7 @@ HELP_GROUPS: list[tuple[str, str]] = [
     ("The box", "status, any issues, notifications, temperatures, disk space, or incidents"),
     ("The newsletter", "what's new, more about and a topic, more, or next"),
     ("Recipes", "do I have a recipe for chili, something with eggplant, then a number, ingredients, steps, or next step"),
-    ("Bitcoin", "the price, all-time high, difficulty, nodes, block height, fees, or bitcoin statistics"),
+    ("Bitcoin", "the price, why it moved, the all-time high, difficulty, nodes, block height, fees, or bitcoin statistics"),
     ("Weather", "the weather today, tomorrow, or just the weather for both"),
     ("Standing questions", "did the backups run, what's on my schedule, what happened recently, or Ryan Hall's latest"),
     ("Notes", "take a note, or take a note for Claude. Dial 7 for a note without the switchboard"),
@@ -439,6 +457,7 @@ _HANDLERS: dict[str, Handler] = {
     "btc-ath": _btc_ath,
     "btc-diff": _btc_diff,
     "btc-nodes": _btc_nodes,
+    "btc-move": _btc_move,
     "btc-stats": _btc_stats,
     "weather:today": _weather("today"),
     "weather:tomorrow": _weather("tomorrow"),

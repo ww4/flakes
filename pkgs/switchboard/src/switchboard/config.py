@@ -120,6 +120,28 @@ class Settings(BaseSettings):
     # node has no fiat price; mempool's backend polls a price feed every few
     # minutes and serves it here along with the tip and fee estimates.
     mempool_url: str = "http://127.0.0.1:8081"
+
+    # --- bitcoin spike watch (btcwatch.py): cheap detector on a timer, model
+    # call only on a sustained new leg. Chris, 2026-09-18. ---
+    # Regime-adaptive spike detector (validated across calm/grind/drop/crash
+    # months). A move must be BOTH a >= btc_sigma_k outlier vs the trailing-24h
+    # hourly-return volatility AND a real mean shift >= btc_min_move_pct — so it
+    # self-scales and won't spam during a bull run's routine chop.
+    btc_window_h: int = 3                    # hours the move is measured over
+    btc_sigma_k: float = 3.0                 # move must exceed this many sigmas of recent churn
+    btc_min_move_pct: float = 1.2            # ...and the 24h mean must have shifted at least this %
+    btc_min_hours: int = 8                   # need this many hourly buckets before firing (cold start)
+    btc_reexplain_after_s: float = 12 * 3600  # a standing move re-explained no more often than this
+    btc_history_keep_s: float = 26 * 3600
+    btc_sample_min_gap_s: float = 480       # record a sample at least this often even if price is flat
+    btc_explain_timeout_s: float = 150.0
+    btc_notify: bool = True                 # one ntfy when a new move is explained (quiet-hours-gated)
+    quiet_start_h: int = 22
+    quiet_end_h: int = 7
+
+    @property
+    def ntfy_post_url(self) -> str:
+        return f"{self.ntfy_url}/{self.ntfy_topic}"
     # Reachable-node count: bitnodes (redirects to btcnodes.io). The one
     # external call in the bitcoin set; cached an hour, absent if unreachable.
     btcnodes_url: str = "https://btcnodes.io/api/v1/snapshots/?limit=1"
