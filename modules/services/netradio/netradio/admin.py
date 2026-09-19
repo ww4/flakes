@@ -405,7 +405,11 @@ def make_handler(admin: Admin):
                         return self._reply(200, admin.cfg.dislikes())
                     if parts == ["api", "art"] and method == "GET":
                         path = parse_qs(u.query).get("path", [""])[0]
-                        got = admin.art(path)
+                        try:
+                            got = admin.art(path)
+                        except OSError as e:       # unreadable file or cover: no art, not a 500
+                            log.warning("art %s: %s", path, e)
+                            got = None
                         if not got:
                             return self._reply(404, {"error": "no art"})
                         data, mime = got
