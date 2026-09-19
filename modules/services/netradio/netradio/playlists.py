@@ -212,6 +212,91 @@ def build_artists(tracks: list[Track]) -> dict:
     return out
 
 
+# a folder that is not an artist (same idea as the spotlight chooser's)
+NOT_AN_ARTIST = re.compile(r"\b(19|20)\d\d\b|various|unknown|compilation|soundtrack|sampler", re.I)
+COVER_NAMES = ("cover.jpg", "Cover.jpg", "folder.jpg", "Folder.jpg", "cover.png", "front.jpg", "Front.jpg", "album.jpg")
+
+
+def has_art(path: str) -> bool:
+    """A cover file beside the track, or a picture inside it (mp3 APIC /
+    m4a covr / flac pictures). The tile picker asks this of a handful of
+    files per station, so the tag read is affordable."""
+    folder = Path(path).parent
+    if any((folder / n).exists() for n in COVER_NAMES):
+        return True
+    try:
+        import mutagen
+        f = mutagen.File(path)
+    except Exception:
+        return False
+    if f is None:
+        return False
+    tags = getattr(f, "tags", None) or {}
+    if any(str(k).startswith("APIC") for k in getattr(tags, "keys", lambda: [])()):
+        return True
+    if hasattr(tags, "get") and tags.get("covr"):
+        return True
+    return bool(getattr(f, "pictures", None))
+
+
+def station_tiles(stations: list[dict], station_pools: dict[str, list[str]], artists: dict, artist_of: dict,
+                  primary: dict[str, str] | None = None, want: int = 4, shortlist: int = 12) -> dict:
+    """What each station's tile shows: {mount: {"covers": [track paths]}}
+    — up to `want` covers from the artists with the most tracks in the
+    station's own pool, one album each, no cover reused across stations
+    (a station left with fewer than `want` shows its first as a hero, so a
+    hero is never another station's mosaic piece either). A station that
+    plays everything ({"all": true}) gets {"icon": "radio"} instead of
+    artists — no four names stand for the whole library."""
+    used: set[str] = set()      # album folders already on a tile
+    tiles: dict = {}
+    # stations with the smallest pools first: they have the fewest covers to choose from
+    order = sorted(stations, key=lambda s: len(station_pools.get(s["mount"], [])))
+    for s in order:
+        m = s["mount"]
+        base = s.get("base") or {}
+        if base.get("all") and not base.get("era") and not base.get("genres") and s.get("kind") != "specialty":
+            tiles[m] = {"icon": "radio", "covers": []}      # the whole library: a radio, not four artists
+            continue
+        pool = station_pools.get(m, [])
+        by_artist: dict[str, list[str]] = collections.defaultdict(list)
+        for path in pool:
+            a = artist_of.get(path)
+            if a and not NOT_AN_ARTIST.search(a):
+                by_artist[a].append(path)
+        # the archetypes first: artists whose tracks' FIRST genre word (the
+        # file's own tag — Chris's word, kept first by the retag) is one of
+        # the station's words, by how many; then the rest by count. So Jazz
+        # shows Ellington, not a soul or rock act with a jazz tag somewhere.
+        words = [w.lower() for w in (base.get("genres") or [])]
+        primary = primary or {}
+        def archetype_count(a: str) -> int:
+            return sum(1 for path in by_artist[a] if primary.get(path, "") in words) if words else 0
+        ranked = sorted(by_artist, key=lambda a: (-archetype_count(a), -len(by_artist[a])))[:shortlist]
+        covers: list[str] = []
+        picked: list[str] = []      # normalised artist names on this tile: "Elvis Costello & the Attractions" is Elvis Costello
+        for a in ranked:
+            key = artist_slug(a)
+            if any(key.startswith(k) or k.startswith(key) for k in picked):
+                continue
+            folders_seen: set[str] = set()
+            # the artist's own folders before a Compilations/Various folder
+            for path in sorted(by_artist[a], key=lambda p: bool(NOT_AN_ARTIST.search(Path(p).parent.parent.name))):
+                folder = str(Path(path).parent)
+                if folder in folders_seen or folder in used:
+                    continue
+                folders_seen.add(folder)
+                if has_art(path):
+                    covers.append(path)
+                    used.add(folder)
+                    picked.append(key)
+                    break
+            if len(covers) >= want:
+                break
+        tiles[m] = {"covers": covers}
+    return tiles
+
+
 def wants_holiday(rule: dict) -> bool:
     return any(word_in(w, [g.lower() for g in rule.get("genres") or []]) for w in FAMILY_WORDS["holiday"])
 
@@ -315,6 +400,8 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
         write_atomic(now / "catalogue.json", json.dumps([{"mount": s["mount"], "name": s["name"], "kind": s.get("kind", "curated")}
                                                           for s in stations]))
         write_atomic(now / "quick-picks.json", json.dumps(quick_picks or []))   # the receiver's menu has them too
+        primary = {t.path: (t.genres[0] if t.genres else "") for t in playable}
+        write_atomic(now / "tiles.json", json.dumps(station_tiles(stations, station_pools, artists, artist_of, primary)))
         if web_base:
             write_atomic(now / "stations.m3u", m3u(stations, web_base, ""))
             write_atomic(now / "stations-lo.m3u", m3u(stations, web_base, "-lo"))

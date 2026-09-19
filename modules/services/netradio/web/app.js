@@ -33,7 +33,7 @@ createApp({
   data() {
     let quality = "", target = "here", tab = "now";
     try { quality = localStorage.getItem("radio.quality") || ""; target = localStorage.getItem("radio.target") || "here"; tab = localStorage.getItem("radio.tab") || "now"; } catch (e) {}
-    return { stations: [], quick: [], counts: {}, up: {}, histories: {}, nexts: {}, current: null, status: "", quality, scanning: false,
+    return { tiles: {}, stations: [], quick: [], counts: {}, up: {}, histories: {}, nexts: {}, current: null, status: "", quality, scanning: false,
              ctx: null, analyser: null, raf: 0, wide: window.innerWidth > 640,
              target, tab, receiver: { name: "", on: false, input: "", volume: 0, mute: false, error: "" }, inputs: [], presets: [],
              pandora: JSON.parse((() => { try { return localStorage.getItem("radio.pandora") || "[]"; } catch (e) { return "[]"; } })()), menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
@@ -121,6 +121,9 @@ createApp({
     "receiver.input"(i) { if (i === "TUNER" && this.receiver.tuner) this.freqDraft = this.freqText; if (this.tab === "sources") this.loadMenu(); },
   },
   methods: {
+    tileCovers(s) { return s.mount && this.tiles[s.mount] ? (this.tiles[s.mount].covers || []) : []; },
+    tileIcon(s) { return s.mount && this.tiles[s.mount] ? (this.tiles[s.mount].icon || "") : ""; },
+    thumb(path, size = 200) { return `admin/api/art?path=${encodeURIComponent(path)}&size=${size}`; },
     initials(name) { return (name || "").split(/[\s&]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join(""); },
     tileStyle(s) { const h = hue(s.name); return { background: `linear-gradient(160deg, hsl(${h} 40% 30%), hsl(${(h + 40) % 360} 50% 17%))` }; },
     label(it) { return it.kind === "break" ? "station break" : (it.artist ? `${it.artist} — ${it.title}` : it.title); },
@@ -144,6 +147,7 @@ createApp({
       const [cat, quick, counts, ic] = await Promise.all([getJSON("now/catalogue.json"), getJSON("now/quick-picks.json"), getJSON("now/stations.json"), getJSON("icecast-status")]);
       if (cat) { this.stations = cat; this.scanning = false; } else if (!this.stations.length) this.scanning = true;
       if (quick) this.quick = quick;
+      if (!this._tilesAt || Date.now() - this._tilesAt > 600000) { const t = await getJSON("now/tiles.json"); if (t) { this.tiles = t; this._tilesAt = Date.now(); } }
       if (counts) this.counts = counts;
       if (ic) this.up = mountsOf(ic);
       const m = this.feedbackMount;

@@ -76,8 +76,14 @@
     <section v-for="group in groups" :key="group.kind">
       <h6>{{ group.title }}</h6>
       <div class="grid">
-        <button v-for="s in group.stations" :key="group.kind + s.name" class="tile" :class="{playing: isPlaying(s)}" :style="tileStyle(s)" @click="isPlaying(s) ? stopTarget() : playTarget(s)">
-          <span class="ini">{{ initials(s.name) }}</span>
+        <button v-for="s in group.stations" :key="group.kind + s.name" class="tile" :class="{playing: isPlaying(s), art: tileCovers(s).length > 0}" :style="tileStyle(s)" @click="isPlaying(s) ? stopTarget() : playTarget(s)">
+          <span v-if="tileCovers(s).length >= 4" class="mosaic"><img v-for="c in tileCovers(s).slice(0, 4)" :key="c" :src="thumb(c)" loading="lazy" alt=""></span>
+          <span v-else-if="tileCovers(s).length" class="hero1"><img :src="thumb(tileCovers(s)[0], 400)" loading="lazy" alt=""></span>
+          <span v-else-if="tileIcon(s) === 'radio'" class="glyph"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><circle cx="16" cy="14" r="3"/><path d="M6 12h5M6 15h5M7 8l9-5"/></svg></span>
+          <span v-else-if="s.kind === 'pandora'" class="glyph"><svg viewBox="0 0 24 24"><path d="M7 3h6a5 5 0 0 1 0 10H9v8H7z" fill="currentColor" stroke="none"/></svg></span>
+          <span v-else-if="s.kind === 'quick'" class="glyph"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="3"/><path d="M8 9a5.5 5.5 0 0 0 0 8M16 9a5.5 5.5 0 0 1 0 8M5 6a9 9 0 0 0 0 14M19 6a9 9 0 0 1 0 14"/></svg></span>
+          <span v-else-if="s.kind === 'preset'" class="glyph"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M7 14h6M7 17h4M7 8l9-5"/></svg></span>
+          <span v-else class="ini">{{ initials(s.name) }}</span>
           <span class="name">{{ s.name }}</span>
           <span class="sub">{{ s.kind === 'quick' ? 'internet' : s.kind === 'pandora' ? 'Pandora' : s.kind === 'preset' ? s.sub : countOf(s.mount) }}</span>
           <span v-if="isUp(s.mount)" class="live-dot" title="on air"></span>
