@@ -11,8 +11,8 @@ python3Packages.buildPythonApplication {
 
   src = fetchgit {
     url = "https://git.rosemaryacres.com/ww4/yamaha-ync.git";
-    rev = "7c259f572fff77760da030ccca5c7a0b87415afa";
-    hash = "sha256-9/GTAX8sVQ3vP18lcWOpbOgzFuhGqz/DTXn2byBkA3U=";
+    rev = "d7a312ce3fd6ed6f284ae3ec9e6b6abc5fe45f32";
+    hash = "sha256-wqfTBoa2tV8PR4+sDWSkin4jVSmgD7864VL0J+GaoTc=";
   };
 
   build-system = [ python3Packages.hatchling ];

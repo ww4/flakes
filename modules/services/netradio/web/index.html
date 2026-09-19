@@ -6,6 +6,16 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Library radio</title>
+<script>
+  // The remote is for phones. A wide screen with a mouse gets the desktop
+  // page instead — unless the user chose a view (?view=remote|desktop, kept).
+  (function () {
+    var q = location.search, view = "";
+    try { if (q.includes("view=remote")) localStorage.setItem("radio.view", "remote"); if (q.includes("view=desktop")) localStorage.setItem("radio.view", "desktop"); view = localStorage.getItem("radio.view") || ""; } catch (e) {}
+    var wide = window.matchMedia("(min-width: 900px)").matches;
+    if (view === "desktop" || (!view && wide)) location.replace("desktop.html" + (view ? "" : "?auto=1"));
+  })();
+</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -16,6 +26,7 @@
   <header class="bar top">
     <button class="room" @click="pickTarget"><span class="dot" :class="{live: target === 'room' ? receiver.on : !!current}"></span>{{ target === 'room' ? (receiver.name || 'Living room') : 'This phone' }} <span class="chev">⌄</span></button>
     <span class="status">{{ busy || status || (target === 'room' && receiver.error ? 'receiver unreachable' : '') }}</span>
+    <a class="admin" href="desktop.html?view=desktop" title="Desktop view">🖥</a>
     <a class="admin" href="admin/" title="Admin">⚙</a>
   </header>
 
