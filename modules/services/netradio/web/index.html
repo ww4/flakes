@@ -33,7 +33,7 @@
   <!-- ===== NOW ============================================================= -->
   <main v-show="tab === 'now'" class="screen now">
     <div class="hero" :style="heroStyle">
-      <img v-if="art && artFailed !== art" :src="art" alt="" @error="artError">
+      <img v-if="artOk()" :src="art" alt="" @error="artError">
       <div v-else class="tile-art">{{ initials(nowStation) }}</div>
     </div>
     <div class="meta">
