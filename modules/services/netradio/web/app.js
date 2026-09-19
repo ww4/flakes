@@ -37,7 +37,7 @@ createApp({
              ctx: null, analyser: null, raf: 0, wide: window.innerWidth > 640,
              target, tab, receiver: { name: "", on: false, input: "", volume: 0, mute: false, error: "" }, inputs: [], presets: [],
              pandora: JSON.parse((() => { try { return localStorage.getItem("radio.pandora") || "[]"; } catch (e) { return "[]"; } })()), menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
-             volumeDraft: 0, freqDraft: "", busy: "", toast: "", query: "", results: [], searchTimer: 0, roomPoll: 0, artFailed: "" };
+             volumeDraft: 0, freqDraft: "", busy: "", toast: "", query: "", results: [], searchTimer: 0, roomPoll: 0, artFailed: "", artFailedAt: 0, tick: 0 };
   },
   computed: {
     groups() {
@@ -128,7 +128,8 @@ createApp({
     listenersOf(m) { return ((this.up[m] || {}).listeners | 0) + ((this.up[m + "-lo"] || {}).listeners | 0); },
     countOf(m) { const c = this.counts[m]; return c ? `${c.tracks.toLocaleString()} tracks` : ""; },
     streamUrl(m) { return `radio/${m}${this.quality}.mp3?t=${Date.now()}`; },
-    artError() { this.artFailed = this.art; },
+    artError() { this.artFailed = this.art; this.artFailedAt = Date.now(); },
+    artOk() { return !!this.art && (this.artFailed !== this.art || this.tick - this.artFailedAt > 30000); },   // a failed cover is retried after 30 s, not written off until the next song
     say(msg) { this.toast = msg; clearTimeout(this._toastT); this._toastT = setTimeout(() => { this.toast = ""; }, 3500); },
     pickTarget() { this.target = this.target === "room" ? "here" : "room"; this.say(this.target === "room" ? `controlling the ${this.receiver.name || "receiver"}` : "playing on this phone"); },
     isPlaying(s) {
@@ -177,6 +178,10 @@ createApp({
       const st = await getJSON("receiver/status");
       if (!st) { this.receiver = { ...this.receiver, error: "unreachable" }; return; }
       this.receiver = { ...st, error: "" };
+      // the station just became known (cold load): fetch its history now,
+      // don't wait for the 10 s refresh — the cover comes from it
+      const m = this.feedbackMount;
+      if (m && !this.histories[m]) this.refresh();
       if (!this.inputs.length) this.inputs = (await getJSON("receiver/inputs")) || [];
       if (st.on && !this.presets.length) this.presets = (await getJSON("receiver/tuner/presets")) || [];
       if (st.on && st.input === "Pandora" && !this._pandoraFresh) { this._pandoraFresh = true; await this.loadPandora(); }
@@ -290,7 +295,7 @@ createApp({
     audio.addEventListener("playing", () => { this.status = ""; });
     window.addEventListener("resize", () => { this.wide = window.innerWidth > 640; });
     this.refresh();
-    setInterval(() => this.refresh(), 10000);
+    setInterval(() => { this.tick = Date.now(); this.refresh(); }, 10000);
     if (this.target === "room") this.pollReceiver();
     if (this.tab === "sources" && this.target !== "room") this.tab = "now";
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
