@@ -41,7 +41,10 @@
       <div class="title">{{ nowLine1 || '—' }}</div>
       <div class="sub">{{ nowLine2 }}</div>
     </div>
-    <div class="transport" v-if="nowKind === 'library'">
+    <div class="transport" v-if="idle">
+      <button class="resume" @click="resume" :title="lastStation ? 'Play ' + lastStation.name : 'Pick a station'"><svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg><span>{{ lastStation ? lastStation.name : 'Pick a station' }}</span></button>
+    </div>
+    <div class="transport" v-else-if="nowKind === 'library'">
       <button @click="skip" title="Skip"><svg viewBox="0 0 24 24"><path d="M5 5l9 7-9 7zM16 5h3v14h-3z"/></svg><span>Skip</span></button>
       <button @click="dislike('track')" title="Never again"><svg viewBox="0 0 24 24"><path d="M15 3H6.5a2 2 0 0 0-2 1.6L3 11.5V13a2 2 0 0 0 2 2h5l-1 4.5a1.5 1.5 0 0 0 2.8 1L15 13zM17 3h4v10h-4z"/></svg><span>Never</span></button>
       <button @click="dislike('artist')" title="Less of this artist"><svg viewBox="0 0 24 24"><path d="M4 12h16M12 4v16" transform="rotate(45 12 12)"/></svg><span>Less</span></button>

@@ -230,3 +230,45 @@ class Feedback(unittest.TestCase):
         self.assertIn("By request from Chris", " ".join(self.tts.texts))
         self.assertTrue(any(self.tracks[0] in u for u in self.ls.pushed[-4:]))  # the request is in the queue
         self.assertTrue(any(e.get("request") for e in self.dj.pushed))
+
+    def test_skip_waits_while_liquidsoap_is_down(self):
+        """A press while Liquidsoap's socket is gone (a deploy) is kept for
+        the next pass — unless it has gone stale, when it is dropped rather
+        than fired minutes later at whatever is playing then."""
+        import json
+        import os
+        import time
+        inbox = Path(self.tmp.name) / "dj" / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        real = self.ls.command
+        self.ls.command = lambda cmd: (_ for _ in ()).throw(FileNotFoundError("no socket"))
+        fresh = inbox / "x-1.json"
+        fresh.write_text(json.dumps({"action": "skip"}))
+        self.dj.handle_inbox()
+        self.assertTrue(fresh.exists())                                    # kept for retry
+        stale = inbox / "x-0.json"
+        stale.write_text(json.dumps({"action": "skip"}))
+        old = time.time() - 600
+        os.utime(stale, (old, old))
+        self.dj.handle_inbox()
+        self.assertFalse(stale.exists())                                   # too old: dropped
+        self.assertTrue(fresh.exists())
+        self.ls.command = real
+        self.dj.handle_inbox()
+        self.assertEqual(self.ls.skipped, 1)                               # fired once the socket is back
+        self.assertFalse(fresh.exists())
+
+    def test_skip_refused_is_logged_not_swallowed(self):
+        import json
+        inbox = Path(self.tmp.name) / "dj" / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        self.ls.command = lambda cmd: 'ERROR: unknown command, type "help" to get a list of commands.'
+        (inbox / "x-1.json").write_text(json.dumps({"action": "skip"}))
+        logging.disable(logging.NOTSET)          # the module silences logging; this test reads it
+        try:
+            with self.assertLogs("netradio.dj", level="ERROR") as cm:
+                self.dj.handle_inbox()
+        finally:
+            logging.disable(logging.CRITICAL)
+        self.assertTrue(any("skip refused" in line for line in cm.output))
+        self.assertFalse(list(inbox.glob("x-*.json")))

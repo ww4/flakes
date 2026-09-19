@@ -22,6 +22,14 @@ class GenreMatching(unittest.TestCase):
         self.assertFalse(pl.word_in("rock", ["rockabilly"]))
         self.assertTrue(pl.word_in("r&b", ["soul and r&b"]))
 
+    def test_holiday_by_name_catches_songs_not_places(self):
+        for title in ["The Reindeer Boogie", "Santa's Big Parade", "Santa Claus Is Comin' To Town", "Sleigh Ride",
+                      "Jingle Bell Rock", "Blue Christmas", "Frosty The Snowman", "Rudolph The Red-Nosed Reindeer"]:
+            self.assertTrue(pl.HOLIDAY_NAME.search(title), title)
+        for title in ["'Longside The Santa Fe Trail", "Santa Rosa Serenade", "Santa Ana's Retreat", "Cold Frosty Morn",
+                      "Santa Câfé", "Billie Holiday", "Snow Bird", "Carlos Santana"]:
+            self.assertFalse(pl.HOLIDAY_NAME.search(title), title)
+
     def test_feed_rule_shellac_default(self):
         self.assertEqual(pl.feed_rule({"rule": {"artists": ["A"]}})["era"], {"exclude": ["shellac"]})
         self.assertNotIn("era", pl.feed_rule({"rule": {"artists": ["A"]}, "shellac": True}))

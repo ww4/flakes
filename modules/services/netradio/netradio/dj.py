@@ -48,6 +48,7 @@ LOOKAHEAD = 2           # queued items to keep waiting behind the playing one
 NO_REPEAT = 300         # tracks remembered to avoid replaying too soon
 POLL = 5.0              # seconds between queue checks
 KEEP_BREAKS = 4         # rendered break files kept per station
+INBOX_RETRY_S = 60      # a skip/request press is retried this long if Liquidsoap is down, then dropped
 
 
 @dataclass
@@ -493,15 +494,26 @@ class StationDJ:
         for f in files:
             try:
                 req = json.loads(f.read_text())
+                age = time.time() - f.stat().st_mtime
             except (OSError, ValueError):
                 f.unlink(missing_ok=True)
                 continue
             try:
                 if req.get("action") == "skip":
-                    self.ls.command(f"src_{self.mount}.skip")
-                    log.info("%s: skipped on request", self.mount)
+                    reply = self.ls.command(f"src_{self.mount}.skip")
+                    if reply.startswith("ERROR"):    # an unknown command is a quiet failure otherwise
+                        log.error("%s: skip refused by Liquidsoap: %s", self.mount, reply)
+                    else:
+                        log.info("%s: skipped on request", self.mount)
                 elif req.get("action") == "request" and req.get("path"):
                     self.play_request(req["path"], req.get("who", ""))
+            except OSError as e:
+                # Liquidsoap's socket is gone (a deploy restarting it): a fresh
+                # press waits for the next pass; an old one would surprise.
+                if age < INBOX_RETRY_S:
+                    log.warning("%s: inbox %s waits, Liquidsoap unreachable (%s)", self.mount, f.name, e)
+                    break
+                log.warning("%s: inbox %s dropped after %.0fs, Liquidsoap unreachable (%s)", self.mount, f.name, age, e)
             except Exception:
                 log.exception("%s: inbox %s failed", self.mount, f.name)
             f.unlink(missing_ok=True)

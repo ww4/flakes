@@ -1,7 +1,7 @@
 // Service worker: makes the page installable and keeps the shell (page,
 // script, styles, icon) available offline. Live data (now/*, receiver/*,
 // admin/api/*, the streams) is never cached — always the network.
-const SHELL = "radio-shell-v3";
+const SHELL = "radio-shell-v4";
 const FILES = ["./", "index.html", "app.js", "remote.css", "vendor/vue.global.prod.js", "icon.svg", "manifest.webmanifest"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== SHELL).map(k => caches.delete(k)))).then(() => self.clients.claim())); });

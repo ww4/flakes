@@ -35,9 +35,15 @@ def station(mount, name) =
   pl = playlist(id="pl_" ^ mount, mode="randomize", reload_mode="watch",
                 playlists ^ "/" ^ mount ^ ".m3u")
   q = request.queue(id="q_" ^ mount)
-  s = fallback(id="src_" ^ mount, track_sensitive=true, [q, pl])
+  sw = fallback(id="src_" ^ mount, track_sensitive=true, [q, pl])
+  # The DJ's skip. A fallback registers no command of its own, and the
+  # output's `<mount>.skip` sits above the crossfade, which lets the abort
+  # through twice (two tracks gone, five seconds late — 2026-09-19). Skipping
+  # the fallback itself ends the selected source's track and nothing else.
+  server.register(namespace="src_" ^ mount, description="Skip the playing track.", "skip",
+                  fun (_) -> begin sw.skip() "Done" end)
   # Breaks carry liq_amplify (speech renders ~8 dB under the music).
-  s = amplify(1., override="liq_amplify", s)
+  s = amplify(1., override="liq_amplify", sw)
   s = crossfade(s)
   s = mksafe(s)
   # The first track's metadata is emitted BEFORE the Icecast connection is

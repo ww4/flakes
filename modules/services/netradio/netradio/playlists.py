@@ -159,8 +159,17 @@ def walk(roots: list[Path], cache: TagCache, extra_genres: dict[str, list[str]] 
 
 
 # Holiday material named rather than tagged: the album folder or the file.
-# Not the bare word "holiday" — Billie Holiday's folder is not a Christmas record.
-HOLIDAY_NAME = re.compile(r"christmas|xmas|noel|santa claus|jingle bells|silent night|nativity|yuletide", re.I)
+# Not the bare word "holiday" — Billie Holiday's folder is not a Christmas
+# record; not "santa" alone — the Santa Fe Trail and Santa Ana's Retreat are
+# not either; not "frosty" — Frosty Morn is a fiddle tune. Hank Snow's
+# Reindeer Boogie got onto Classic Country past the first list (2026-09-19).
+HOLIDAY_NAME = re.compile(
+    r"christmas|xmas|noel|nativity|yuletide|reindeer|rudolph|mistletoe|sleigh|"
+    r"santa'?s\b|santa claus|here comes santa|santa baby|santa looked|"
+    r"jingle bell|silent night|silver bells|white christmas|let it snow|winter wonderland|frosty the snowman|"
+    r"little drummer boy|deck the halls|o holy night|hark the herald|joy to the world|holly jolly|"
+    r"feliz navidad|auld lang syne|god rest ye|we three kings|away in a manger|o come all ye|"
+    r"first noel|good king wenceslas|blue christmas|here comes santa", re.I)
 
 
 def _walk_error(err: OSError, counts: dict) -> None:
