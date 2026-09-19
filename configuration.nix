@@ -194,7 +194,7 @@ let hm = homelab-modules.nixosModules; in
 
   # The living-room Yamaha R-N301 (static 192.168.1.61 — it points at Blocky
   # for the vTuner stand-in; reserve it in the router for MAC 00:a0:de:c4:18:54).
-  services.yamaha-ync = { enable = true; host = "192.168.1.61"; name = "Living room"; };
+  services.yamaha-ync = { enable = true; host = "192.168.1.61"; name = "Living room"; exposeApiToContainers = true; };  # the Homepage widget
 
   # House PBX + the voice switchboard: dial 0 from any registered handset and
   # ask the box a question. Fast intents (status/temps/disk/incidents/time)

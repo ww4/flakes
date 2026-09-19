@@ -27,6 +27,10 @@ in
     apiPort = lib.mkOption { type = lib.types.port; default = 8791; };
     mcpPort = lib.mkOption { type = lib.types.port; default = 8790; };
     allowNetworkChanges = lib.mkOption { type = lib.types.bool; default = false; };
+    exposeApiToContainers = lib.mkOption {
+      type = lib.types.bool; default = false;
+      description = "bind the JSON API on all interfaces and open its port to Docker bridges only (host.docker.internal), for a Homepage widget";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -39,10 +43,18 @@ in
       wants = [ "network-online.target" ];
       environment = {
         YNC_HOST = cfg.host; YNC_NAME = cfg.name;
-        YNC_BIND = "127.0.0.1"; YNC_PORT = toString cfg.apiPort;
+        YNC_BIND = if cfg.exposeApiToContainers then "0.0.0.0" else "127.0.0.1"; YNC_PORT = toString cfg.apiPort;
       };
       serviceConfig = hardening // { ExecStart = "${yamaha-ync}/bin/ync-api"; };
     };
+
+    # The API has no auth (the receiver has none either); with the option on
+    # it is reachable from loopback and from Docker bridges (br-+, the
+    # host-gateway route Homepage widgets use) — not from the LAN or
+    # tailnet, whose way in stays the radio vhost's /receiver/ proxy.
+    networking.firewall.extraCommands = lib.mkIf cfg.exposeApiToContainers ''
+      iptables -I nixos-fw 1 -i br-+ -p tcp --dport ${toString cfg.apiPort} -j nixos-fw-accept
+    '';
 
     systemd.services.yamaha-ync-mcp = {
       description = "Yamaha receiver MCP server (yamaha-ync)";

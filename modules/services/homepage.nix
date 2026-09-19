@@ -69,6 +69,31 @@ let
 
   servicesYaml = pkgs.writeText "homepage-services.yaml" ''
     - Media:
+        - Library radio:
+            description: The house radio, and the living-room receiver
+            href: https://radio.rosemaryacres.com
+            icon: mdi-radio
+            widget:
+              # the receiver's JSON API (yamaha-ync-api on the host-gateway
+              # port, opened to br-+ by services.yamaha-ync.exposeApiToContainers)
+              type: customapi
+              url: http://host.docker.internal:8791/status
+              refreshInterval: 10000
+              method: GET
+              display: list
+              mappings:
+                - field: power
+                  label: Receiver
+                - field: input
+                  label: Input
+                - field:
+                    now_playing: station
+                  label: Station
+                - field:
+                    now_playing: track
+                  label: Now playing
+                - field: volume
+                  label: Volume
         - Jellyfin:
             description: Movies, TV, music
             href: https://jellyfin.rosemaryacres.com
