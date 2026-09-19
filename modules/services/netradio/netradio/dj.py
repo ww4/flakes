@@ -365,7 +365,7 @@ class StationDJ:
                  ls: Liquidsoap, tts: Kokoro, rng: random.Random | None = None,
                  lookahead: int = LOOKAHEAD, breaks_every: tuple[int, int] = (3, 4),
                  voice_gain: str = "1.8", profile: Path | None = None, overrides: Path | None = None,
-                 now_dir: Path | None = None, programme: Programme | None = None):
+                 now_dir: Path | None = None, programme: Programme | None = None, inbox: Path | None = None):
         self.mount = mount
         self.name = name
         self.playlist = playlist
@@ -389,7 +389,10 @@ class StationDJ:
         self.planned: Track | None = None   # chosen one ahead, so a track's
                                             # exit can suit what follows it
         self.now_dir = now_dir              # where the radio page reads "next" from
-        self.inbox = out_dir / "inbox"      # skip / request files from the admin API
+        # skip / request files from the admin API: ONE inbox for all stations,
+        # beside the per-station break dirs (out_dir is <dj>/<mount>; the
+        # admin writes <dj>/inbox — 2026-09-18 the first skip went unseen)
+        self.inbox = inbox if inbox is not None else out_dir.parent / "inbox"
         self.dislikes: dict = {"tracks": {}, "artists": {}}
         self.dislikes_mtime = 0.0
         self.pushed: list[dict] = []        # what was queued, in order, for that
@@ -707,7 +710,8 @@ def main(argv: list[str] | None = None) -> int:
         prog = Programme(s, cfg, args.pools, lastfm_key)
         dj = StationDJ(s["mount"], s["name"], args.playlists / f"{s['mount']}.m3u",
                        args.out / s["mount"], ls, tts, breaks_every=breaks_spec(s.get("breaks_every"), (lo, hi)),
-                       profile=args.profile, overrides=args.overrides, now_dir=args.now_dir, programme=prog)
+                       profile=args.profile, overrides=args.overrides, now_dir=args.now_dir, programme=prog,
+                       inbox=args.out / "inbox")
         t = threading.Thread(target=dj.run, args=(stop,), name=s["mount"], daemon=True)
         t.start()
         threads.append(t)
