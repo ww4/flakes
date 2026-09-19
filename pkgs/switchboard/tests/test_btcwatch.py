@@ -203,3 +203,27 @@ def test_write_feed_disabled_when_path_empty(tmp_path):
     # must not raise and must not create the moves record
     btcwatch.write_feed(s, btcwatch.Move("up", 3.0, 70000, 72000, 72000, 60), "x", 1_700_000_000)
     assert not (tmp_path / "btc-moves.json").exists()
+
+
+def test_render_atom_empty_is_valid_feed_with_no_entries():
+    entries = _parse_atom_like_newsdesk(btcwatch.render_atom([], "https://x/f.xml"))
+    assert entries == []                          # valid empty feed -> 0 entries, no 404
+
+
+def test_ensure_feed_writes_empty_feed_when_missing(tmp_path):
+    feed = tmp_path / "digest" / "btc-moves.xml"
+    s = Settings(state_dir=tmp_path, btc_feed_path=feed, btc_feed_base_url="https://x/f.xml")
+    assert not feed.exists()
+    btcwatch.ensure_feed(s)                        # brand-new watch, no moves yet
+    assert feed.exists()
+    assert _parse_atom_like_newsdesk(feed.read_text()) == []
+    # does not clobber a feed that already has content
+    btcwatch.write_feed(s, btcwatch.Move("up", 3.0, 70000, 72000, 72000, 60), "real move", 1_700_000_000)
+    btcwatch.ensure_feed(s)
+    entries = _parse_atom_like_newsdesk(feed.read_text())
+    assert len(entries) == 1 and entries[0]["content"] == "real move"
+
+
+def test_ensure_feed_noop_when_disabled(tmp_path):
+    from pathlib import Path
+    btcwatch.ensure_feed(Settings(state_dir=tmp_path, btc_feed_path=Path("")))  # must not raise
