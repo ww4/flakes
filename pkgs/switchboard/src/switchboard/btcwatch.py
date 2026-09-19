@@ -244,6 +244,7 @@ async def run(settings: Settings, now_ts: float | None = None) -> dict:
     """One watch tick. Returns a small status dict (also what the CLI prints)."""
     now_ts = now_ts or time.time()
     flush_pending(settings)      # release anything deferred overnight, now that it's morning
+    ensure_feed(settings)        # a valid (possibly empty) feed exists before newsdesk ever polls it
     hist = load_history(settings)
     try:
         _feed_ts, price = await sample_price(settings)
@@ -351,12 +352,39 @@ def _rfc3339(ts: float) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _feed_disabled(settings: Settings) -> bool:
+    return str(settings.btc_feed_path) in ("", ".")   # empty path disables the feed
+
+
+def _render_feed_file(settings: Settings, recs: list[dict]) -> None:
+    """Atomically render `recs` to the Atom feed file. Best-effort: the digest
+    is a secondary consumer, so a write failure (e.g. the digest dir absent on
+    a host that has no digest) is logged, never fatal to the watch tick."""
+    try:
+        xml = render_atom(recs, settings.btc_feed_base_url)
+        fp = settings.btc_feed_path
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        ftmp = fp.with_suffix(".xml.part")
+        ftmp.write_text(xml)
+        ftmp.replace(fp)
+    except OSError as exc:
+        log.warning("btc-watch feed: %s", exc)
+
+
+def ensure_feed(settings: Settings) -> None:
+    """Guarantee the feed file exists before newsdesk ever polls it. A brand-new
+    watch has no moves yet, but a MISSING file 404s and newsdesk would flag the
+    source as 'failing' (that check runs ahead of the 'quiet' exemption). An
+    empty-but-valid Atom feed keeps fail_streak at 0 until the first real move."""
+    if _feed_disabled(settings) or settings.btc_feed_path.exists():
+        return
+    _render_feed_file(settings, _load_moves(settings))
+
+
 def write_feed(settings: Settings, move: Move, text: str, now_ts: float) -> None:
     """Append this explained move to the rolling on-disk record and re-render
-    the Atom feed. Best-effort: the digest is a secondary consumer, so a write
-    failure (e.g. the digest dir absent on a host that has no digest) is logged,
-    never fatal to the watch tick."""
-    if str(settings.btc_feed_path) in ("", "."):   # empty path disables the feed
+    the Atom feed."""
+    if _feed_disabled(settings):
         return
     recs = _load_moves(settings)
     recs.append({"ts": now_ts, "direction": move.direction, "pct": move.pct,
@@ -368,14 +396,10 @@ def write_feed(settings: Settings, move: Move, text: str, now_ts: float) -> None
         tmp = mp.with_suffix(".json.part")
         tmp.write_text(json.dumps(recs))
         tmp.replace(mp)
-        xml = render_atom(recs, settings.btc_feed_base_url)
-        fp = settings.btc_feed_path
-        fp.parent.mkdir(parents=True, exist_ok=True)
-        ftmp = fp.with_suffix(".xml.part")
-        ftmp.write_text(xml)
-        ftmp.replace(fp)
     except OSError as exc:
-        log.warning("btc-watch feed: %s", exc)
+        log.warning("btc-watch moves: %s", exc)
+        return
+    _render_feed_file(settings, recs)
 
 
 def _is_quiet(settings: Settings, now_ts: float | None = None) -> bool:
