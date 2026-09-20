@@ -1,10 +1,10 @@
 import sys
 
-from netradio import admin, compile as compile_, dj, liq, migrate, playlists, profile, profile_server, wake
+from netradio import admin, compile as compile_, dj, liq, migrate, pandora, playlists, profile, profile_server, wake
 
 COMMANDS = {"playlists": playlists.main, "wake": wake.main, "dj": dj.main,
             "profile": profile.main, "profile-server": profile_server.main,
-            "admin": admin.main, "liq": liq.main, "migrate": migrate.main,
+            "admin": admin.main, "liq": liq.main, "migrate": migrate.main, "pandora": pandora.main,
             "compile-prompt": compile_.main_prompt, "compile-apply": compile_.main_apply}
 
 

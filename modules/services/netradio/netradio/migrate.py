@@ -79,10 +79,50 @@ def country_excludes_bluegrass(cfg: Config) -> str:
     return "no curated country station"
 
 
+# What each curated station yields to: a track whose own (first) tag is not
+# the station's, and which carries one of these words, is fringe — played a
+# little, never the bulk. The neighbours, by specificity: bluegrass over
+# country over folk; soul over blues over jazz; everything over rock.
+FRINGE_GENRES = {
+    "bluegrass": ["jazz", "rock", "alternative", "pop"],
+    "country": ["rock", "alternative", "pop", "blues", "jazz", "folk", "singer songwriter", "soul", "r&b"],
+    "folk": ["bluegrass", "old time", "oldtime", "newgrass", "string band", "country", "western swing", "honky tonk",
+             "rock", "alternative", "pop", "world", "classical"],
+    "rock": ["country", "bluegrass", "folk", "blues", "jazz", "soul", "r&b", "funk", "classical", "vocal",
+             "easy listening", "world", "latin", "soundtrack", "new age"],
+    "blues": ["soul", "r&b", "funk", "motown", "rock", "alternative", "jazz", "country", "bluegrass", "folk"],
+    "jazz": ["rock", "alternative", "pop", "country", "western swing", "soul", "r&b", "funk", "new age", "blues"],
+    "soul": ["blues", "jazz", "rock", "pop", "gospel"],
+    "gospel": ["country", "rock", "pop", "bluegrass", "blues", "soul"],
+    "classical": ["rock", "alternative", "pop", "soundtrack", "new age", "jazz", "world", "electronic"],
+}
+
+
+def stations_yield_to_neighbours(cfg: Config) -> str:
+    """Chris, 2026-09-19: every station sticks to its genre with limited
+    excursion; spotlights go further afield. The base rules get
+    `fringe_genres` (see FRINGE_GENRES); the scanner splits each base into
+    core + fringe and the DJ plays the fringe a tenth of the time."""
+    stations = cfg.stations()
+    changed = 0
+    for s in stations:
+        if s.get("kind") == "specialty" or s.get("mount") not in FRINGE_GENRES:
+            continue
+        base = s.setdefault("base", {})
+        if "fringe_genres" in base:
+            continue
+        base["fringe_genres"] = list(FRINGE_GENRES[s["mount"]])
+        changed += 1
+    if changed:
+        cfg.save_stations(stations)
+    return f"{changed} station(s) now yield to their neighbours" if changed else "nothing to do"
+
+
 MIGRATIONS = [
     ("split-blues-jazz-soul", split_blues_jazz_soul),
     ("feeds-keep-shellac", feeds_keep_shellac),
     ("country-excludes-bluegrass", country_excludes_bluegrass),
+    ("stations-yield-to-neighbours", stations_yield_to_neighbours),
 ]
 
 

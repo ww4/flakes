@@ -7,7 +7,8 @@ Inputs
     <config>/stations.json
 Outputs (all atomic)
     playlists/library.m3u          every audio file (the profiler's input)
-    playlists/<mount>.m3u          what each station plays outside segments
+    playlists/<mount>.m3u          what each station plays outside segments (its own genre)
+    playlists/<mount>-fringe.m3u   matched by a later tag only: the DJ's occasional excursion
     pools/feeds/<feed>.m3u         each feed's pool (segments draw on these)
     pools/artists/<slug>.m3u       each artist's tracks (spotlights)
     <config>/artists.json          {artist: {tracks, families, slug}}
@@ -52,7 +53,8 @@ class Track:
 
 
 def split_genre(tag: str) -> list[str]:
-    parts = re.split(r"[/;,|]+", tag.lower())
+    tag = re.sub(r"singer\s*/\s*songwriter", "singer songwriter", tag.lower())   # one genre, not two
+    parts = re.split(r"[/;,|]+", tag)
     out = []
     for p in parts:
         p = re.sub(r"\s+", " ", re.sub(r"[-_]+", " ", p)).strip()
@@ -175,6 +177,40 @@ HOLIDAY_NAME = re.compile(
 def _walk_error(err: OSError, counts: dict) -> None:
     counts["unreadable_dirs"] += 1
     log.info("skipping unreadable directory: %s", err.filename)
+
+
+def is_core(rule: dict, track: "Track", artist_info: dict | None) -> bool | None:
+    """Whether a track that already matches a station's base rule is of the
+    station's own genre — or an excursion.
+
+    Core: the track's FIRST genre (its own tag, before the catalogue's
+    additions) hits one of the rule's genre words; a rule that picks by
+    artist, instrument, or `all` is core throughout. Fringe: the first tag
+    is something else and a tag hits one of the rule's `fringe_genres` —
+    the neighbours the station yields to (Folk yields to bluegrass and
+    country: the Stanleys carry "Americana" but are not a folk station's
+    own; Blues yields to soul: Aretha is Blues by her fourth tag). With no
+    such hit the track is core — "Country; Bluegrass" is bluegrass. None:
+    out altogether — the feeds vouch for the artist as one of the rule's
+    EXCLUDED families and not its own (Dan Gellert's tag says Country; the
+    old-time feeds hold 91% of him), which the negative clause meant to
+    keep off the station. Spotlights ignore all of this.
+    """
+    words = [w.lower() for w in rule.get("genres") or []]
+    if rule.get("exclude_genres") and artist_info:
+        excluded = families_of([w.lower() for w in rule["exclude_genres"]])
+        own = families_of(words)
+        vouched = artist_info.get("feed_share") or {}
+        if any(vouched.get(f, 0) >= 0.5 for f in excluded) and not any(vouched.get(f, 0) >= 0.5 for f in own):
+            return None
+    if not words or rule.get("all"):
+        return True
+    from netradio.feeds import artist_hit   # feeds imports this module
+    if artist_hit(rule.get("artists") or [], track.artist, track.path):
+        return True
+    if any(word_in(w, track.genres[:1]) for w in words):
+        return True
+    return not any(word_in(w.lower(), track.genres) for w in rule.get("fringe_genres") or [])
 
 
 def families_of(genres: list[str]) -> list[str]:
@@ -385,8 +421,28 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
     # the spotlight chooser's measure of fit (genres, exclusions and era in
     # one number: Jimmy Martin has 0 for Classic Country, the Carter Family
     # only their non-shellac sides)
-    station_pools = {s["mount"]: (feed_pools.get(s.get("feed", ""), []) if s.get("kind") == "specialty"
-                                  else pool(s.get("base") or {"all": True})) for s in stations}
+    # A curated base is two lists: the station's own genre (what the
+    # station plays, what the spotlight chooser and the tiles measure) and
+    # the fringe — matched only by a later tag — that the DJ lets in a
+    # little (dj.EXCURSION). A specialty station is its feed, all core.
+    station_pools: dict[str, list[str]] = {}
+    fringe_pools: dict[str, list[str]] = {}
+    for s in stations:
+        if s.get("kind") == "specialty":
+            station_pools[s["mount"]] = feed_pools.get(s.get("feed", ""), [])
+            fringe_pools[s["mount"]] = []
+            continue
+        rule = s.get("base") or {"all": True}
+        core, fringe = [], []
+        matched = set(pool(rule))
+        for t in (everything if wants_holiday(rule) else playable):
+            if t.path not in matched:
+                continue
+            kind = is_core(rule, t, artists.get(t.artist))
+            if kind is None:
+                continue
+            (core if kind else fringe).append(t.path)
+        station_pools[s["mount"]], fringe_pools[s["mount"]] = core, fringe
     for mount, paths in station_pools.items():
         for path in paths:
             a = artist_of.get(path)
@@ -398,12 +454,13 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
 
     counts = {}
     for s in stations:
-        paths = station_pools[s["mount"]]
+        paths, fringe = station_pools[s["mount"]], fringe_pools[s["mount"]]
         write_m3u(out / f"{s['mount']}.m3u", paths)
+        write_m3u(out / f"{s['mount']}-fringe.m3u", fringe)
         counts[s["mount"]] = len(paths)
-        log.info("%-14s %6d tracks  (%s)", s["mount"], len(paths), s.get("name", ""))
+        log.info("%-14s %6d tracks  +%d fringe  (%s)", s["mount"], len(paths), len(fringe), s.get("name", ""))
     if summary:
-        write_atomic(summary, json.dumps({m: {"tracks": n} for m, n in counts.items()}))
+        write_atomic(summary, json.dumps({m: {"tracks": n, "fringe": len(fringe_pools[m])} for m, n in counts.items()}))
         # the radio page's station list and the radio-app playlists, beside it
         now = summary.parent
         write_atomic(now / "catalogue.json", json.dumps([{"mount": s["mount"], "name": s["name"], "kind": s.get("kind", "curated")}

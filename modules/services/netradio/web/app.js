@@ -141,7 +141,7 @@ createApp({
     label(it) { return it.kind === "break" ? "station break" : (it.artist ? `${it.artist} — ${it.title}` : it.title); },
     isUp(m) { return !!m && !!(this.up[m] || this.up[m + "-lo"]); },
     listenersOf(m) { return ((this.up[m] || {}).listeners | 0) + ((this.up[m + "-lo"] || {}).listeners | 0); },
-    countOf(m) { const c = this.counts[m]; return c ? `${c.tracks.toLocaleString()} tracks` : ""; },
+    countOf(m) { const c = this.counts[m]; return c ? `${c.tracks.toLocaleString()} tracks${c.fringe ? " +" + c.fringe.toLocaleString() + " fringe" : ""}` : ""; },
     streamUrl(m) { return `radio/${m}${this.quality}.mp3?t=${Date.now()}`; },
     artError() { this.artFailed = this.art; this.artFailedAt = Date.now(); },
     artOk() { return !!this.art && (this.artFailed !== this.art || this.tick - this.artFailedAt > 30000); },   // a failed cover is retried after 30 s, not written off until the next song

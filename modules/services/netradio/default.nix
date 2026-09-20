@@ -631,6 +631,28 @@ in
     };
   };
 
+  # --- what the receiver plays on Pandora ---------------------------------------
+  # A Pandora station Chris likes is a model for a library station; the log
+  # feeds the admin page's "Heard on Pandora" tab and the Lidarr fills.
+  systemd.services.netradio-pandora = lib.mkIf config.services.yamaha-ync.enable {
+    description = "Log what the receiver plays on Pandora (for growing the library)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "yamaha-ync-api.service" ];
+    serviceConfig = hardening // {
+      User = user;
+      Group = user;
+      ExecStart = lib.concatStringsSep " " [
+        "${netradio}/bin/netradio pandora"
+        "--api http://127.0.0.1:${toString config.services.yamaha-ync.apiPort}"
+        "--out ${configDir}/pandora.jsonl"
+        "--interval 15"
+      ];
+      ReadWritePaths = [ configDir ];
+      Restart = "always";
+      RestartSec = 30;
+    };
+  };
+
   # --- playlist scanner: nightly + shortly after boot --------------------------
   systemd.services.netradio-playlists = {
     description = "Rebuild the library station playlists from genre tags";

@@ -102,7 +102,7 @@ def matches(rule: dict, *, artist: str, path: str, genre: str, yamnet: dict | No
 def validate(rule: dict) -> list[str]:
     """Problems with a rule as written (the admin page shows them)."""
     errs = []
-    for k in ("artists", "genres", "exclude_genres"):
+    for k in ("artists", "genres", "exclude_genres", "fringe_genres"):
         v = rule.get(k)
         if v is not None and (not isinstance(v, list) or not all(isinstance(x, str) for x in v)):
             errs.append(f"{k} must be a list of strings")

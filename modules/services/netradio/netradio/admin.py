@@ -12,9 +12,10 @@ dir; the scanner and the DJ read those.
   PUT    /api/feeds/<id>                 {title?, description?, rule?, family?, listenable?}
   POST   /api/feeds/<id>/compile         (re)compile from the description
   DELETE /api/feeds/<id>
-  PUT    /api/stations/<mount>           {name?, family?, base?}
+  PUT    /api/stations/<mount>           {name?, family?, base?, breaks_every?, excursion?}
   PUT    /api/schedule                   the whole list of slots
   POST   /api/apply                      rescan now (and restart Liquidsoap if mounts changed)
+  GET    /api/pandora                    what the receiver played on Pandora: artists per station, in-library flags
 """
 
 from __future__ import annotations
@@ -50,6 +51,14 @@ class Admin:
         self._inbox_n = itertools.count()
 
     # -- reads
+    def pandora(self) -> dict:
+        """What the receiver has played on Pandora (netradio pandora writes
+        <config>/pandora.jsonl): artists per station, thumbed first, marked
+        by whether the library has them. The list to grow the library from."""
+        from netradio.pandora import read_log, summarise
+        records = read_log(self.cfg.root / "pandora.jsonl")
+        return {"stations": summarise(records, set(self.cfg.artists())), "plays": len(records)}
+
     def state(self) -> dict:
         feeds = self.cfg.feeds()
         stations = self.cfg.stations()
@@ -199,6 +208,14 @@ class Admin:
                 if n < 0 or n > 50:
                     raise ValueError("breaks_every must be 0..50")
                 st["breaks_every"] = n
+        if "excursion" in body and st.get("kind") != "specialty":
+            try:
+                pct = float(body["excursion"])
+            except (TypeError, ValueError):
+                raise ValueError("excursion must be a percentage, 0-50")
+            if not 0 <= pct <= 50:
+                raise ValueError("excursion must be 0..50 (percent of base picks from the fringe)")
+            st["excursion"] = round(pct / 100, 3)
         if "base" in body and st.get("kind") != "specialty":
             errs = feedrules.validate(body["base"] or {})
             if errs:
@@ -418,6 +435,8 @@ def make_handler(admin: Admin):
                         return self._reply(200, admin.undislike(self._json()))
                     if parts == ["api", "dislikes"] and method == "GET":
                         return self._reply(200, admin.cfg.dislikes())
+                    if parts == ["api", "pandora"] and method == "GET":
+                        return self._reply(200, admin.pandora())
                     if parts == ["api", "art"] and method == "GET":
                         qs = parse_qs(u.query)
                         path = qs.get("path", [""])[0]

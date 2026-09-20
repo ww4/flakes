@@ -88,6 +88,8 @@
             <tag-input v-model="edit.family" :suggestions="state.families"></tag-input></label>
           <label>DJ break every <small class="muted">— songs; 0 = never, or a range like 3-4</small>
             <input v-model="edit.breaks_every" placeholder="3-4"></label>
+          <label v-if="selected.kind !== 'specialty'">Excursion <small class="muted">— % of picks from the fringe (neighbouring genres); default 10</small>
+            <input v-model="edit.excursion" placeholder="10" inputmode="numeric"></label>
         </div>
         <template v-if="selected.kind !== 'specialty'">
           <details><summary>Base rule <small class="muted">— what it plays outside segments</small></summary>
@@ -117,6 +119,25 @@
           <small class="muted">{{ scheduleMsg }}</small>
         </div>
       </div>
+    </article>
+  </section>
+
+  <!-- ===== Heard on Pandora ===== -->
+  <section v-if="tab === 'pandora'">
+    <p class="muted" v-if="!pandora.plays">Nothing logged yet — play a Pandora station on the receiver; every track it plays for 20 s or more is written down here.</p>
+    <article v-for="(st, name) in pandora.stations" :key="name">
+      <header><strong>{{ name }}</strong> <small class="muted">— {{ st.plays }} plays, {{ st.artists.length }} artists; <span class="tag in-library">in library</span> means the scanner already has the artist</small></header>
+      <table>
+        <thead><tr><th>artist</th><th>plays</th><th>👍</th><th></th><th>heard</th></tr></thead>
+        <tbody>
+          <tr v-for="a in st.artists" :key="a.name">
+            <td>{{ a.name }}</td><td>{{ a.plays }}</td><td>{{ a.thumbs || '' }}</td>
+            <td><span v-if="a.in_library" class="tag in-library">in library</span></td>
+            <td><small class="muted">{{ a.tracks.slice(0, 4).join(' · ') }}<span v-if="a.tracks.length > 4"> · …</span></small></td>
+          </tr>
+        </tbody>
+      </table>
+      <p><small class="muted">Not in the library yet: <code>{{ st.artists.filter(a => !a.in_library).map(a => a.name).join(', ') }}</code></small></p>
     </article>
   </section>
 </main>

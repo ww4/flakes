@@ -82,6 +82,15 @@ class AdminApi(unittest.TestCase):
         code, r = self.call("PUT", "/api/feeds/western-swing", {"listenable": False})
         self.assertNotIn("western-swing", [s["mount"] for s in self.cfg.stations()])
 
+    def test_station_excursion_is_a_percentage(self):
+        code, r = self.call("PUT", "/api/stations/country", {"excursion": 20})
+        self.assertEqual(code, 200, r)
+        self.assertEqual(next(s for s in self.cfg.stations() if s["mount"] == "country")["excursion"], 0.2)
+        code, r = self.call("PUT", "/api/stations/country", {"excursion": 80})
+        self.assertEqual(code, 400, r)
+        code, r = self.call("PUT", "/api/stations/country", {"base": {"genres": ["country"], "fringe_genres": "rock"}})
+        self.assertEqual(code, 400, r)                                   # fringe_genres must be a list
+
     def test_schedule_validation(self):
         good = [{"station": "country", "name": "Swing Hour", "kind": "feed", "feed": "western-swing", "days": ["sat"], "start": "10:00", "minutes": 60},
                 {"station": "country", "kind": "auto", "like": "artist", "days": "daily", "start": "20:00"}]

@@ -41,7 +41,8 @@ createApp({
              options: {}, tab: "feeds", openId: null, edit: {}, add: { title: "", description: "", family: [], listenable: true, shellac: false },
              slots: {}, days: DAYS, flash: "", flashErr: false, scheduleMsg: "", answers: {},
              sel: null,
-             tabs: [{ id: "feeds", title: "Feeds" }, { id: "stations", title: "Stations" }] };
+             pandora: { stations: {}, plays: 0 },
+             tabs: [{ id: "feeds", title: "Feeds" }, { id: "stations", title: "Stations" }, { id: "pandora", title: "Heard on Pandora" }] };
   },
   computed: {
     feedList() { return Object.entries(this.state.feeds).sort((a, b) => a[1].title.localeCompare(b[1].title)); },
@@ -53,6 +54,7 @@ createApp({
     say(msg, err) { this.flash = msg; this.flashErr = !!err; clearTimeout(this._t); this._t = setTimeout(() => this.flash = "", 7000); },
     async load() {
       this.state = await api("GET", "/state");
+      try { this.pandora = await api("GET", "/pandora"); } catch (e) {}
       this.slots = {};
       for (const s of this.state.schedule) {
         const custom = Array.isArray(s.days);
@@ -93,7 +95,8 @@ createApp({
     async select(st) {
       this.sel = st.mount;
       this.edit = { name: st.name, family: [...(st.family || [])], base: JSON.stringify(st.base || {}, null, 1),
-                    breaks_every: st.breaks_every === undefined || st.breaks_every === null ? "" : String(st.breaks_every) };
+                    breaks_every: st.breaks_every === undefined || st.breaks_every === null ? "" : String(st.breaks_every),
+                    excursion: typeof st.excursion === "number" ? String(Math.round(st.excursion * 100)) : "" };
       if (st.kind !== "specialty" && !this.options[st.mount])
         this.options[st.mount] = await api("GET", `/options?station=${encodeURIComponent(st.mount)}`);
     },
@@ -125,6 +128,7 @@ createApp({
         if (this.edit.breaks_every !== "") body.breaks_every = /^\d+-\d+$/.test(this.edit.breaks_every) ? this.edit.breaks_every : Number(this.edit.breaks_every);
         if (st.kind !== "specialty") {
           body.family = this.edit.family;
+          if (this.edit.excursion !== "") body.excursion = Number(this.edit.excursion);
           body.base = JSON.parse(this.edit.base || "{}");
           const r = await api("PUT", "/schedule", this.allSlots());
           this.scheduleMsg = `schedule: ${r.count} slot(s)`;
