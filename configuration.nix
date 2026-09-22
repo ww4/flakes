@@ -120,6 +120,7 @@ let hm = homelab-modules.nixosModules; in
     hm.silverbullet                         # markdown notes/tasks space — scheduling-assistant SoT; two-writer values below
     ./modules/services/pim.nix              # plain-text calendar vdir + vdirsyncer (Nextcloud two-way, Google RO)
     ./modules/services/homelab-mcp.nix      # MCP connector for Claude-in-the-app — public via the lock3 VPS jump host
+    ./modules/services/cd-ripper.nix        # insert a CD in any USB drive → whipper rips it, beets files it in the library, ntfy says so
     ./modules/services/yamaha-ync.nix       # the living-room receiver: JSON API for the radio page + MCP server (public pkg ww4/yamaha-ync)
     ./modules/services/asterisk.nix         # house PBX (pjsip): dial 0 for the switchboard, 1XX for a handset — LAN/tailnet only
     ./modules/services/switchboard.nix      # dial 0: whisper -> intents / claude -p -> piper (FastAGI behind Asterisk)
@@ -195,6 +196,7 @@ let hm = homelab-modules.nixosModules; in
   # The living-room Yamaha R-N301 (static 192.168.1.61 — it points at Blocky
   # for the vTuner stand-in; reserve it in the router for MAC 00:a0:de:c4:18:54).
   services.yamaha-ync = { enable = true; host = "192.168.1.61"; name = "Living room"; exposeApiToContainers = true; };  # the Homepage widget
+  services.cd-ripper.enable = true;   # USB CD drives on gromit: insert → whipper → beets → /mnt/fusion/Music; radio.rosemaryacres.com/rips/
 
   # House PBX + the voice switchboard: dial 0 from any registered handset and
   # ask the box a question. Fast intents (status/temps/disk/incidents/time)
