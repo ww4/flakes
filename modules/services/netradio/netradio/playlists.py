@@ -300,6 +300,9 @@ def station_tiles(stations: list[dict], station_pools: dict[str, list[str]], art
     for s in order:
         m = s["mount"]
         base = s.get("base") or {}
+        if s.get("kind") == "fixed":
+            tiles[m] = {"icon": "rain", "covers": []}       # an ambient bed has no artists to show
+            continue
         if base.get("all") and not base.get("era") and not base.get("genres") and s.get("kind") != "specialty":
             tiles[m] = {"icon": "radio", "covers": []}      # the whole library: a radio, not four artists
             continue
@@ -355,6 +358,13 @@ def feed_rule(feed: dict) -> dict:
     if not feed.get("shellac") and not rule.get("era"):
         rule["era"] = {"exclude": ["shellac"]}
     return rule
+
+
+def read_m3u(path: Path) -> list[str]:
+    try:
+        return [l.strip() for l in path.read_text().splitlines() if l.strip() and not l.startswith("#")]
+    except OSError:
+        return []
 
 
 def write_m3u(path: Path, paths: list[str]) -> None:
@@ -428,6 +438,12 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
     station_pools: dict[str, list[str]] = {}
     fringe_pools: dict[str, list[str]] = {}
     for s in stations:
+        if s.get("kind") == "fixed":
+            # an ambient station: its m3u is kept by hand (or by the ambient
+            # fetcher), never by the scanner — read it, don't write it
+            station_pools[s["mount"]] = read_m3u(out / f"{s['mount']}.m3u")
+            fringe_pools[s["mount"]] = []
+            continue
         if s.get("kind") == "specialty":
             station_pools[s["mount"]] = feed_pools.get(s.get("feed", ""), [])
             fringe_pools[s["mount"]] = []
@@ -455,8 +471,9 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
     counts = {}
     for s in stations:
         paths, fringe = station_pools[s["mount"]], fringe_pools[s["mount"]]
-        write_m3u(out / f"{s['mount']}.m3u", paths)
-        write_m3u(out / f"{s['mount']}-fringe.m3u", fringe)
+        if s.get("kind") != "fixed":
+            write_m3u(out / f"{s['mount']}.m3u", paths)
+            write_m3u(out / f"{s['mount']}-fringe.m3u", fringe)
         counts[s["mount"]] = len(paths)
         log.info("%-14s %6d tracks  +%d fringe  (%s)", s["mount"], len(paths), len(fringe), s.get("name", ""))
     if summary:

@@ -118,11 +118,25 @@ def stations_yield_to_neighbours(cfg: Config) -> str:
     return f"{changed} station(s) now yield to their neighbours" if changed else "nothing to do"
 
 
+def add_rain_station(cfg: Config) -> str:
+    """Chris, 2026-09-23: a rain station on a loop, and gromit's own sound
+    card as a place to play it. `kind: fixed` means the scanner never writes
+    its playlist (the ambient fetcher does) and the DJ never talks over it."""
+    stations = cfg.stations()
+    if any(s.get("mount") == "rain" for s in stations):
+        return "nothing to do"
+    stations.append({"mount": "rain", "name": "Rain", "kind": "fixed", "family": ["any"],
+                     "breaks_every": 0, "base": {}})
+    cfg.save_stations(stations)
+    return "rain station added (fixed playlist, no DJ)"
+
+
 MIGRATIONS = [
     ("split-blues-jazz-soul", split_blues_jazz_soul),
     ("feeds-keep-shellac", feeds_keep_shellac),
     ("country-excludes-bluegrass", country_excludes_bluegrass),
     ("stations-yield-to-neighbours", stations_yield_to_neighbours),
+    ("add-rain-station", add_rain_station),
 ]
 
 

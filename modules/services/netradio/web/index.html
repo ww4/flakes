@@ -24,8 +24,8 @@
 
   <!-- ===== top: where we're playing ======================================== -->
   <header class="bar top">
-    <button class="room" @click="pickTarget"><span class="dot" :class="{live: target === 'room' ? receiver.on : !!current}"></span>{{ target === 'room' ? (receiver.name || 'Living room') : 'This phone' }} <span class="chev">⌄</span></button>
-    <span class="status">{{ busy || status || (target === 'room' && receiver.error ? 'receiver unreachable' : '') }}</span>
+    <button class="room" @click="pickTarget"><span class="dot" :class="{live: target === 'room' ? receiver.on : target === 'gromit' ? speaker.playing : !!current}"></span>{{ targetName() }} <span class="chev">⌄</span></button>
+    <span class="status">{{ busy || status || (target === 'room' && receiver.error ? 'receiver unreachable' : '') || (target === 'gromit' && speaker.error === 'unreachable' ? 'speaker service down' : '') }}</span>
     <a class="admin" href="desktop.html?view=desktop" title="Desktop view">🖥</a>
     <a class="admin" href="admin/" title="Admin">⚙</a>
   </header>
@@ -82,6 +82,7 @@
         <button v-for="s in group.stations" :key="group.kind + s.name" class="tile" :class="{playing: isPlaying(s), art: tileCovers(s).length > 0}" :style="tileStyle(s)" @click="isPlaying(s) ? stopTarget() : playTarget(s)">
           <span v-if="tileCovers(s).length >= 4" class="mosaic"><img v-for="c in tileCovers(s).slice(0, 4)" :key="c" :src="thumb(c)" loading="lazy" alt=""></span>
           <span v-else-if="tileCovers(s).length" class="hero1"><img :src="thumb(tileCovers(s)[0], 400)" loading="lazy" alt=""></span>
+          <span v-else-if="tileIcon(s) === 'rain'" class="glyph"><svg viewBox="0 0 24 24"><path d="M7 15a4 4 0 0 1 .5-8 5.5 5.5 0 0 1 10.4 1.6A3.5 3.5 0 0 1 17.5 15z"/><path d="M8 18l-1 3M12 18l-1 3M16 18l-1 3"/></svg></span>
           <span v-else-if="tileIcon(s) === 'radio'" class="glyph"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><circle cx="16" cy="14" r="3"/><path d="M6 12h5M6 15h5M7 8l9-5"/></svg></span>
           <span v-else-if="s.kind === 'pandora'" class="glyph"><svg viewBox="0 0 24 24"><path d="M7 3h6a5 5 0 0 1 0 10H9v8H7z" fill="currentColor" stroke="none"/></svg></span>
           <span v-else-if="s.kind === 'quick'" class="glyph"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="3"/><path d="M8 9a5.5 5.5 0 0 0 0 8M16 9a5.5 5.5 0 0 1 0 8M5 6a9 9 0 0 0 0 14M19 6a9 9 0 0 1 0 14"/></svg></span>
@@ -146,6 +147,14 @@
     <input type="range" min="0" :max="receiver.volume_max || 100" step="1" v-model.number="volumeDraft" @change="setVolume(volumeDraft)" :disabled="!receiver.on" aria-label="Volume">
     <button class="icon" @click="volumeStep(2)" :disabled="!receiver.on">+</button>
     <button class="icon" :class="{on: receiver.mute}" @click="mute(!receiver.mute)" :disabled="!receiver.on" :title="receiver.mute ? 'Unmute' : 'Mute'"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path v-if="!receiver.mute" d="M16 8.5a5 5 0 0 1 0 7"/><path v-else d="M16 9l5 6M21 9l-5 6"/></svg></button>
+  </footer>
+  <footer class="bar volume" v-else-if="target === 'gromit'">
+    <button class="icon" :class="{on: speaker.playing}" @click="speaker.mount ? stopTarget() : speakerPlay(last.gromit || 'rain')" :title="speaker.playing ? 'Stop' : 'Play'">
+      <svg v-if="speaker.playing" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></svg><svg v-else viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg></button>
+    <button class="icon" @click="speakerVolume(-5)">−</button>
+    <input type="range" min="0" max="100" step="1" :value="speaker.volume ?? 0" @change="speakerAction('', () => call('POST', 'speaker/volume', { level: Number($event.target.value) }))" aria-label="Volume">
+    <button class="icon" @click="speakerVolume(5)">+</button>
+    <button class="icon" :class="{on: speaker.muted}" @click="speakerMute(!speaker.muted)" :title="speaker.muted ? 'Unmute' : 'Mute'"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path v-if="!speaker.muted" d="M16 8.5a5 5 0 0 1 0 7"/><path v-else d="M16 9l5 6M21 9l-5 6"/></svg></button>
   </footer>
   <footer class="bar volume here" v-else>
     <button class="icon" v-if="current" @click="stop" title="Stop"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></button>
