@@ -113,4 +113,44 @@ class Ambient(unittest.TestCase):
             self.assertEqual(n, 2)                          # only the audio is listed
             lines = [l for l in pl.read_text().splitlines() if not l.startswith("#")]
             self.assertTrue(all(l.endswith((".flac", ".mp3")) for l in lines))
-            self.assertIn("CC0", (root / "rain" / "LICENCES.txt").read_text())
+            self.assertIn("aporee", (root / "rain" / "LICENCES.txt").read_text())   # provenance is written beside the audio
+
+
+class BedCheck(unittest.TestCase):
+    """The guard that keeps a slated sound-effects cut off the station."""
+
+    def run_check(self, stderr):
+        with mock.patch.object(ambient.subprocess, "run",
+                               return_value=mock.Mock(stderr=stderr, stdout="")):
+            return ambient.slate_or_gap(Path("/x/bed.flac"))
+
+    def test_a_slate_is_rejected(self):
+        # the real shape of GOLD TAPE G46-04: announcer to 1.5 s, gap, then rain
+        why = self.run_check("lavfi.silence_start=1.506\nlavfi.silence_end=2.865\n")
+        self.assertIn("slated", why)
+
+    def test_a_long_internal_silence_is_rejected(self):
+        why = self.run_check("lavfi.silence_start=6.0\nlavfi.silence_end=11.9\n")
+        self.assertIn("silent", why)
+
+    def test_continuous_rain_passes(self):
+        self.assertEqual(self.run_check(""), "")
+        self.assertEqual(self.run_check("lavfi.silence_start=25.0\nlavfi.silence_end=25.4\n"), "")
+
+    def test_the_check_failing_does_not_drop_the_file(self):
+        with mock.patch.object(ambient.subprocess, "run", side_effect=OSError("no ffmpeg")):
+            self.assertEqual(ambient.slate_or_gap(Path("/x/bed.flac")), "")
+
+    def test_a_bed_no_longer_wanted_is_removed_but_a_dropped_in_file_is_kept(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "ambient"; (root / "rain").mkdir(parents=True)
+            (root / "rain" / "old.mp3").write_bytes(b"x")       # fetched last time
+            (root / "rain" / "mine.mp3").write_bytes(b"x")      # Chris's own
+            (root / "rain" / ".fetched.json").write_text('["old.mp3"]')
+            with mock.patch.object(ambient, "SETS", {"rain": [("i", "new.mp3", "CC0")]}), \
+                 mock.patch.object(ambient, "fetch", side_effect=lambda i, n, dest: dest.write_bytes(b"x") or True), \
+                 mock.patch.object(ambient, "slate_or_gap", return_value=""):
+                ambient.build("rain", root, Path(d) / "rain.m3u")
+            self.assertFalse((root / "rain" / "old.mp3").exists())
+            self.assertTrue((root / "rain" / "mine.mp3").exists())
+            self.assertTrue((root / "rain" / "new.mp3").exists())
