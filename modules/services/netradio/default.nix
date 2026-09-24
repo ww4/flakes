@@ -78,6 +78,12 @@ let
   ycastPort = 8010;
   wakePort = 8011;
   adminPort = 8012;
+  speakerPort = 8013;
+  # gromit's analog out (Realtek ALC887-VD, card 0). The rain plays there at
+  # boot at a low level; the remote and `curl` change both.
+  speakerCard = "0";
+  speakerDefaultMount = "rain";
+  speakerStartVolume = 35;
   icecastPort = 8020; # 8000 is audiobookshelf (icecast SEGVs when the bind fails)
 
   user = "netradio";
@@ -91,6 +97,7 @@ let
   # Its own subdir, like playlists/ and dj/: ${stateDir} itself is root-owned
   # (it holds credentials.env), so the netradio user cannot create the
   # profile.json.tmp the atomic save needs there (2026-09-16 first-run failure).
+  ambientDir = "${stateDir}/ambient";   # rain and the like: the fixed stations' beds, never in the music library
   profileDir = "${stateDir}/profile";
   profileJson = "${profileDir}/profile.json";
   profileOverrides = "${profileDir}/profile-overrides.json";   # {path: "talk"|"music"}, hand-edited
@@ -439,6 +446,13 @@ in
           proxy_read_timeout 90s;   # a menu walk can take a while
         '';
       };
+      # gromit's own sound card as a third endpoint (netradio-speaker)
+      "/speaker/" = {
+        proxyPass = "http://127.0.0.1:${toString speakerPort}/";
+        extraConfig = ''
+          add_header Cache-Control "no-store";
+        '';
+      };
       # The admin API (netradio admin, loopback). The page itself is static
       # under /admin/. The vhost's Tailscale/LAN gate is the perimeter.
       "/admin/api/" = {
@@ -477,6 +491,7 @@ in
       install -d -m 0755 -o ${user} -g ${user} ${djDir} ${djDir}/inbox   # inbox: skip/request files from the admin API
       install -d -m 0755 -o ${user} -g ${user} ${nowDir}
       install -d -m 0755 -o ${user} -g ${user} ${profileDir}
+      install -d -m 0755 -o ${user} -g ${user} ${ambientDir} ${ambientDir}/rain
       install -d -m 0755 -o ${user} -g ${user} ${poolsDir} ${poolsDir}/feeds ${poolsDir}/artists
       # The runtime config: netradio writes it (admin, scanner, DJ) and the
       # claude user's compile job writes feeds.json too, so it is group
@@ -626,6 +641,61 @@ in
         "--listen 127.0.0.1 --port ${toString wakePort}"
         "--idle-after 300 --tick 30"
       ];
+      Restart = "always";
+      RestartSec = 5;
+    };
+  };
+
+  # --- the rain: ambient beds a fixed station loops -----------------------------
+  # Freely licensed recordings from the Internet Archive; the fetch is
+  # idempotent, so it runs at boot and after a deploy and normally does
+  # nothing. Drop your own files in ${ambientDir}/rain and they play too.
+  systemd.services.netradio-ambient = {
+    description = "Fetch the ambient beds (rain) and write the fixed station's playlist";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "netradio-liquidsoap.service" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = hardening // {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      User = user;
+      Group = user;
+      ExecStart = lib.concatStringsSep " " [
+        "${netradio}/bin/netradio ambient"
+        "--dir ${ambientDir}"
+        "--playlist ${playlistDir}/rain.m3u"
+        "--set rain"
+      ];
+      ReadWritePaths = [ ambientDir playlistDir ];
+      TimeoutStartSec = "20min";      # a few hundred MB of FLAC on a slow day
+    };
+  };
+
+  # --- gromit's sound card as a playback endpoint -------------------------------
+  # The green jack on the back: one ffplay on a station's mount, ALSA mixer
+  # for volume, a small JSON API behind radio.<domain>/speaker/. Starts on
+  # the rain so a power cycle brings it back with nothing to press.
+  systemd.services.netradio-speaker = {
+    description = "Play a library station on gromit's own audio output";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "netradio-icecast.service" "sound.target" ];
+    wants = [ "netradio-icecast.service" ];
+    serviceConfig = hardening // {
+      User = user;
+      Group = user;
+      SupplementaryGroups = [ "audio" ];
+      ExecStart = lib.concatStringsSep " " [
+        "${netradio}/bin/netradio speaker"
+        "--icecast http://127.0.0.1:${toString icecastPort}"
+        "--listen 127.0.0.1 --port ${toString speakerPort}"
+        "--card ${speakerCard}"
+        "--default-mount ${speakerDefaultMount}"
+        "--start-volume ${toString speakerStartVolume}"
+        "--ffplay ${pkgs.ffmpeg}/bin/ffplay"
+      ];
+      Environment = [ "PATH=${lib.makeBinPath [ pkgs.alsa-utils pkgs.ffmpeg ]}" ];
+      PrivateDevices = false;         # it needs /dev/snd
       Restart = "always";
       RestartSec = 5;
     };

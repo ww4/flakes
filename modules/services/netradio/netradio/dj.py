@@ -764,6 +764,11 @@ def main(argv: list[str] | None = None) -> int:
     stop = threading.Event()
     threads = []
     for s in stations:
+        if s.get("kind") == "fixed":
+            # an ambient station (rain): a hand-kept playlist Liquidsoap loops
+            # on its own — no chooser, no announcements, nothing to say
+            log.info("%s: fixed playlist, no DJ", s["mount"])
+            continue
         prog = Programme(s, cfg, args.pools, lastfm_key)
         dj = StationDJ(s["mount"], s["name"], args.playlists / f"{s['mount']}.m3u",
                        args.out / s["mount"], ls, tts, breaks_every=breaks_spec(s.get("breaks_every"), (lo, hi)),
@@ -773,7 +778,7 @@ def main(argv: list[str] | None = None) -> int:
         t.start()
         threads.append(t)
     log.info("DJ on %d stations, a break every %d-%d tracks, voice %s via %s%s",
-             len(stations), lo, hi, args.voice, ", ".join(args.kokoro_url),
+             len(threads), lo, hi, args.voice, ", ".join(args.kokoro_url),
              "; spotlights with Last.fm similar artists" if lastfm_key else "")
     try:
         while True:
