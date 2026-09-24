@@ -650,11 +650,21 @@ in
   # Freely licensed recordings from the Internet Archive; the fetch is
   # idempotent, so it runs at boot and after a deploy and normally does
   # nothing. Drop your own files in ${ambientDir}/rain and they play too.
+  # The state dirs the other units get from netradio-credentials' script are
+  # created too late for this one: ReadWritePaths is resolved when the unit
+  # starts, and a missing path is 226/NAMESPACE before a line of code runs
+  # (2026-09-23, the first deploy of the rain station). tmpfiles runs before
+  # any service, so the directory is always there.
+  systemd.tmpfiles.rules = [
+    "d ${ambientDir} 0755 ${user} ${user} -"
+    "d ${ambientDir}/rain 0755 ${user} ${user} -"
+  ];
+
   systemd.services.netradio-ambient = {
     description = "Fetch the ambient beds (rain) and write the fixed station's playlist";
     wantedBy = [ "multi-user.target" ];
     before = [ "netradio-liquidsoap.service" ];
-    after = [ "network-online.target" ];
+    after = [ "network-online.target" "netradio-credentials.service" ];
     wants = [ "network-online.target" ];
     serviceConfig = hardening // {
       Type = "oneshot";
