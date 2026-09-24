@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import shlex
 import shutil
@@ -112,7 +113,10 @@ class Player:
         with self.lock:
             self.stop()
             cmd = [self.ffplay, "-nodisp", "-autoexit", "-loglevel", "warning", "-infbuf", self.url(mount)]
-            env = {"SDL_AUDIODRIVER": "alsa", "PATH": "/run/current-system/sw/bin", "HOME": "/tmp"}
+            # inherit the unit's environment (PATH comes from Environment= in
+            # the service) and only say which audio device to open — hardcoding
+            # PATH here broke the player anywhere that path does not exist
+            env = {**os.environ, "SDL_AUDIODRIVER": "alsa"}
             if self.device:
                 env["AUDIODEV"] = self.device
             log.info("playing %s: %s", mount, shlex.join(cmd))

@@ -1,5 +1,6 @@
 import json
 import logging
+import sys
 import tempfile
 import threading
 import unittest
@@ -46,8 +47,10 @@ class MixerParsing(unittest.TestCase):
 class Api(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        # a stand-in player that just stays alive: no shell, no PATH lookup —
+        # the build sandbox has neither (2026-09-23, this test broke the deploy)
         fake = Path(self.tmp.name) / "player"
-        fake.write_text("#!/bin/sh\nexec sleep 30\n")
+        fake.write_text(f"#!{sys.executable}\nimport time; time.sleep(30)\n")
         fake.chmod(0o755)
         self.player = speaker.Player("http://127.0.0.1:8020", str(fake))
         self.mixer = FakeMixer()
