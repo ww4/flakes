@@ -658,6 +658,8 @@ in
   systemd.tmpfiles.rules = [
     "d ${ambientDir} 0755 ${user} ${user} -"
     "d ${ambientDir}/rain 0755 ${user} ${user} -"
+    "d ${ambientDir}/rainymood 0755 ${user} ${user} -"
+    "d ${ambientDir}/rainymood/src 0755 ${user} ${user} -"
   ];
 
   systemd.services.netradio-ambient = {
@@ -674,14 +676,13 @@ in
       ExecStart = lib.concatStringsSep " " [
         "${netradio}/bin/netradio ambient"
         "--dir ${ambientDir}"
-        "--playlist ${playlistDir}/rain.m3u"
-        "--set rain"
+        "--playlists ${playlistDir}"
       ];
-      # ffmpeg: the bed check (a slated sound-effects cut must never reach
-      # the station again — 2026-09-23)
+      # ffmpeg/ffprobe: the bed check (a slated sound-effects cut must never
+      # reach the station again — 2026-09-23) and the seamless-loop cut
       Environment = [ "PATH=${lib.makeBinPath [ pkgs.ffmpeg ]}" ];
       ReadWritePaths = [ ambientDir playlistDir ];
-      TimeoutStartSec = "20min";      # a few hundred MB of FLAC on a slow day
+      TimeoutStartSec = "60min";      # a download plus a 34-minute loop re-encode
     };
   };
 

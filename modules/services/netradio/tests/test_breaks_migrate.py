@@ -55,10 +55,10 @@ class Migration(unittest.TestCase):
                          {"mount": "gospel", "name": "G", "kind": "curated", "family": ["gospel"], "base": {}}],
                      [{"id": "s1", "station": "blues-jazz", "kind": "auto", "like": "artist", "start": "20:00"}])
             out = migrate.run(cfg)
-            self.assertEqual(len(out), 5)
+            self.assertEqual(len(out), 6)
             self.assertTrue(any(s["mount"] == "rain" and s["kind"] == "fixed" for s in cfg.stations()))
             mounts = [s["mount"] for s in cfg.stations()]
-            self.assertEqual(mounts, ["country", "blues", "jazz", "soul", "gospel", "rain"])  # split in place, order kept; rain appended
+            self.assertEqual(mounts, ["country", "blues", "jazz", "soul", "gospel", "rain", "rainymood"])  # split in place, order kept; the ambient stations appended
             jazz = next(s for s in cfg.stations() if s["mount"] == "jazz")
             self.assertEqual(jazz["base"]["era"], {"exclude": ["shellac"]})
             self.assertEqual(jazz["base"]["fringe_genres"], migrate.FRINGE_GENRES["jazz"])   # yields to its neighbours

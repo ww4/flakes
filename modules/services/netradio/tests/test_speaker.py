@@ -116,6 +116,12 @@ class Ambient(unittest.TestCase):
             self.assertIn("aporee", (root / "rain" / "LICENCES.txt").read_text())   # provenance is written beside the audio
 
 
+def _fake_fetch(bed, dest):
+    dest.parent.mkdir(parents=True, exist_ok=True)   # the real fetch makes src/
+    dest.write_bytes(b"x")
+    return True
+
+
 class BedCheck(unittest.TestCase):
     """The guard that keeps a slated sound-effects cut off the station."""
 
@@ -147,8 +153,8 @@ class BedCheck(unittest.TestCase):
             (root / "rain" / "old.mp3").write_bytes(b"x")       # fetched last time
             (root / "rain" / "mine.mp3").write_bytes(b"x")      # Chris's own
             (root / "rain" / ".fetched.json").write_text('["old.mp3"]')
-            with mock.patch.object(ambient, "SETS", {"rain": [("i", "new.mp3", "CC0")]}), \
-                 mock.patch.object(ambient, "fetch", side_effect=lambda i, n, dest: dest.write_bytes(b"x") or True), \
+            with mock.patch.object(ambient, "SETS", {"rain": [ambient.Bed("http://x/new.mp3", "new.mp3", "CC0")]}), \
+                 mock.patch.object(ambient, "fetch", side_effect=lambda bed, dest: dest.write_bytes(b"x") or True), \
                  mock.patch.object(ambient, "slate_or_gap", return_value=""):
                 ambient.build("rain", root, Path(d) / "rain.m3u")
             self.assertFalse((root / "rain" / "old.mp3").exists())
@@ -164,9 +170,35 @@ class BedCheck(unittest.TestCase):
             root = Path(d) / "ambient"; (root / "rain").mkdir(parents=True)
             (root / "rain" / "G46-04-Distant Storm.flac").write_bytes(b"x")   # shipped by an older version
             (root / "rain" / "mine.mp3").write_bytes(b"x")
-            with mock.patch.object(ambient, "SETS", {"rain": [("i", "new.mp3", "CC0")]}), \
-                 mock.patch.object(ambient, "fetch", side_effect=lambda i, n, dest: dest.write_bytes(b"x") or True), \
+            with mock.patch.object(ambient, "SETS", {"rain": [ambient.Bed("http://x/new.mp3", "new.mp3", "CC0")]}), \
+                 mock.patch.object(ambient, "fetch", side_effect=lambda bed, dest: dest.write_bytes(b"x") or True), \
                  mock.patch.object(ambient, "slate_or_gap", return_value=""):
                 ambient.build("rain", root, Path(d) / "rain.m3u")
             self.assertFalse((root / "rain" / "G46-04-Distant Storm.flac").exists())
             self.assertTrue((root / "rain" / "mine.mp3").exists())
+
+    def test_a_looped_bed_plays_the_loop_not_the_raw_download(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "ambient"
+            bed = ambient.Bed("http://x/src.m4a", "src.m4a", "personal copy",
+                              loop=ambient.Loop(head=1.5, tail=35.0, xfade=12.0))
+            self.assertEqual(ambient.played_name(bed), "src-loop.flac")
+            with mock.patch.object(ambient, "SETS", {"rainymood": [bed]}), \
+                 mock.patch.object(ambient, "fetch", side_effect=_fake_fetch), \
+                 mock.patch.object(ambient, "make_loop",
+                                   side_effect=lambda src, dest, spec: dest.write_bytes(b"x") or True) as ml, \
+                 mock.patch.object(ambient, "slate_or_gap", return_value=""):
+                n = ambient.build("rainymood", root, Path(d) / "rainymood.m3u")
+            self.assertEqual(n, 1)
+            # the raw download is parked in src/ so it can never reach the playlist
+            self.assertTrue((root / "rainymood" / "src" / "src.m4a").exists())
+            self.assertEqual(ml.call_args[0][2].xfade, 12.0)
+            played = [l for l in (Path(d) / "rainymood.m3u").read_text().splitlines() if not l.startswith("#")]
+            self.assertEqual([Path(x).name for x in played], ["src-loop.flac"])
+
+    def test_a_recording_too_short_for_its_trims_is_not_looped(self):
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "short.m4a"; src.write_bytes(b"x")
+            with mock.patch.object(ambient, "duration", return_value=20.0):
+                self.assertFalse(ambient.make_loop(src, Path(d) / "out.flac", ambient.Loop(1.5, 35.0, 12.0)))
+            self.assertFalse((Path(d) / "out.flac").exists())
