@@ -19,7 +19,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import shutil
+import subprocess
 import sys
 import urllib.parse
 import urllib.request
@@ -29,15 +31,25 @@ log = logging.getLogger("netradio.ambient")
 
 AUDIO = (".mp3", ".flac", ".ogg", ".opus", ".m4a", ".wav")
 
-# (archive.org item, file, licence) — CC0 or CC-BY(-SA); the licence is
-# written beside the audio so its provenance stays with it.
+# (archive.org item, file, licence) — the rain beds.
+#
+# Chosen by MEASUREMENT, not by title (2026-09-23). The first set here was a
+# studio sound-effects tape: every cut opens with an announcer slating it
+# ("number four…"), which is exactly what Chris heard, and the cuts are dark
+# and thunder-heavy. These were picked by fingerprinting rainymood.com — the
+# bed he actually likes — into octave bands and ranking Creative Commons
+# recordings by how close their spectral SHAPE is to it. Its signature is a
+# flat 63 Hz–8 kHz response (close, enveloping rain); the ones below sit
+# 2.4–4.5 dB RMS from that curve, where the studio tape sat at 14.8.
+#
+# All are non-commercial licences, which private home playback satisfies;
+# attribution is written to LICENCES.txt beside the audio.
 RAIN = [
-    ("GOLD_TAPE_46_Thunderstorm_Rain", "G46-03-Long Thunder Storm.flac", "CC0 1.0 (USC Cinema / Sunset Editorial collection)"),
-    ("GOLD_TAPE_46_Thunderstorm_Rain", "G46-12-Thunderclap Fox.flac", "CC0 1.0 (USC Cinema / Sunset Editorial collection)"),
-    ("GOLD_TAPE_46_Thunderstorm_Rain", "G46-04-Distant Storm.flac", "CC0 1.0 (USC Cinema / Sunset Editorial collection)"),
-    ("GOLD_TAPE_46_Thunderstorm_Rain", "G46-01-Light Rain and Natural Thunder.flac", "CC0 1.0 (USC Cinema / Sunset Editorial collection)"),
-    ("GOLD_TAPE_46_Thunderstorm_Rain", "G46-09-Steady Rain and Thunder.flac", "CC0 1.0 (USC Cinema / Sunset Editorial collection)"),
-    ("StormFrom30To45", "Storm from 30 to 45.flac", "CC BY-SA 3.0 — freetousesounds.com"),
+    ("aporee_49306_56200", "soundmap202005212.mp3", "CC BY-NC-ND 3.0 — radio aporee, Chaozhou Township, Pingtung County"),
+    ("aporee_42317_48252", "2017629rainnightwindowshuters0021.mp3", "CC BY-NC-ND 3.0 — radio aporee, Unije: rain and window shutters at night"),
+    ("aporee_51774_59139", "2012160067ChuvacarroPiso.mp3", "Public Domain Mark 1.0 — radio aporee, Praia do Pisao: heavy rain at the beach"),
+    ("aporee_71764_83802", "180223009.mp3", "CC BY-NC 3.0 — radio aporee, Mbarara City, Uganda: heavy rain"),
+    ("aporee_35521_40790", "132RainTent15Mar86Knockree4416.mp3", "CC BY-NC-ND 3.0 — radio aporee, Co. Wicklow: rain on a tent"),
 ]
 SETS = {"rain": RAIN}
 
@@ -67,6 +79,33 @@ def fetch(item: str, name: str, dest: Path, timeout: float = 300.0) -> bool:
         return dest.exists()
 
 
+def slate_or_gap(path: Path, ffprobe_window: float = 14.0) -> str:
+    """'' if the file is a usable bed, else why it is not.
+
+    A sound-effects tape slates each cut — a second or two of an announcer,
+    a pause, then the effect. That is audible on a radio station and it
+    reached Chris before anything caught it (2026-09-23). The signature is
+    cheap to test for: a short burst of audio followed by a real silence,
+    near the head of the file. A long silence anywhere in the window is
+    also disqualifying — a rain bed should never go quiet.
+    """
+    try:
+        r = subprocess.run(["ffmpeg", "-v", "error", "-t", str(ffprobe_window), "-i", str(path),
+                            "-af", "silencedetect=noise=-45dB:d=0.4,ametadata=mode=print:file=-", "-f", "null", "-"],
+                           capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("%s: could not inspect (%s) — using it anyway", path.name, e)
+        return ""
+    starts = [float(m) for m in re.findall(r"silence_start=([\d.]+)", r.stderr + r.stdout)]
+    ends = [float(m) for m in re.findall(r"silence_end=([\d.]+)", r.stderr + r.stdout)]
+    if starts and starts[0] < 4.0 and ends:
+        return f"looks slated: audio stops at {starts[0]:.1f}s, resumes at {ends[0]:.1f}s"
+    for a, b in zip(starts, ends):
+        if b - a > 3.0:
+            return f"goes silent for {b - a:.0f}s at {a:.0f}s"
+    return ""
+
+
 def playable(d: Path) -> list[str]:
     """Everything audible in the directory, sorted — Chris's own recordings
     dropped in here play beside the fetched ones."""
@@ -79,17 +118,36 @@ def playable(d: Path) -> list[str]:
 def build(name: str, dir_: Path, playlist: Path) -> int:
     d = dir_ / name
     d.mkdir(parents=True, exist_ok=True)
+    manifest = d / ".fetched.json"
+    try:
+        was = set(json.loads(manifest.read_text()))
+    except (OSError, ValueError):
+        was = set()
+    wanted = {fname for _, fname, _ in SETS.get(name, [])}
+    # a bed this tool fetched that is no longer wanted goes; anything dropped
+    # in by hand is never touched (that is how you add your own recordings)
+    for stale in was - wanted:
+        if (d / stale).exists():
+            (d / stale).unlink()
+            log.info("%s: dropped (no longer in the set)", stale)
     for item, fname, licence in SETS.get(name, []):
         fetch(item, fname, d / fname)
+    manifest.write_text(json.dumps(sorted(wanted)))
     (d / "LICENCES.txt").write_text(
         "Ambient beds fetched by `netradio ambient`. Freely licensed recordings only.\n\n" +
         "".join(f"{fname}\n    {licence}\n    https://archive.org/details/{item}\n\n" for item, fname, licence in SETS.get(name, [])))
-    files = playable(d)
+    files, rejected = [], []
+    for f in playable(d):
+        why = slate_or_gap(Path(f))
+        (rejected if why else files).append((f, why) if why else f)
+        if why:
+            log.warning("%s: NOT a usable bed — %s", Path(f).name, why)
     playlist.parent.mkdir(parents=True, exist_ok=True)
     tmp = playlist.with_suffix(".m3u.tmp")
     tmp.write_text("#EXTM3U\n" + "".join(f + "\n" for f in files))
     tmp.replace(playlist)
-    log.info("%s: %d file(s) → %s", name, len(files), playlist)
+    log.info("%s: %d file(s) → %s%s", name, len(files), playlist,
+             f" ({len(rejected)} rejected)" if rejected else "")
     return len(files)
 
 
