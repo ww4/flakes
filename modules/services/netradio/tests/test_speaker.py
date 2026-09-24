@@ -1,5 +1,7 @@
 import json
 import logging
+import shlex
+import sys
 import tempfile
 import threading
 import unittest
@@ -47,7 +49,12 @@ class Api(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         fake = Path(self.tmp.name) / "player"
-        fake.write_text("#!/bin/sh\nexec sleep 30\n")
+        # The fake player must not look anything up on PATH: play() hands the
+        # child PATH=/run/current-system/sw/bin, which is empty in a build
+        # sandbox, so `exec sleep 30` dies at once there and `playing` becomes
+        # a race with how fast the child exits. An absolute interpreter is the
+        # same long-lived child everywhere.
+        fake.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} -c 'import time; time.sleep(30)'\n")
         fake.chmod(0o755)
         self.player = speaker.Player("http://127.0.0.1:8020", str(fake))
         self.mixer = FakeMixer()
