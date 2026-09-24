@@ -154,3 +154,19 @@ class BedCheck(unittest.TestCase):
             self.assertFalse((root / "rain" / "old.mp3").exists())
             self.assertTrue((root / "rain" / "mine.mp3").exists())
             self.assertTrue((root / "rain" / "new.mp3").exists())
+
+    def test_a_file_that_merely_begins_quiet_is_not_a_slate(self):
+        # the beach recording: silence from 0.0 — nothing before it to be a slate
+        self.assertEqual(self.run_check("lavfi.silence_start=0\nlavfi.silence_end=1.653\n"), "")
+
+    def test_a_retired_bed_is_removed_even_with_no_manifest(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "ambient"; (root / "rain").mkdir(parents=True)
+            (root / "rain" / "G46-04-Distant Storm.flac").write_bytes(b"x")   # shipped by an older version
+            (root / "rain" / "mine.mp3").write_bytes(b"x")
+            with mock.patch.object(ambient, "SETS", {"rain": [("i", "new.mp3", "CC0")]}), \
+                 mock.patch.object(ambient, "fetch", side_effect=lambda i, n, dest: dest.write_bytes(b"x") or True), \
+                 mock.patch.object(ambient, "slate_or_gap", return_value=""):
+                ambient.build("rain", root, Path(d) / "rain.m3u")
+            self.assertFalse((root / "rain" / "G46-04-Distant Storm.flac").exists())
+            self.assertTrue((root / "rain" / "mine.mp3").exists())

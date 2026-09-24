@@ -53,6 +53,15 @@ RAIN = [
 ]
 SETS = {"rain": RAIN}
 
+# Beds this tool shipped before and must clean up, even on a host whose
+# manifest predates it (the studio sound-effects tape, 2026-09-23, and the
+# muffled field recording that went with it).
+RETIRED = {
+    "rain": ["G46-01-Light Rain and Natural Thunder.flac", "G46-03-Long Thunder Storm.flac",
+             "G46-04-Distant Storm.flac", "G46-09-Steady Rain and Thunder.flac",
+             "G46-12-Thunderclap Fox.flac", "Storm from 30 to 45.flac"],
+}
+
 
 def fetch(item: str, name: str, dest: Path, timeout: float = 300.0) -> bool:
     """Download one archive.org file unless it is already here and whole."""
@@ -98,7 +107,10 @@ def slate_or_gap(path: Path, ffprobe_window: float = 14.0) -> str:
         return ""
     starts = [float(m) for m in re.findall(r"silence_start=([\d.]+)", r.stderr + r.stdout)]
     ends = [float(m) for m in re.findall(r"silence_end=([\d.]+)", r.stderr + r.stdout)]
-    if starts and starts[0] < 4.0 and ends:
+    # A slate is AUDIO, then a gap. A file that merely begins quiet has
+    # silence starting at 0.0 with nothing before it to be a slate — the
+    # first run rejected a perfectly good beach recording that way.
+    if starts and 0.3 <= starts[0] < 4.0 and ends:
         return f"looks slated: audio stops at {starts[0]:.1f}s, resumes at {ends[0]:.1f}s"
     for a, b in zip(starts, ends):
         if b - a > 3.0:
@@ -126,7 +138,7 @@ def build(name: str, dir_: Path, playlist: Path) -> int:
     wanted = {fname for _, fname, _ in SETS.get(name, [])}
     # a bed this tool fetched that is no longer wanted goes; anything dropped
     # in by hand is never touched (that is how you add your own recordings)
-    for stale in was - wanted:
+    for stale in (was | set(RETIRED.get(name, []))) - wanted:
         if (d / stale).exists():
             (d / stale).unlink()
             log.info("%s: dropped (no longer in the set)", stale)
