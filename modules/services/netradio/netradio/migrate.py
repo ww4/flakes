@@ -131,12 +131,27 @@ def add_rain_station(cfg: Config) -> str:
     return "rain station added (fixed playlist, no DJ)"
 
 
+def add_rainymood_station(cfg: Config) -> str:
+    """Chris, 2026-09-24: "variety when I want it and rainy mood for
+    sleeping". A second fixed station holding one long seamless loop,
+    beside the five-bed `rain`."""
+    stations = cfg.stations()
+    if any(s.get("mount") == "rainymood" for s in stations):
+        return "nothing to do"
+    at = next((i for i, s in enumerate(stations) if s.get("mount") == "rain"), len(stations) - 1)
+    stations.insert(at + 1, {"mount": "rainymood", "name": "Rainy Mood", "kind": "fixed",
+                             "family": ["any"], "breaks_every": 0, "base": {}})
+    cfg.save_stations(stations)
+    return "Rainy Mood station added (fixed playlist, no DJ)"
+
+
 MIGRATIONS = [
     ("split-blues-jazz-soul", split_blues_jazz_soul),
     ("feeds-keep-shellac", feeds_keep_shellac),
     ("country-excludes-bluegrass", country_excludes_bluegrass),
     ("stations-yield-to-neighbours", stations_yield_to_neighbours),
     ("add-rain-station", add_rain_station),
+    ("add-rainymood-station", add_rainymood_station),
 ]
 
 
