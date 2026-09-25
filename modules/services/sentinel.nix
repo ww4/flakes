@@ -547,6 +547,21 @@ let
       { id = "oom"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "journalctl -k --since -10min --no-pager | grep -iE 'out of memory|oom-kill|killed process'"; }
 
+      # Swap HEADROOM — the gap the 2026-09-25 investigation exposed. `oom` above
+      # only greps for kills that have ALREADY happened, so it is a post-mortem,
+      # not a warning: gromit ran with 0 free swap from 09-14 to 09-25 (11 days)
+      # and nothing fired, because nothing was ever killed. Chris noticed by feel.
+      # This is the leading indicator that was missing.
+      #
+      # Fires under 10% free swap. Warning, not critical, and act = false: the box
+      # is not necessarily in distress when swap is full (on 09-25 the swap held
+      # cold pages from idle services, PSI full stall was 0.1% of wall clock and
+      # falling), so this means "the shock absorber is spent, go look" — exactly
+      # the agent-diagnose case. Critical would make it a false alarm generator.
+      { id = "swap-headroom"; type = "metric"; severity = "warning"; agent = true; act = false;
+        expr = "node_memory_SwapFree_bytes * 100 / node_memory_SwapTotal_bytes";
+        op = "<"; threshold = 10; }
+
       # Drive FAILURE — the real thing (Chris 2026-08-10: only wants to know if a
       # drive is actually failing, not just transiently slow). Fed by the SMART
       # health attributes drive-temps.nix now exports. Two signals:
