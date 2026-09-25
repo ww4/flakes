@@ -202,3 +202,47 @@ class BedCheck(unittest.TestCase):
             with mock.patch.object(ambient, "duration", return_value=20.0):
                 self.assertFalse(ambient.make_loop(src, Path(d) / "out.flac", ambient.Loop(1.5, 35.0, 12.0)))
             self.assertFalse((Path(d) / "out.flac").exists())
+
+    def test_the_fetch_identifies_itself(self):
+        # Python's default agent is 403'd by some CDNs; that emptied the
+        # Rainy Mood playlist on its first deploy (2026-09-24)
+        seen = []
+
+        class FakeResp:
+            headers = {"Content-Length": "3"}
+            status = 200
+            def __init__(self): self._left = [b"abc"]
+            def read(self, *a): return self._left.pop() if self._left else b""
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def fake_urlopen(req, timeout=None):
+            seen.append(req.get_header("User-agent"))
+            return FakeResp()
+
+        with tempfile.TemporaryDirectory() as d, \
+             mock.patch.object(ambient.urllib.request, "urlopen", side_effect=fake_urlopen):
+            ambient.fetch(ambient.Bed("http://x/a.mp3", "a.mp3", "CC0"), Path(d) / "a.mp3")
+        self.assertTrue(seen and all(u and "urllib" not in u.lower() for u in seen), seen)
+
+    def test_a_server_refusing_HEAD_is_still_downloaded(self):
+        calls = []
+
+        class FakeResp:
+            headers = {}
+            def __init__(self): self._left = [b"abc"]
+            def read(self, *a): return self._left.pop() if self._left else b""
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def fake_urlopen(req, timeout=None):
+            calls.append(req.get_method())
+            if req.get_method() == "HEAD":
+                raise OSError("405")
+            return FakeResp()
+
+        with tempfile.TemporaryDirectory() as d, \
+             mock.patch.object(ambient.urllib.request, "urlopen", side_effect=fake_urlopen):
+            ok = ambient.fetch(ambient.Bed("http://x/a.mp3", "a.mp3", "CC0"), Path(d) / "a.mp3")
+        self.assertTrue(ok)
+        self.assertIn("GET", calls)

@@ -32,6 +32,13 @@ log = logging.getLogger("netradio.ambient")
 
 AUDIO = (".mp3", ".flac", ".ogg", ".opus", ".m4a", ".wav")
 
+# Identify the client. Python's default `Python-urllib/3.x` is blocked
+# outright by some CDNs — rainymood's returns 403 to it on both HEAD and
+# GET, while any descriptive agent is served normally (measured
+# 2026-09-24), which is what left the Rainy Mood station with an empty
+# playlist on its first deploy.
+UA = {"User-Agent": "netradio-ambient/1.0 (personal use; +https://git.rosemaryacres.com/ww4/flakes)"}
+
 @dataclass(frozen=True)
 class Bed:
     """One ambient recording: where it comes from, what it is called on disk,
@@ -101,19 +108,22 @@ RETIRED = {
 
 def fetch(bed: "Bed", dest: Path, timeout: float = 600.0) -> bool:
     """Download one bed unless it is already here and whole."""
+    size = 0
     try:
-        with urllib.request.urlopen(urllib.request.Request(bed.url, method="HEAD"), timeout=30) as r:
+        with urllib.request.urlopen(urllib.request.Request(bed.url, method="HEAD", headers=UA), timeout=30) as r:
             size = int(r.headers.get("Content-Length") or 0)
     except Exception as e:
-        log.warning("%s: cannot reach (%s)", bed.name, e)
-        return dest.exists()
+        # a server that refuses HEAD is no reason not to try the download
+        log.info("%s: HEAD refused (%s), fetching anyway", bed.name, e)
+        if dest.exists():
+            return True
     if dest.exists() and (not size or dest.stat().st_size == size):
         log.debug("%s: already here", bed.name)
         return True
     tmp = dest.with_suffix(dest.suffix + ".part")
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(bed.url, timeout=timeout) as r, tmp.open("wb") as fh:
+        with urllib.request.urlopen(urllib.request.Request(bed.url, headers=UA), timeout=timeout) as r, tmp.open("wb") as fh:
             shutil.copyfileobj(r, fh)
         tmp.replace(dest)
         log.info("%s: %.1f MB", bed.name, dest.stat().st_size / 1e6)
