@@ -81,7 +81,22 @@ in
       volumes = [
         "/var/lib/mempool/cache:/backend/cache"
       ];
-      extraOptions = [ "--network=${mempoolNet}" ];
+      # Memory backstop. Deliberately a docker `--memory` flag and NOT
+      # serviceConfig.MemoryMax on docker-mempool-api.service: dockerd puts the
+      # container's processes in their own /system.slice/docker-<id>.scope, so a
+      # cgroup limit on the unit constrains nothing and would be a fig leaf
+      # (verified 2026-09-25 by reading /proc/<pid>/cgroup for the node process).
+      # --memory-swap equal to --memory denies the container swap entirely, which
+      # is the point: the 2026-09-25 incident was swap exhaustion, and this
+      # backend is hot (76% of a core) so its pages are not swap candidates.
+      # 6g is chosen to be loose enough not to misfire before we have measured a
+      # post-fix steady state — with a working cache this should sit far lower.
+      # TIGHTEN once the real figure is known.
+      extraOptions = [
+        "--network=${mempoolNet}"
+        "--memory=6g"
+        "--memory-swap=6g"
+      ];
     };
 
     mempool-web = {
@@ -261,16 +276,26 @@ in
   systemd.tmpfiles.rules = [
     "d /var/lib/mempool         0755 root root - -"
     "d /var/lib/mempool/mysql   0755 root root - -"
-    # mempool/backend:latest@sha256:358c0a517c8dcf26e7f5c02447de5bab33ec7e3fa6318685cf8012ce36098e3a runs `node backend/server.js` as uid 1001 / gid
-    # 65533 (verified via host `ps` — the container has no explicit User), and
-    # this dir is bind-mounted to /backend/cache. Left root-owned it could never
+    # This dir is bind-mounted to /backend/cache. Left unwritable it could never
     # be written: "EACCES: permission denied, open './cache/tmp-cache.json'".
     # That is not cosmetic — with no cache the backend re-fetches block and tx
     # data from bitcoind on every restart and after every hiccup, which is what
     # saturates bitcoind's RPC work queue (see rpcworkqueue in bitcoind.nix).
-    # Numeric on purpose: uid 1001 belongs to `pinchflat` on the host, so naming
-    # it would wrongly imply a relationship between the two services.
-    "d /var/lib/mempool/cache   0755 1001 65533 - -"
+    #
+    # ⚠️ 2026-09-25: this was `1001 65533` for the life of the deployment and the
+    # cache NEVER worked once. The old comment claimed the image runs as uid 1001
+    # "verified via host `ps`"; it does not. The authoritative read is
+    # /proc/<pid>/status, which reports Uid 1000 / Gid 0 for
+    # `node /backend/package/index.js`. Consequences measured on 2026-09-25:
+    # 303 x EACCES in the log ring, and 117 x "Error writing rbf data to cache
+    # file: Invalid string length" — V8 refusing to JSON.stringify the RBF cache
+    # because the result exceeds its ~512 MB max string length. The backend had
+    # grown to 3.6 GB RSS and 76% of a core, the largest process on the box, and
+    # was the reason all 8.8 GB of swap was consumed.
+    #
+    # Numeric on purpose: uid 1000 belongs to `chris` on the host, so naming it
+    # would wrongly imply a relationship between the two.
+    "d /var/lib/mempool/cache   0755 1000 0 - -"
   ];
 
   services.nginx.virtualHosts."mempool.rosemaryacres.com" = {
