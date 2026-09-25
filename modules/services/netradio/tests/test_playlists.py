@@ -189,3 +189,26 @@ class Tiles(unittest.TestCase):
             self.assertEqual(len(tiles["x"]["covers"]), 3)                     # so x gets B, C, D — a hero, not a mosaic — rather than reuse A
             used = [Path(p).parent for t in tiles.values() for p in t["covers"]]
             self.assertEqual(len(used), len(set(used)))                        # no album folder on two tiles
+
+
+class ArtistScope(unittest.TestCase):
+    """`Artist :: album words` — an artist admitted for part of their work."""
+
+    def hit(self, rule, artist, path):
+        from netradio import feeds
+        return feeds.artist_hit(rule, artist, path)
+
+    def test_only_the_named_albums_count(self):
+        rule = ["Bear McCreary :: Outlander"]
+        self.assertTrue(self.hit(rule, "Bear McCreary", "/mnt/fusion/Music/Bear McCreary/Outlander Vol 1/01 x.mp3"))
+        self.assertFalse(self.hit(rule, "Bear McCreary", "/mnt/fusion/Music/Bear McCreary/The Singularity/01 y.mp3"))
+        self.assertFalse(self.hit(rule, "Bear McCreary", "/mnt/fusion/Music/Bear McCreary/Ekleipsis/01 z.mp3"))
+
+    def test_an_unscoped_entry_still_takes_the_whole_artist(self):
+        rule = ["Clannad"]
+        for album in ("Magical Ring", "Anam"):
+            self.assertTrue(self.hit(rule, "Clannad", f"/mnt/fusion/Music/Clannad/{album}/01 a.mp3"))
+
+    def test_a_scoped_entry_does_not_match_a_different_artist(self):
+        self.assertFalse(self.hit(["Bear McCreary :: Outlander"], "Raya Yarbrough",
+                                  "/mnt/fusion/Music/Raya Yarbrough/Outlander Songs/01 q.mp3"))

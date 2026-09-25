@@ -162,6 +162,8 @@ CELTIC_ARTISTS = [
     "The Bothy Band", "The Dubliners", "The Irish Rovers", "The Clancy Brothers",
     "Christy Moore", "Gaelic Storm", "Clannad", "Loreena McKennitt", "Cara Dillon",
     "Mary Black", "Talisk", "Dougie MacLean", "Karine Polwart", "The Chieftains",
+    # the Outlander score only — the rest of his catalogue is sci-fi and horror
+    "Bear McCreary :: Outlander",
 ]
 CELTIC_GENRES = ["celtic", "irish", "scottish", "gaelic", "celtic folk", "irish folk"]
 

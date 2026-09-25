@@ -36,17 +36,29 @@ def norm_artist(name: str) -> str:
 
 def artist_hit(rule_artists: list[str], track_artist: str, track_path: str = "") -> bool:
     """The rule's name inside the track's artist (so 'george jones' hits
-    'Ralph Stanley & George Jones' too), or the library folder's artist."""
+    'Ralph Stanley & George Jones' too), or the library folder's artist.
+
+    An entry may be narrowed to part of an artist's work by writing
+    ``Artist :: album words`` — only albums whose folder carries those words
+    count. Chris wants the Outlander score on Celtic and none of Bear
+    McCreary's sci-fi and horror scoring (2026-09-25); scoping what is
+    ALLOWED in stays right as an artist's catalogue grows, where a list of
+    exclusions has to be extended every time they release something."""
     if not rule_artists:
         return False
     hay = [norm_artist(track_artist)]
     parts = track_path.split("/")
     if len(parts) > 4:
         hay.append(norm_artist(parts[4]))   # /mnt/fusion/Music/<Artist>/...
+    album = norm_artist(parts[5]) if len(parts) > 5 else ""
     for a in rule_artists:
-        n = norm_artist(a)
-        if n and any(n in h for h in hay):
-            return True
+        name, _, want_album = a.partition("::")
+        n = norm_artist(name)
+        if not n or not any(n in h for h in hay):
+            continue
+        if want_album and norm_artist(want_album) not in album:
+            continue
+        return True
     return False
 
 
