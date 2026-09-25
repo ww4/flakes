@@ -145,6 +145,55 @@ def add_rainymood_station(cfg: Config) -> str:
     return "Rainy Mood station added (fixed playlist, no DJ)"
 
 
+# The Celtic roster. A genre rule alone catches barely half of it: Lidarr
+# imports keep whatever genre the release shipped with, and that vocabulary
+# is not the catalogue's — Clannad arrives tagged "Folk", Dougie MacLean
+# "Scottish Instrumental & Vocal", Patty Gurdy "Pop, Rock" (measured
+# 2026-09-25). So the station names its artists as well as its genres.
+# Seeded from Chris's YouTube playlist, then widened through Last.fm's
+# similar-artist graph (the same one the spotlight chooser uses).
+CELTIC_ARTISTS = [
+    # from the playlist
+    "Patty Gurdy", "Celtic Woman", "Ella Roberts", "Old Blind Dogs", "Julie Fowlis",
+    "UCD Choral Scholars", "Choral Scholars of University College Dublin", "The High Kings",
+    "Nathan Carter", "Griogair Labhruidh",
+    # the trad expansion
+    "Solas", "Capercaillie", "Silly Wizard", "Dervish", "Lúnasa", "Planxty", "Altan",
+    "The Bothy Band", "The Dubliners", "The Irish Rovers", "The Clancy Brothers",
+    "Christy Moore", "Gaelic Storm", "Clannad", "Loreena McKennitt", "Cara Dillon",
+    "Mary Black", "Talisk", "Dougie MacLean", "Karine Polwart", "The Chieftains",
+]
+CELTIC_GENRES = ["celtic", "irish", "scottish", "gaelic", "celtic folk", "irish folk"]
+
+
+def add_celtic_station(cfg: Config) -> str:
+    """Chris, 2026-09-25: a Celtic station seeded from a YouTube playlist.
+
+    Folk's base already claimed `celtic` and `irish`, so without this the two
+    would play the same tracks: Folk now excludes those words AND the Celtic
+    roster by name (a tag-only exclusion would leave Clannad on Folk, since
+    that is how the release is tagged)."""
+    stations = cfg.stations()
+    if any(s.get("mount") == "celtic" for s in stations):
+        return "nothing to do"
+    folk = next((s for s in stations if s.get("mount") == "folk"), None)
+    if folk is not None:
+        base = folk.setdefault("base", {})
+        base["genres"] = [g for g in (base.get("genres") or []) if g not in ("celtic", "irish")]
+        base["exclude_genres"] = sorted(set(base.get("exclude_genres") or []) | set(CELTIC_GENRES))
+        base["exclude_artists"] = sorted(set(base.get("exclude_artists") or []) | set(CELTIC_ARTISTS))
+    at = next((i for i, s in enumerate(stations) if s.get("mount") == "folk"), len(stations) - 1)
+    stations.insert(at + 1, {
+        "mount": "celtic", "name": "Celtic", "kind": "curated", "family": ["folk"],
+        "base": {"genres": list(CELTIC_GENRES), "artists": list(CELTIC_ARTISTS),
+                 "era": {"exclude": ["shellac"]},
+                 "fringe_genres": ["folk", "singer songwriter", "traditional", "acoustic",
+                                   "world", "rock", "pop", "new age", "soundtrack"]},
+    })
+    cfg.save_stations(stations)
+    return f"Celtic station added ({len(CELTIC_ARTISTS)} artists); Folk yields celtic/irish to it"
+
+
 MIGRATIONS = [
     ("split-blues-jazz-soul", split_blues_jazz_soul),
     ("feeds-keep-shellac", feeds_keep_shellac),
@@ -152,6 +201,7 @@ MIGRATIONS = [
     ("stations-yield-to-neighbours", stations_yield_to_neighbours),
     ("add-rain-station", add_rain_station),
     ("add-rainymood-station", add_rainymood_station),
+    ("add-celtic-station", add_celtic_station),
 ]
 
 

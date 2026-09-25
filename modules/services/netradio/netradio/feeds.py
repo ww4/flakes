@@ -91,6 +91,12 @@ def matches(rule: dict, *, artist: str, path: str, genre: str, yamnet: dict | No
     # bluegrass ones — the catalogue tags Monroe "Country" too (2026-09-17)
     if any(word_in(w.lower(), genres) for w in rule.get("exclude_genres") or []):
         return False
+    # …and the same for artists a station has handed to another one: Clannad
+    # is tagged plain "Folk", so only naming them keeps Folk off the Celtic
+    # roster (2026-09-25 — Lidarr imports keep whatever genre the release
+    # shipped with, which is not the catalogue's vocabulary)
+    if artist_hit(rule.get("exclude_artists") or [], artist, path):
+        return False
     if (artists or genre_words) and not rule.get("all"):
         if not (artist_hit(artists, artist, path) or any(word_in(w.lower(), genres) for w in genre_words)):
             return False
@@ -102,7 +108,7 @@ def matches(rule: dict, *, artist: str, path: str, genre: str, yamnet: dict | No
 def validate(rule: dict) -> list[str]:
     """Problems with a rule as written (the admin page shows them)."""
     errs = []
-    for k in ("artists", "genres", "exclude_genres", "fringe_genres"):
+    for k in ("artists", "genres", "exclude_genres", "fringe_genres", "exclude_artists"):
         v = rule.get(k)
         if v is not None and (not isinstance(v, list) or not all(isinstance(x, str) for x in v)):
             errs.append(f"{k} must be a list of strings")
