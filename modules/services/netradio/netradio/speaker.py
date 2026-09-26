@@ -82,8 +82,11 @@ class Mixer:
         return (int(pct.group(1)) if pct else None), ("[off]" in out)
 
     def set(self, level: int) -> None:
+        """Level only. Deliberately NOT `unmute` as well: the receiver does
+        not unmute when you change its volume, and a box that boots muted
+        must stay muted until someone asks for sound (Chris, 2026-09-25)."""
         if self.control:
-            self._run("sset", self.control, f"{max(0, min(100, int(level)))}%", "unmute")
+            self._run("sset", self.control, f"{max(0, min(100, int(level)))}%")
 
     def step(self, delta: int) -> None:
         cur, _ = self.state()
@@ -258,6 +261,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--wake", default="", help="the wake service, e.g. http://127.0.0.1:8011 (starts the encoder)")
     ap.add_argument("--default-mount", default="", help="play this at startup (the rain, usually)")
     ap.add_argument("--start-volume", type=int, help="set the mixer here at startup")
+    ap.add_argument("--start-muted", action="store_true",
+                    help="come up silent — the stream runs, the jack is quiet until unmuted")
     ap.add_argument("--ffplay", default=shutil.which("ffplay") or "ffplay")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
@@ -268,6 +273,9 @@ def main(argv: list[str] | None = None) -> int:
     log.info("mixer control: %s (card %s)", mixer.control or "none found", args.card)
     if args.start_volume is not None:
         mixer.set(args.start_volume)
+    if args.start_muted:
+        mixer.mute(True)          # after the level, so the level is ready when it is unmuted
+        log.info("starting muted")
     player = Player(args.icecast, args.ffplay, args.device, args.wake)
     stop = threading.Event()
     threading.Thread(target=player.watch, args=(stop,), daemon=True).start()

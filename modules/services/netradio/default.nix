@@ -79,8 +79,9 @@ let
   wakePort = 8011;
   adminPort = 8012;
   speakerPort = 8013;
-  # gromit's analog out (Realtek ALC887-VD, card 0). The rain plays there at
-  # boot at a low level; the remote and `curl` change both.
+  # gromit's analog out (Realtek ALC887-VD, card 0). The rain starts at boot
+  # but MUTED, like the receiver: the stream is running and the jack is silent
+  # until the remote's mute button says otherwise.
   speakerCard = "0";
   speakerDefaultMount = "rain";
   speakerStartVolume = 35;
@@ -708,6 +709,7 @@ in
         "--card ${speakerCard}"
         "--default-mount ${speakerDefaultMount}"
         "--start-volume ${toString speakerStartVolume}"
+        "--start-muted"
         "--ffplay ${pkgs.ffmpeg}/bin/ffplay"
       ];
       Environment = [ "PATH=${lib.makeBinPath [ pkgs.alsa-utils pkgs.ffmpeg ]}" ];
