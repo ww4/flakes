@@ -34,6 +34,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -81,8 +82,11 @@ class Mixer:
         return (int(pct.group(1)) if pct else None), ("[off]" in out)
 
     def set(self, level: int) -> None:
+        """Level only. Deliberately NOT `unmute` as well: the receiver does
+        not unmute when you change its volume, and a box that boots muted
+        must stay muted until someone asks for sound (Chris, 2026-09-25)."""
         if self.control:
-            self._run("sset", self.control, f"{max(0, min(100, int(level)))}%", "unmute")
+            self._run("sset", self.control, f"{max(0, min(100, int(level)))}%")
 
     def step(self, delta: int) -> None:
         cur, _ = self.state()
@@ -97,10 +101,11 @@ class Player:
     """One ffplay on one mount, kept alive. Switching mounts kills and
     restarts it — a stream is not seekable, so there is nothing to keep."""
 
-    def __init__(self, base: str, ffplay: str, device: str = ""):
+    def __init__(self, base: str, ffplay: str, device: str = "", wake: str = ""):
         self.base = base.rstrip("/")
         self.ffplay = ffplay
         self.device = device
+        self.wake_url = wake.rstrip("/")
         self.mount = ""
         self.proc: subprocess.Popen | None = None
         self.error = ""
@@ -109,16 +114,37 @@ class Player:
     def url(self, mount: str) -> str:
         return f"{self.base}/{mount}.mp3"
 
+    def wake(self, mount: str) -> None:
+        """Start the station's encoder before connecting to it.
+
+        The encoders are on-demand: nginx fires `auth_request /_wake` when a
+        listener asks for /radio/<mount>.mp3, and only then does Liquidsoap
+        start that output. Connecting straight to Icecast skips all of that,
+        so the mount does not exist and Icecast answers 404 — which is what
+        this service did on every attempt until 2026-09-25. Calling the wake
+        service directly is the same door, without nginx's https redirect."""
+        if not self.wake_url:
+            return
+        req = urllib.request.Request(self.wake_url + "/wake",
+                                     headers={"X-Original-URI": f"/radio/{mount}.mp3"})
+        try:
+            urllib.request.urlopen(req, timeout=30).read()
+        except Exception as e:
+            log.warning("wake for %s failed (%s) — trying the mount anyway", mount, e)
+
     def play(self, mount: str) -> None:
         with self.lock:
             self.stop()
+            self.wake(mount)
             cmd = [self.ffplay, "-nodisp", "-autoexit", "-loglevel", "warning", "-infbuf", self.url(mount)]
             # inherit the unit's environment (PATH comes from Environment= in
             # the service) and only say which audio device to open — hardcoding
             # PATH here broke the player anywhere that path does not exist
-            env = {**os.environ, "SDL_AUDIODRIVER": "alsa"}
-            if self.device:
-                env["AUDIODEV"] = self.device
+            # AUDIODEV must name the hardware. ALSA's `default` is redirected
+            # to PipeWire by 99-pipewire-default.conf, and PipeWire here is a
+            # per-user service belonging to the desktop session — a system
+            # service reaching for it gets "Host is down" (2026-09-25).
+            env = {**os.environ, "SDL_AUDIODRIVER": "alsa", "AUDIODEV": self.device or "plughw:0,0"}
             log.info("playing %s: %s", mount, shlex.join(cmd))
             self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env)
             self.mount, self.error = mount, ""
@@ -230,9 +256,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=8013)
     ap.add_argument("--card", default="0", help="ALSA card index or name for the mixer")
     ap.add_argument("--control", default="", help="mixer control (default: the first of Master/PCM/Speaker…)")
-    ap.add_argument("--device", default="", help="SDL AUDIODEV, e.g. plughw:0,0 (default: ALSA's default)")
+    ap.add_argument("--device", default="plughw:0,0",
+                    help="ALSA device to open; NOT `default`, which PipeWire claims")
+    ap.add_argument("--wake", default="", help="the wake service, e.g. http://127.0.0.1:8011 (starts the encoder)")
     ap.add_argument("--default-mount", default="", help="play this at startup (the rain, usually)")
     ap.add_argument("--start-volume", type=int, help="set the mixer here at startup")
+    ap.add_argument("--start-muted", action="store_true",
+                    help="come up silent — the stream runs, the jack is quiet until unmuted")
     ap.add_argument("--ffplay", default=shutil.which("ffplay") or "ffplay")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
@@ -243,7 +273,10 @@ def main(argv: list[str] | None = None) -> int:
     log.info("mixer control: %s (card %s)", mixer.control or "none found", args.card)
     if args.start_volume is not None:
         mixer.set(args.start_volume)
-    player = Player(args.icecast, args.ffplay, args.device)
+    if args.start_muted:
+        mixer.mute(True)          # after the level, so the level is ready when it is unmuted
+        log.info("starting muted")
+    player = Player(args.icecast, args.ffplay, args.device, args.wake)
     stop = threading.Event()
     threading.Thread(target=player.watch, args=(stop,), daemon=True).start()
 
