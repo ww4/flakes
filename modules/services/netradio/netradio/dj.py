@@ -609,6 +609,10 @@ class StationDJ:
                 log.exception("%s: cannot read %s", self.mount, path)
         if not items:
             return
+        # read the depth BEFORE pushing: measured afterwards it counts the
+        # request and its own intro, so the log said "queued behind 4" for a
+        # track that was actually second in line
+        ahead = self.pending()
         text = request_break(items, self.rng)
         uri = self.render_break(text)
         if uri:
@@ -618,7 +622,7 @@ class StationDJ:
             self.push(self.track_uri(track, None), f"request {track.artist} - {track.title}",
                       {"kind": "track", "artist": track.artist, "title": track.title, "request": True})
         self.since_break = []
-        log.info("%s: %d request(s) queued behind %d: %s", self.mount, len(items), self.pending(),
+        log.info("%s: %d request(s) queued behind %d: %s", self.mount, len(items), ahead,
                  "; ".join(f"{t.artist} - {t.title}" for t in items))
 
     def check_settings(self) -> None:

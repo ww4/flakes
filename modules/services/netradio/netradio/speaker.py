@@ -2,8 +2,9 @@
 
 The library stations already reach the phone and the living-room receiver;
 this makes the green jack on the back of the box a third place to send
-them. It keeps one ffplay child alive on a station's Icecast mount, and
-answers a small JSON API on loopback so the remote can drive it:
+them. It keeps one ffmpeg child alive on a station's Icecast mount, decoding
+straight to the ALSA device, and answers a small JSON API on loopback so the
+remote can drive it:
 
     GET  /state                  {playing, mount, volume, muted, error}
     POST /play    {"mount": "rain"}
@@ -41,6 +42,11 @@ from urllib.parse import urlparse
 log = logging.getLogger("netradio.speaker")
 
 MOUNT_RE = re.compile(r"^[a-z0-9-]+$")
+
+# ALSA's `default` is redirected to PipeWire by 99-pipewire-default.conf, and
+# PipeWire on this box is a per-user service belonging to the desktop session.
+# A system service reaching for it gets EHOSTDOWN — "Host is down".
+DEFAULT_DEVICE = "plughw:0,0"
 
 
 class Mixer:
@@ -98,13 +104,22 @@ class Mixer:
 
 
 class Player:
-    """One ffplay on one mount, kept alive. Switching mounts kills and
-    restarts it — a stream is not seekable, so there is nothing to keep."""
+    """One ffmpeg on one mount, kept alive. Switching mounts kills and
+    restarts it — a stream is not seekable, so there is nothing to keep.
 
-    def __init__(self, base: str, ffplay: str, device: str = "", wake: str = ""):
+    ffmpeg, not ffplay, for one reason: the output device has to be an
+    *argument*. ffplay is an SDL program and takes its device from the
+    AUDIODEV environment variable — but the ffplay in nixpkgs links
+    sdl2-compat, which reimplements the SDL2 API on top of SDL3, and SDL3
+    dropped AUDIODEV (the string does not appear in the library at all). So
+    the variable was accepted, ignored, and ffplay opened ALSA's `default`
+    anyway: straight into PipeWire, "Host is down", forever. An ignored
+    environment variable fails silently; `-f alsa plughw:0,0` cannot."""
+
+    def __init__(self, base: str, ffmpeg: str, device: str = "", wake: str = ""):
         self.base = base.rstrip("/")
-        self.ffplay = ffplay
-        self.device = device
+        self.ffmpeg = ffmpeg
+        self.device = device or DEFAULT_DEVICE
         self.wake_url = wake.rstrip("/")
         self.mount = ""
         self.proc: subprocess.Popen | None = None
@@ -132,21 +147,27 @@ class Player:
         except Exception as e:
             log.warning("wake for %s failed (%s) — trying the mount anyway", mount, e)
 
+    def command(self, mount: str) -> list[str]:
+        """The argv, separately so a test can read the device back out of it."""
+        return [self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "warning",
+                # Icecast drops a listener now and then; reconnect rather than
+                # wait for watch() to notice five seconds later.
+                "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
+                "-i", self.url(mount),
+                "-f", "alsa", self.device]
+
     def play(self, mount: str) -> None:
         with self.lock:
             self.stop()
             self.wake(mount)
-            cmd = [self.ffplay, "-nodisp", "-autoexit", "-loglevel", "warning", "-infbuf", self.url(mount)]
+            cmd = self.command(mount)
             # inherit the unit's environment (PATH comes from Environment= in
-            # the service) and only say which audio device to open — hardcoding
-            # PATH here broke the player anywhere that path does not exist
-            # AUDIODEV must name the hardware. ALSA's `default` is redirected
-            # to PipeWire by 99-pipewire-default.conf, and PipeWire here is a
-            # per-user service belonging to the desktop session — a system
-            # service reaching for it gets "Host is down" (2026-09-25).
-            env = {**os.environ, "SDL_AUDIODRIVER": "alsa", "AUDIODEV": self.device or "plughw:0,0"}
+            # the service) — hardcoding PATH here broke the player anywhere
+            # that path does not exist
             log.info("playing %s: %s", mount, shlex.join(cmd))
-            self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env)
+            self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                         env={**os.environ})
             self.mount, self.error = mount, ""
 
     def stop(self) -> None:
@@ -256,14 +277,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=8013)
     ap.add_argument("--card", default="0", help="ALSA card index or name for the mixer")
     ap.add_argument("--control", default="", help="mixer control (default: the first of Master/PCM/Speaker…)")
-    ap.add_argument("--device", default="plughw:0,0",
+    ap.add_argument("--device", default=DEFAULT_DEVICE,
                     help="ALSA device to open; NOT `default`, which PipeWire claims")
     ap.add_argument("--wake", default="", help="the wake service, e.g. http://127.0.0.1:8011 (starts the encoder)")
     ap.add_argument("--default-mount", default="", help="play this at startup (the rain, usually)")
     ap.add_argument("--start-volume", type=int, help="set the mixer here at startup")
     ap.add_argument("--start-muted", action="store_true",
                     help="come up silent — the stream runs, the jack is quiet until unmuted")
-    ap.add_argument("--ffplay", default=shutil.which("ffplay") or "ffplay")
+    ap.add_argument("--ffmpeg", default=shutil.which("ffmpeg") or "ffmpeg")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -276,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.start_muted:
         mixer.mute(True)          # after the level, so the level is ready when it is unmuted
         log.info("starting muted")
-    player = Player(args.icecast, args.ffplay, args.device, args.wake)
+    player = Player(args.icecast, args.ffmpeg, args.device, args.wake)
     stop = threading.Event()
     threading.Thread(target=player.watch, args=(stop,), daemon=True).start()
 
