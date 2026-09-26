@@ -1,4 +1,4 @@
-"""The admin API behind radio.rosemaryacres.com/admin — edits the runtime
+"""The admin API behind <radio host>/admin — edits the runtime
 config (feeds, stations, schedule) and files requests for the privileged
 side (compile a feed, apply: rescan + restart Liquidsoap when mounts change).
 

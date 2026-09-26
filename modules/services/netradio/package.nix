@@ -21,7 +21,13 @@ python3.pkgs.buildPythonApplication {
   version = "1.0.0";
   format = "other";
 
-  src = ./.;
+  # Only the Python and its tests — NOT `./.`, which pulled default.nix and
+  # web/ into the source and so rehashed the package (and restarted every unit
+  # on deploy) for a change that could not affect a line of it.
+  src = lib.fileset.toSource {
+    root = ./.;
+    fileset = lib.fileset.unions [ ./netradio ./tests ];
+  };
 
   nativeBuildInputs = [ makeWrapper ];
   propagatedBuildInputs = pyDeps python3.pkgs;
