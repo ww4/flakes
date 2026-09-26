@@ -280,7 +280,10 @@ class Admin:
         path = str(body.get("path") or "")
         if path not in set(self.library()):
             raise ValueError("not a library track")
-        return self._inbox(mount, {"action": "request", "path": path, "who": str(body.get("who") or "")[:40]})
+        # deliberately no requester name: nothing in the app sends one, and an
+        # unauthenticated free-text field would let anyone on the tailnet put a
+        # name in the DJ's mouth (2026-09-25)
+        return self._inbox(mount, {"action": "request", "path": path})
 
     def dislike(self, body: dict) -> dict:
         """{"path": …, "scope": "track"|"artist", "title": …, "artist": …}.

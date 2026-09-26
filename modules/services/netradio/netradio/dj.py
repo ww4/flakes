@@ -124,14 +124,12 @@ def join_list(items: list[str]) -> str:
     return ", ".join(items[:-1]) + " and " + items[-1]
 
 
-def request_break(items: list[tuple[Track, str]], rng: random.Random) -> str:
+def request_break(items: list[Track], rng: random.Random) -> str:
     """What the DJ says over a batch of requests. One line however many came
     in — a station reads them out together rather than interrupting once per
-    listener (Chris, 2026-09-25)."""
-    said = []
-    for track, who in items:
-        line = say_track(track, rng)
-        said.append(f"{line} for {who}" if who else line)
+    listener. No names: there is no sign-in anywhere in this system, so the
+    DJ cannot know who asked and must not pretend to (Chris, 2026-09-25)."""
+    said = [say_track(t, rng) for t in items]
     forms = REQUEST_ONE if len(said) == 1 else REQUEST_MANY
     return rng.choice(forms).format(list=join_list(said))
 
@@ -561,7 +559,7 @@ class StationDJ:
             files = sorted(self.inbox.glob(f"{self.mount}-*.json"))
         except OSError:
             return
-        pending: list[tuple[str, str]] = []
+        pending: list[str] = []
         for f in files:
             try:
                 req = json.loads(f.read_text())
@@ -577,7 +575,7 @@ class StationDJ:
                     else:
                         log.info("%s: skipped on request", self.mount)
                 elif req.get("action") == "request" and req.get("path"):
-                    pending.append((req["path"], req.get("who", "")))
+                    pending.append(req["path"])
             except OSError as e:
                 # Liquidsoap's socket is gone (a deploy restarting it): a fresh
                 # press waits for the next pass; an old one would surprise.
@@ -591,7 +589,7 @@ class StationDJ:
         if pending:
             self.play_requests(pending)
 
-    def play_requests(self, wanted: list[tuple[str, str]]) -> None:
+    def play_requests(self, wanted: list[str]) -> None:
         """Queue a batch of listener requests, announced together.
 
         Liquidsoap 2.4's request.queue can only `push`, `queue`, `skip` and
@@ -603,10 +601,10 @@ class StationDJ:
         mistake as the skip button). So nothing is cleared: a request joins the
         queue behind at most `lookahead` items, and the DJ says so on air.
         """
-        items: list[tuple[Track, str]] = []
-        for path, who in wanted:
+        items: list[Track] = []
+        for path in wanted:
             try:
-                items.append((read_tags(path), who))
+                items.append(read_tags(path))
             except Exception:
                 log.exception("%s: cannot read %s", self.mount, path)
         if not items:
@@ -616,12 +614,12 @@ class StationDJ:
         if uri:
             self.push(uri, "request intro", {"kind": "break", "artist": self.name, "title": "Requests"})
             self.last_break_text = text
-        for track, _ in items:
+        for track in items:
             self.push(self.track_uri(track, None), f"request {track.artist} - {track.title}",
                       {"kind": "track", "artist": track.artist, "title": track.title, "request": True})
         self.since_break = []
         log.info("%s: %d request(s) queued behind %d: %s", self.mount, len(items), self.pending(),
-                 "; ".join(f"{t.artist} - {t.title}" for t, _ in items))
+                 "; ".join(f"{t.artist} - {t.title}" for t in items))
 
     def check_settings(self) -> None:
         """Pick up a changed break frequency without a restart."""

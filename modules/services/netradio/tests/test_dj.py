@@ -222,7 +222,7 @@ class Feedback(unittest.TestCase):
         self.assertEqual(self.dj.inbox, inbox)
         inbox.mkdir(parents=True, exist_ok=True)
         (inbox / "x-1.json").write_text(json.dumps({"action": "skip"}))
-        (inbox / "x-2.json").write_text(json.dumps({"action": "request", "path": self.tracks[0], "who": "Chris"}))
+        (inbox / "x-2.json").write_text(json.dumps({"action": "request", "path": self.tracks[0]}))
         self.dj.fill()
         self.assertEqual(self.ls.skipped, 1)
         self.assertFalse(list(inbox.glob("x-*.json")))                     # consumed
@@ -230,7 +230,7 @@ class Feedback(unittest.TestCase):
         # queued item, so a request joins the back of a shallow queue
         for rid in pending_before:
             self.assertIn(rid, self.ls.pending)
-        self.assertIn("Chris", " ".join(self.tts.texts))                   # announced on air, by name
+        self.assertIn("Song3", " ".join(self.tts.texts))                   # announced on air by title
         self.assertTrue(any(self.tracks[0] in u for u in self.ls.pushed[-4:]))
         self.assertTrue(any(e.get("request") for e in self.dj.pushed))
 
@@ -239,19 +239,28 @@ class Feedback(unittest.TestCase):
         self.dj.fill()
         inbox = Path(self.tmp.name) / "dj" / "inbox"
         inbox.mkdir(parents=True, exist_ok=True)
-        for i, (who, song) in enumerate((("Chris", "First"), ("Mary", "Second"), ("", "Third"))):
+        for i, song in enumerate(("First", "Second", "Third")):
             (inbox / f"x-{1000000000000 + i}-0000.json").write_text(
-                json.dumps({"action": "request", "path": f"/m/AAA/Album/0{i} {song}.mp3", "who": who}))
+                json.dumps({"action": "request", "path": f"/m/AAA/Album/0{i} {song}.mp3"}))
         before = len(self.tts.texts)
         self.dj.handle_inbox()
         # ONE break for the batch, naming all three and both askers
         breaks = self.tts.texts[before:]
         self.assertEqual(len(breaks), 1, breaks)
-        for name in ("First", "Second", "Third", "Chris", "Mary"):
+        for name in ("First", "Second", "Third"):
             self.assertIn(name, breaks[0])
         # and the three tracks queued behind it, in the order they were asked
         reqs = [e for e in self.dj.pushed if e.get("request")]
         self.assertEqual([r["title"] for r in reqs], ["First", "Second", "Third"])
+
+    def test_the_dj_never_names_a_requester(self):
+        # there is no sign-in anywhere in this system: the DJ cannot know who
+        # asked, and an unauthenticated name field would be anyone's to set
+        import inspect
+        from netradio import admin as admin_mod
+        self.assertNotIn("who", inspect.getsource(admin_mod.Admin.request))
+        text = dj.request_break([dj.Track("/p", "Song", "Artist")], random.Random(1))
+        self.assertNotIn("for ", text)
 
     def test_the_dj_never_calls_a_command_liquidsoap_lacks(self):
         import json
