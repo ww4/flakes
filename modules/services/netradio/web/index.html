@@ -26,6 +26,7 @@
   <header class="bar top">
     <button class="room" @click="pickTarget"><span class="dot" :class="{live: target === 'room' ? receiver.on : target === 'gromit' ? speaker.playing : !!current}"></span>{{ targetName() }} <span class="chev">⌄</span></button>
     <span class="status">{{ busy || status || (target === 'room' && receiver.error ? 'receiver unreachable' : '') || (target === 'gromit' && speaker.error === 'unreachable' ? 'speaker service down' : '') }}</span>
+    <button class="admin" @click="openRemote" title="Receiver remote" aria-label="Receiver remote"><svg viewBox="0 0 24 24" style="width:1.15rem;height:1.15rem;fill:none;stroke:currentColor;stroke-width:1.8"><rect x="7" y="2" width="10" height="20" rx="3"/><circle cx="12" cy="6.5" r="1.2"/><path d="M9.5 11h5M9.5 14h5M9.5 17h5"/></svg></button>
     <a class="admin" href="desktop.html?view=desktop" title="Desktop view">🖥</a>
     <a class="admin" href="admin/" title="Admin">⚙</a>
   </header>
@@ -44,7 +45,7 @@
     <div class="transport" v-if="idle">
       <button class="resume" @click="resume" :title="lastStation ? 'Play ' + lastStation.name : 'Pick a station'"><svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg><span>{{ lastStation ? lastStation.name : 'Pick a station' }}</span></button>
     </div>
-    <div class="transport" v-else-if="nowKind === 'library'">
+    <div class="transport" v-else-if="nowKind === 'library' && canDJ">
       <button @click="skip" title="Skip"><svg viewBox="0 0 24 24"><path d="M5 5l9 7-9 7zM16 5h3v14h-3z"/></svg><span>Skip</span></button>
       <button @click="dislike('track')" title="Never again"><svg viewBox="0 0 24 24"><path d="M15 3H6.5a2 2 0 0 0-2 1.6L3 11.5V13a2 2 0 0 0 2 2h5l-1 4.5a1.5 1.5 0 0 0 2.8 1L15 13zM17 3h4v10h-4z"/></svg><span>Never</span></button>
       <button @click="dislike('artist')" title="Less of this artist"><svg viewBox="0 0 24 24"><path d="M4 12h16M12 4v16" transform="rotate(45 12 12)"/></svg><span>Less</span></button>
@@ -161,11 +162,85 @@
     <canvas ref="viz" width="600" height="60"></canvas>
     <span class="quality"><label><input type="radio" value="" v-model="quality" @change="retune">192k</label><label><input type="radio" value="-lo" v-model="quality" @change="retune">96k</label></span>
   </footer>
+  <!-- ===== THE REMOTE ======================================================= -->
+  <div class="remote-wrap" v-if="remote" @click.self="remote = false">
+    <section class="remote">
+      <header>
+        <strong>{{ receiver.name || 'Living room' }}</strong>
+        <small>{{ receiver.on ? receiver.input : (receiver.error || 'standby') }}</small>
+        <button class="x" @click="remote = false" aria-label="Close">✕</button>
+      </header>
+
+      <div class="r-top">
+        <button class="key power" :class="{on: receiver.on}" @click="power(!receiver.on)" title="Power">
+          <svg viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/></svg></button>
+        <div class="r-vol">
+          <button class="key" @click="volumeStep(2)" :disabled="!receiver.on">+</button>
+          <span class="lvl">{{ Math.round(receiver.volume) }}</span>
+          <button class="key" @click="volumeStep(-2)" :disabled="!receiver.on">−</button>
+        </div>
+        <button class="key mute" :class="{on: receiver.mute}" @click="mute(!receiver.mute)" :disabled="!receiver.on" title="Mute">
+          <svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path v-if="!receiver.mute" d="M16 8.5a5 5 0 0 1 0 7"/><path v-else d="M16 9l5 6M21 9l-5 6"/></svg></button>
+      </div>
+
+      <h6>Input</h6>
+      <div class="r-inputs">
+        <button v-for="i in inputs" :key="i.name" class="key wide" :class="{on: receiver.input === i.name}"
+                @click="selectInput(i.name)" :disabled="!receiver.on">{{ i.title || i.name }}</button>
+      </div>
+
+      <div class="r-mid">
+        <div class="dpad">
+          <button class="key up" @click="cursor('Up')" :disabled="!receiver.on">▲</button>
+          <button class="key left" @click="cursor('Return')" :disabled="!receiver.on" title="Back">◀</button>
+          <button class="key sel" @click="cursor('Sel')" :disabled="!receiver.on">OK</button>
+          <button class="key right" @click="remotePage(true)" :disabled="!receiver.on" title="Page down">▶</button>
+          <button class="key down" @click="cursor('Down')" :disabled="!receiver.on">▼</button>
+        </div>
+        <div class="r-side">
+          <button class="key" @click="cursor('Return to Home')" :disabled="!receiver.on" title="Home">⌂</button>
+          <button class="key" @click="remotePage(false)" :disabled="!receiver.on" title="Page up">⇞</button>
+          <button class="key" @click="remotePage(true)" :disabled="!receiver.on" title="Page down">⇟</button>
+        </div>
+      </div>
+
+      <h6>Transport</h6>
+      <div class="r-transport">
+        <button class="key" @click="playback('Skip Rev')" :disabled="!receiver.on">⏮</button>
+        <button class="key" @click="playback('Play')" :disabled="!receiver.on">▶</button>
+        <button class="key" @click="playback('Pause')" :disabled="!receiver.on">⏸</button>
+        <button class="key" @click="playback('Stop')" :disabled="!receiver.on">⏹</button>
+        <button class="key" @click="playback('Skip Fwd')" :disabled="!receiver.on">⏭</button>
+      </div>
+
+      <template v-if="receiver.input === 'Pandora'">
+        <h6>Pandora</h6>
+        <div class="r-transport">
+          <button class="key wide" @click="feedback(true)">👍 Thumb up</button>
+          <button class="key wide" @click="feedback(false)">👎 Thumb down</button>
+        </div>
+      </template>
+
+      <h6>Tuner</h6>
+      <div class="r-tuner">
+        <button class="key" :class="{on: receiver.tuner && receiver.tuner.band === 'FM'}" @click="band('FM')" :disabled="!receiver.on">FM</button>
+        <button class="key" :class="{on: receiver.tuner && receiver.tuner.band === 'AM'}" @click="band('AM')" :disabled="!receiver.on">AM</button>
+        <span class="freq">{{ receiver.input === 'TUNER' ? freqText : '—' }}</span>
+        <button class="key" @click="tuneStep(-1)" :disabled="receiver.input !== 'TUNER'">−</button>
+        <button class="key" @click="tuneStep(1)" :disabled="receiver.input !== 'TUNER'">+</button>
+        <button class="key" @click="presetStep(false)" :disabled="receiver.input !== 'TUNER'" title="Preset down">P−</button>
+        <button class="key" @click="presetStep(true)" :disabled="receiver.input !== 'TUNER'" title="Preset up">P+</button>
+      </div>
+
+      <p class="r-note">No sleep timer, tone, dimmer, scenes or FM mono over the network — the receiver keeps those on the front panel.</p>
+    </section>
+  </div>
+
   <nav class="bar tabs">
     <button :class="{active: tab === 'now'}" @click="tab = 'now'"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2"/></svg>Now</button>
     <button :class="{active: tab === 'stations'}" @click="tab = 'stations'"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>Stations</button>
     <button :class="{active: tab === 'sources'}" @click="tab = 'sources'; pollReceiver()" :disabled="target !== 'room'"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h13"/></svg>Sources</button>
-    <button :class="{active: tab === 'request'}" @click="tab = 'request'"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="M15 15l5 5"/></svg>Request</button>
+    <button :class="{active: tab === 'request'}" @click="tab = 'request'" :disabled="!canDJ" :title="canDJ ? 'Request a song' : 'No requests on an ambient station'"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="M15 15l5 5"/></svg>Request</button>
   </nav>
   <audio ref="audio" preload="none"></audio>
 </div>

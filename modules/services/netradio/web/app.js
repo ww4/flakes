@@ -38,12 +38,14 @@ createApp({
              target, tab, receiver: { name: "", on: false, input: "", volume: 0, mute: false, error: "" }, inputs: [], presets: [],
              speaker: { playing: false, mount: "", volume: null, muted: false, error: "" }, speakerPoll: 0,
              pandora: JSON.parse((() => { try { return localStorage.getItem("radio.pandora") || "[]"; } catch (e) { return "[]"; } })()), menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
-             volumeDraft: 0, freqDraft: "", busy: "", toast: "", query: "", results: [], searchTimer: 0, roomPoll: 0, artFailed: "", artFailedAt: 0, tick: 0 };
+             remote: false, volumeDraft: 0, freqDraft: "", busy: "", toast: "", query: "", results: [], searchTimer: 0, roomPoll: 0, artFailed: "", artFailedAt: 0, tick: 0 };
   },
   computed: {
     groups() {
-      const curated = this.stations.filter(s => s.kind !== "specialty");
-      const specialty = this.stations.filter(s => s.kind === "specialty");
+      // a fixed station (Rain, Rainy Mood) is a specialty as far as the
+      // list is concerned — it is not a curated genre programme
+      const curated = this.stations.filter(s => !["specialty", "fixed"].includes(s.kind));
+      const specialty = this.stations.filter(s => ["specialty", "fixed"].includes(s.kind));
       const g = [{ kind: "curated", title: "Curated", stations: curated }];
       if (specialty.length) g.push({ kind: "specialty", title: "Specialty", stations: specialty });
       if (this.target === "room") {
@@ -132,6 +134,10 @@ createApp({
       for (const g of this.groups) { const s = g.stations.find(s => s.kind === l.kind && s.name === l.name); if (s) return s; }
       return l.kind ? l : null;   // not in today's lists (a Pandora station since removed, say): still worth a try
     },
+    // a fixed station has no DJ behind it: nothing to skip to, nothing to
+    // request, no history to dislike. The buttons go rather than lie.
+    canDJ() { const m = this.target === "room" ? this.roomMount : this.target === "gromit" ? this.speaker.mount : this.current;
+              return !!m && !this.isFixed(m); },
     feedbackMount() {
       const m = this.target === "room" ? this.roomMount : this.target === "gromit" ? this.speaker.mount : this.current;
       return this.isFixed(m) ? null : m;      // no history, no requests, no dislikes on a rain loop
@@ -235,7 +241,8 @@ createApp({
     stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; this.stopViz(); },
     retune() { try { localStorage.setItem("radio.quality", this.quality); } catch (e) {} if (this.current) this.play(this.current); },
     playTarget(s) {
-      if (this.target === "gromit") { if (!s.mount) return; this.remember(s); this.tab = "now"; return this.speakerPlay(s.mount); }
+      this.tab = "now";              // always show the switch happen
+      if (this.target === "gromit") { if (!s.mount) return; this.remember(s); return this.speakerPlay(s.mount); }
       if (this.target !== "room") return this.play(s.mount);
       this.remember(s);
       if (s.kind === "preset") return this.receiverAction("tuning…", async () => { if (this.receiver.input !== "TUNER") await call("POST", "receiver/input", { name: "TUNER" }); return call("POST", "receiver/tuner", { preset: s.number }); });
@@ -269,6 +276,31 @@ createApp({
       catch (e) { this.say(e.message); }
       finally { this.busy = ""; }
     },
+    // ---- the remote ----------------------------------------------------------
+    openRemote() {
+      this.remote = true;
+      if (this.target !== "room") this.target = "room";
+      this.pollReceiver();
+      if (!this.inputs.length) getJSON("receiver/inputs").then(i => { if (i) this.inputs = i; });
+      if (!this.presets.length) getJSON("receiver/tuner/presets").then(p => { if (p) this.presets = p; });
+    },
+    remoteSource() {
+      const map = { "NET RADIO": "NET_RADIO", "Pandora": "Pandora", "Spotify": "Spotify",
+                    "SERVER": "SERVER", "AirPlay": "AirPlay", "TUNER": "Tuner" };
+      return map[this.receiver.input] || "";
+    },
+    cursor(action) {
+      const src = this.remoteSource();
+      if (!src || src === "Tuner") return;
+      return this.receiverAction("", async () => { this.menu = await call("POST", "receiver/menu/cursor", { source: src, action }); });
+    },
+    remotePage(down) {
+      const src = this.remoteSource();
+      if (!src || src === "Tuner") return;
+      return this.receiverAction("", async () => { this.menu = await call("POST", "receiver/menu/page", { source: src, down }); });
+    },
+    presetStep(up) { return this.receiverAction("", () => call("POST", "receiver/tuner", { preset: up ? "Up" : "Down" })); },
+    band(b) { return this.receiverAction("", () => call("POST", "receiver/tuner", { band: b, frequency: b === "FM" ? 93.1 : 1300 })); },
     power(on) { return this.receiverAction(on ? "powering on…" : "standby…", () => call("POST", "receiver/power", { on })); },
     mute(on) { return this.receiverAction("", () => call("POST", "receiver/mute", { on })); },
     setVolume(level) { return this.receiverAction("", () => call("POST", "receiver/volume", { level })); },
