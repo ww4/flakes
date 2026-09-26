@@ -85,8 +85,9 @@ class FakeLS:
         if cmd == "q_x.queue":
             return " ".join(str(r) for r in self.pending)
         if cmd.startswith("q_x.ignore "):
-            self.pending.remove(int(cmd.split()[1]))
-            return "OK"
+            # Liquidsoap 2.4 has no such command; the real server answers this
+            # way and the DJ must never depend on it again (2026-09-25)
+            return "ERROR: unknown command, type \"help\" to get a list of commands."
         if cmd == "src_x.skip":
             self.skipped = getattr(self, "skipped", 0) + 1
             return "Done"
@@ -225,11 +226,45 @@ class Feedback(unittest.TestCase):
         self.dj.fill()
         self.assertEqual(self.ls.skipped, 1)
         self.assertFalse(list(inbox.glob("x-*.json")))                     # consumed
+        # NOTHING already queued is dropped: Liquidsoap 2.4 cannot remove a
+        # queued item, so a request joins the back of a shallow queue
         for rid in pending_before:
-            self.assertNotIn(rid, self.ls.pending)                          # the shuffle's picks were dropped
-        self.assertIn("By request from Chris", " ".join(self.tts.texts))
-        self.assertTrue(any(self.tracks[0] in u for u in self.ls.pushed[-4:]))  # the request is in the queue
+            self.assertIn(rid, self.ls.pending)
+        self.assertIn("Chris", " ".join(self.tts.texts))                   # announced on air, by name
+        self.assertTrue(any(self.tracks[0] in u for u in self.ls.pushed[-4:]))
         self.assertTrue(any(e.get("request") for e in self.dj.pushed))
+
+    def test_several_requests_share_one_announcement_and_keep_their_order(self):
+        import json
+        self.dj.fill()
+        inbox = Path(self.tmp.name) / "dj" / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        for i, (who, song) in enumerate((("Chris", "First"), ("Mary", "Second"), ("", "Third"))):
+            (inbox / f"x-{1000000000000 + i}-0000.json").write_text(
+                json.dumps({"action": "request", "path": f"/m/AAA/Album/0{i} {song}.mp3", "who": who}))
+        before = len(self.tts.texts)
+        self.dj.handle_inbox()
+        # ONE break for the batch, naming all three and both askers
+        breaks = self.tts.texts[before:]
+        self.assertEqual(len(breaks), 1, breaks)
+        for name in ("First", "Second", "Third", "Chris", "Mary"):
+            self.assertIn(name, breaks[0])
+        # and the three tracks queued behind it, in the order they were asked
+        reqs = [e for e in self.dj.pushed if e.get("request")]
+        self.assertEqual([r["title"] for r in reqs], ["First", "Second", "Third"])
+
+    def test_the_dj_never_calls_a_command_liquidsoap_lacks(self):
+        import json
+        self.dj.fill()
+        inbox = Path(self.tmp.name) / "dj" / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / "x-9.json").write_text(json.dumps({"action": "request", "path": "/m/AAA/Album/01 X.mp3"}))
+        seen = []
+        real = self.ls.command
+        self.ls.command = lambda c: seen.append(c) or real(c)
+        self.dj.handle_inbox()
+        self.assertFalse([c for c in seen if ".ignore" in c],
+                         "q.ignore does not exist in Liquidsoap 2.4 — see play_requests")
 
     def test_skip_waits_while_liquidsoap_is_down(self):
         """A press while Liquidsoap's socket is gone (a deploy) is kept for

@@ -44,7 +44,11 @@ from netradio.wake import Liquidsoap
 
 log = logging.getLogger("netradio.dj")
 
-LOOKAHEAD = 2           # queued items to keep waiting behind the playing one
+LOOKAHEAD = 2           # items queued behind the playing one. A real station keeps the
+                        # deck shallow, and this is the whole distance a request waits —
+                        # a queued item cannot be removed, so it must not be far
+                        # the deck shallow, and it is the whole distance a request
+                        # has to wait, since a queued item cannot be removed
 NO_REPEAT = 300         # tracks remembered to avoid replaying too soon
 POLL = 5.0              # seconds between queue checks
 KEEP_BREAKS = 4         # rendered break files kept per station
@@ -74,6 +78,18 @@ OPENERS_MANY = [
     "{t1} to finish that set, after {rest}.",
     "That set: {rest}, then {t1}.",
     "Just now, {t1} — and earlier {rest}.",
+]
+REQUEST_ONE = [
+    "We've got a request in the box: {list}.",
+    "A request coming up — {list}.",
+    "Someone asked for this one: {list}.",
+    "This next one is a request: {list}.",
+]
+REQUEST_MANY = [
+    "We've got requests stacking up: {list}.",
+    "A few requests in the box tonight: {list}.",
+    "Coming up, by request: {list}.",
+    "Requests, in the order they came in: {list}.",
 ]
 NEXTS = [
     "Coming up, {n}.",
@@ -106,6 +122,18 @@ def join_list(items: list[str]) -> str:
     if len(items) <= 1:
         return "".join(items)
     return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def request_break(items: list[tuple[Track, str]], rng: random.Random) -> str:
+    """What the DJ says over a batch of requests. One line however many came
+    in — a station reads them out together rather than interrupting once per
+    listener (Chris, 2026-09-25)."""
+    said = []
+    for track, who in items:
+        line = say_track(track, rng)
+        said.append(f"{line} for {who}" if who else line)
+    forms = REQUEST_ONE if len(said) == 1 else REQUEST_MANY
+    return rng.choice(forms).format(list=join_list(said))
 
 
 def compose(previous: list[Track], nxt: Track, station: str, rng: random.Random) -> str:
@@ -533,6 +561,7 @@ class StationDJ:
             files = sorted(self.inbox.glob(f"{self.mount}-*.json"))
         except OSError:
             return
+        pending: list[tuple[str, str]] = []
         for f in files:
             try:
                 req = json.loads(f.read_text())
@@ -548,7 +577,7 @@ class StationDJ:
                     else:
                         log.info("%s: skipped on request", self.mount)
                 elif req.get("action") == "request" and req.get("path"):
-                    self.play_request(req["path"], req.get("who", ""))
+                    pending.append((req["path"], req.get("who", "")))
             except OSError as e:
                 # Liquidsoap's socket is gone (a deploy restarting it): a fresh
                 # press waits for the next pass; an old one would surprise.
@@ -559,23 +588,40 @@ class StationDJ:
             except Exception:
                 log.exception("%s: inbox %s failed", self.mount, f.name)
             f.unlink(missing_ok=True)
+        if pending:
+            self.play_requests(pending)
 
-    def play_request(self, path: str, who: str = "") -> None:
-        """Queue a listener's request to play NEXT: the tracks already waiting
-        are dropped from Liquidsoap's queue (they were the shuffle's choice,
-        nothing is lost) and re-chosen after; a short "by request" line is
-        rendered in front of it."""
-        track = read_tags(path)
-        for rid in self.ls.command(f"q_{self.mount}.queue").split():
-            self.ls.command(f"q_{self.mount}.ignore {rid}")
-        self.pushed = []
-        intro = self.render_break(f"{'By request' if not who else 'By request from ' + who}: {track.artist}, {track.title}.")
-        if intro:
-            self.push(intro, "request intro", {"kind": "break", "artist": self.name, "title": "By request"})
-        self.push(self.track_uri(track, None), f"request {track.artist} - {track.title}",
-                  {"kind": "track", "artist": track.artist, "title": track.title, "request": True})
+    def play_requests(self, wanted: list[tuple[str, str]]) -> None:
+        """Queue a batch of listener requests, announced together.
+
+        Liquidsoap 2.4's request.queue can only `push`, `queue`, `skip` and
+        `flush_and_skip` — there is NO way to remove one queued item. This
+        used to call `q_<mount>.ignore <rid>` on everything waiting, believing
+        it was clearing the way so the request played next; that command does
+        not exist, every call returned an error nobody read, and the request
+        simply landed behind whatever was already queued (2026-09-25, the same
+        mistake as the skip button). So nothing is cleared: a request joins the
+        queue behind at most `lookahead` items, and the DJ says so on air.
+        """
+        items: list[tuple[Track, str]] = []
+        for path, who in wanted:
+            try:
+                items.append((read_tags(path), who))
+            except Exception:
+                log.exception("%s: cannot read %s", self.mount, path)
+        if not items:
+            return
+        text = request_break(items, self.rng)
+        uri = self.render_break(text)
+        if uri:
+            self.push(uri, "request intro", {"kind": "break", "artist": self.name, "title": "Requests"})
+            self.last_break_text = text
+        for track, _ in items:
+            self.push(self.track_uri(track, None), f"request {track.artist} - {track.title}",
+                      {"kind": "track", "artist": track.artist, "title": track.title, "request": True})
         self.since_break = []
-        log.info("%s: request queued next: %s - %s", self.mount, track.artist, track.title)
+        log.info("%s: %d request(s) queued behind %d: %s", self.mount, len(items), self.pending(),
+                 "; ".join(f"{t.artist} - {t.title}" for t, _ in items))
 
     def check_settings(self) -> None:
         """Pick up a changed break frequency without a restart."""

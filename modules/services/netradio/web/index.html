@@ -134,9 +134,9 @@
     <h6>Request on {{ feedbackStation.name || 'the station' }}</h6>
     <input type="search" v-model="query" @input="searchDebounced" placeholder="artist, song, album…" autocomplete="off" autofocus>
     <div class="menu">
-      <button class="row" v-for="r in results" :key="r.path" @click="request(r)"><span><strong>{{ r.title }}</strong><br><small>{{ r.artist }} · {{ r.album }}</small></span><span class="chev">play next</span></button>
+      <button class="row" v-for="r in results" :key="r.path" @click="request(r)"><span><strong>{{ r.title }}</strong><br><small>{{ r.artist }} · {{ r.album }}</small></span><span class="chev">request</span></button>
       <p v-if="query.length > 1 && !results.length" class="muted">nothing in the library matches</p>
-      <p v-if="!feedbackMount" class="muted">Start a library station first — a request plays next on it.</p>
+      <p v-if="!feedbackMount" class="muted">Start a library station first — requests join that station's queue.</p>
     </div>
   </main>
 
