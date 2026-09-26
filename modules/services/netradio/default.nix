@@ -83,7 +83,7 @@ let
   # but MUTED, like the receiver: the stream is running and the jack is silent
   # until the remote's mute button says otherwise.
   speakerCard = "0";
-  speakerDefaultMount = "rain";
+  speakerDefaultMount = "rainymood";   # the single seamless loop, not the five-bed variety station
   speakerStartVolume = 35;
   icecastPort = 8020; # 8000 is audiobookshelf (icecast SEGVs when the bind fails)
 
