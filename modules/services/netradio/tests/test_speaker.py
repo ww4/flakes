@@ -276,9 +276,22 @@ class BedCheck(unittest.TestCase):
             alive = pl.alive(); pl.stop()
         self.assertTrue(alive)
 
-    def test_the_alsa_device_is_never_pipewires_default(self):
-        pl = speaker.Player("http://x", "/bin/true")
-        self.assertEqual(pl.device or "plughw:0,0", "plughw:0,0")
+    def test_the_device_is_an_argument_not_an_environment_variable(self):
+        # The previous version of this test asserted `pl.device == "plughw:0,0"`
+        # and passed all the while the player was silent: ffplay took its device
+        # from AUDIODEV, and the sdl2-compat/SDL3 stack ignores AUDIODEV. The
+        # attribute was right; nothing carried it to the process. So assert the
+        # argv — the thing the kernel actually sees.
+        argv = speaker.Player("http://x", "/bin/ffmpeg").command("rain")
+        self.assertIn("-f", argv)
+        self.assertEqual(argv[argv.index("-f") + 1], "alsa")
+        self.assertEqual(argv[-1], "plughw:0,0", "the device must be the output argument")
+        self.assertNotIn("default", argv, "`default` is PipeWire's, and PipeWire is per-user")
+        self.assertEqual(argv[argv.index("-i") + 1], "http://x/rain.mp3")
+
+    def test_an_explicit_device_reaches_the_argv(self):
+        argv = speaker.Player("http://x", "/bin/ffmpeg", device="plughw:1,0").command("rain")
+        self.assertEqual(argv[-1], "plughw:1,0")
 
     def test_setting_a_level_does_not_unmute(self):
         m = FakeMixer(); m.muted = True

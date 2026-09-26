@@ -688,7 +688,8 @@ in
   };
 
   # --- gromit's sound card as a playback endpoint -------------------------------
-  # The green jack on the back: one ffplay on a station's mount, ALSA mixer
+  # The green jack on the back: one ffmpeg decoding a station's mount into the
+  # card (`-f alsa plughw:0,0` — an argument, so it cannot be ignored), ALSA mixer
   # for volume, a small JSON API behind radio.<domain>/speaker/. Starts on
   # the rain so a power cycle brings it back with nothing to press.
   systemd.services.netradio-speaker = {
@@ -710,7 +711,7 @@ in
         "--default-mount ${speakerDefaultMount}"
         "--start-volume ${toString speakerStartVolume}"
         "--start-muted"
-        "--ffplay ${pkgs.ffmpeg}/bin/ffplay"
+        "--ffmpeg ${pkgs.ffmpeg}/bin/ffmpeg"
       ];
       Environment = [ "PATH=${lib.makeBinPath [ pkgs.alsa-utils pkgs.ffmpeg ]}" ];
       PrivateDevices = false;         # it needs /dev/snd
