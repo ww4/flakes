@@ -246,3 +246,36 @@ class BedCheck(unittest.TestCase):
             ok = ambient.fetch(ambient.Bed("http://x/a.mp3", "a.mp3", "CC0"), Path(d) / "a.mp3")
         self.assertTrue(ok)
         self.assertIn("GET", calls)
+
+    def test_the_encoder_is_woken_before_connecting(self):
+        # on-demand encoders: without this the mount 404s and the service
+        # restart-loops, which is what it did on gromit (2026-09-25)
+        seen = []
+
+        class R:
+            def read(self, *a): return b""
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        with tempfile.TemporaryDirectory() as d:
+            fake = Path(d) / "player"; fake.write_text(f"#!{sys.executable}\nimport time; time.sleep(5)\n"); fake.chmod(0o755)
+            pl = speaker.Player("http://127.0.0.1:8020", str(fake), wake="http://127.0.0.1:8011")
+            with mock.patch.object(speaker.urllib.request, "urlopen",
+                                   side_effect=lambda req, timeout=None: seen.append(
+                                       (req.full_url, req.get_header("X-original-uri"))) or R()):
+                pl.play("rain")
+            pl.stop()
+        self.assertEqual(seen, [("http://127.0.0.1:8011/wake", "/radio/rain.mp3")])
+
+    def test_a_failed_wake_still_tries_the_mount(self):
+        with tempfile.TemporaryDirectory() as d:
+            fake = Path(d) / "player"; fake.write_text(f"#!{sys.executable}\nimport time; time.sleep(5)\n"); fake.chmod(0o755)
+            pl = speaker.Player("http://127.0.0.1:8020", str(fake), wake="http://127.0.0.1:8011")
+            with mock.patch.object(speaker.urllib.request, "urlopen", side_effect=OSError("down")):
+                pl.play("rain")
+            alive = pl.alive(); pl.stop()
+        self.assertTrue(alive)
+
+    def test_the_alsa_device_is_never_pipewires_default(self):
+        pl = speaker.Player("http://x", "/bin/true")
+        self.assertEqual(pl.device or "plughw:0,0", "plughw:0,0")

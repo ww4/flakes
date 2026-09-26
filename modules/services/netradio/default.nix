@@ -693,8 +693,8 @@ in
   systemd.services.netradio-speaker = {
     description = "Play a library station on gromit's own audio output";
     wantedBy = [ "multi-user.target" ];
-    after = [ "netradio-icecast.service" "sound.target" ];
-    wants = [ "netradio-icecast.service" ];
+    after = [ "netradio-icecast.service" "netradio-wake.service" "sound.target" ];
+    wants = [ "netradio-icecast.service" "netradio-wake.service" ];
     serviceConfig = hardening // {
       User = user;
       Group = user;
@@ -702,7 +702,9 @@ in
       ExecStart = lib.concatStringsSep " " [
         "${netradio}/bin/netradio speaker"
         "--icecast http://127.0.0.1:${toString icecastPort}"
+        "--wake http://127.0.0.1:${toString wakePort}"
         "--listen 127.0.0.1 --port ${toString speakerPort}"
+        "--device plughw:0,0"
         "--card ${speakerCard}"
         "--default-mount ${speakerDefaultMount}"
         "--start-volume ${toString speakerStartVolume}"
