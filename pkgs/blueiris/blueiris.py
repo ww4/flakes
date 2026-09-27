@@ -60,6 +60,9 @@ def load_site(site: str) -> dict:
 
 class BI:
     def __init__(self, cfg: dict):
+        # Kept whole: the per-site flap thresholds live in the same env file,
+        # and reading them off the object beats re-parsing it.
+        self.cfg = cfg
         self.url = cfg["BI_URL"].rstrip("/") + "/json"
         self.user, self.pw = cfg["BI_USER"], cfg["BI_PASSWORD"]
         self.session = None
@@ -258,9 +261,43 @@ def flush_held(st: dict) -> None:
 # ignore the channel, which is the failure mode this whole tool exists to avoid.
 
 FLAP_WINDOW_H = 24      # look back this far
-FLAP_ENTER = 6          # drops in the window to call it flapping
-FLAP_EXIT = 2           # drops in the window to call it stable again
+
+# ⚠️ THESE ARE IN UNITS OF THE NVR's COUNTER, NOT IN DROPS. Calibrated against
+# Craigmyle 2026-09-27: Blue Iris advances a camera's `count` in steps of TWO per
+# drop/restore cycle, so the numbers here are roughly 2x the real drop count.
+#
+# The first attempt used ENTER=6 believing it meant six drops. It meant about
+# three, which at this site is ordinary background — Monty House, Back Lot and
+# Shop Door all tripped it while being fine, and Chris got a page for each. A
+# flapping detector that fires on the healthy majority of an estate is worse than
+# no detector.
+#
+# Measured distribution at Craigmyle over 24h: healthy cameras 2-12; the
+# chronically sick one (New Shop East) 8-20; the genuinely failing Rita's group
+# 47-73 at its worst. 24 (~once an hour) separates "something is wrong" from
+# "normal for this site" with room on both sides.
+#
+# Per-site override, because a quiet office LAN and a tractor shop do not share a
+# normal: BI_FLAP_ENTER / BI_FLAP_EXIT in ~/.config/blueiris/<site>.env.
+FLAP_ENTER = 24         # counter units in the window to call it flapping
+FLAP_EXIT = 8           # counter units in the window to call it settled again
 _RESTORED = "signal: restored"
+
+# Flapping is a STANDING CONDITION, not an event, so it is reported as a digest
+# of everything currently flapping rather than one alert per camera per
+# transition. Chris, 2026-09-27: "I got one for each camera. That's flapping. I
+# want one combined notification for all flapping cameras."
+#
+# He is right twice over. It is noise — and it also ARGUES AGAINST THE FINDING:
+# five separate pages read as five faults, when the whole point of the flapping
+# work is that cameras failing together are ONE fault with one upstream. The
+# notification should say what the data says.
+#
+# Batching per RUN is not enough on its own. Cameras cross the threshold in
+# different polls (16:40 caught three, 17:40 caught a fourth), so the digest is
+# also rate-limited: at most one flap notification per interval, always carrying
+# the COMPLETE current set, and only when that set has changed.
+FLAP_DIGEST_INTERVAL_H = 6
 
 
 def _logtime(e: dict) -> str:
@@ -367,47 +404,95 @@ def mute_active(st: dict, short: str) -> tuple[bool, str]:
     return True, m.get("reason", "")
 
 
-def flap_transitions(st: dict, cams: list, drops: dict) -> set:
-    """Update flap state, alert on the EDGES, return who is flapping now.
+def flap_transitions(st: dict, cams: list, drops: dict,
+                     enter: int = FLAP_ENTER, exit_: int = FLAP_EXIT) -> set:
+    """Update who is flapping. Emits NOTHING — the digest does the reporting.
 
-    Hysteresis on purpose: enter at FLAP_ENTER drops, leave only at FLAP_EXIT.
-    A single threshold would have a camera sitting near it toggle
-    flapping/stable and produce exactly the alarm storm this replaces.
+    Hysteresis: enter high, leave low. A single threshold would have a camera
+    sitting near it toggle flapping/settled and produce the alarm storm this
+    whole mechanism replaces.
     """
     names = {c["optionValue"]: (c.get("optionDisplay") or c["optionValue"])
              for c in cams}
     flaps = st.setdefault("flapping", {})
-    now_flapping = set()
-
-    for short, name in names.items():
+    for short in names:
         n = drops.get(short, 0)
-        was = short in flaps
-        if n >= FLAP_ENTER and not was:
+        if n >= enter and short not in flaps:
             flaps[short] = {"since": _now(), "drops": n}
-            emit(st, f"blueiris: CAMERA FLAPPING — {name}",
-                 f"{name} ({short}) has dropped and recovered {n} times in the "
-                 f"last {FLAP_WINDOW_H}h, per the NVR's own log.\n\n"
-                 f"This is a link/power fault, not a dead camera — it keeps "
-                 f"coming back. Individual up/down alerts for it are suppressed "
-                 f"while this lasts; you get one more when it settles.\n\n"
-                 f"If several cameras flap together they share an upstream — "
-                 f"look at that switch or run, not the cameras.\n\n"
-                 f"To silence it while it waits on a fix:  "
-                 f"blueiris mute {short} --days 7 \"flapping, awaiting repair\"",
-                 "high", "warning")
-        elif was and n <= FLAP_EXIT:
-            since = flaps.pop(short, {}).get("since", "?")
-            emit(st, f"blueiris: camera settled — {name}",
-                 f"{name} ({short}) has stopped flapping "
-                 f"({n} drops in the last {FLAP_WINDOW_H}h).\n"
-                 f"It had been flapping since {since}.",
-                 "default", "white_check_mark")
-        elif was:
-            flaps[short]["drops"] = n          # still flapping; refresh count
-            now_flapping.add(short)
-        if short in flaps:
-            now_flapping.add(short)
-    return now_flapping
+        elif short in flaps and n <= exit_:
+            flaps.pop(short, None)
+        elif short in flaps:
+            flaps[short]["drops"] = n
+    return set(flaps)
+
+
+def notify_flapping(st: dict, site: str, cams: list, drops: dict,
+                    enter: int) -> None:
+    """ONE notification covering every flapping camera. Never one per camera.
+
+    Rate-limited and set-change gated, because flapping is a standing condition:
+    a camera that has been flapping since breakfast is not news every 10 minutes,
+    and a fourth camera joining three others is not a separate incident from the
+    first three. The digest always carries the COMPLETE current set, so whichever
+    one arrives is a full picture rather than a fragment.
+    """
+    from datetime import datetime, timedelta, timezone
+    names = {c["optionValue"]: (c.get("optionDisplay") or c["optionValue"])
+             for c in cams}
+    now_set = set(st.get("flapping") or {})
+    last_set = set(st.get("flapnotified") or [])
+    if now_set == last_set:
+        return
+
+    last_at = st.get("flapnotified_at")
+    if last_at and now_set:
+        try:
+            if datetime.now(timezone.utc) - datetime.fromisoformat(last_at) < \
+                    timedelta(hours=FLAP_DIGEST_INTERVAL_H):
+                # Changed, but too soon. Hold it: the next digest carries the
+                # full set anyway, so nothing is lost by waiting.
+                print(f"  flapping set changed ({len(now_set)}) — holding, "
+                      f"digest sent < {FLAP_DIGEST_INTERVAL_H}h ago")
+                return
+        except ValueError:
+            pass
+
+    if not now_set:
+        st["flapnotified"] = []
+        st["flapnotified_at"] = _now()
+        emit(st, f"blueiris: cameras settled — {site}",
+             "Nothing is flapping any more. Previously flapping:\n"
+             + "\n".join(f"  {names.get(s, s)}" for s in sorted(last_set)),
+             "default", "white_check_mark")
+        return
+
+    rows = sorted(now_set, key=lambda s: -drops.get(s, 0))
+    new = now_set - last_set
+    gone = last_set - now_set
+    lines = []
+    for short in rows:
+        mark = "  (new)" if short in new else ""
+        lines.append(f"  {names.get(short, short)}: {drops.get(short, 0)}{mark}")
+    body = (f"{len(now_set)} camera(s) at {site} are dropping and recovering "
+            f"repeatedly, in the last {FLAP_WINDOW_H}h "
+            f"(counter units; >= {enter} is flapping):\n" + "\n".join(lines))
+    if gone:
+        body += ("\n\nSettled since the last report:\n"
+                 + "\n".join(f"  {names.get(s, s)}" for s in sorted(gone)))
+    if len(now_set) > 1:
+        body += ("\n\nSeveral at once usually means ONE shared upstream — a "
+                 "switch, an uplink, a PoE budget or a powerline adapter — not "
+                 "several broken cameras. On site: `netdiag legs` groups the "
+                 "ones failing together, and `netdiag plc` checks for a "
+                 "powerline adapter in the path.")
+    body += (f"\n\nThis is one combined report; there will not be another for "
+             f"at least {FLAP_DIGEST_INTERVAL_H}h unless the set changes.\n"
+             f"To silence one:  blueiris mute <cam> --days 7 \"reason\"")
+
+    emit(st, f"blueiris: {len(now_set)} camera(s) FLAPPING — {site}",
+         body, "high", "warning")
+    st["flapnotified"] = sorted(now_set)
+    st["flapnotified_at"] = _now()
 
 
 # A mute is cleared automatically only once the camera has been SOLIDLY back:
@@ -449,8 +534,43 @@ def clear_settled_mutes(st: dict, site: str, flapping: set) -> None:
              "default", "white_check_mark")
 
 
+def flap_limits(cfg: dict) -> tuple[int, int]:
+    """Per-site thresholds, falling back to the calibrated defaults."""
+    def val(key, default):
+        try:
+            n = int(cfg.get(key, ""))
+            return n if n > 0 else default
+        except (TypeError, ValueError):
+            return default
+    enter = val("BI_FLAP_ENTER", FLAP_ENTER)
+    exit_ = val("BI_FLAP_EXIT", FLAP_EXIT)
+    # Hysteresis must survive a bad config: an exit at or above enter would let a
+    # camera toggle flapping/settled on one event and recreate the alarm storm.
+    return enter, min(exit_, max(1, enter - 1))
+
+
+# Bumped whenever a change would make the stored flap state mean something
+# different. Deploying the recalibrated thresholds without this would strand the
+# cameras admitted under the OLD too-low ENTER: hysteresis only releases a camera
+# below EXIT, so Back Lot at 12 units would sit in the flapping set indefinitely
+# and keep appearing in every digest, having never been a problem.
+FLAP_STATE_VERSION = 2
+
+
+def migrate_flap_state(st: dict) -> None:
+    if st.get("flapver") == FLAP_STATE_VERSION:
+        return
+    if st.get("flapping") or st.get("flapnotified"):
+        print("  thresholds changed — re-evaluating flap state from scratch")
+    st["flapping"] = {}
+    st["flapnotified"] = []
+    st.pop("flapnotified_at", None)
+    st["flapver"] = FLAP_STATE_VERSION
+
+
 def cmd_watch(bi: "BI", site: str) -> int:
     st = load_state(site)
+    migrate_flap_state(st)
     flush_held(st)
     cams = bi.cameras()
 
@@ -497,7 +617,8 @@ def cmd_watch(bi: "BI", site: str) -> int:
         elif not prev.get("online") and online:
             came_back.append((name, short))
 
-    flapping = flap_transitions(st, cams, drops)
+    enter, exit_ = flap_limits(bi.cfg)
+    flapping = flap_transitions(st, cams, drops, enter, exit_)
 
     if seeding:
         st["seeded"] = _now()
@@ -510,34 +631,67 @@ def cmd_watch(bi: "BI", site: str) -> int:
                  for c in off),
              "default", "camera")
 
+    # ONE notification per class per run, never one per camera. Five cameras
+    # going down together is ONE event — five pages both bury the signal and
+    # misrepresent it as five faults. (Craigmyle, 2026-09-27 13:30: five
+    # separate DOWN pages for what was a single upstream failing.)
+    down_now = []
     for name, short, err in went_down:
         muted, reason = mute_active(st, short)
         if muted:
             print(f"  {name} went down but is MUTED ({reason}) — not alerting")
             continue
         if short in flapping:
-            # Already reported as flapping. Reporting each individual drop on
-            # top of that is the alarm storm, not extra information.
-            print(f"  {name} went down — already reported FLAPPING, not alerting")
+            # Covered by the flapping digest. Reporting each individual drop on
+            # top of that IS the alarm storm.
+            print(f"  {name} went down — in the FLAPPING digest, not alerting")
             continue
-        emit(st, f"blueiris: CAMERA DOWN — {name}",
-             f"{name} ({short}) at {site} stopped responding.\n"
-             f"error: {err or '<none reported>'}\n\n"
-             f"If it cannot be fixed soon:  blueiris mute {short} --days 30 "
-             f"\"awaiting replacement\"",
-             "high", "camera")
+        down_now.append((name, short, err))
 
+    up_now = []
     for name, short in came_back:
         if short in flapping:
-            print(f"  {name} back up — already reported FLAPPING, not alerting")
+            print(f"  {name} back up — in the FLAPPING digest, not alerting")
             continue
         if mute_active(st, short)[0]:
             print(f"  {name} back up but still MUTED — see mute-clear below")
             continue
-        emit(st, f"blueiris: camera recovered — {name}",
-             f"{name} ({short}) at {site} is online again.",
-             "default", "white_check_mark")
+        up_now.append((name, short))
 
+    if down_now:
+        if len(down_now) == 1:
+            name, short, err = down_now[0]
+            emit(st, f"blueiris: CAMERA DOWN — {name}",
+                 f"{name} ({short}) at {site} stopped responding.\n"
+                 f"error: {err or '<none reported>'}\n\n"
+                 f"If it cannot be fixed soon:  blueiris mute {short} "
+                 f"--days 30 \"awaiting replacement\"",
+                 "high", "camera")
+        else:
+            emit(st, f"blueiris: {len(down_now)} CAMERAS DOWN — {site}",
+                 f"{len(down_now)} cameras stopped responding at the same "
+                 f"time:\n"
+                 + "\n".join(
+                     f"  {n} ({sh}): {e or '<no error reported>'}"
+                     for n, sh, e in down_now)
+                 + "\n\nGoing down together usually means ONE shared "
+                   "upstream — a switch, an uplink, a PoE budget or a "
+                   "powerline adapter — not several broken cameras.",
+                 "high", "camera")
+
+    if up_now:
+        if len(up_now) == 1:
+            name, short = up_now[0]
+            emit(st, f"blueiris: camera recovered — {name}",
+                 f"{name} ({short}) at {site} is online again.",
+                 "default", "white_check_mark")
+        else:
+            emit(st, f"blueiris: {len(up_now)} cameras recovered — {site}",
+                 "Back online:\n"
+                 + "\n".join(f"  {n} ({sh})" for n, sh in up_now),
+                 "default", "white_check_mark")
+
+    notify_flapping(st, site, cams, drops, enter)
     clear_settled_mutes(st, site, flapping)
 
     save_state(site, st)
