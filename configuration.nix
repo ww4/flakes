@@ -245,7 +245,9 @@ let hm = homelab-modules.nixosModules; in
       enable = true;
       label = "Gromit speakers";
       defaultMount = "rainymood";           # the seamless loop, not the five-bed variety station
-      startVolume = 35;
+      # Chris set this by ear on the rain loop (2026-09-27): where it should come
+      # up, with plenty of headroom left above it.
+      startVolume = 70;
     };
 
     # The living-room R-N301, via modules/services/yamaha-ync.nix.

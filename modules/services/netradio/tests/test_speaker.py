@@ -28,7 +28,8 @@ class FakeMixer(speaker.Mixer):
     def __init__(self, level: int = 35):
         self.calls: list[tuple[str, ...]] = []
         self.level, self.muted = level, False
-        self.FADE_MS = 0          # no real sleeping in tests
+        self.STEP_MS = 1                          # a step per ms, so a ramp is
+        self.fade_in_ms, self.fade_out_ms = 30, 12   # 30 and 12 steps, ~42 ms total
         super().__init__("0", control="Master")
 
     def _run(self, *args: str) -> str:
@@ -62,7 +63,7 @@ class FakeMixer(speaker.Mixer):
 class MixerParsing(unittest.TestCase):
     def test_picks_master_and_reads_level(self):
         m = speaker.Mixer.__new__(speaker.Mixer)
-        m.card, m.amixer, m._muted = "0", "amixer", False
+        m.card, m.amixer = "0", "amixer"
         with mock.patch.object(speaker.Mixer, "_run", return_value="Simple mixer control 'PCM',0\nSimple mixer control 'Master',0\n"):
             self.assertEqual(m._find(), "Master")          # Master wins over PCM
         m.control = "Master"
@@ -401,3 +402,145 @@ class BedCheck(unittest.TestCase):
         with mock.patch.object(speaker.Mixer, "_run", side_effect=lambda *a: seen.append(a) or ""):
             m.set(40)
         self.assertNotIn("unmute", seen[0])
+
+
+class Shutdown(unittest.TestCase):
+    """SIGTERM must end the process promptly.
+
+    It did not: the handler called `srv.shutdown()` while the main thread was
+    inside `serve_forever()`, and since Python runs handlers on the main
+    thread, shutdown() waited for a loop that could not run. systemd took the
+    full 90 s TimeoutStop and SIGKILLed — 90 s of silence on every deploy, and
+    the window Chris hit on 2026-09-26 when the station "wouldn't play".
+
+    This runs the real CLI in a subprocess, because the bug only exists in the
+    interaction between a real signal, a real main thread and a real server.
+    """
+
+    def test_sigterm_exits_promptly(self):
+        import os
+        import signal as sig
+        import socket
+        import subprocess
+        import time as t
+
+        with tempfile.TemporaryDirectory() as d:
+            fake = Path(d) / "ffmpeg"
+            fake.write_text(f"#!{sys.executable}\nimport time\nwhile True: time.sleep(1)\n")
+            fake.chmod(0o755)
+            with socket.socket() as s:                     # a port nobody is on
+                s.bind(("127.0.0.1", 0))
+                port = s.getsockname()[1]
+            env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)}
+            p = subprocess.Popen(
+                [sys.executable, "-m", "netradio.cli", "speaker",
+                 "--listen", "127.0.0.1", "--port", str(port),
+                 "--card", "99",                            # no such card: the mixer no-ops
+                 "--icecast", "http://127.0.0.1:1",
+                 "--default-mount", "rain",
+                 "--ffmpeg", str(fake)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+            try:
+                # wait for it to be listening, so we are not racing startup
+                for _ in range(100):
+                    with socket.socket() as c:
+                        if c.connect_ex(("127.0.0.1", port)) == 0:
+                            break
+                    t.sleep(0.1)
+                else:
+                    self.skipTest("the service never came up; nothing to prove about its exit")
+
+                began = t.monotonic()
+                p.send_signal(sig.SIGTERM)
+                try:
+                    p.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    self.fail("SIGTERM did not end the process within 15 s — systemd would "
+                              "wait out TimeoutStop and SIGKILL it, silencing the station")
+                self.assertLess(t.monotonic() - began, 15)
+            finally:
+                if p.poll() is None:
+                    p.kill()
+                    p.wait(timeout=10)
+
+
+class VolumeCeiling(unittest.TestCase):
+    """Nothing may drive the card past the configured ceiling.
+
+    Chris found the live level at 100% on 2026-09-26 with no way to attribute
+    it — the service logged no level changes at all. Both halves are fixed: a
+    cap that cannot be exceeded, and an INFO line for every change.
+    """
+
+    def capped(self, cap, level=35):
+        m = FakeMixer.__new__(FakeMixer)
+        m.calls, m.level, m.muted = [], level, False
+        m.STEP_MS, m.fade_in_ms, m.fade_out_ms = 1, 30, 12
+        speaker.Mixer.__init__(m, "0", control="Master", cap=cap)
+        return m
+
+    def test_an_explicit_level_is_clamped(self):
+        m = self.capped(80)
+        m.choose(100)
+        self.assertEqual(m.level, 80)
+        self.assertEqual(m.target, 80, "and the remembered level is the capped one")
+
+    def test_stepping_cannot_climb_past_it(self):
+        m = self.capped(60, level=55)
+        for _ in range(10):
+            m.step(5)
+        self.assertEqual(m.level, 60)
+
+    def test_a_raw_set_is_capped_too(self):
+        m = self.capped(50)
+        m.set(99)
+        self.assertEqual(m.level, 50, "the ramp uses set(), so the ceiling has to hold there")
+
+    def test_unmuting_cannot_exceed_it(self):
+        m = self.capped(70, level=70)
+        m.mute(True)
+        m.target = 100          # however it got there
+        m.mute(False)
+        self.assertLessEqual(m.level, 70)
+
+    def test_the_default_ceiling_changes_nothing(self):
+        m = self.capped(100)
+        m.choose(100)
+        self.assertEqual(m.level, 100)
+
+
+class FadeShape(unittest.TestCase):
+    """Chris asked for a longer fade IN than out (2026-09-27): coming back
+    should be gentle, going away and ordinary volume changes should feel
+    immediate."""
+
+    def test_the_fade_in_is_longer_than_the_fade_out(self):
+        self.assertGreater(speaker.Mixer.fade_in_ms, speaker.Mixer.fade_out_ms)
+        self.assertEqual(speaker.Mixer.fade_in_ms, 300)
+        self.assertEqual(speaker.Mixer.fade_out_ms, 120)
+
+    def test_unmuting_takes_more_steps_than_muting(self):
+        m = FakeMixer(35)
+        m.calls.clear(); m.mute(True)
+        out = len(m.levels())
+        m.calls.clear(); m.mute(False)
+        back = len(m.levels())
+        self.assertGreater(back, out, f"fade in {back} steps vs out {out}")
+
+    def test_the_ramp_honours_the_clock_not_a_flat_sleep(self):
+        """Every write forks amixer, so sleeping a flat interval per step made
+        the fade reliably longer than asked. Pace against monotonic time."""
+        import time as t
+        m = FakeMixer(35)
+        m.STEP_MS, m.fade_out_ms = 4, 120
+        began = t.monotonic()
+        m._ramp(35, 0, 120)
+        took = (t.monotonic() - began) * 1000
+        self.assertGreater(took, 90, f"should not finish early: {took:.0f} ms")
+        self.assertLess(took, 400, f"should not overshoot badly: {took:.0f} ms")
+
+    def test_a_zero_duration_still_reaches_the_target(self):
+        m = FakeMixer(35)
+        m.calls.clear()
+        m._ramp(35, 60, 0)
+        self.assertEqual(m.level, 60, "no time to fade is not permission to skip the change")

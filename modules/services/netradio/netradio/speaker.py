@@ -56,9 +56,31 @@ class Mixer:
 
     CANDIDATES = ("Master", "PCM", "Speaker", "Headphone", "Digital")
 
-    def __init__(self, card: str, amixer: str = "amixer", control: str = ""):
+    # Class-level defaults so an instance built without __init__ still behaves.
+    # Tests and diagnostics do that, and every time a new instance attribute
+    # appeared they broke on AttributeError instead of on the thing under test.
+    cap = 100
+    target = 50
+    _muted = False
+    # Asymmetric on purpose. Coming back is a fade IN and wants to be gentle;
+    # going away, and any ordinary volume change, wants to feel immediate.
+    # Chris set 300 ms in by ear (2026-09-27).
+    fade_in_ms = 300
+    fade_out_ms = 120
+
+    def __init__(self, card: str, amixer: str = "amixer", control: str = "", cap: int = 100,
+                 fade_in_ms: int | None = None, fade_out_ms: int | None = None):
         self.card = card
         self.amixer = amixer
+        # A ceiling nothing can exceed: not the UI, not a stray request, not a
+        # diagnostic. Chris found the live level at 100% on 2026-09-26 with no
+        # way to tell what had put it there, and on speakers that is the kind of
+        # accident worth making impossible rather than unlikely.
+        self.cap = max(0, min(100, int(cap)))
+        if fade_in_ms is not None:
+            self.fade_in_ms = max(0, int(fade_in_ms))
+        if fade_out_ms is not None:
+            self.fade_out_ms = max(0, int(fade_out_ms))
         self.control = control or self._find()
         self.lock = threading.RLock()
         self._muted = False
@@ -106,38 +128,50 @@ class Mixer:
         not unmute when you change its volume, and a box that boots muted
         must stay muted until someone asks for sound (Chris, 2026-09-25)."""
         if self.control:
-            self._run("sset", self.control, f"{max(0, min(100, int(level)))}%")
+            self._run("sset", self.control, f"{max(0, min(self.cap, int(level)))}%")
 
     def choose(self, level: int) -> None:
         """A user-driven level change: remember it, and slide rather than jump.
         While muted it is only remembered — changing the volume must not bring
         the sound back."""
-        level = max(0, min(100, int(level)))
+        level = max(0, min(self.cap, int(level)))
         with self.lock:
             cur, muted = self.state()
+            log.info("volume %s -> %d%s", cur, level, " (muted, remembered only)" if muted else "")
             self.target = level
             if muted:
                 return
-            self._ramp(cur if cur is not None else level, level)
+            self._ramp(cur if cur is not None else level, level, self.fade_out_ms)
 
     def step(self, delta: int) -> None:
         with self.lock:
             self.choose(self.target + delta)
 
-    # How the fade is shaped. 120 ms is long enough that the step between
-    # amixer writes is inaudible and short enough to feel instant.
-    FADE_MS = 120
-    FADE_STEPS = 12
+    # One write every ~12 ms: fine enough that the steps are inaudible, coarse
+    # enough that a 300 ms fade is 25 subprocess calls and not 300.
+    STEP_MS = 12
 
-    def _ramp(self, start: int, end: int) -> None:
-        """Walk the level from start to end so the change is a slope, not a
-        step. Each amixer write is one codec register write; spacing them is
-        the whole trick."""
-        if start == end:
+    def _ramp(self, start: int, end: int, ms: int) -> None:
+        """Walk the level from start to end over `ms`, so the change is a slope
+        rather than a step. Each amixer write is one codec register write;
+        spacing them is the whole trick.
+
+        The pacing is against the CLOCK, not a fixed sleep per step: every
+        write forks amixer, which costs a few milliseconds of its own, so
+        sleeping a flat interval made the fade reliably longer than asked for.
+        """
+        if start == end or ms <= 0:
+            if start != end:
+                self.set(end)
             return
-        for i in range(1, self.FADE_STEPS + 1):
-            self.set(round(start + (end - start) * i / self.FADE_STEPS))
-            time.sleep(self.FADE_MS / 1000.0 / self.FADE_STEPS)
+        steps = max(2, round(ms / self.STEP_MS))
+        began = time.monotonic()
+        for i in range(1, steps + 1):
+            self.set(round(start + (end - start) * i / steps))
+            due = began + (ms / 1000.0) * i / steps
+            remaining = due - time.monotonic()
+            if remaining > 0:
+                time.sleep(remaining)
 
     def mute(self, on: bool) -> None:
         """Mute by taking the level to zero. The codec's mute switch is never
@@ -163,14 +197,15 @@ class Mixer:
         with self.lock:
             cur, _ = self.state()
             cur = cur if cur is not None else 50
+            log.info("%s (level %s, returning to %d)", "mute" if on else "unmute", cur, self.target)
             if on:
                 if not self._muted:
                     self.target = cur          # remember where to come back to
-                self._ramp(cur, 0)
+                self._ramp(cur, 0, self.fade_out_ms)
                 self._muted = True
             else:
                 self._muted = False
-                self._ramp(0, self.target)
+                self._ramp(0, self.target, self.fade_in_ms)
 
 
 class Player:
@@ -357,6 +392,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--wake", default="", help="the wake service, e.g. http://127.0.0.1:8011 (starts the encoder)")
     ap.add_argument("--default-mount", default="", help="play this at startup (the rain, usually)")
     ap.add_argument("--start-volume", type=int, help="set the mixer here at startup")
+    ap.add_argument("--max-volume", type=int, default=100,
+                    help="a ceiling no request can exceed — protects the speakers from a stray 100%%")
+    ap.add_argument("--fade-in-ms", type=int, default=300, help="how long an unmute takes to come back")
+    ap.add_argument("--fade-out-ms", type=int, default=120, help="how long a mute, or a volume change, takes")
     ap.add_argument("--start-muted", action="store_true",
                     help="come up silent — the stream runs, the jack is quiet until unmuted")
     ap.add_argument("--ffmpeg", default=shutil.which("ffmpeg") or "ffmpeg")
@@ -365,8 +404,10 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(message)s", stream=sys.stdout)
 
-    mixer = Mixer(args.card, control=args.control)
-    log.info("mixer control: %s (card %s)", mixer.control or "none found", args.card)
+    mixer = Mixer(args.card, control=args.control, cap=args.max_volume,
+                  fade_in_ms=args.fade_in_ms, fade_out_ms=args.fade_out_ms)
+    log.info("mixer control: %s (card %s), ceiling %d%%, fade %d/%d ms in/out",
+             mixer.control or "none found", args.card, mixer.cap, mixer.fade_in_ms, mixer.fade_out_ms)
     if args.start_volume is not None:
         mixer.set(args.start_volume)
     if args.start_muted:
@@ -380,12 +421,28 @@ def main(argv: list[str] | None = None) -> int:
         player.play(args.default_mount)
 
     srv = ThreadingHTTPServer((args.listen, args.port), make_handler(player, mixer))
-    signal.signal(signal.SIGTERM, lambda *_: (stop.set(), player.stop(), srv.shutdown()))
+    # Serve on a THREAD and wait here. The obvious shape — serve_forever() in
+    # the main thread with a SIGTERM handler that calls srv.shutdown() —
+    # deadlocks: Python runs signal handlers on the main thread, so shutdown()
+    # blocks waiting for a serve loop that cannot run until the handler
+    # returns. systemd then waited the full 90 s TimeoutStop and SIGKILLed,
+    # which is 90 s of silence on every single deploy (2026-09-26).
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: stop.set())
     log.info("speaker on %s:%d, playing %s", args.listen, args.port, args.default_mount or "nothing")
     try:
-        srv.serve_forever()
+        # A POLLING wait, not a bare stop.wait(). An untimed wait depends on the
+        # signal interrupting a C-level lock acquire, which held on the box and
+        # did NOT in the build sandbox — the process outlived SIGTERM by more
+        # than 15 s there. Waking twice a second makes the handler's effect
+        # observable no matter how the platform treats the interrupt.
+        while not stop.wait(0.5):
+            pass
     except KeyboardInterrupt:
         pass
     stop.set()
     player.stop()
+    srv.shutdown()          # safe from here: the loop is on another thread
+    srv.server_close()
     return 0
