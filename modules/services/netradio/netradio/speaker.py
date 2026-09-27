@@ -61,6 +61,13 @@ class Mixer:
         self.amixer = amixer
         self.control = control or self._find()
         self.lock = threading.RLock()
+        self._muted = False
+        # The codec's own mute switch is never touched after this (see mute()),
+        # so clear it ONCE at startup — a `[off]` left in alsa-state from before
+        # would otherwise make the service silent forever while it happily
+        # ramped a volume nobody could hear. This is the one click per start.
+        if self.control:
+            self._run("sset", self.control, "unmute")
         # Where an unmute returns to. A muted control reads 0%, so the level
         # has to be remembered rather than read back.
         cur, _ = self.state()
@@ -85,12 +92,14 @@ class Mixer:
         return names[0] if names else ""
 
     def state(self) -> tuple[int | None, bool]:
-        """(volume 0-100, muted)."""
+        """(volume 0-100, muted). Muted is OUR state, because the mute is a
+        level of zero rather than the codec's switch; `[off]` still counts, so
+        someone muting the card by hand is not reported as unmuted."""
         if not self.control:
             return None, False
         out = self._run("sget", self.control)
         pct = re.search(r"\[(\d{1,3})%\]", out)
-        return (int(pct.group(1)) if pct else None), ("[off]" in out)
+        return (int(pct.group(1)) if pct else None), (self._muted or "[off]" in out)
 
     def set(self, level: int) -> None:
         """Level only. Deliberately NOT `unmute` as well: the receiver does
@@ -131,31 +140,36 @@ class Mixer:
             time.sleep(self.FADE_MS / 1000.0 / self.FADE_STEPS)
 
     def mute(self, on: bool) -> None:
-        """Fade, THEN switch — which is what stops the pop.
+        """Mute by taking the level to zero. The codec's mute switch is never
+        written.
 
-        Chris asked for zero-crossing detection (2026-09-26). That is the
-        right tool for gating a signal path, but it is not what is clicking
-        here and ALSA exposes no zero-cross hook to userspace: the codec's
-        output mute is a register write, and the click is the amplifier
-        stage's DC transient plus the instant envelope step from full level
-        to nothing. Muting exactly on a zero crossing would not remove
-        either. What does remove them is making the level change a slope and
-        doing the register write while the output is already silent — so:
-        ramp down, mute, and on the way back unmute at zero and ramp up.
+        The story, because it rules out the obvious alternatives. Chris asked
+        for zero-crossing detection; a fade was tried first, on the theory that
+        the click was the envelope step from full level to nothing. The fade is
+        audible and pleasant — and the click was completely unchanged
+        (2026-09-26). That measurement is the answer: a transient that does not
+        care what the volume is, is not in the signal. It is the pin widget's
+        mute bit stepping the analog stage's DC operating point, which is also
+        why zero-crossing detection could never have helped — there is no
+        crossing to catch.
+
+        So: no switch. `Master` bottoms out at -64 dB (dbmin -6400 on this
+        codec), which is inaudible, and the DAC node reports `mute=0` — it has
+        no mute of its own to use instead. Ramping to the bottom is both silent
+        and click-free, and `_muted` carries the state the switch used to.
         """
         if not self.control:
             return
         with self.lock:
-            cur, muted = self.state()
+            cur, _ = self.state()
             cur = cur if cur is not None else 50
             if on:
-                if not muted:
+                if not self._muted:
                     self.target = cur          # remember where to come back to
                 self._ramp(cur, 0)
-                self._run("sset", self.control, "mute")
+                self._muted = True
             else:
-                self.set(0)                    # switch in silence
-                self._run("sset", self.control, "unmute")
+                self._muted = False
                 self._ramp(0, self.target)
 
 

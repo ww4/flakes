@@ -62,7 +62,7 @@ class FakeMixer(speaker.Mixer):
 class MixerParsing(unittest.TestCase):
     def test_picks_master_and_reads_level(self):
         m = speaker.Mixer.__new__(speaker.Mixer)
-        m.card, m.amixer = "0", "amixer"
+        m.card, m.amixer, m._muted = "0", "amixer", False
         with mock.patch.object(speaker.Mixer, "_run", return_value="Simple mixer control 'PCM',0\nSimple mixer control 'Master',0\n"):
             self.assertEqual(m._find(), "Master")          # Master wins over PCM
         m.control = "Master"
@@ -332,38 +332,57 @@ class BedCheck(unittest.TestCase):
         m.set(50)
         self.assertTrue(m.muted, "changing the volume must not bring the sound back")
 
-    def test_mute_fades_down_BEFORE_it_switches(self):
-        # The pop Chris heard (2026-09-26): the codec's mute was a register
-        # write at full level, so the output stepped from 35% to nothing in one
-        # sample. Ramp first, switch in silence.
+    def test_mute_NEVER_writes_the_codec_switch(self):
+        """The click Chris heard is the pin widget's mute bit stepping the
+        analog stage's DC, not an envelope step: a 120 ms fade left it
+        completely unchanged (2026-09-26). A transient that does not care about
+        the volume is not in the signal, so the switch is simply never used —
+        `Master` bottoms out at -64 dB, which is inaudible.
+        """
         m = FakeMixer(35)
         m.calls.clear()
         m.mute(True)
-        levels, switches = m.levels(), m.switches()
-        self.assertEqual(switches, ["mute"])
+        self.assertEqual(m.switches(), [], "the codec's mute must never be written")
+        levels = m.levels()
         self.assertGreater(len(levels), 4, "expected a ramp, not a single write")
-        self.assertEqual(levels[-1], 0, "must reach silence before muting")
-        self.assertTrue(all(a >= b for a, b in zip(levels, levels[1:])), f"ramp must be monotonic down: {levels}")
-        # and the last level write precedes the mute switch
-        order = [("level" if a[0] == "sset" and any(x.endswith("%") for x in a[2:]) else "switch")
-                 for a in m.calls if a[0] == "sset"]
-        self.assertEqual(order[-1], "switch", "the switch must come last")
+        self.assertEqual(levels[-1], 0)
+        self.assertTrue(all(a >= b for a, b in zip(levels, levels[1:])), f"monotonic down: {levels}")
+        self.assertTrue(m.state()[1], "and it must still REPORT muted")
 
-    def test_unmute_switches_at_zero_then_fades_back_up(self):
+    def test_unmute_ramps_back_up_with_no_switch_either(self):
         m = FakeMixer(35)
-        m.mute(True); m.calls.clear()
+        m.mute(True)
+        self.assertEqual(m.level, 0, "muted means the level really is at the bottom")
+        m.calls.clear()
         m.mute(False)
         levels = m.levels()
-        self.assertEqual(m.switches(), ["unmute"])
-        self.assertEqual(levels[0], 0, "must unmute while silent")
-        self.assertEqual(levels[-1], 35, "must return to the level it was muted at")
-        self.assertTrue(all(a <= b for a, b in zip(levels, levels[1:])), f"ramp must be monotonic up: {levels}")
+        self.assertEqual(m.switches(), [])
+        # _ramp writes the first STEP, not the starting value it already sits at
+        self.assertLess(levels[0], 10, f"climbs from the bottom: {levels}")
+        self.assertEqual(levels[-1], 35, "returns to the level it was muted at")
+        self.assertTrue(all(a <= b for a, b in zip(levels, levels[1:])), f"monotonic up: {levels}")
+        self.assertFalse(m.state()[1])
+
+    def test_the_startup_unmute_happens_exactly_once(self):
+        """The switch is never touched again, so a stale `[off]` in alsa-state
+        would make the service permanently silent while it ramped a volume
+        nobody could hear. Clear it once, at construction."""
+        m = FakeMixer(35)
+        self.assertEqual(m.switches(), ["unmute"], "one unmute, at startup")
+        m.calls.clear()
+        m.mute(True); m.mute(False); m.choose(50)
+        self.assertEqual(m.switches(), [], "and never again")
+
+    def test_a_card_muted_by_hand_still_reads_as_muted(self):
+        m = FakeMixer(35)
+        m.muted = True                      # somebody ran amixer themselves
+        self.assertTrue(m.state()[1])
 
     def test_the_level_chosen_while_muted_is_where_unmute_returns(self):
         m = FakeMixer(35)
         m.mute(True)
         m.choose(60)
-        self.assertTrue(m.muted, "choosing a level must not unmute")
+        self.assertTrue(m.state()[1], "choosing a level must not unmute")
         self.assertEqual(m.level, 0, "and must not raise the output either")
         m.mute(False)
         self.assertEqual(m.level, 60)
