@@ -28,7 +28,8 @@ class FakeMixer(speaker.Mixer):
     def __init__(self, level: int = 35):
         self.calls: list[tuple[str, ...]] = []
         self.level, self.muted = level, False
-        self.FADE_MS = 0          # no real sleeping in tests
+        self.STEP_MS = 1                          # a step per ms, so a ramp is
+        self.fade_in_ms, self.fade_out_ms = 30, 12   # 30 and 12 steps, ~42 ms total
         super().__init__("0", control="Master")
 
     def _run(self, *args: str) -> str:
@@ -473,7 +474,8 @@ class VolumeCeiling(unittest.TestCase):
 
     def capped(self, cap, level=35):
         m = FakeMixer.__new__(FakeMixer)
-        m.calls, m.level, m.muted, m.FADE_MS = [], level, False, 0
+        m.calls, m.level, m.muted = [], level, False
+        m.STEP_MS, m.fade_in_ms, m.fade_out_ms = 1, 30, 12
         speaker.Mixer.__init__(m, "0", control="Master", cap=cap)
         return m
 
@@ -505,3 +507,40 @@ class VolumeCeiling(unittest.TestCase):
         m = self.capped(100)
         m.choose(100)
         self.assertEqual(m.level, 100)
+
+
+class FadeShape(unittest.TestCase):
+    """Chris asked for a longer fade IN than out (2026-09-27): coming back
+    should be gentle, going away and ordinary volume changes should feel
+    immediate."""
+
+    def test_the_fade_in_is_longer_than_the_fade_out(self):
+        self.assertGreater(speaker.Mixer.fade_in_ms, speaker.Mixer.fade_out_ms)
+        self.assertEqual(speaker.Mixer.fade_in_ms, 300)
+        self.assertEqual(speaker.Mixer.fade_out_ms, 120)
+
+    def test_unmuting_takes_more_steps_than_muting(self):
+        m = FakeMixer(35)
+        m.calls.clear(); m.mute(True)
+        out = len(m.levels())
+        m.calls.clear(); m.mute(False)
+        back = len(m.levels())
+        self.assertGreater(back, out, f"fade in {back} steps vs out {out}")
+
+    def test_the_ramp_honours_the_clock_not_a_flat_sleep(self):
+        """Every write forks amixer, so sleeping a flat interval per step made
+        the fade reliably longer than asked. Pace against monotonic time."""
+        import time as t
+        m = FakeMixer(35)
+        m.STEP_MS, m.fade_out_ms = 4, 120
+        began = t.monotonic()
+        m._ramp(35, 0, 120)
+        took = (t.monotonic() - began) * 1000
+        self.assertGreater(took, 90, f"should not finish early: {took:.0f} ms")
+        self.assertLess(took, 400, f"should not overshoot badly: {took:.0f} ms")
+
+    def test_a_zero_duration_still_reaches_the_target(self):
+        m = FakeMixer(35)
+        m.calls.clear()
+        m._ramp(35, 60, 0)
+        self.assertEqual(m.level, 60, "no time to fade is not permission to skip the change")

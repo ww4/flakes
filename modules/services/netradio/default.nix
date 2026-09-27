@@ -558,6 +558,19 @@ in
         description = "Play this station at boot, so a power cycle needs no phone. Empty for none.";
       };
       startVolume = lib.mkOption { type = lib.types.int; default = 35; description = "Mixer level at startup."; };
+      fadeInMs = lib.mkOption {
+        type = lib.types.ints.between 0 5000;
+        default = 300;
+        description = "How long an unmute takes to come back up. Longer is gentler.";
+      };
+      fadeOutMs = lib.mkOption {
+        type = lib.types.ints.between 0 5000;
+        default = 120;
+        description = ''
+          How long a mute — and any ordinary volume change — takes. Shorter than
+          the fade in on purpose: going away and adjusting should feel immediate.
+        '';
+      };
       maxVolume = lib.mkOption {
         type = lib.types.ints.between 0 100;
         default = 100;
@@ -1182,6 +1195,8 @@ in
         "--device ${cfg.speaker.device}"
         "--card ${speakerCard}"
         "--max-volume ${toString cfg.speaker.maxVolume}"
+        "--fade-in-ms ${toString cfg.speaker.fadeInMs}"
+        "--fade-out-ms ${toString cfg.speaker.fadeOutMs}"
       ] ++ lib.optional (speakerDefaultMount != "") "--default-mount ${speakerDefaultMount}"
         ++ [ "--start-volume ${toString speakerStartVolume}" ]
         ++ lib.optional cfg.speaker.startMuted "--start-muted"
