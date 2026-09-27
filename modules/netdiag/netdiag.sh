@@ -55,6 +55,8 @@ netdiag <subcommand> [args]
     audit <ip>            service exposure on one host
 
   REACH
+    plc [iface] [n]       powerline (HomePlug) adapters + per-link PHY rates
+    legs <targets...>     which LEG is failing — groups targets that fail together
     hop <cidr> [secs]     temporarily join a foreign subnet and scan it
     hop-clear             drop the temporary address early
 
@@ -617,6 +619,33 @@ cmd_identify() {
   nmap -Pn -sU -p137 --script nbstat "$ip" 2>/dev/null | grep -iE 'NetBIOS name' || echo "(none)"
 }
 
+# Powerline. Interprets the PHY rate so nobody has to remember what a healthy
+# HomePlug AV number looks like — that is the whole diagnostic.
+cmd_plc() {
+  local iface=${1-} samples=${2-3} out
+  [[ -n $iface ]] || iface=$(iface_default) || true
+  [[ -n $iface ]] || die "usage: netdiag plc <iface> [samples]"
+  hdr "powerline adapters on ${iface}"
+  warn_if_wireless "$iface"
+  out=$(priv plc "$iface" "$samples" 2>&1) || true
+  echo "$out"
+  if ! grep -qiE 'rate|tei|network' <<<"$out"; then
+    echo
+    echo "  No adapters answered. That does NOT rule out a powerline leg:"
+    echo "    * this port may not share a segment with them"
+    echo "    * HomePlug AV2/G.hn silicon ignores these frames entirely"
+    return 0
+  fi
+  echo
+  echo "  HOW TO READ THE RATE: HomePlug AV negotiates ~80-200 Mbit/s when"
+  echo "  healthy. Under ~30 is degraded and will stutter a camera stream;"
+  echo "  under ~10 drops it outright while still answering ping. Rates that"
+  echo "  move a lot between samples mean electrical noise — a motor, welder,"
+  echo "  compressor or HVAC on the same circuit is the usual cause, and it"
+  echo "  explains a fault that comes and goes with the working day."
+}
+
+
 cmd_hop() {
   local cidr=${1-} secs=${2-600} iface net
   [[ -n $cidr ]] || die "usage: netdiag hop <cidr> [seconds]"
@@ -659,6 +688,8 @@ main() {
     switchport) cmd_switchport "$@" ;;
     exposure)   cmd_exposure "$@" ;;
     audit)      cmd_audit "$@" ;;
+    plc)        cmd_plc "$@" ;;
+    legs)       netdiag-legs "$@" ;;
     hop)        cmd_hop "$@" ;;
     hop-clear)  cmd_hop_clear "$@" ;;
     -h|--help|help) usage ;;
