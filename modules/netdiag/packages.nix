@@ -46,12 +46,32 @@ rec {
     flakeIgnore = [ "E501" "E203" "W503" ];
   } (builtins.readFile ./netdiag-wsdiscover.py);
 
+  # Unprivileged on purpose: TCP connect needs no raw socket, so the leg soak
+  # runs as an ordinary user the moment marcus is plugged in.
+  legsUnchecked = pkgs.writers.writePython3Bin "netdiag-legs" {
+    flakeIgnore = [ "E501" "E203" "W503" ];
+  } (builtins.readFile ./netdiag-legs.py);
+
+  # The clustering is GATED BY ITS TESTS, because it is the one piece of this
+  # toolkit that produces a CONCLUSION rather than a reading — "these five share
+  # an upstream" sends someone to a switch. Two real bugs (a sorted-key lookup
+  # and a min() denominator) both under/over-grouped while looking perfectly
+  # plausible, and both were caught only by asserting a known answer.
+  legs = pkgs.runCommand "netdiag-legs" { } ''
+    ${pkgs.python3}/bin/python3 ${./netdiag-legs-test.py}       ${legsUnchecked}/bin/netdiag-legs
+    mkdir -p $out/bin
+    ln -s ${legsUnchecked}/bin/netdiag-legs $out/bin/netdiag-legs
+  '';
+
   # The privileged half. Small on purpose.
   netdiagPriv = pkgs.writeShellApplication {
     name = "netdiag-priv";
     runtimeInputs = with pkgs; [
       coreutils gnused gnugrep gawk
       iproute2 jq tcpdump arp-scan nmap lldpd ndisc6 ethtool
+    ] ++ [
+      # HomePlug AV management tools. NOT in nixpkgs — packaged in pkgs/.
+      (pkgs.callPackage ../../pkgs/open-plc-utils { })
     ];
     text = builtins.readFile ./netdiag-priv.sh;
   };
@@ -63,7 +83,7 @@ rec {
       coreutils gnused gnugrep gawk findutils
       iproute2 jq nmap curl avahi sudo net-snmp miniupnpc libnatpmp
       ffmpeg python3
-    ]) ++ [ wsdiscover ];
+    ]) ++ [ wsdiscover legs ];
     text = ''
       export NETDIAG_OUI=${ouiTable}
     '' + builtins.readFile ./netdiag.sh;
