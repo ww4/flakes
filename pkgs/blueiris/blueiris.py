@@ -129,8 +129,17 @@ def fmt_cams(cams: list[dict], only_bad: bool) -> int:
 # MUTE exists because cameras cannot always be replaced immediately, and a
 # permanently-red indicator is how an alert channel dies. Mutes EXPIRE by
 # default (30 days) — a mute with no end date is how you forget a camera has
-# been dead for a year — and a muted camera that COMES BACK auto-unmutes, so a
-# stale mute cannot hide the next outage.
+# been dead for a year — and a muted camera that comes back and STAYS back
+# auto-unmutes, so a stale mute cannot hide the next outage.
+#
+# "Stays back" is load-bearing: see clear_settled_mutes(). Clearing on the first
+# recovery looks equivalent and is not, because a FLAPPING camera recovers every
+# few minutes and would clear its own mute immediately.
+#
+# THREE fault shapes, three responses — see the flapping section below:
+#   down        -> alert once, alert again when it returns
+#   flapping    -> alert ONCE as flapping; individual up/down suppressed
+#   unreachable -> an ERROR; never rendered as an all-clear
 
 STATE_DIR = os.environ.get("BLUEIRIS_STATE", "/var/lib/blueiris")
 NTFY = os.environ.get("BLUEIRIS_NTFY", "http://127.0.0.1:8090/gromit-alerts")
@@ -228,6 +237,120 @@ def flush_held(st: dict) -> None:
     st["held"] = []
 
 
+# ------------------------------------------------------------------ flapping
+#
+# A camera that drops and comes back every few minutes is a DIFFERENT fault from
+# a camera that is down, and the difference matters twice over.
+#
+# It is invisible to a 10-minute poll. Found 2026-09-27 while diagnosing the
+# Craigmyle alarms: the Rita's group dropped ~60 times in a day and the watch
+# alerted THREE times, because only the drops straddling a poll are ever seen.
+# Sampling a fast signal slowly does not just under-report it — it reports a
+# random subset, which is what "alarms going off and on" actually was.
+#
+# So flapping is measured from the NVR'S OWN counters instead of from our
+# samples. Blue Iris coalesces repeated log lines into one row and keeps a
+# repeat count, so `sum(count)` over recent "Signal: restored" rows is the true
+# drop count, at the NVR's resolution rather than ours.
+#
+# And it is reported ONCE, as flapping — not as an alternating stream of
+# down/recovered pairs. A flapping camera that pages twice an hour trains you to
+# ignore the channel, which is the failure mode this whole tool exists to avoid.
+
+FLAP_WINDOW_H = 24      # look back this far
+FLAP_ENTER = 6          # drops in the window to call it flapping
+FLAP_EXIT = 2           # drops in the window to call it stable again
+_RESTORED = "signal: restored"
+
+
+def _logtime(e: dict) -> str:
+    d = e.get("date")
+    if isinstance(d, (int, float)):
+        from datetime import datetime
+        return datetime.fromtimestamp(d).strftime("%m-%d %H:%M:%S")
+    return str(d or "")
+
+
+def log_rows(bi: "BI") -> list:
+    """NVR log, NEWEST FIRST.
+
+    The API already returns newest-first, which the original `log -n` got
+    backwards: it sliced `[-n:]` and so printed the OLDEST n entries every time
+    (fixed 2026-09-27, after it hid the very events being investigated). Sorted
+    explicitly here rather than trusting the order, so the contract is ours.
+    """
+    rows = bi.cmd("log").get("data") or []
+    return sorted(rows, key=lambda e: e.get("date") or 0, reverse=True)
+
+
+def _repeats(e: dict) -> int:
+    """The coalesced repeat count on a log row, defaulting to a single event."""
+    c = str(e.get("count") or 1)
+    return int(c) if c.isdigit() and int(c) > 0 else 1
+
+
+def restored_totals(rows: list) -> dict:
+    """Total 'Signal: restored' events per camera currently visible in the log.
+
+    Counting RESTORES, not "network retry", is deliberate and is the
+    discriminator between the two fault shapes. A restore only happens on a
+    completed drop->recovery cycle, which is exactly what flapping is. A camera
+    that is simply DOWN retries forever and never restores, so it can never be
+    misfiled as flapping — Cam26 at Craigmyle sits on 57,000+ retries and must
+    keep reading as one dead camera, not an emergency.
+    """
+    out: dict = {}
+    for e in rows:
+        if _RESTORED not in str(e.get("msg", "")).lower():
+            continue
+        obj = str(e.get("obj") or "").strip()
+        if obj:
+            out[obj] = out.get(obj, 0) + _repeats(e)
+    return out
+
+
+def record_drops(st: dict, rows: list, window_h: int = FLAP_WINDOW_H) -> dict:
+    """Roll the drop ledger forward from this poll. Returns drops per camera.
+
+    Counted as DELTAS held in our own state rather than by summing a window of
+    the NVR's log, because that log is not a stable substrate: Blue Iris
+    rewrites a row in place (bumping `count` and moving `date` forward) and
+    ages rows out unpredictably. Observed 2026-09-27 — a row timestamped 12:15
+    with count=65 had vanished entirely twenty minutes later while rows from
+    09-18 survived. Any "sum the last 24h of rows" reading is therefore
+    unstable, and two runs minutes apart genuinely disagreed.
+
+    A delta ledger is immune to all of that: if a counter rises we log the
+    increase; if it falls (rows aged out) we log nothing and re-baseline.
+    """
+    import time
+    now = time.time()
+    prev = st.setdefault("flapseen", {})
+    ledger = st.setdefault("flapledger", {})
+    totals = restored_totals(rows)
+    seeding = not prev
+
+    for obj, total in totals.items():
+        before = prev.get(obj)
+        prev[obj] = total
+        if seeding or before is None:
+            continue                      # first sight: baseline, never a burst
+        delta = total - before
+        if delta > 0:
+            ledger.setdefault(obj, []).append([now, delta])
+
+    cutoff = now - window_h * 3600
+    out: dict = {}
+    for obj, events in list(ledger.items()):
+        keep = [ev for ev in events if ev[0] >= cutoff]
+        if keep:
+            ledger[obj] = keep
+            out[obj] = sum(int(n) for _, n in keep)
+        else:
+            ledger.pop(obj, None)
+    return out
+
+
 def mute_active(st: dict, short: str) -> tuple[bool, str]:
     m = (st.get("muted") or {}).get(short)
     if not m:
@@ -242,6 +365,88 @@ def mute_active(st: dict, short: str) -> tuple[bool, str]:
         except ValueError:
             pass
     return True, m.get("reason", "")
+
+
+def flap_transitions(st: dict, cams: list, drops: dict) -> set:
+    """Update flap state, alert on the EDGES, return who is flapping now.
+
+    Hysteresis on purpose: enter at FLAP_ENTER drops, leave only at FLAP_EXIT.
+    A single threshold would have a camera sitting near it toggle
+    flapping/stable and produce exactly the alarm storm this replaces.
+    """
+    names = {c["optionValue"]: (c.get("optionDisplay") or c["optionValue"])
+             for c in cams}
+    flaps = st.setdefault("flapping", {})
+    now_flapping = set()
+
+    for short, name in names.items():
+        n = drops.get(short, 0)
+        was = short in flaps
+        if n >= FLAP_ENTER and not was:
+            flaps[short] = {"since": _now(), "drops": n}
+            emit(st, f"blueiris: CAMERA FLAPPING — {name}",
+                 f"{name} ({short}) has dropped and recovered {n} times in the "
+                 f"last {FLAP_WINDOW_H}h, per the NVR's own log.\n\n"
+                 f"This is a link/power fault, not a dead camera — it keeps "
+                 f"coming back. Individual up/down alerts for it are suppressed "
+                 f"while this lasts; you get one more when it settles.\n\n"
+                 f"If several cameras flap together they share an upstream — "
+                 f"look at that switch or run, not the cameras.\n\n"
+                 f"To silence it while it waits on a fix:  "
+                 f"blueiris mute {short} --days 7 \"flapping, awaiting repair\"",
+                 "high", "warning")
+        elif was and n <= FLAP_EXIT:
+            since = flaps.pop(short, {}).get("since", "?")
+            emit(st, f"blueiris: camera settled — {name}",
+                 f"{name} ({short}) has stopped flapping "
+                 f"({n} drops in the last {FLAP_WINDOW_H}h).\n"
+                 f"It had been flapping since {since}.",
+                 "default", "white_check_mark")
+        elif was:
+            flaps[short]["drops"] = n          # still flapping; refresh count
+            now_flapping.add(short)
+        if short in flaps:
+            now_flapping.add(short)
+    return now_flapping
+
+
+# A mute is cleared automatically only once the camera has been SOLIDLY back:
+# continuously online this long, and not flapping.
+MUTE_CLEAR_STABLE_H = 24
+
+
+def clear_settled_mutes(st: dict, site: str, flapping: set) -> None:
+    """Auto-clear mutes, but only for cameras that genuinely recovered.
+
+    The original rule was "a recovered camera auto-unmutes", so a stale mute
+    could not hide the next outage. Correct for a dead camera that gets
+    replaced — and useless for a FLAPPING one, which "recovers" every few
+    minutes and would clear its own mute within one poll of it being set
+    (found 2026-09-27: muting the flapping Rita's group would have silenced
+    nothing). So recovery now has to STICK before it counts.
+    """
+    from datetime import datetime, timedelta, timezone
+    for short in list((st.get("muted") or {}).keys()):
+        cam = (st.get("cameras") or {}).get(short) or {}
+        if not cam.get("online") or short in flapping:
+            continue
+        since = cam.get("online_since")
+        if not since:
+            continue
+        try:
+            up_since = datetime.fromisoformat(since)
+        except ValueError:
+            continue
+        if datetime.now(timezone.utc) - up_since < timedelta(
+                hours=MUTE_CLEAR_STABLE_H):
+            continue
+        st["muted"].pop(short, None)
+        name = cam.get("name", short)
+        emit(st, f"blueiris: mute cleared — {name}",
+             f"{name} ({short}) at {site} has been stable for "
+             f"{MUTE_CLEAR_STABLE_H}h, so its mute was cleared automatically. "
+             f"It will alert normally again.",
+             "default", "white_check_mark")
 
 
 def cmd_watch(bi: "BI", site: str) -> int:
@@ -262,20 +467,37 @@ def cmd_watch(bi: "BI", site: str) -> int:
     seeding = st.get("seeded") is None
     went_down, came_back = [], []
 
+    # Drop counts from the NVR's own log. A failure here must not sink the
+    # whole run: state changes are still worth reporting without flap data.
+    try:
+        drops = record_drops(st, log_rows(bi))
+    except Exception as exc:                        # noqa: BLE001
+        print(f"  warning: flap data unavailable: {exc!r}", file=sys.stderr)
+        drops = {}
+
     for c in cams:
         short = c["optionValue"]
         name = c.get("optionDisplay") or short
         online = c.get("isOnline") is True
         err = (c.get("error") or "").strip()
         prev = known.get(short)
+        # How long has it been continuously up? Needed for mute clearing, which
+        # must not trigger on a flapping camera's momentary recovery.
+        if online and prev and prev.get("online") and prev.get("online_since"):
+            online_since = prev["online_since"]
+        else:
+            online_since = _now() if online else None
         known[short] = {"name": name, "online": online, "last": _now(),
-                        "error": err}
+                        "error": err, "online_since": online_since,
+                        "drops24h": drops.get(short, 0)}
         if seeding or prev is None:
             continue
         if prev.get("online") and not online:
             went_down.append((name, short, err))
         elif not prev.get("online") and online:
             came_back.append((name, short))
+
+    flapping = flap_transitions(st, cams, drops)
 
     if seeding:
         st["seeded"] = _now()
@@ -293,6 +515,11 @@ def cmd_watch(bi: "BI", site: str) -> int:
         if muted:
             print(f"  {name} went down but is MUTED ({reason}) — not alerting")
             continue
+        if short in flapping:
+            # Already reported as flapping. Reporting each individual drop on
+            # top of that is the alarm storm, not extra information.
+            print(f"  {name} went down — already reported FLAPPING, not alerting")
+            continue
         emit(st, f"blueiris: CAMERA DOWN — {name}",
              f"{name} ({short}) at {site} stopped responding.\n"
              f"error: {err or '<none reported>'}\n\n"
@@ -301,19 +528,24 @@ def cmd_watch(bi: "BI", site: str) -> int:
              "high", "camera")
 
     for name, short in came_back:
-        # A recovered camera auto-unmutes: a stale mute must not hide the NEXT
-        # outage on a camera that has since been repaired.
-        if (st.get("muted") or {}).pop(short, None):
-            print(f"  {name} recovered — mute cleared automatically")
+        if short in flapping:
+            print(f"  {name} back up — already reported FLAPPING, not alerting")
+            continue
+        if mute_active(st, short)[0]:
+            print(f"  {name} back up but still MUTED — see mute-clear below")
+            continue
         emit(st, f"blueiris: camera recovered — {name}",
              f"{name} ({short}) at {site} is online again.",
              "default", "white_check_mark")
+
+    clear_settled_mutes(st, site, flapping)
 
     save_state(site, st)
     online = sum(1 for c in cams if c.get("isOnline") is True)
     muted_n = len(st.get("muted") or {})
     print(f"  {online}/{len(cams)} online, {len(went_down)} newly down, "
-          f"{len(came_back)} recovered, {muted_n} muted")
+          f"{len(came_back)} recovered, {len(flapping)} flapping, "
+          f"{muted_n} muted")
     return 0
 
 
@@ -380,6 +612,8 @@ def main() -> int:
     sa = sub.add_parser("snapshot-all", help="a frame from every camera")
     sa.add_argument("-d", "--dir", default="./bi-snapshots")
     sub.add_parser("watch", help="alert on camera state CHANGES (for the timer)")
+    fl = sub.add_parser("flaps", help="drop counts per camera from the NVR log")
+    fl.add_argument("--hours", type=int, default=FLAP_WINDOW_H)
     mu = sub.add_parser("mute", help="stop alerting on a camera that cannot be fixed yet")
     mu.add_argument("camera")
     mu.add_argument("--days", type=int, default=30)
@@ -429,6 +663,66 @@ def main() -> int:
               (f"  ({n} needing attention)" if args.cmd == "offline" and n else ""))
         return 0
 
+    if args.cmd == "flaps":
+        # READ-ONLY: shows the ledger the watch maintains, and never advances
+        # it. An ad-hoc `flaps` must not consume deltas the watch needs, or
+        # running it would blind the next poll.
+        rows = log_rows(bi)
+        st = load_state(args.site)
+        ledger = st.get("flapledger") or {}
+        import time as _t
+        cutoff = _t.time() - args.hours * 3600
+        drops = {o: sum(int(n) for ts, n in ev if ts >= cutoff)
+                 for o, ev in ledger.items()}
+        drops = {o: n for o, n in drops.items() if n}
+        lifetime = restored_totals(rows)
+        names = {c["optionValue"]: (c.get("optionDisplay") or c["optionValue"])
+                 for c in bi.cameras()}
+        if not ledger:
+            print("  no flap ledger yet — it is built by `blueiris watch`, "
+                  "so counts appear after a few polls.")
+            print("  NVR lifetime restore counts (context only, not a rate):")
+            for o, n in sorted(lifetime.items(), key=lambda kv: -kv[1])[:12]:
+                print(f"    {o:<10} {names.get(o, '?')[:24]:<24} {n}")
+            return 0
+        if args.json:
+            print(json.dumps({"window_hours": args.hours,
+                              "drops": {k: {"name": names.get(k, k), "drops": v}
+                                        for k, v in drops.items()}}, indent=1))
+            return 0
+        if not drops:
+            print(f"  no signal drops logged in the last {args.hours}h")
+            return 0
+        print(f"  drops per camera, last {args.hours}h "
+              f"(>= {FLAP_ENTER} counts as flapping)")
+        print(f"  {'CAMERA':<10} {'NAME':<24} DROPS")
+        for short, n in sorted(drops.items(), key=lambda kv: -kv[1]):
+            mark = "  <<< FLAPPING" if n >= FLAP_ENTER else ""
+            print(f"  {short:<10} {names.get(short, '?')[:24]:<24} {n}{mark}")
+        # Cameras dropping together share an upstream — the single most useful
+        # thing to notice, and easy to miss in a sorted list.
+        #
+        # Clustered on the RATIO between neighbouring rates, not on fixed
+        # buckets: bucketing by n//10 split the Craigmyle Rita's group (73, 66,
+        # 65, 64, 59 — plainly one fault) across three buckets, which is the
+        # opposite of the point.
+        flap = sorted(((n, names.get(s, s)) for s, n in drops.items()
+                       if n >= FLAP_ENTER), reverse=True)
+        clusters: list = []
+        for n, nm in flap:
+            if clusters and n >= clusters[-1][-1][0] * 0.75:
+                clusters[-1].append((n, nm))
+            else:
+                clusters.append([(n, nm)])
+        for cl in clusters:
+            if len(cl) > 1:
+                lo, hi = cl[-1][0], cl[0][0]
+                print(f"\n  ⚠ {len(cl)} cameras dropping at a similar rate "
+                      f"({lo}-{hi} in {args.hours}h) — almost certainly ONE "
+                      f"shared upstream, not {len(cl)} faults:\n"
+                      f"      {', '.join(sorted(nm for _, nm in cl))}")
+        return 0
+
     if args.cmd == "status":
         d = bi.cmd("status").get("data") or {}
         for k in sorted(d):
@@ -437,8 +731,15 @@ def main() -> int:
         return 0
 
     if args.cmd == "log":
-        for e in (bi.cmd("log").get("data") or [])[-args.n:]:
-            print(f"  {e.get('date', '')}  {str(e.get('level', '')):<3} {e.get('msg', '')[:110]}")
+        rows = log_rows(bi)[:args.n]
+        if args.json:
+            print(json.dumps(rows, indent=1))
+            return 0
+        print(f"  {'WHEN':<16} {'LVL':<4} {'CAMERA':<10} {'xN':<5} MESSAGE")
+        for e in reversed(rows):           # oldest first: reads like a story
+            print(f"  {_logtime(e):<16} {str(e.get('level', '')):<4} "
+                  f"{str(e.get('obj') or '-')[:10]:<10} "
+                  f"{str(e.get('count') or ''):<5} {str(e.get('msg', ''))[:70]}")
         return 0
 
     # Snapshots go through the NVR's own image endpoint, authenticated by the
