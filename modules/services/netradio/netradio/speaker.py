@@ -60,6 +60,11 @@ class Mixer:
         self.card = card
         self.amixer = amixer
         self.control = control or self._find()
+        self.lock = threading.RLock()
+        # Where an unmute returns to. A muted control reads 0%, so the level
+        # has to be remembered rather than read back.
+        cur, _ = self.state()
+        self.target = cur if cur else 50
 
     def _run(self, *args: str) -> str:
         """amixer missing or the card gone: no volume control, but the music
@@ -94,13 +99,64 @@ class Mixer:
         if self.control:
             self._run("sset", self.control, f"{max(0, min(100, int(level)))}%")
 
+    def choose(self, level: int) -> None:
+        """A user-driven level change: remember it, and slide rather than jump.
+        While muted it is only remembered — changing the volume must not bring
+        the sound back."""
+        level = max(0, min(100, int(level)))
+        with self.lock:
+            cur, muted = self.state()
+            self.target = level
+            if muted:
+                return
+            self._ramp(cur if cur is not None else level, level)
+
     def step(self, delta: int) -> None:
-        cur, _ = self.state()
-        self.set((cur if cur is not None else 50) + delta)
+        with self.lock:
+            self.choose(self.target + delta)
+
+    # How the fade is shaped. 120 ms is long enough that the step between
+    # amixer writes is inaudible and short enough to feel instant.
+    FADE_MS = 120
+    FADE_STEPS = 12
+
+    def _ramp(self, start: int, end: int) -> None:
+        """Walk the level from start to end so the change is a slope, not a
+        step. Each amixer write is one codec register write; spacing them is
+        the whole trick."""
+        if start == end:
+            return
+        for i in range(1, self.FADE_STEPS + 1):
+            self.set(round(start + (end - start) * i / self.FADE_STEPS))
+            time.sleep(self.FADE_MS / 1000.0 / self.FADE_STEPS)
 
     def mute(self, on: bool) -> None:
-        if self.control:
-            self._run("sset", self.control, "mute" if on else "unmute")
+        """Fade, THEN switch — which is what stops the pop.
+
+        Chris asked for zero-crossing detection (2026-09-26). That is the
+        right tool for gating a signal path, but it is not what is clicking
+        here and ALSA exposes no zero-cross hook to userspace: the codec's
+        output mute is a register write, and the click is the amplifier
+        stage's DC transient plus the instant envelope step from full level
+        to nothing. Muting exactly on a zero crossing would not remove
+        either. What does remove them is making the level change a slope and
+        doing the register write while the output is already silent — so:
+        ramp down, mute, and on the way back unmute at zero and ramp up.
+        """
+        if not self.control:
+            return
+        with self.lock:
+            cur, muted = self.state()
+            cur = cur if cur is not None else 50
+            if on:
+                if not muted:
+                    self.target = cur          # remember where to come back to
+                self._ramp(cur, 0)
+                self._run("sset", self.control, "mute")
+            else:
+                self.set(0)                    # switch in silence
+                self._run("sset", self.control, "unmute")
+                self._ramp(0, self.target)
 
 
 class Player:
@@ -231,7 +287,12 @@ def make_handler(player: Player, mixer: Mixer):
 
         def _state(self) -> dict:
             vol, muted = mixer.state()
-            return {"playing": player.alive(), "mount": player.mount, "volume": vol, "muted": muted,
+            # `volume` is the CHOSEN level, which is where an unmute returns
+            # to. Reporting the live register instead made the slider snap to
+            # 0 the moment you muted, and a fade in progress made it jitter.
+            return {"playing": player.alive(), "mount": player.mount,
+                    "volume": mixer.target if mixer.control else vol,
+                    "actual": vol, "muted": muted,
                     "control": mixer.control, "error": player.error}
 
         def do_GET(self):
@@ -252,7 +313,7 @@ def make_handler(player: Player, mixer: Mixer):
                     player.stop()
                 elif path == "/volume":
                     if "level" in body:
-                        mixer.set(int(body["level"]))
+                        mixer.choose(int(body["level"]))
                     elif "step" in body:
                         mixer.step(int(body["step"]))
                     else:

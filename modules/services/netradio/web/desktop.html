@@ -17,11 +17,33 @@
     <h1>Library radio</h1>
     <nav class="target" role="group" aria-label="Play on">
       <button :class="{active: target === 'here'}" @click="target = 'here'">This phone</button>
-      <button :class="{active: target === 'room'}" @click="target = 'room'; pollReceiver()" :disabled="receiver.error === 'unreachable'">{{ receiver.name || 'Living room' }}</button>
+      <button v-if="site.hasRoom" :class="{active: target === 'room'}" @click="target = 'room'; pollReceiver()" :disabled="receiver.error === 'unreachable'">{{ receiver.name || site.roomName }}</button>
+      <button v-if="site.hasLocal" :class="{active: target === 'local'}" @click="target = 'local'" :disabled="speaker.error === 'unreachable'">{{ site.localName }}</button>
     </nav>
   </header>
 
   <!-- ===== The receiver ===================================================== -->
+  <!-- ===== this machine's own sound card =================================== -->
+  <article v-if="target === 'local'" class="receiver">
+    <div class="row">
+      <div class="what">
+        <strong>{{ site.localName }}</strong>
+        <small class="muted">{{ speaker.error || (speaker.playing ? 'playing' : 'stopped') }}</small>
+        <div class="title">{{ (stations.find(s => s.mount === speaker.mount) || {}).name || '—' }}</div>
+      </div>
+      <div class="keys">
+        <button @click="speaker.mount ? stopTarget() : speakerPlay(last_local_mount())" :title="speaker.playing ? 'Stop' : 'Play'">
+          {{ speaker.playing ? '■ Stop' : '▶ Play' }}</button>
+        <button @click="speakerVolume(-5)" aria-label="Quieter">−</button>
+        <input type="range" min="0" max="100" step="1" v-model.number="speakerDraft"
+               @input="speakerDragging = true" @change="speakerDragging = false; speakerSet(speakerDraft)" aria-label="Volume">
+        <button @click="speakerVolume(5)" aria-label="Louder">+</button>
+        <span class="lvl">{{ speaker.volume ?? '–' }}</span>
+        <button :class="{active: speaker.muted}" @click="speakerMute(!speaker.muted)">{{ speaker.muted ? 'Unmute' : 'Mute' }}</button>
+      </div>
+    </div>
+  </article>
+
   <article v-if="target === 'room'" class="receiver">
     <div class="row">
       <button class="round big" :class="{on: receiver.on}" @click="power(!receiver.on)" :title="receiver.on ? 'Standby' : 'Power on'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v6"/><path d="M4.2 4.2a5.4 5.4 0 1 0 7.6 0"/></svg></button>
