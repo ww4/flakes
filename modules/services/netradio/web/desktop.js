@@ -7,9 +7,13 @@
 //   now/<mount>.json       last played;  now/<mount>-next.json  what the DJ queued
 //   receiver/*             the receiver's JSON API (yamaha-ync-api via nginx)
 //   admin/api/dj/*, admin/api/dislike, admin/api/search   listener feedback (the DJ's inbox)
-// Two targets: "here" plays the stream in this browser (one <audio>, live,
+// Three targets: "here" plays the stream in this browser (one <audio>, live,
 // no scrub bar); "room" drives the receiver — a station tap walks its
-// NET RADIO menu to My Stations → <category> → <station>.
+// NET RADIO menu to My Stations → <category> → <station>; "local" drives this
+// machine's own sound card through speaker/* (netradio-speaker).
+// The phone page grew "local" first and this one did not, so a wide screen —
+// which index.html redirects here automatically — had no way to reach the
+// speakers at all (2026-09-26).
 
 const { createApp } = Vue;
 
@@ -47,12 +51,17 @@ createApp({
     return { stations: [], quick: [], counts: {}, up: {}, histories: {}, nexts: {}, current: null, open: null,
              status: "", quality, scanning: false, ctx: null, analyser: null, raf: 0,
              target, receiver: { name: "", on: false, input: "", volume: 0, mute: false, error: "" }, inputs: [], presets: [],
-             volumeDraft: 0, busy: "", toast: "", requesting: false, query: "", results: [], searchTimer: 0, roomPoll: 0 };
+             volumeDraft: 0, busy: "", toast: "", requesting: false, query: "", results: [], searchTimer: 0, roomPoll: 0,
+             site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "", hasLocal: false, hasRoom: true },
+             speaker: { playing: false, mount: "", volume: null, muted: false, error: "" },
+             speakerDraft: 0, speakerDragging: false, speakerPoll: 0 };
   },
   computed: {
     groups() {
-      const curated = this.stations.filter(s => s.kind !== "specialty");
-      const specialty = this.stations.filter(s => s.kind === "specialty");
+      // a fixed station (Rain, Rainy Mood) lists as a specialty, exactly as
+      // on the phone page — it is not a curated genre programme
+      const curated = this.stations.filter(s => !["specialty", "fixed"].includes(s.kind));
+      const specialty = this.stations.filter(s => ["specialty", "fixed"].includes(s.kind));
       const g = [{ kind: "curated", title: "Curated", stations: curated }];
       if (specialty.length) g.push({ kind: "specialty", title: "Specialty", stations: specialty });
       if (this.target === "room" && this.quick.length)
@@ -75,14 +84,19 @@ createApp({
       const s = this.stations.find(s => s.name === np.station);
       return s ? s.mount : null;
     },
-    feedbackMount() { return this.target === "room" ? this.roomMount : this.current; },
+    feedbackMount() { return this.target === "room" ? this.roomMount : this.target === "local" ? this.speaker.mount : this.current; },
     feedbackStation() { return this.stations.find(s => s.mount === this.feedbackMount) || { name: "" }; },
     feedbackTitle() { return this.target === "room" ? this.roomTitle : this.nowTitle; },
     feedbackHistory() { return this.histories[this.feedbackMount] || []; },
     feedbackNext() { return this.nexts[this.feedbackMount] || {}; },
   },
   watch: {
-    target(t) { try { localStorage.setItem("radio.target", t); } catch (e) {} if (t === "here") clearInterval(this.roomPoll); },
+    target(t) {
+      try { localStorage.setItem("radio.target", t); } catch (e) {}
+      if (t !== "room") clearInterval(this.roomPoll);
+      if (t !== "local") clearInterval(this.speakerPoll);
+      if (t === "local") this.pollSpeaker();
+    },
     "receiver.volume"(v) { this.volumeDraft = v; },
   },
   methods: {
@@ -94,6 +108,7 @@ createApp({
     streamUrl(m) { return `radio/${m}${this.quality}.mp3?t=${Date.now()}`; },
     isPlaying(s) {
       if (this.target === "room") return this.receiver.on && this.receiver.now_playing && this.receiver.now_playing.station === s.name;
+      if (this.target === "local") return !!s.mount && this.speaker.mount === s.mount;
       return this.current === s.mount;
     },
     say(msg) { this.toast = msg; clearTimeout(this._toastT); this._toastT = setTimeout(() => { this.toast = ""; }, 4000); },
@@ -132,8 +147,45 @@ createApp({
       try { localStorage.setItem("radio.quality", this.quality); } catch (e) {}
       if (this.current) this.play(this.current);
     },
-    playTarget(s) { return this.target === "room" ? this.playOnReceiver(s) : this.play(s.mount); },
-    stopTarget() { return this.target === "room" ? this.receiverAction("stopping…", () => call("POST", "receiver/playback", { action: "Stop" })) : this.stop(); },
+    playTarget(s) {
+      if (this.target === "room") return this.playOnReceiver(s);
+      if (this.target === "local") return s.mount ? this.speakerPlay(s.mount) : undefined;
+      return this.play(s.mount);
+    },
+    stopTarget() {
+      if (this.target === "room") return this.receiverAction("stopping…", () => call("POST", "receiver/playback", { action: "Stop" }));
+      if (this.target === "local") return this.speakerAction("stopping…", () => call("POST", "speaker/stop", {}));
+      return this.stop();
+    },
+
+    // ---- this machine's own audio output -------------------------------------
+    async pollSpeaker() {
+      const st = await getJSON("speaker/state");
+      this.speaker = st ? { ...st, error: st.error || "" } : { ...this.speaker, error: "unreachable" };
+      if (st && !this.speakerDragging) this.speakerDraft = st.volume ?? 0;
+      clearInterval(this.speakerPoll);
+      this.speakerPoll = setInterval(async () => {
+        if (this.target !== "local" || this.busy) return;
+        const s2 = await getJSON("speaker/state");
+        if (s2) { this.speaker = { ...s2, error: s2.error || "" }; if (!this.speakerDragging) this.speakerDraft = s2.volume ?? this.speakerDraft; }
+      }, 5000);
+    },
+    async speakerAction(label, fn) {
+      this.busy = label;
+      try { const st = await fn(); if (st) this.speaker = { ...st, error: st.error || "" }; }
+      catch (e) { this.say(e.message); }
+      finally { this.busy = ""; }
+    },
+    speakerPlay(mount) { return this.speakerAction("starting…", () => call("POST", "speaker/play", { mount })); },
+    speakerSet(level) {
+      this.speakerDraft = Math.max(0, Math.min(100, Math.round(level)));
+      return this.speakerAction("", () => call("POST", "speaker/volume", { level: this.speakerDraft }));
+    },
+    speakerVolume(step) { return this.speakerSet((this.speaker.volume ?? this.speakerDraft) + step); },
+    speakerMute(on) { return this.speakerAction("", () => call("POST", "speaker/mute", { on })); },
+    // what Play starts when nothing is selected: the station the box is tuned
+    // to by default (site.json), else the first one in the list
+    last_local_mount() { return this.site.localMount || (this.stations[0] || {}).mount || ""; },
 
     // ---- the receiver --------------------------------------------------------
     async pollReceiver() {
@@ -238,9 +290,11 @@ createApp({
     audio.addEventListener("error", () => { this.status = "stream error — try again"; });
     audio.addEventListener("waiting", () => { this.status = "buffering…"; });
     audio.addEventListener("playing", () => { this.status = ""; });
+    getJSON("site.json").then(s => { if (s) { this.site = { ...this.site, ...s }; document.title = this.site.title; } });
     this.refresh();
     setInterval(() => this.refresh(), 10000);
     if (this.target === "room") this.pollReceiver();
+    if (this.target === "local") this.pollSpeaker();
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   },
 }).mount("#app");

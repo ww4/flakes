@@ -39,6 +39,7 @@ createApp({
              speaker: { playing: false, mount: "", volume: null, muted: false, error: "" }, speakerPoll: 0,
              pandora: JSON.parse((() => { try { return localStorage.getItem("radio.pandora") || "[]"; } catch (e) { return "[]"; } })()), menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
              site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "" },
+             speakerDraft: 0, speakerDragging: false,
              remote: false, volumeDraft: 0, freqDraft: "", busy: "", toast: "", query: "", results: [], searchTimer: 0, roomPoll: 0, artFailed: "", artFailedAt: 0, tick: 0 };
   },
   computed: {
@@ -187,10 +188,14 @@ createApp({
     async pollSpeaker() {
       const st = await getJSON("speaker/state");
       this.speaker = st ? { ...st, error: st.error || "" } : { ...this.speaker, error: "unreachable" };
+      // the slider is a DRAFT: adopt the reported level only when the user is
+      // not holding it, or the ten-second poll drags it back mid-gesture and
+      // the control feels dead (2026-09-26)
+      if (st && !this.speakerDragging) this.speakerDraft = st.volume ?? 0;
       clearInterval(this.speakerPoll);
       this.speakerPoll = setInterval(async () => {
         const s = await getJSON("speaker/state");
-        if (s) this.speaker = { ...s, error: s.error || "" };
+        if (s) { this.speaker = { ...s, error: s.error || "" }; if (!this.speakerDragging) this.speakerDraft = s.volume ?? this.speakerDraft; }
       }, 10000);
     },
     async speakerAction(msg, fn) {
@@ -200,7 +205,11 @@ createApp({
       finally { this.busy = ""; }
     },
     speakerPlay(mount) { return this.speakerAction("starting…", () => call("POST", "speaker/play", { mount })); },
-    speakerVolume(step) { return this.speakerAction("", () => call("POST", "speaker/volume", { step })); },
+    speakerSet(level) {
+      this.speakerDraft = Math.max(0, Math.min(100, Math.round(level)));
+      return this.speakerAction("", () => call("POST", "speaker/volume", { level: this.speakerDraft }));
+    },
+    speakerVolume(step) { return this.speakerSet((this.speaker.volume ?? this.speakerDraft) + step); },
     speakerMute(on) { return this.speakerAction("", () => call("POST", "speaker/mute", { on })); },
     isPlaying(s) {
       if (this.target === "local") return !!s.mount && this.speaker.mount === s.mount;
@@ -306,7 +315,13 @@ createApp({
     power(on) { return this.receiverAction(on ? "powering on…" : "standby…", () => call("POST", "receiver/power", { on })); },
     mute(on) { return this.receiverAction("", () => call("POST", "receiver/mute", { on })); },
     setVolume(level) { return this.receiverAction("", () => call("POST", "receiver/volume", { level })); },
-    volumeStep(step) { this.volumeDraft = Math.max(0, Math.min(this.receiver.volume_max || 100, this.volumeDraft + step)); return this.setVolume(this.volumeDraft); },
+    volumeStep(step) {
+      if (this.target === "local") return this.speakerVolume(step);
+      this.volumeDraft = Math.max(0, Math.min(this.receiver.volume_max || 100, this.volumeDraft + step));
+      return this.setVolume(this.volumeDraft);
+    },
+    // what the remote's level readout shows, for whichever target is selected
+    shownVolume() { return this.target === "local" ? (this.speaker.volume ?? 0) : Math.round(this.receiver.volume); },
     selectInput(name) { return this.receiverAction(`switching to ${name}…`, () => call("POST", "receiver/input", { name })); },
     playback(action) { return this.receiverAction("", () => call("POST", "receiver/playback", { action })); },
     feedback(up) { return this.receiverAction("", async () => { await call("POST", "receiver/feedback", { thumbs_up: up, source: "Pandora" }); this.say(up ? "thumbs up" : "thumbs down"); }); },

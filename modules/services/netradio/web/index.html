@@ -153,7 +153,7 @@
     <button class="icon" :class="{on: speaker.playing}" @click="speaker.mount ? stopTarget() : speakerPlay(last.local || site.localMount)" :title="speaker.playing ? 'Stop' : 'Play'">
       <svg v-if="speaker.playing" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></svg><svg v-else viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg></button>
     <button class="icon" @click="speakerVolume(-5)">−</button>
-    <input type="range" min="0" max="100" step="1" :value="speaker.volume ?? 0" @change="speakerAction('', () => call('POST', 'speaker/volume', { level: Number($event.target.value) }))" aria-label="Volume">
+    <input type="range" min="0" max="100" step="1" v-model.number="speakerDraft" @input="speakerDragging = true" @change="speakerDragging = false; speakerSet(speakerDraft)" aria-label="Volume">
     <button class="icon" @click="speakerVolume(5)">+</button>
     <button class="icon" :class="{on: speaker.muted}" @click="speakerMute(!speaker.muted)" :title="speaker.muted ? 'Unmute' : 'Mute'"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path v-if="!speaker.muted" d="M16 8.5a5 5 0 0 1 0 7"/><path v-else d="M16 9l5 6M21 9l-5 6"/></svg></button>
   </footer>
@@ -176,7 +176,7 @@
           <svg viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/></svg></button>
         <div class="r-vol">
           <button class="key" @click="volumeStep(2)" :disabled="!receiver.on">+</button>
-          <span class="lvl">{{ Math.round(receiver.volume) }}</span>
+          <span class="lvl">{{ shownVolume() }}</span>
           <button class="key" @click="volumeStep(-2)" :disabled="!receiver.on">−</button>
         </div>
         <button class="key mute" :class="{on: receiver.mute}" @click="mute(!receiver.mute)" :disabled="!receiver.on" title="Mute">
