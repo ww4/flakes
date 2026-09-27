@@ -37,7 +37,7 @@ AUDIO = (".mp3", ".flac", ".ogg", ".opus", ".m4a", ".wav")
 # GET, while any descriptive agent is served normally (measured
 # 2026-09-24), which is what left the Rainy Mood station with an empty
 # playlist on its first deploy.
-UA = {"User-Agent": "netradio-ambient/1.0 (personal use; +https://git.rosemaryacres.com/ww4/flakes)"}
+UA = {"User-Agent": "netradio-ambient/1.0 (self-hosted radio station; personal use)"}
 
 @dataclass(frozen=True)
 class Bed:

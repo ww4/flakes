@@ -34,7 +34,8 @@ def norm_artist(name: str) -> str:
     return s
 
 
-def artist_hit(rule_artists: list[str], track_artist: str, track_path: str = "") -> bool:
+def artist_hit(rule_artists: list[str], track_artist: str, track_path: str = "",
+               folder_artist: str = "", folder_album: str = "") -> bool:
     """The rule's name inside the track's artist (so 'george jones' hits
     'Ralph Stanley & George Jones' too), or the library folder's artist.
 
@@ -47,10 +48,17 @@ def artist_hit(rule_artists: list[str], track_artist: str, track_path: str = "")
     if not rule_artists:
         return False
     hay = [norm_artist(track_artist)]
-    parts = track_path.split("/")
-    if len(parts) > 4:
-        hay.append(norm_artist(parts[4]))   # /mnt/fusion/Music/<Artist>/...
-    album = norm_artist(parts[5]) if len(parts) > 5 else ""
+    # The scanner resolves these against the library root and passes them in.
+    # Without them (a caller holding only a path) read the TAIL —
+    # <Artist>/<Album>/<file> — which is right at any depth, where the old
+    # absolute indices were right only under the first root.
+    if not folder_artist and track_path:
+        parts = track_path.split("/")
+        folder_artist = parts[-3] if len(parts) > 2 else ""
+        folder_album = parts[-2] if len(parts) > 1 else ""
+    if folder_artist:
+        hay.append(norm_artist(folder_artist))
+    album = norm_artist(folder_album)
     for a in rule_artists:
         name, _, want_album = a.partition("::")
         n = norm_artist(name)
@@ -90,7 +98,8 @@ def era_ok(spec: dict | None, era: str) -> bool:
     return True
 
 
-def matches(rule: dict, *, artist: str, path: str, genre: str, yamnet: dict | None, era: str) -> bool:
+def matches(rule: dict, *, artist: str, path: str, genre: str, yamnet: dict | None, era: str,
+            folder_artist: str = "", folder_album: str = "") -> bool:
     if not era_ok(rule.get("era"), era):
         return False
     artists = rule.get("artists") or []
@@ -107,10 +116,10 @@ def matches(rule: dict, *, artist: str, path: str, genre: str, yamnet: dict | No
     # is tagged plain "Folk", so only naming them keeps Folk off the Celtic
     # roster (2026-09-25 — Lidarr imports keep whatever genre the release
     # shipped with, which is not the catalogue's vocabulary)
-    if artist_hit(rule.get("exclude_artists") or [], artist, path):
+    if artist_hit(rule.get("exclude_artists") or [], artist, path, folder_artist, folder_album):
         return False
     if (artists or genre_words) and not rule.get("all"):
-        if not (artist_hit(artists, artist, path) or any(word_in(w.lower(), genres) for w in genre_words)):
+        if not (artist_hit(artists, artist, path, folder_artist, folder_album) or any(word_in(w.lower(), genres) for w in genre_words)):
             return False
     if instruments and not instruments_hit(instruments, yamnet):
         return False

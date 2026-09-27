@@ -31,13 +31,14 @@ function hue(name) { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt
 
 createApp({
   data() {
-    let quality = "", target = "here", tab = "now", last = { here: "", room: null, gromit: "rain" };
+    let quality = "", target = "here", tab = "now", last = { here: "", room: null, local: "" };
     try { quality = localStorage.getItem("radio.quality") || ""; target = localStorage.getItem("radio.target") || "here"; tab = localStorage.getItem("radio.tab") || "now"; last = { ...last, ...JSON.parse(localStorage.getItem("radio.last") || "{}") }; } catch (e) {}
     return { tiles: {}, stations: [], quick: [], counts: {}, up: {}, histories: {}, nexts: {}, current: null, status: "", quality, scanning: false, last,
              ctx: null, analyser: null, raf: 0, wide: window.innerWidth > 640,
              target, tab, receiver: { name: "", on: false, input: "", volume: 0, mute: false, error: "" }, inputs: [], presets: [],
              speaker: { playing: false, mount: "", volume: null, muted: false, error: "" }, speakerPoll: 0,
              pandora: JSON.parse((() => { try { return localStorage.getItem("radio.pandora") || "[]"; } catch (e) { return "[]"; } })()), menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
+             site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "" },
              remote: false, volumeDraft: 0, freqDraft: "", busy: "", toast: "", query: "", results: [], searchTimer: 0, roomPoll: 0, artFailed: "", artFailedAt: 0, tick: 0 };
   },
   computed: {
@@ -63,7 +64,7 @@ createApp({
     // its transport is the play/stop on the bottom bar, nothing else
     isFixed() { return (m) => (this.stations.find(s => s.mount === m) || {}).kind === "fixed"; },
     nowKind() {
-      if (this.target === "gromit") return !this.speaker.mount ? "" : this.isFixed(this.speaker.mount) ? "ambient" : "library";
+      if (this.target === "local") return !this.speaker.mount ? "" : this.isFixed(this.speaker.mount) ? "ambient" : "library";
       if (this.target === "here") return !this.current ? "" : this.isFixed(this.current) ? "ambient" : "library";
       if (!this.receiver.on) return "";
       if (this.receiver.input === "TUNER") return "tuner";
@@ -78,7 +79,7 @@ createApp({
       const s = this.stations.find(s => s.name === np.station); return s ? s.mount : null;
     },
     nowStation() {
-      if (this.target === "gromit") return (this.stations.find(s => s.mount === this.speaker.mount) || {}).name || "";
+      if (this.target === "local") return (this.stations.find(s => s.mount === this.speaker.mount) || {}).name || "";
       if (this.target === "here") return this.currentStation.name;
       const np = this.np;
       if (this.nowKind === "tuner") return `${this.receiver.tuner.band} radio`;
@@ -86,14 +87,14 @@ createApp({
       return np && np.station ? np.station : (this.receiver.on ? this.receiver.input : "");
     },
     nowLine1() {
-      if (this.target === "gromit") { const m = this.speaker.mount; return (this.up[m] || {}).title || ""; }
+      if (this.target === "local") { const m = this.speaker.mount; return (this.up[m] || {}).title || ""; }
       if (this.target === "here") return this.nowTitle;
       if (this.nowKind === "tuner") return this.freqText + (this.receiver.tuner.band === "FM" ? " MHz" : " kHz");
       const np = this.np; if (!np) return "";
       return this.nowKind === "pandora" ? (np.track || "") : (np.track || np.station || "");
     },
     nowLine2() {
-      if (this.target === "gromit") return this.speaker.error || (this.speaker.playing ? "on gromit's speakers" : "stopped");
+      if (this.target === "local") return this.speaker.error || (this.speaker.playing ? `on ${this.site.localName}` : "stopped");
       if (this.nowKind === "ambient") return "on a loop";
       if (this.target === "here") { const n = this.listenersOf(this.current); return n ? `${n} listening` : ""; }
       if (this.nowKind === "tuner") return this.receiver.tuner.tuned ? (this.receiver.tuner.stereo ? "stereo" : "mono") : "no signal";
@@ -122,13 +123,13 @@ createApp({
     freqText() { const t = this.receiver.tuner; if (!t) return ""; return t.band === "FM" ? (t.fm.val / 100).toFixed(1) : String(t.am.val); },
     // --- nothing chosen yet: the play button starts what played last on this target
     idle() {
-      if (this.target === "gromit") return !this.speaker.mount;
+      if (this.target === "local") return !this.speaker.mount;
       if (this.target === "here") return !this.current;
       const np = this.np;
       return this.receiver.on && this.receiver.input === "NET RADIO" && !!np && np.playback === "Stop" && !np.station;
     },
     lastStation() {
-      if (this.target === "gromit") return this.stations.find(s => s.mount === (this.last.gromit || "rain")) || null;
+      if (this.target === "local") return this.stations.find(s => s.mount === (this.last.local || this.site.localMount)) || null;
       if (this.target === "here") return this.stations.find(s => s.mount === this.last.here) || null;
       const l = this.last.room; if (!l) return null;
       for (const g of this.groups) { const s = g.stations.find(s => s.kind === l.kind && s.name === l.name); if (s) return s; }
@@ -136,10 +137,10 @@ createApp({
     },
     // a fixed station has no DJ behind it: nothing to skip to, nothing to
     // request, no history to dislike. The buttons go rather than lie.
-    canDJ() { const m = this.target === "room" ? this.roomMount : this.target === "gromit" ? this.speaker.mount : this.current;
+    canDJ() { const m = this.target === "room" ? this.roomMount : this.target === "local" ? this.speaker.mount : this.current;
               return !!m && !this.isFixed(m); },
     feedbackMount() {
-      const m = this.target === "room" ? this.roomMount : this.target === "gromit" ? this.speaker.mount : this.current;
+      const m = this.target === "room" ? this.roomMount : this.target === "local" ? this.speaker.mount : this.current;
       return this.isFixed(m) ? null : m;      // no history, no requests, no dislikes on a rain loop
     },
     feedbackStation() { return this.stations.find(s => s.mount === this.feedbackMount) || { name: "" }; },
@@ -152,7 +153,7 @@ createApp({
       clearInterval(this.roomPoll); clearInterval(this.speakerPoll);
       if (t !== "room" && this.tab === "sources") this.tab = "now";
       if (t === "room") this.pollReceiver();
-      if (t === "gromit") this.pollSpeaker();
+      if (t === "local") this.pollSpeaker();
     },
     tab(t) { try { localStorage.setItem("radio.tab", t); } catch (e) {} if (t === "sources") this.loadMenu(); },
     "receiver.volume"(v) { this.volumeDraft = v; },
@@ -172,16 +173,17 @@ createApp({
     artError() { this.artFailed = this.art; this.artFailedAt = Date.now(); },
     artOk() { return !!this.art && (this.artFailed !== this.art || this.tick - this.artFailedAt > 30000); },   // a failed cover is retried after 30 s, not written off until the next song
     say(msg) { this.toast = msg; clearTimeout(this._toastT); this._toastT = setTimeout(() => { this.toast = ""; }, 3500); },
-    // here → the living room → gromit's own speakers → back
+    // here → the living room → this box's own speakers → back, skipping the
+    // ones this install does not have (site.json says which exist)
     pickTarget() {
-      const order = ["here", "room", "gromit"];
+      const order = ["here"].concat(this.site.hasRoom ? ["room"] : [], this.site.hasLocal ? ["local"] : []);
       this.target = order[(order.indexOf(this.target) + 1) % order.length];
       this.say({ here: "playing on this phone", room: `controlling the ${this.receiver.name || "receiver"}`,
-                 gromit: "controlling gromit's speakers" }[this.target]);
+                 local: `controlling ${this.site.localName}` }[this.target]);
     },
-    targetName() { return { here: "This phone", room: this.receiver.name || "Living room", gromit: "Gromit speakers" }[this.target]; },
+    targetName() { return { here: "This phone", room: this.receiver.name || this.site.roomName, local: this.site.localName }[this.target]; },
 
-    // ---- gromit's own audio output ------------------------------------------
+    // ---- this box's own audio output ------------------------------------------
     async pollSpeaker() {
       const st = await getJSON("speaker/state");
       this.speaker = st ? { ...st, error: st.error || "" } : { ...this.speaker, error: "unreachable" };
@@ -201,7 +203,7 @@ createApp({
     speakerVolume(step) { return this.speakerAction("", () => call("POST", "speaker/volume", { step })); },
     speakerMute(on) { return this.speakerAction("", () => call("POST", "speaker/mute", { on })); },
     isPlaying(s) {
-      if (this.target === "gromit") return !!s.mount && this.speaker.mount === s.mount;
+      if (this.target === "local") return !!s.mount && this.speaker.mount === s.mount;
       if (this.target === "here") return !!s.mount && this.current === s.mount;
       const np = this.np;
       if (s.kind === "preset") return this.receiver.input === "TUNER" && this.receiver.tuner && String(this.receiver.tuner.preset) === String(s.number);
@@ -242,7 +244,7 @@ createApp({
     retune() { try { localStorage.setItem("radio.quality", this.quality); } catch (e) {} if (this.current) this.play(this.current); },
     playTarget(s) {
       this.tab = "now";              // always show the switch happen
-      if (this.target === "gromit") { if (!s.mount) return; this.remember(s); return this.speakerPlay(s.mount); }
+      if (this.target === "local") { if (!s.mount) return; this.remember(s); return this.speakerPlay(s.mount); }
       if (this.target !== "room") return this.play(s.mount);
       this.remember(s);
       if (s.kind === "preset") return this.receiverAction("tuning…", async () => { if (this.receiver.input !== "TUNER") await call("POST", "receiver/input", { name: "TUNER" }); return call("POST", "receiver/tuner", { preset: s.number }); });
@@ -251,7 +253,7 @@ createApp({
       return this.receiverAction(`tuning to ${s.name}…`, () => call("POST", "receiver/menu/path", { path: ["My Stations", category, s.name] }));
     },
     stopTarget() {
-      if (this.target === "gromit") return this.speakerAction("stopping…", () => call("POST", "speaker/stop", {}));
+      if (this.target === "local") return this.speakerAction("stopping…", () => call("POST", "speaker/stop", {}));
       return this.target === "room" ? this.receiverAction("stopping…", () => call("POST", "receiver/playback", { action: "Stop" })) : this.stop();
     },
 
@@ -401,10 +403,12 @@ createApp({
     audio.addEventListener("waiting", () => { this.status = "buffering…"; });
     audio.addEventListener("playing", () => { this.status = ""; });
     window.addEventListener("resize", () => { this.wide = window.innerWidth > 640; });
+    // who this box is, written at build time from the module's options
+    getJSON("site.json").then(s => { if (s) { this.site = { ...this.site, ...s }; document.title = this.site.title; } });
     this.refresh();
     setInterval(() => { this.tick = Date.now(); this.refresh(); }, 10000);
     if (this.target === "room") this.pollReceiver();
-    if (this.target === "gromit") this.pollSpeaker();
+    if (this.target === "local") this.pollSpeaker();
     if (this.tab === "sources" && this.target !== "room") this.tab = "now";
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   },

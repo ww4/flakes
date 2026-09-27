@@ -50,6 +50,14 @@ class Track:
     genres: list[str] = field(default_factory=list)   # split words
     yamnet: dict | None = None
     era: str = ""
+    # The <Artist>/<Album> folders, taken RELATIVE to the library root this
+    # file was found under. Absolute path indices were wrong the moment a
+    # second root of a different depth was added: under
+    # /mnt/fusion/arr/media/music, parts[4] read "media" and the album read
+    # "music", so folder-artist matching and `Artist :: album` scoping could
+    # never hit a Lidarr-imported album (found 2026-09-26).
+    folder_artist: str = ""
+    folder_album: str = ""
 
 
 def split_genre(tag: str) -> list[str]:
@@ -149,14 +157,17 @@ def walk(roots: list[Path], cache: TagCache, extra_genres: dict[str, list[str]] 
                 if any(word_in(w, genres) for w in EXCLUDE_WORDS):
                     counts["excluded"] += 1
                     continue
+                rel = p.relative_to(root).parts
+                folder_artist = rel[0] if len(rel) > 1 else ""
+                folder_album = rel[1] if len(rel) > 2 else ""
                 if not artist:
-                    parts = str(p).split("/")
-                    artist = parts[4] if len(parts) > 5 else ""   # /mnt/fusion/Music/<Artist>/...
+                    artist = folder_artist
                 if "holiday" not in genres and HOLIDAY_NAME.search(f"{p.parent.name} {p.stem}"):
                     # a Christmas album tagged "Cowboy" is still a Christmas album
                     genre, genres = (genre + "; holiday").strip("; "), genres + ["holiday"]
                     counts["holiday_by_name"] = counts.get("holiday_by_name", 0) + 1
-                tracks.append(Track(str(p), genre, artist, genres))
+                tracks.append(Track(str(p), genre, artist, genres,
+                                    folder_artist=folder_artist, folder_album=folder_album))
     return tracks, counts
 
 
@@ -389,7 +400,8 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
     def pool(rule: dict) -> list[str]:
         source = everything if wants_holiday(rule) else playable
         return [t.path for t in source
-                if feedrules.matches(rule, artist=t.artist, path=t.path, genre=t.genre, yamnet=t.yamnet, era=t.era)]
+                if feedrules.matches(rule, artist=t.artist, path=t.path, genre=t.genre, yamnet=t.yamnet, era=t.era,
+                                     folder_artist=t.folder_artist, folder_album=t.folder_album)]
 
     feed_pools: dict[str, list[str]] = {}
     for fid, f in feeds.items():

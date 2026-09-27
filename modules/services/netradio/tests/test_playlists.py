@@ -212,3 +212,25 @@ class ArtistScope(unittest.TestCase):
     def test_a_scoped_entry_does_not_match_a_different_artist(self):
         self.assertFalse(self.hit(["Bear McCreary :: Outlander"], "Raya Yarbrough",
                                   "/mnt/fusion/Music/Raya Yarbrough/Outlander Songs/01 q.mp3"))
+
+    def test_the_scope_works_under_a_root_of_ANY_depth(self):
+        # The old code read the artist at parts[4] and the album at parts[5],
+        # absolute indices that only lined up under the FIRST library root. A
+        # second root of a different depth (Lidarr's
+        # /mnt/fusion/arr/media/music) made the artist read "media" and the
+        # album "music", so this scope could never match an imported album —
+        # silently, and only for part of the library (2026-09-26).
+        rule = ["Bear McCreary :: Outlander"]
+        for root in ("/mnt/fusion/Music", "/mnt/fusion/arr/media/music", "/srv/music", "/m"):
+            self.assertTrue(self.hit(rule, "Bear McCreary", f"{root}/Bear McCreary/Outlander Vol 1/01 x.mp3"),
+                            f"should match under {root}")
+            self.assertFalse(self.hit(rule, "Bear McCreary", f"{root}/Bear McCreary/The Singularity/01 y.mp3"),
+                             f"should NOT match the sci-fi score under {root}")
+
+    def test_the_scanner_resolves_the_folders_against_the_root_it_walked(self):
+        # and the values it passes in beat any guess made from the path
+        from netradio import feeds
+        self.assertTrue(feeds.artist_hit(["Clannad"], "", "/anything/at/all/x.mp3",
+                                         folder_artist="Clannad", folder_album="Magical Ring"))
+        self.assertFalse(feeds.artist_hit(["Clannad :: Anam"], "", "/anything/at/all/x.mp3",
+                                          folder_artist="Clannad", folder_album="Magical Ring"))

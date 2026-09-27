@@ -1,7 +1,23 @@
-# Net radio for the Yamaha R-N301 — the receiver's "Net Radio" input, brought
-# back after vTuner went pay-to-use, plus radio stations made from the music
-# library.
+# Radio stations built from a music library: genre playlists, on-demand
+# encoders, a DJ that talks between the songs, and a web remote. Optionally a
+# stand-in for vTuner, so an older Yamaha receiver's "Net Radio" input works
+# again after vTuner went pay-to-use.
 #
+# Everything site-specific is an option — see `options.services.netradio`
+# below. The smallest useful configuration is a domain and a library:
+#
+#     services.netradio = {
+#       enable = true;
+#       domain = "radio.example.com";
+#       libraryRoots = [ "/srv/music" ];
+#     };
+#
+# That gives the stations, the page and the admin UI. The receiver stand-in
+# (`vtuner.*`), this machine's own sound card (`speaker.*`), receiver controls
+# (`receiver.*`), the DJ's voice (`tts.*`) and agent-written feed rules
+# (`compile.*`) are each off until asked for.
+#
+# --- the vTuner stand-in, when enabled ---------------------------------------
 # How the receiver finds radio at all: it looks up radioyamaha.vtuner.com,
 # speaks plain HTTP on port 80 to whatever answers, and plays the stream URLs
 # it is handed. So:
@@ -37,7 +53,7 @@
 #
 # Stations, specialty feeds and the schedule are RUNTIME config
 # (${stateDir}/config/, seeded once from this file) edited on
-# radio.rosemaryacres.com/admin. Two kinds of station: CURATED (a broad base
+# <radio host>/admin. Two kinds of station: CURATED (a broad base
 # rule plus a schedule of segments — themed hours drawn from specialty feeds
 # or artist spotlights with similar artists mixed in; `auto` slots are the
 # DJ's own pick for the day) and SPECIALTY (one feed, listenable on its own).
@@ -45,14 +61,14 @@
 # apply path unit runs it as the claude user); the DJ announces segments as
 # they start and the day's schedule at breaks, radio-style.
 #
-# The page at radio.rosemaryacres.com (web/) shows what's playing, the last
+# The page at the configured domain (web/) shows what's playing, the last
 # few played, what the DJ queued next, listener counts and a visualiser, and
 # serves stations.m3u / .pls for radio apps. Every station also has a
 # "-lo" mount at 96 kbps (cellular). Nothing here needs a port opened.
 #
 # Ops:
 #   sudo cat /var/lib/netradio/credentials.env      Icecast passwords (generated)
-#   radio.rosemaryacres.com/admin                   feeds, schedule, stations (the config)
+#   <radio host>/admin                              feeds, schedule, stations (the config)
 #   /var/lib/netradio/config/                       feeds.json stations.json schedule.json picks.json
 #   journalctl -u netradio-apply                    what the admin's requests did (rescan / restart / compile)
 #   systemctl start netradio-playlists              rescan the library now
@@ -63,32 +79,30 @@
 { config, lib, pkgs, ... }:
 
 let
+  cfg = config.services.netradio;
+
   ycast = pkgs.callPackage ../../../pkgs/ycast { };
   netradio = pkgs.callPackage ./package.nix { };
 
-  # The vTuner names the receiver resolves. Both point here.
-  vtunerHost = "radioyamaha.vtuner.com";
-  vtunerBackup = "radioyamaha2.vtuner.com";
-  # The LAN address nginx is on — the same answer Blocky gives for
-  # *.rosemaryacres.com (proxyIP in blocky.nix; reading it back from
-  # config.services.blocky.settings while also adding to it is an infinite
-  # recursion, so it is repeated here — keep the two together).
-  lanIP = "192.168.1.65";
+  # The vTuner names the receiver resolves. Both point at this box.
+  vtunerHost = cfg.vtuner.host;
+  vtunerBackup = cfg.vtuner.backupHost;
+  # The LAN address nginx is on. Where Blocky also answers for the site's own
+  # names — reading it back out of config.services.blocky.settings while also
+  # adding to it is an infinite recursion, so it is a value here, not derived.
+  lanIP = cfg.vtuner.address;
 
-  ycastPort = 8010;
-  wakePort = 8011;
-  adminPort = 8012;
-  speakerPort = 8013;
-  # gromit's analog out (Realtek ALC887-VD, card 0). The rain starts at boot
-  # but MUTED, like the receiver: the stream is running and the jack is silent
-  # until the remote's mute button says otherwise.
-  speakerCard = "0";
-  speakerDefaultMount = "rainymood";   # the single seamless loop, not the five-bed variety station
-  speakerStartVolume = 35;
-  icecastPort = 8020; # 8000 is audiobookshelf (icecast SEGVs when the bind fails)
+  ycastPort = cfg.ports.ycast;
+  wakePort = cfg.ports.wake;
+  adminPort = cfg.ports.admin;
+  speakerPort = cfg.ports.speaker;
+  speakerCard = cfg.speaker.card;
+  speakerDefaultMount = cfg.speaker.defaultMount;
+  speakerStartVolume = cfg.speaker.startVolume;
+  icecastPort = cfg.ports.icecast;
 
-  user = "netradio";
-  stateDir = "/var/lib/netradio";
+  user = cfg.user;
+  stateDir = cfg.stateDir;
   credsEnv = "${stateDir}/credentials.env";
   playlistDir = "${stateDir}/playlists";
   cacheDir = "${stateDir}/cache";
@@ -106,30 +120,28 @@ let
 
   yamnet = pkgs.callPackage ./yamnet.nix { };
 
-  # The profiling itself is offloaded to wallace when it is up (the 5900X does
-  # it 4-5x faster; hosts/wallace/netradio-profile-server.nix), same shape as
-  # the switchboard's whisper/Kokoro: gromit's workers try it first and
-  # measure locally when nobody answers. Eight client workers keep twelve
-  # server processes fed over the tailnet (LAN-direct); if wallace is off the
-  # eight fall back to this box's four cores — slower, still correct.
-  profileRemotes = [ "http://100.66.171.120:8790" ];
-  profileWorkers = 8;
+  # The profiling can be offloaded to a faster box (`netradio profile-server`,
+  # one per remote): the local workers try each remote first and measure here
+  # when nobody answers, so a remote that is switched off is only slower.
+  profileRemotes = cfg.profile.remotes;
+  profileWorkers = cfg.profile.workers;
 
   runDir = "/run/netradio";
   liqSocket = "${runDir}/liquidsoap.sock";
 
-  # The DJ's voice: the switchboard's Kokoro choice and URL order (wallace
-  # first, gromit's own container last) so the house has one voice.
-  kokoroVoice = config.services.switchboard.kokoroVoice;
-  kokoroUrls = config.services.switchboard.remoteKokoroUrls ++ [ "http://127.0.0.1:8880" ];
+  # The DJ's voice: a Kokoro-compatible TTS endpoint (several are tried in
+  # order, so a fast remote can lead and a local container back it up).
+  kokoroVoice = cfg.tts.voice;
+  kokoroUrls = cfg.tts.urls;
 
-  # Where the music is. The first is the Jellyfin library; the second is
-  # where Lidarr puts new albums (lidarr.nix).
-  libraryRoots = [ "/mnt/fusion/Music" "/mnt/fusion/arr/media/music" ];
+  # Where the music is: every root the scanner walks.
+  libraryRoots = cfg.libraryRoots;
+  # The group that can read those roots, for the units that open the files.
+  libraryGroups = lib.optional (cfg.libraryGroup != null) cfg.libraryGroup;
 
   # --- the runtime config and its seeds ---------------------------------------
   # Stations, specialty feeds and the schedule are RUNTIME config under
-  # ${stateDir}/config/, edited on radio.rosemaryacres.com/admin; the scanner,
+  # ${stateDir}/config/, edited on <radio host>/admin; the scanner,
   # the DJ, Liquidsoap (script rendered at start), YCast (menu file) and the
   # wake service all read it. These seeds are copied in ONCE, on a box that
   # has no config yet — Chris's edits are never overwritten by a deploy.
@@ -142,7 +154,17 @@ let
   poolsDir = "${stateDir}/pools";
 
   noShellac = { exclude = [ "shellac" ]; };
-  seedFeeds = {
+  # The seeds are OPTION DEFAULTS, copied in once on a box with no config yet
+  # and never again — so they shape a fresh install and nothing else. Someone
+  # with a different record collection sets services.netradio.seed.* (or edits
+  # them on the admin page after the first boot).
+  seedFeeds = cfg.seed.feeds;
+  seedStations = cfg.seed.stations;
+  seedSchedule = cfg.seed.schedule;
+  quickPicks = cfg.quickPicks;
+  radioHost = cfg.domain;
+
+  defaultFeeds = {
     brother-duets = {
       shellac = true;   # 1930s-40s sides are the point of this feed
       title = "Brother Duets";
@@ -198,7 +220,7 @@ let
     };
   };
   specialtyStation = id: f: { mount = id; name = f.title; kind = "specialty"; feed = id; inherit (f) family; };
-  seedStations = [
+  defaultStations = [
     { mount = "all";        name = "Everything";           kind = "curated"; family = [ "any" ];                base = { all = true; }; }
     { mount = "scratchy";   name = "Old Scratchy Records"; kind = "curated"; family = [ "any" ];                base = { all = true; era = { only = [ "shellac" ]; }; }; }
     { mount = "bluegrass";  name = "Bluegrass & Old-Time"; kind = "curated"; family = [ "bluegrass" "folk" ];   base = { genres = [ "bluegrass" "old time" "oldtime" "newgrass" "string band" "brother duets" "appalachian" ]; era = noShellac; }; }
@@ -211,8 +233,9 @@ let
     { mount = "gospel";     name = "Gospel";               kind = "curated"; family = [ "gospel" ];             base = { genres = [ "gospel" "religious" "christian" "hymns" "sacred" "spiritual" ]; }; }
     { mount = "classical";  name = "Classical";            kind = "curated"; family = [ "classical" ];          base = { genres = [ "classical" "baroque" "orchestral" "opera" "chamber" ]; }; }
     { mount = "holiday";    name = "Holiday";              kind = "curated"; family = [ "holiday" ];            base = { genres = [ "holiday" "christmas" "xmas" ]; }; }
-  ] ++ lib.mapAttrsToList specialtyStation seedFeeds;
-  seedSchedule = [
+    # every specialty feed is also listenable as its own station
+  ] ++ lib.mapAttrsToList specialtyStation cfg.seed.feeds;
+  defaultSchedule = [
     { id = "country-sat-swing";  station = "country";   name = "Western Swing Hour";     kind = "feed"; feed = "western-swing";   days = [ "sat" ]; start = "10:00"; minutes = 60; }
     { id = "country-happy-hour"; station = "country";   name = "Honky Tonk Happy Hour";  kind = "feed"; feed = "honky-tonk";      days = "weekdays"; start = "17:00"; minutes = 60; }
     { id = "country-spotlight";  station = "country";   kind = "auto"; like = "artist";  days = "daily"; start = "20:00"; minutes = 60; }
@@ -226,7 +249,7 @@ let
   # A few known-good plain-HTTP streams so the input has something to play
   # before any browsing (all verified 2026-09-15). Discovery is Radiobrowser's
   # job; this is not a curated list.
-  quickPicks = [
+  defaultQuickPicks = [
     { name = "NPR News";            url = "http://npr-ice.streamguys1.com/live.mp3"; }
     { name = "WFPK Louisville";     url = "http://lpm.streamguys1.com/wfpk-web"; }
     { name = "WUKY Lexington";      url = "http://wuky.streamguys1.com/wuky"; }
@@ -244,8 +267,6 @@ let
   # the scanner has written the real one (JSON is valid YAML).
   ycastSeedYaml = pkgs.writeText "netradio-stations-seed.yml"
     (builtins.toJSON { "Quick Picks" = builtins.listToAttrs (map (p: { name = p.name; value = p.url; }) quickPicks); });
-
-  radioHost = "radio.rosemaryacres.com";
 
   # Library streams, shared by both vhosts. auth_request wakes the encoder
   # first; then the listener is proxied straight to Icecast, unbuffered, with
@@ -287,8 +308,21 @@ let
     url = "https://cdn.jsdelivr.net/npm/@picocss/pico@2.0.6/css/pico.min.css";
     hash = "sha256-3V/VWRr9ge4h3MEXrYXAFNw/HxncLXt9EB6grMKSdMI=";
   };
+  # The names the page puts on its three playback targets. Written at build
+  # time rather than hardcoded in app.js, so the page does not say "Gromit
+  # speakers" on somebody else's box.
+  siteJson = pkgs.writeText "netradio-site.json" (builtins.toJSON {
+    title = cfg.title;
+    localName = cfg.speaker.label;
+    localMount = cfg.speaker.defaultMount;
+    roomName = cfg.receiver.label;
+    hasLocal = cfg.speaker.enable;
+    hasRoom = cfg.receiver.enable;
+  });
+
   radioWeb = pkgs.runCommand "netradio-web" { } ''
     mkdir -p $out/admin $out/vendor
+    cp ${siteJson} $out/site.json
     cp ${./web}/index.html ${./web}/app.js ${./web}/remote.css ${./web}/ui.css $out/
     cp ${./web}/desktop.html ${./web}/desktop.js $out/   # the wide-screen page (the remote redirects there)
     cp ${./web}/manifest.webmanifest ${./web}/sw.js ${./web}/icon.svg ${./web}/icon-192.png ${./web}/icon-512.png $out/   # the PWA
@@ -308,7 +342,7 @@ let
   icecastTemplate = pkgs.writeText "icecast.xml.in" ''
     <?xml version="1.0"?>
     <icecast>
-      <location>gromit</location>
+      <location>${config.networking.hostName}</location>
       <admin>root@localhost</admin>
       <hostname>127.0.0.1</hostname>
       <limits>
@@ -360,25 +394,308 @@ let
   };
 in
 {
+  options.services.netradio = {
+    enable = lib.mkEnableOption "library radio stations (Icecast + Liquidsoap) with a DJ and a web remote";
+
+    domain = lib.mkOption {
+      type = lib.types.str;
+      example = "radio.example.com";
+      description = ''
+        The name the page and the streams are served under. This vhost is
+        expected to be access-gated by whatever guards the rest of the site —
+        nothing here opens a port.
+      '';
+    };
+
+    title = lib.mkOption {
+      type = lib.types.str;
+      default = "Radio";
+      description = "What the page calls itself.";
+    };
+
+    user = lib.mkOption {
+      type = lib.types.str;
+      default = "netradio";
+      description = "The system user every unit runs as.";
+    };
+
+    stateDir = lib.mkOption {
+      type = lib.types.path;
+      default = "/var/lib/netradio";
+      description = ''
+        Playlists, the runtime config, the DJ's rendered breaks, the profile
+        and the generated Icecast passwords. Survives a rebuild; the seeds
+        below are copied in only where a file does not already exist.
+      '';
+    };
+
+    libraryRoots = lib.mkOption {
+      type = lib.types.listOf lib.types.path;
+      example = [ "/srv/music" ];
+      description = "Every directory the scanner walks for audio files.";
+    };
+
+    libraryGroup = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "media";
+      description = ''
+        A group that can read `libraryRoots`, added to the units that touch
+        the files. Leave null when the library is world-readable.
+      '';
+    };
+
+    requiresMounts = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "mnt-music.mount" ];
+      description = ''
+        Mount units the library lives on, ordered before the scanner and the
+        encoders so a boot does not scan an empty mountpoint.
+      '';
+    };
+
+    tls = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Serve the page over HTTPS with an ACME certificate.";
+    };
+
+    acmeRoot = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        The ACME webroot for HTTP-01. Null (the default) means DNS-01, which
+        is what a name that only resolves on an overlay network needs.
+      '';
+    };
+
+    ports = {
+      ycast = lib.mkOption { type = lib.types.port; default = 8010; description = "YCast (loopback)."; };
+      wake = lib.mkOption { type = lib.types.port; default = 8011; description = "The on-demand encoder waker (loopback)."; };
+      admin = lib.mkOption { type = lib.types.port; default = 8012; description = "The admin API (loopback)."; };
+      speaker = lib.mkOption { type = lib.types.port; default = 8013; description = "The local-speaker API (loopback)."; };
+      icecast = lib.mkOption {
+        type = lib.types.port;
+        default = 8020;
+        description = ''
+          Icecast (loopback). Note Icecast SEGVs rather than exiting cleanly
+          when its bind fails, so a collision here looks like a crash.
+        '';
+      };
+    };
+
+    tts = {
+      voice = lib.mkOption {
+        type = lib.types.str;
+        default = "af_heart";
+        description = "The Kokoro voice the DJ speaks in.";
+      };
+      urls = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ "http://127.0.0.1:8880" ];
+        description = ''
+          Kokoro-compatible TTS endpoints, tried in order — put a fast remote
+          first and a local container last. With none reachable the stations
+          still play; they simply stop talking.
+        '';
+      };
+      afterUnits = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        example = [ "docker-kokoro.service" ];
+        description = "Units to order the DJ after, when TTS is hosted on this box.";
+      };
+    };
+
+    speaker = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Play a station on this machine's own sound card.";
+      };
+      label = lib.mkOption {
+        type = lib.types.str;
+        default = "These speakers";
+        description = "What the page calls this machine's audio output.";
+      };
+      card = lib.mkOption { type = lib.types.str; default = "0"; description = "ALSA card index or name, for the mixer."; };
+      device = lib.mkOption {
+        type = lib.types.str;
+        default = "plughw:0,0";
+        description = ''
+          The ALSA device to open. NOT `default`: on a box running PipeWire
+          per-user, `default` is redirected into the desktop session and a
+          system service opening it gets "Host is down".
+        '';
+      };
+      defaultMount = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        example = "rain";
+        description = "Play this station at boot, so a power cycle needs no phone. Empty for none.";
+      };
+      startVolume = lib.mkOption { type = lib.types.int; default = 35; description = "Mixer level at startup."; };
+      startMuted = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Come up silent: the stream runs and the jack stays quiet until something unmutes it.";
+      };
+    };
+
+    receiver = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Show living-room controls on the page, proxied to a receiver's own
+          HTTP API (`apiUrl`), and log what it plays for library-growing.
+        '';
+      };
+      label = lib.mkOption { type = lib.types.str; default = "Living room"; description = "What the page calls the receiver."; };
+      apiUrl = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        example = "http://127.0.0.1:8014";
+        description = "Base URL of the receiver-control API (see services.yamaha-ync for one implementation).";
+      };
+      afterUnits = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        example = [ "yamaha-ync-api.service" ];
+        description = "Units serving `apiUrl`, to order the play logger after.";
+      };
+    };
+
+    vtuner = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Stand in for vTuner so a Yamaha receiver's "Net Radio" input works
+          after vTuner went pay-to-use: a DNS answer for the vTuner hostnames
+          pointing here, a plain-HTTP vhost on port 80 (the receiver cannot do
+          TLS), and YCast behind it serving the station menu.
+        '';
+      };
+      host = lib.mkOption { type = lib.types.str; default = "radioyamaha.vtuner.com"; description = "The vTuner name the receiver resolves."; };
+      backupHost = lib.mkOption { type = lib.types.str; default = "radioyamaha2.vtuner.com"; description = "The receiver's fallback name."; };
+      address = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        example = "192.168.1.10";
+        description = "The LAN address nginx answers on, handed out for the names above.";
+      };
+      blockyMapping = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Add the DNS mapping to services.blocky. Turn off to point some other resolver at `address` yourself.";
+      };
+    };
+
+    profile = {
+      workers = lib.mkOption { type = lib.types.int; default = 4; description = "Local analysis workers."; };
+      remotes = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        example = [ "http://faster-box:8790" ];
+        description = ''
+          `netradio profile-server` endpoints to offload audio analysis to.
+          Each is tried before measuring locally, so one that is switched off
+          only costs speed.
+        '';
+      };
+    };
+
+    compile = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Let the admin page write a feed's matching rule from its prose
+          description by handing the prompt to an agent CLI. Off by default:
+          it runs a command as another user.
+        '';
+      };
+      user = lib.mkOption { type = lib.types.str; default = "claude"; description = "The user the agent CLI runs as."; };
+      home = lib.mkOption { type = lib.types.path; default = "/home/claude"; description = "HOME for that user."; };
+      workingDirectory = lib.mkOption { type = lib.types.path; default = "/home/claude"; description = "Where the CLI is invoked."; };
+      program = lib.mkOption { type = lib.types.str; default = "claude"; description = "The CLI, resolved on that user's PATH."; };
+    };
+
+    lastfmEnvFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      example = "/run/secrets/lastfm-env";
+      description = ''
+        An EnvironmentFile holding a Last.fm API key, for the similar-artist
+        lookups behind artist spotlights. Optional — without it the DJ simply
+        does not reach for neighbours. Provide it with sops-nix, agenix or
+        anything else that lands a file; this module never names a secret.
+      '';
+    };
+
+    quickPicks = lib.mkOption {
+      type = lib.types.listOf (lib.types.submodule {
+        options = {
+          name = lib.mkOption { type = lib.types.str; description = "Shown in the menu."; };
+          url = lib.mkOption { type = lib.types.str; description = "A plain-HTTP stream (a receiver cannot do TLS)."; };
+        };
+      });
+      default = defaultQuickPicks;
+      description = "A handful of outside stations, so the input plays something before any browsing.";
+    };
+
+    seed = {
+      feeds = lib.mkOption {
+        type = lib.types.attrsOf (lib.types.attrsOf lib.types.anything);
+        default = defaultFeeds;
+        description = ''
+          Specialty feeds to write into the runtime config on a box that has
+          none yet. A feed is a title, a description and a rule (artists /
+          genres / instruments / era, AND-ed). Edited on the admin page
+          afterwards — a deploy never overwrites them.
+        '';
+      };
+      stations = lib.mkOption {
+        type = lib.types.listOf (lib.types.attrsOf lib.types.anything);
+        default = defaultStations;
+        description = ''
+          Stations for a fresh install: `curated` (a broad base rule plus a
+          schedule of segments), `specialty` (one feed) or `fixed` (a
+          hand-kept playlist, no DJ). Defaults to one per genre family plus
+          one per seeded feed.
+        '';
+      };
+      schedule = lib.mkOption {
+        type = lib.types.listOf (lib.types.attrsOf lib.types.anything);
+        default = defaultSchedule;
+        description = "Themed segments and spotlight slots for a fresh install.";
+      };
+    };
+  };
+
+  config = lib.mkIf cfg.enable {
   users.users.${user} = {
     isSystemUser = true;
     group = user;
-    extraGroups = [ "media" ];  # the library is jellyfin:media 0770/0774
+    extraGroups = lib.optional (cfg.libraryGroup != null) cfg.libraryGroup;
     home = stateDir;
   };
   users.groups.${user} = { };
 
   # --- DNS: the receiver's lookups land here -------------------------------
-  # LAN-only by construction (blocky.nix): a Tailscale client keeps public DNS
+  # LAN-only by construction: a device on some other resolver keeps public DNS
   # and gets the real vTuner, which is fine — nothing off-LAN uses this.
-  services.blocky.settings.customDNS.mapping = {
-    ${vtunerHost} = lanIP;
-    ${vtunerBackup} = lanIP;
-  };
+  services.blocky.settings.customDNS.mapping =
+    lib.mkIf (cfg.vtuner.enable && cfg.vtuner.blockyMapping) {
+      ${vtunerHost} = lanIP;
+      ${vtunerBackup} = lanIP;
+    };
 
   # --- nginx: the ONE thing the receiver talks to ---------------------------
   # Plain HTTP on 80, deliberately no forceSSL: the receiver has no TLS.
-  services.nginx.virtualHosts.${vtunerHost} = {
+  services.nginx.virtualHosts = lib.optionalAttrs cfg.vtuner.enable { ${vtunerHost} = {
     serverAliases = [ vtunerBackup ];
     extraConfig = ''
       # A 2014 receiver's HTTP parser: no compressed bodies, no chunking.
@@ -395,18 +712,17 @@ in
         recommendedProxySettings = true;
       };
     } // streamLocations;
-  };
+  }; } // {
 
-  # --- radio.rosemaryacres.com: the same streams for phones and laptops -----
-  # Tailscale-reachable (A record → the Tailscale IP, DNS-01 cert) and
-  # source-gated like every other vhost. Exists because the LAN cannot be
-  # steered to Blocky (the Askey router ignores a LAN forwarder), so the
-  # vtuner name only resolves here for devices given .65 as DNS by hand; this
-  # name resolves everywhere. Index page: the stations, tap to play.
-  services.nginx.virtualHosts.${radioHost} = {
-    forceSSL = true;
-    enableACME = true;
-    acmeRoot = null;
+  # --- the page: the same streams for phones and laptops --------------------
+  # Reachable wherever this name resolves, and access-gated like the rest of
+  # the site. Exists because the vtuner name above only answers for devices
+  # pointed at this box's resolver; this one answers everywhere. Index page:
+  # the stations, tap to play.
+  ${radioHost} = {
+    forceSSL = cfg.tls;
+    enableACME = cfg.tls;
+    acmeRoot = cfg.acmeRoot;
     root = radioWeb;
     locations = {
       "/" = {
@@ -438,22 +754,6 @@ in
           types { } default_type application/manifest+json;
         '';
       };
-      # The receiver's JSON API (yamaha-ync-api, loopback; modules/services/yamaha-ync.nix)
-      # for the page's living-room controls. Same Tailscale/LAN gate as the page.
-      "/receiver/" = {
-        proxyPass = "http://127.0.0.1:${toString config.services.yamaha-ync.apiPort}/";
-        extraConfig = ''
-          add_header Cache-Control "no-store";
-          proxy_read_timeout 90s;   # a menu walk can take a while
-        '';
-      };
-      # gromit's own sound card as a third endpoint (netradio-speaker)
-      "/speaker/" = {
-        proxyPass = "http://127.0.0.1:${toString speakerPort}/";
-        extraConfig = ''
-          add_header Cache-Control "no-store";
-        '';
-      };
       # The admin API (netradio admin, loopback). The page itself is static
       # under /admin/. The vhost's Tailscale/LAN gate is the perimeter.
       "/admin/api/" = {
@@ -469,7 +769,28 @@ in
           add_header Cache-Control "no-store";
         '';
       };
-    } // streamLocations;
+    } // streamLocations
+      # The receiver's own JSON API, for the page's living-room controls.
+      # Same access gate as the page.
+      // lib.optionalAttrs (cfg.receiver.enable && cfg.receiver.apiUrl != "") {
+        "/receiver/" = {
+          proxyPass = "${cfg.receiver.apiUrl}/";
+          extraConfig = ''
+            add_header Cache-Control "no-store";
+            proxy_read_timeout 90s;   # a menu walk can take a while
+          '';
+        };
+      }
+      # This machine's own sound card as a third endpoint (netradio-speaker)
+      // lib.optionalAttrs cfg.speaker.enable {
+        "/speaker/" = {
+          proxyPass = "http://127.0.0.1:${toString speakerPort}/";
+          extraConfig = ''
+            add_header Cache-Control "no-store";
+          '';
+        };
+      };
+  };
   };
 
   # --- Icecast passwords: generated on the box, never in the repo ------------
@@ -561,7 +882,7 @@ in
   systemd.services.netradio-liquidsoap = {
     description = "Liquidsoap — library radio station outputs";
     wantedBy = [ "multi-user.target" ];
-    after = [ "netradio-icecast.service" "netradio-credentials.service" "mnt-fusion.mount" ];
+    after = [ "netradio-icecast.service" "netradio-credentials.service" ] ++ cfg.requiresMounts;
     requires = [ "netradio-icecast.service" "netradio-credentials.service" ];
     # Liquidsoap restarts whenever the station list changes (its script
     # does); pull a playlist rebuild along so new stations are populated.
@@ -571,7 +892,7 @@ in
     serviceConfig = hardening // {
       User = user;
       Group = user;
-      SupplementaryGroups = [ "media" ];
+      SupplementaryGroups = libraryGroups;
       EnvironmentFile = credsEnv;
       RuntimeDirectory = "netradio";
       RuntimeDirectoryMode = "0700";
@@ -598,14 +919,15 @@ in
   systemd.services.netradio-dj = {
     description = "Library radio DJ — sequence tracks, announce every few";
     wantedBy = [ "multi-user.target" ];
-    after = [ "netradio-liquidsoap.service" "docker-open-notebook-kokoro.service" ];
+    after = [ "netradio-liquidsoap.service" ] ++ cfg.tts.afterUnits;
     bindsTo = [ "netradio-liquidsoap.service" ];
     serviceConfig = hardening // {
       User = user;
       Group = user;
-      SupplementaryGroups = [ "media" ];   # reads the tracks' tags
+      SupplementaryGroups = libraryGroups;   # reads the tracks' tags
       ReadWritePaths = [ djDir nowDir configDir ];   # picks.json / similar.json live in config
-      EnvironmentFile = [ "-/run/secrets/lastfm-env" ];  # similar artists for spotlights; optional
+      # similar artists for spotlights; optional, and absent is fine (the "-")
+      EnvironmentFile = lib.optional (cfg.lastfmEnvFile != null) "-${cfg.lastfmEnvFile}";
       ExecStart = lib.concatStringsSep " " ([
         "${netradio}/bin/netradio dj"
         "--now-dir ${nowDir}"
@@ -687,13 +1009,13 @@ in
     };
   };
 
-  # --- gromit's sound card as a playback endpoint -------------------------------
-  # The green jack on the back: one ffmpeg decoding a station's mount into the
-  # card (`-f alsa plughw:0,0` — an argument, so it cannot be ignored), ALSA mixer
-  # for volume, a small JSON API behind radio.<domain>/speaker/. Starts on
-  # the rain so a power cycle brings it back with nothing to press.
-  systemd.services.netradio-speaker = {
-    description = "Play a library station on gromit's own audio output";
+  # --- this machine's sound card as a playback endpoint -------------------------
+  # One ffmpeg decoding a station's mount into the card (`-f alsa <device>` — an
+  # argument, so it cannot be ignored the way AUDIODEV was), the ALSA mixer for
+  # volume, and a small JSON API behind <domain>/speaker/. Plays the default
+  # mount at boot, so a power cycle needs nothing pressed.
+  systemd.services.netradio-speaker = lib.mkIf cfg.speaker.enable {
+    description = "Play a library station on this machine's own audio output";
     wantedBy = [ "multi-user.target" ];
     after = [ "netradio-icecast.service" "netradio-wake.service" "sound.target" ];
     wants = [ "netradio-icecast.service" "netradio-wake.service" ];
@@ -701,18 +1023,17 @@ in
       User = user;
       Group = user;
       SupplementaryGroups = [ "audio" ];
-      ExecStart = lib.concatStringsSep " " [
+      ExecStart = lib.concatStringsSep " " ([
         "${netradio}/bin/netradio speaker"
         "--icecast http://127.0.0.1:${toString icecastPort}"
         "--wake http://127.0.0.1:${toString wakePort}"
         "--listen 127.0.0.1 --port ${toString speakerPort}"
-        "--device plughw:0,0"
+        "--device ${cfg.speaker.device}"
         "--card ${speakerCard}"
-        "--default-mount ${speakerDefaultMount}"
-        "--start-volume ${toString speakerStartVolume}"
-        "--start-muted"
-        "--ffmpeg ${pkgs.ffmpeg}/bin/ffmpeg"
-      ];
+      ] ++ lib.optional (speakerDefaultMount != "") "--default-mount ${speakerDefaultMount}"
+        ++ [ "--start-volume ${toString speakerStartVolume}" ]
+        ++ lib.optional cfg.speaker.startMuted "--start-muted"
+        ++ [ "--ffmpeg ${pkgs.ffmpeg}/bin/ffmpeg" ]);
       Environment = [ "PATH=${lib.makeBinPath [ pkgs.alsa-utils pkgs.ffmpeg ]}" ];
       PrivateDevices = false;         # it needs /dev/snd
       Restart = "always";
@@ -720,19 +1041,19 @@ in
     };
   };
 
-  # --- what the receiver plays on Pandora ---------------------------------------
-  # A Pandora station Chris likes is a model for a library station; the log
-  # feeds the admin page's "Heard on Pandora" tab and the Lidarr fills.
-  systemd.services.netradio-pandora = lib.mkIf config.services.yamaha-ync.enable {
-    description = "Log what the receiver plays on Pandora (for growing the library)";
+  # --- what the receiver plays on a streaming service ---------------------------
+  # A well-tuned commercial station is a model for a library station: the log
+  # feeds the admin page's "heard elsewhere" tab and the wishlist it builds.
+  systemd.services.netradio-pandora = lib.mkIf (cfg.receiver.enable && cfg.receiver.apiUrl != "") {
+    description = "Log what the receiver plays (for growing the library)";
     wantedBy = [ "multi-user.target" ];
-    after = [ "yamaha-ync-api.service" ];
+    after = cfg.receiver.afterUnits;
     serviceConfig = hardening // {
       User = user;
       Group = user;
       ExecStart = lib.concatStringsSep " " [
         "${netradio}/bin/netradio pandora"
-        "--api http://127.0.0.1:${toString config.services.yamaha-ync.apiPort}"
+        "--api ${cfg.receiver.apiUrl}"
         "--out ${configDir}/pandora.jsonl"
         "--interval 15"
       ];
@@ -745,13 +1066,13 @@ in
   # --- playlist scanner: nightly + shortly after boot --------------------------
   systemd.services.netradio-playlists = {
     description = "Rebuild the library station playlists from genre tags";
-    after = [ "netradio-credentials.service" "mnt-fusion.mount" ];
+    after = [ "netradio-credentials.service" ] ++ cfg.requiresMounts;
     requires = [ "netradio-credentials.service" ];
     serviceConfig = hardening // {
       Type = "oneshot";
       User = user;
       Group = user;
-      SupplementaryGroups = [ "media" ];
+      SupplementaryGroups = libraryGroups;
       ReadWritePaths = [ playlistDir cacheDir nowDir poolsDir configDir ];
       Nice = 10;
       IOSchedulingClass = "idle";
@@ -764,8 +1085,12 @@ in
         "--genres ${configDir}/genres.json"   # optional: the beets + Last.fm catalogue's words per file
         "--summary ${nowDir}/stations.json"
         "--ycast ${configDir}/stations.yml"
-        "--public-base http://${vtunerHost}/radio"
-        "--web-base https://${radioHost}/radio"
+      ]
+        # The URL the receiver is handed, which must be the plain-HTTP vhost it
+        # can actually parse — only meaningful when that stand-in exists.
+        ++ lib.optional cfg.vtuner.enable "--public-base http://${vtunerHost}/radio"
+        ++ [
+        "--web-base ${if cfg.tls then "https" else "http"}://${radioHost}/radio"
         "--quick-picks ${quickPicksJson}"
         "--profile ${profileJson}"
         "--overrides ${profileOverrides}"
@@ -797,7 +1122,7 @@ in
   # Runs before the 04:30 playlist rebuild so exclusions land the same night.
   systemd.services.netradio-profile = {
     description = "Profile library tracks for talk vs music (YAMNet + pitch)";
-    after = [ "netradio-credentials.service" "mnt-fusion.mount" ];
+    after = [ "netradio-credentials.service" ] ++ cfg.requiresMounts;
     requires = [ "netradio-credentials.service" ];
     # The playlists are what act on the profile: rebuild them the moment a
     # pass finishes rather than at the next 04:30 (the first pass runs past
@@ -814,7 +1139,7 @@ in
       Type = "oneshot";
       User = user;
       Group = user;
-      SupplementaryGroups = [ "media" ];
+      SupplementaryGroups = libraryGroups;
       ReadWritePaths = [ stateDir ];
       Nice = 19;
       IOSchedulingClass = "idle";
@@ -895,35 +1220,37 @@ in
       req=${configDir}/requests
       shopt -s nullglob
       need_apply=0
+      ${lib.optionalString cfg.compile.enable ''
       for f in "$req"/compile-*.json; do
         feed="$(jq -r .feed "$f")"
         rm -f "$f"
         [ -n "$feed" ] || continue
         echo "compiling feed $feed"
         work="$(mktemp -d /tmp/netradio-compile.XXXXXX)"
-        chown claude "$work"
-        if runuser -u claude -- env HOME=/home/claude CLAUDE_AUTONOMOUS=1 \
-             PATH=/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin:/usr/bin:/bin \
+        chown ${cfg.compile.user} "$work"
+        if runuser -u ${cfg.compile.user} -- env HOME=${cfg.compile.home} CLAUDE_AUTONOMOUS=1 \
+             PATH=/etc/profiles/per-user/${cfg.compile.user}/bin:/run/current-system/sw/bin:/usr/bin:/bin \
              bash -c '
-               cd /home/claude/nixos-homelab-improvements || exit 1
+               cd ${cfg.compile.workingDirectory} || exit 1
                ${netradio}/bin/netradio compile-prompt --config ${configDir} --feed "$1" --genre-words ${configDir}/genre-words.json > "$2/prompt" || exit 1
-               timeout 10m claude -p "$(cat "$2/prompt")" > "$2/result" 2>/dev/null || exit 1
+               timeout 10m ${cfg.compile.program} -p "$(cat "$2/prompt")" > "$2/result" 2>/dev/null || exit 1
                ${netradio}/bin/netradio compile-apply --config ${configDir} --feed "$1" --result "$2/result"
              ' _ "$feed" "$work"; then
           echo "feed $feed compiled"
         else
           echo "feed $feed: compile failed (see above)"
           # compile-apply marks the feed failed with the real reason when it
-          # ran; only when claude produced nothing at all is there no result
+          # ran; only when the agent produced nothing at all is there no result
           # file, and then the page should say that instead.
           if [ ! -s "$work/result" ]; then
-            printf 'claude -p produced no answer (timeout or failure) — see journalctl -u netradio-apply\n' > "$work/result"
+            printf '${cfg.compile.program} -p produced no answer (timeout or failure) — see journalctl -u netradio-apply\n' > "$work/result"
             ${netradio}/bin/netradio compile-apply --config ${configDir} --feed "$feed" --result "$work/result" >/dev/null 2>&1 || true
           fi
         fi
         rm -rf "$work"
         need_apply=1
       done
+      ''}
       for f in "$req"/apply-*.json; do
         echo "apply requested: $(jq -r '.reason // ""' "$f")"
         rm -f "$f"
@@ -944,7 +1271,7 @@ in
   };
 
   # --- YCast: the vTuner directory ------------------------------------------
-  systemd.services.ycast = {
+  systemd.services.ycast = lib.mkIf cfg.vtuner.enable {
     description = "YCast — vTuner internet radio directory emulation";
     wantedBy = [ "multi-user.target" ];
     # YCast decides ONCE at startup whether "My Stations" exists (it looks
@@ -970,18 +1297,6 @@ in
     };
   };
 
-  # --- Last.fm API key (curation plan, phase 2) ------------------------------
-  # Genre tags (beets lastgenre) and similar-artist lookups for the DJ's
-  # artist tranches. Read-only use. Owner netradio; group users so the agent's
-  # catalogue jobs (run as claude) can read it too — a low-value key.
-  # Handed over via the secrets-inbox 2026-09-16; edit with `sops secrets/lastfm-env.yaml`.
-  sops.secrets."lastfm-env" = {
-    sopsFile = ../../../secrets/lastfm-env.yaml;
-    key = "lastfm-env";
-    owner = user;
-    group = "users";
-    mode = "0440";
+    environment.systemPackages = [ netradio ];
   };
-
-  environment.systemPackages = [ netradio ];
 }

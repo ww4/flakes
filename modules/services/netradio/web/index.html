@@ -24,8 +24,8 @@
 
   <!-- ===== top: where we're playing ======================================== -->
   <header class="bar top">
-    <button class="room" @click="pickTarget"><span class="dot" :class="{live: target === 'room' ? receiver.on : target === 'gromit' ? speaker.playing : !!current}"></span>{{ targetName() }} <span class="chev">⌄</span></button>
-    <span class="status">{{ busy || status || (target === 'room' && receiver.error ? 'receiver unreachable' : '') || (target === 'gromit' && speaker.error === 'unreachable' ? 'speaker service down' : '') }}</span>
+    <button class="room" @click="pickTarget"><span class="dot" :class="{live: target === 'room' ? receiver.on : target === 'local' ? speaker.playing : !!current}"></span>{{ targetName() }} <span class="chev">⌄</span></button>
+    <span class="status">{{ busy || status || (target === 'room' && receiver.error ? 'receiver unreachable' : '') || (target === 'local' && speaker.error === 'unreachable' ? 'speaker service down' : '') }}</span>
     <button class="admin" @click="openRemote" title="Receiver remote" aria-label="Receiver remote"><svg viewBox="0 0 24 24" style="width:1.15rem;height:1.15rem;fill:none;stroke:currentColor;stroke-width:1.8"><rect x="7" y="2" width="10" height="20" rx="3"/><circle cx="12" cy="6.5" r="1.2"/><path d="M9.5 11h5M9.5 14h5M9.5 17h5"/></svg></button>
     <a class="admin" href="desktop.html?view=desktop" title="Desktop view">🖥</a>
     <a class="admin" href="admin/" title="Admin">⚙</a>
@@ -149,8 +149,8 @@
     <button class="icon" @click="volumeStep(2)" :disabled="!receiver.on">+</button>
     <button class="icon" :class="{on: receiver.mute}" @click="mute(!receiver.mute)" :disabled="!receiver.on" :title="receiver.mute ? 'Unmute' : 'Mute'"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path v-if="!receiver.mute" d="M16 8.5a5 5 0 0 1 0 7"/><path v-else d="M16 9l5 6M21 9l-5 6"/></svg></button>
   </footer>
-  <footer class="bar volume" v-else-if="target === 'gromit'">
-    <button class="icon" :class="{on: speaker.playing}" @click="speaker.mount ? stopTarget() : speakerPlay(last.gromit || 'rain')" :title="speaker.playing ? 'Stop' : 'Play'">
+  <footer class="bar volume" v-else-if="target === 'local'">
+    <button class="icon" :class="{on: speaker.playing}" @click="speaker.mount ? stopTarget() : speakerPlay(last.local || site.localMount)" :title="speaker.playing ? 'Stop' : 'Play'">
       <svg v-if="speaker.playing" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></svg><svg v-else viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg></button>
     <button class="icon" @click="speakerVolume(-5)">−</button>
     <input type="range" min="0" max="100" step="1" :value="speaker.volume ?? 0" @change="speakerAction('', () => call('POST', 'speaker/volume', { level: Number($event.target.value) }))" aria-label="Volume">

@@ -5,7 +5,7 @@
 # 2026-09 modularization; personal values live in ./modules/homelab-values.nix).
 # To try something out, add or comment a single import below and `nixos-rebuild
 # test`; roll back with git or the boot menu.
-{ homelab-modules, ... }:
+{ config, homelab-modules, ... }:
 
 let hm = homelab-modules.nixosModules; in
 {
@@ -218,5 +218,70 @@ let hm = homelab-modules.nixosModules; in
     # wallace is powered off — hosts/wallace/switchboard-inference.nix.
     remoteWhisperUrls = [ "http://100.66.171.120:8778" ];
     remoteKokoroUrls = [ "http://100.66.171.120:8880" ];
+  };
+
+  # --- the radio: this box's values for modules/services/netradio -------------
+  # The module itself is generic (options only); everything here is local fact.
+  services.netradio = {
+    enable = true;
+    domain = "radio.rosemaryacres.com";
+    title = "Rosemary Acres Radio";
+    # The Jellyfin library, and where Lidarr puts new albums (lidarr.nix).
+    libraryRoots = [ "/mnt/fusion/Music" "/mnt/fusion/arr/media/music" ];
+    libraryGroup = "media";                 # the library is jellyfin:media 0770/0774
+    requiresMounts = [ "mnt-fusion.mount" ];
+
+    # One voice for the whole house: the switchboard's Kokoro choice and its
+    # URL order (wallace first, gromit's own container last).
+    tts = {
+      voice = config.services.switchboard.kokoroVoice;
+      urls = config.services.switchboard.remoteKokoroUrls ++ [ "http://127.0.0.1:8880" ];
+      afterUnits = [ "docker-open-notebook-kokoro.service" ];
+    };
+
+    # gromit's analog out (Realtek ALC887-VD, card 0). Muted at boot like the
+    # receiver: the stream runs and the jack is silent until the remote says so.
+    speaker = {
+      enable = true;
+      label = "Gromit speakers";
+      defaultMount = "rainymood";           # the seamless loop, not the five-bed variety station
+      startVolume = 35;
+    };
+
+    # The living-room R-N301, via modules/services/yamaha-ync.nix.
+    receiver = {
+      enable = config.services.yamaha-ync.enable;
+      label = config.services.yamaha-ync.name;
+      apiUrl = "http://127.0.0.1:${toString config.services.yamaha-ync.apiPort}";
+      afterUnits = [ "yamaha-ync-api.service" ];
+    };
+
+    # The receiver's Net Radio input: Blocky answers the vTuner names with the
+    # LAN address nginx is on (the same value as blocky.nix's proxyIP — reading
+    # it back from services.blocky.settings while adding to it is an infinite
+    # recursion, so keep the two together).
+    vtuner = { enable = true; address = "192.168.1.65"; };
+
+    # Audio analysis offloaded to wallace when it is up (the 5900X is 4-5x
+    # faster); eight local workers keep twelve server processes fed over the
+    # tailnet, and fall back to this box's four cores when it is off.
+    profile = { workers = 8; remotes = [ "http://100.66.171.120:8790" ]; };
+
+    # The admin page writes a feed's rule from its description with `claude -p`.
+    compile = { enable = true; workingDirectory = "/home/claude/nixos-homelab-improvements"; };
+
+    lastfmEnvFile = config.sops.secrets."lastfm-env".path;
+  };
+
+  # Genre tags (beets lastgenre) and the DJ's similar-artist lookups. Read-only
+  # use. Owner netradio; group users so the agent's catalogue jobs (as claude)
+  # can read it too — a low-value key. Handed over via the secrets-inbox
+  # 2026-09-16; edit with `sops secrets/lastfm-env.yaml`.
+  sops.secrets."lastfm-env" = {
+    sopsFile = ./secrets/lastfm-env.yaml;
+    key = "lastfm-env";
+    owner = "netradio";
+    group = "users";
+    mode = "0440";
   };
 }
