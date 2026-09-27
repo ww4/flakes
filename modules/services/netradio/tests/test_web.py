@@ -3,13 +3,24 @@ These are the cheap structural checks that catch the mistakes that actually
 happened.
 """
 
+import os
 import re
 import unittest
 from pathlib import Path
 
-WEB = Path(__file__).resolve().parent.parent / "web"
+# web/ is deliberately NOT part of the Python package's source (editing a page
+# must not rehash the package and restart every unit), so inside that build
+# there is nothing here to check and these tests skip. They are run for real by
+# the `netradio-web` derivation, which has the pages and sets NETRADIO_WEB —
+# and that derivation is nginx's document root, so it gates every deploy.
+WEB = Path(os.environ.get("NETRADIO_WEB") or (Path(__file__).resolve().parent.parent / "web"))
 PAGES = ["index.html", "desktop.html"]
 SCRIPTS = ["app.js", "desktop.js"]
+
+
+def setUpModule():
+    if not (WEB / "index.html").exists():
+        raise unittest.SkipTest(f"no web/ at {WEB} — these run in the netradio-web build")
 
 
 def module_functions(js: str) -> set[str]:
