@@ -311,8 +311,20 @@ let
   # The names the page puts on its three playback targets. Written at build
   # time rather than hardcoded in app.js, so the page does not say "Gromit
   # speakers" on somebody else's box.
+  # Every device, in picker order, with its base path and what it can do. The
+  # page reads this instead of knowing any device's name.
+  deviceList = map (id: {
+    inherit id;
+    inherit (cfg.devices.${id}) name capabilities statePath order;
+    base = "device/${id}";
+  }) (lib.sort (a: b: cfg.devices.${a}.order < cfg.devices.${b}.order)
+               (lib.attrNames cfg.devices));
+
   siteJson = pkgs.writeText "netradio-site.json" (builtins.toJSON {
     title = cfg.title;
+    devices = deviceList;
+    # the current page still reads these; the device list replaces them when
+    # the page is refactored to loop rather than branch
     localName = cfg.speaker.label;
     localMount = cfg.speaker.defaultMount;
     roomName = cfg.receiver.label;
@@ -577,6 +589,67 @@ in
       };
     };
 
+    # --- playback devices --------------------------------------------------
+    # A device is anything that can be told to play a station, and it is
+    # described rather than special-cased: a base URL plus what it can do. The
+    # verbs every device answers are
+    #
+    #     GET  <endpoint>/<statePath>     what is playing, volume, muted
+    #     POST <endpoint>/play    {"mount": "rain"}
+    #     POST <endpoint>/stop
+    #     POST <endpoint>/volume  {"level": 40} | {"step": 5}
+    #     POST <endpoint>/mute    {"on": true}
+    #
+    # Anything beyond that is a capability the device declares and the page
+    # offers only if present — power, input switching, a menu to walk, a tuner.
+    # So a new receiver needs a small service speaking those verbs, an entry
+    # here, and nothing changed inside netradio.
+    #
+    # `speaker.*` and `receiver.*` above are sugar that fill this in, so the
+    # two devices that already exist keep working untouched.
+    devices = lib.mkOption {
+      default = { };
+      description = "Playback endpoints, by id. Each is proxied at /device/<id>/ under the page's own vhost, so it inherits the same access gate and needs no port of its own — keep the endpoints on loopback.";
+      type = lib.types.attrsOf (lib.types.submodule ({ name, ... }: {
+        options = {
+          name = lib.mkOption {
+            type = lib.types.str;
+            default = name;
+            description = "What the page calls it.";
+          };
+          endpoint = lib.mkOption {
+            type = lib.types.str;
+            example = "http://127.0.0.1:8014";
+            description = "Base URL of the service speaking the verbs above. Loopback.";
+          };
+          capabilities = lib.mkOption {
+            type = lib.types.listOf (lib.types.enum [
+              "play" "stop" "volume" "mute"
+              "stations"
+              "power" "inputs" "menu" "tuner" "presets" "feedback"
+            ]);
+            default = [ "play" "stop" "volume" "mute" "stations" ];
+            description = "What this device can do. play/stop/volume/mute plus `stations` are the contract; the rest are extras the page shows only when declared.";
+          };
+          statePath = lib.mkOption {
+            type = lib.types.str;
+            default = "state";
+            description = "The path the device answers its status on. `state` is the contract; this exists so a device already speaking a different dialect (yamaha-ync answers `status`) is usable without being rewritten.";
+          };
+          order = lib.mkOption {
+            type = lib.types.int;
+            default = 50;
+            description = "Sort order in the page's target picker; lower comes first.";
+          };
+          afterUnits = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+            description = "Units that serve this endpoint, for ordering.";
+          };
+        };
+      }));
+    };
+
     vtuner = {
       enable = lib.mkOption {
         type = lib.types.bool;
@@ -686,6 +759,53 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+  # The two devices that exist, expressed as devices. This is the only place
+  # that knows `speaker` and `receiver` are special — everything downstream
+  # reads services.netradio.devices, so a third one is config, not code.
+  # A device that cannot do the four verbs is not a device, and finding that
+  # out by tapping a dead button in the page is the wrong time.
+  assertions =
+    (lib.mapAttrsToList (id: d: {
+      assertion = lib.all (c: lib.elem c d.capabilities) [ "play" "stop" "volume" "mute" ];
+      message = "services.netradio.devices.${id}: capabilities must include play, stop, volume and mute — "
+                + "those four are the contract. Got: ${lib.concatStringsSep ", " d.capabilities}.";
+    }) cfg.devices)
+    ++ (lib.mapAttrsToList (id: d: {
+      assertion = d.endpoint != "" && lib.hasPrefix "http" d.endpoint;
+      message = "services.netradio.devices.${id}.endpoint must be an http(s) base URL, e.g. http://127.0.0.1:8014.";
+    }) cfg.devices);
+
+  warnings = lib.filter (w: w != "") (lib.mapAttrsToList (id: d:
+    lib.optionalString (!(lib.hasInfix "127.0.0.1" d.endpoint || lib.hasInfix "localhost" d.endpoint))
+      ("services.netradio.devices.${id}.endpoint is not on loopback (${d.endpoint}). It is proxied under the "
+       + "page's vhost, which is the access gate — a device reachable another way is outside it.")
+  ) cfg.devices);
+
+  services.netradio.devices = lib.mkMerge [
+    (lib.mkIf cfg.speaker.enable {
+      local = {
+        name = cfg.speaker.label;
+        endpoint = "http://127.0.0.1:${toString speakerPort}";
+        capabilities = [ "play" "stop" "volume" "mute" "stations" ];
+        order = 20;
+        afterUnits = [ "netradio-speaker.service" ];
+      };
+    })
+    (lib.mkIf (cfg.receiver.enable && cfg.receiver.apiUrl != "") {
+      room = {
+        name = cfg.receiver.label;
+        endpoint = cfg.receiver.apiUrl;
+        # yamaha-ync answers /status, not /state. Declared rather than
+        # rewritten: the adapter is one word of config.
+        statePath = "status";
+        capabilities = [ "play" "stop" "volume" "mute" "stations"
+                         "power" "inputs" "menu" "tuner" "presets" "feedback" ];
+        order = 10;
+        afterUnits = cfg.receiver.afterUnits;
+      };
+    })
+  ];
+
   users.users.${user} = {
     isSystemUser = true;
     group = user;
@@ -799,7 +919,17 @@ in
             add_header Cache-Control "no-store";
           '';
         };
-      };
+      }
+      # …and every declared device at its own generic path. The two legacy
+      # locations above stay until the page stops naming them, so this change
+      # adds a route and removes nothing.
+      // lib.mapAttrs' (id: d: lib.nameValuePair "/device/${id}/" {
+        proxyPass = "${lib.removeSuffix "/" d.endpoint}/";
+        extraConfig = ''
+          add_header Cache-Control "no-store";
+          proxy_read_timeout 90s;   # a device that walks a menu can be slow
+        '';
+      }) cfg.devices;
   };
   };
 
