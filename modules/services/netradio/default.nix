@@ -320,7 +320,17 @@ let
     hasRoom = cfg.receiver.enable;
   });
 
-  radioWeb = pkgs.runCommand "netradio-web" { } ''
+  # Building the document root also CHECKS it. The pages are plain files with no
+  # build step, so a template expression naming something out of scope fails
+  # only when a finger lands on it, in a browser, silently — the speaker volume
+  # slider called a module-scope helper and threw on every drag (2026-09-26).
+  # tests/test_web.py catches that class. It cannot run inside the Python
+  # package's build, because web/ is deliberately not part of that source; here
+  # it can, and this derivation is nginx's document root, so nothing deploys
+  # without it passing.
+  radioWeb = pkgs.runCommand "netradio-web" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+    NETRADIO_WEB=${./web} python3 -m unittest discover -s ${./tests} -t ${./tests} -p 'test_web.py' -v
+
     mkdir -p $out/admin $out/vendor
     cp ${siteJson} $out/site.json
     cp ${./web}/index.html ${./web}/app.js ${./web}/remote.css ${./web}/ui.css $out/
