@@ -380,12 +380,22 @@ def main(argv: list[str] | None = None) -> int:
         player.play(args.default_mount)
 
     srv = ThreadingHTTPServer((args.listen, args.port), make_handler(player, mixer))
-    signal.signal(signal.SIGTERM, lambda *_: (stop.set(), player.stop(), srv.shutdown()))
+    # Serve on a THREAD and wait here. The obvious shape — serve_forever() in
+    # the main thread with a SIGTERM handler that calls srv.shutdown() —
+    # deadlocks: Python runs signal handlers on the main thread, so shutdown()
+    # blocks waiting for a serve loop that cannot run until the handler
+    # returns. systemd then waited the full 90 s TimeoutStop and SIGKILLed,
+    # which is 90 s of silence on every single deploy (2026-09-26).
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: stop.set())
     log.info("speaker on %s:%d, playing %s", args.listen, args.port, args.default_mount or "nothing")
     try:
-        srv.serve_forever()
+        stop.wait()
     except KeyboardInterrupt:
         pass
     stop.set()
     player.stop()
+    srv.shutdown()          # safe from here: the loop is on another thread
+    srv.server_close()
     return 0
