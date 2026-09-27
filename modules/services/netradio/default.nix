@@ -1223,10 +1223,42 @@ in
         "--api ${cfg.receiver.apiUrl}"
         "--out ${configDir}/pandora.jsonl"
         "--interval 15"
+        "--receiver-state ${nowDir}/receiver.json"
+        "--menu ${configDir}/stations.yml"
       ];
-      ReadWritePaths = [ configDir ];
+      ReadWritePaths = [ configDir nowDir ];
       Restart = "always";
       RestartSec = 30;
+    };
+  };
+
+  # --- put the receiver back after an encoder restart ---------------------------
+  # Liquidsoap restarts on any deploy that changes the package, which drops
+  # every listener. The phone reconnects and the local speaker has a watchdog;
+  # a receiver does not — an R-N301 goes to Stop and stays there, which is how
+  # Classic Country was silent in the living room for four hours on 2026-09-27.
+  # `wantedBy` on the Liquidsoap unit means this runs every time it starts.
+  # The guardrails live in netradio/resume.py: powered on, already on net
+  # radio, not already playing, and only a station it was seen playing.
+  systemd.services.netradio-resume = lib.mkIf (cfg.receiver.enable && cfg.receiver.apiUrl != "") {
+    description = "Put the receiver back on the station it was playing";
+    after = [ "netradio-liquidsoap.service" "netradio-wake.service" ] ++ cfg.receiver.afterUnits;
+    wants = [ "netradio-wake.service" ];
+    wantedBy = [ "netradio-liquidsoap.service" ];
+    serviceConfig = hardening // {
+      Type = "oneshot";
+      User = user;
+      Group = user;
+      ExecStart = lib.concatStringsSep " " [
+        "${netradio}/bin/netradio resume"
+        "--api ${cfg.receiver.apiUrl}"
+        "--now-dir ${nowDir}"
+        "--wake http://127.0.0.1:${toString wakePort}"
+        # a receiver takes a moment to notice the stream went away; asking it
+        # while it still thinks it is playing would be a no-op
+        "--settle 15"
+      ];
+      TimeoutStartSec = "5min";
     };
   };
 
@@ -1350,7 +1382,15 @@ in
       User = user;
       Group = user;
       ReadWritePaths = [ configDir "${djDir}/inbox" ];
-      ExecStart = "${netradio}/bin/netradio admin --config ${configDir} --listen 127.0.0.1 --port ${toString adminPort} --dj-dir ${djDir} --playlists ${playlistDir}";
+      ExecStart = lib.concatStringsSep " " ([
+        "${netradio}/bin/netradio admin"
+        "--config ${configDir}" "--listen 127.0.0.1" "--port ${toString adminPort}"
+        "--dj-dir ${djDir}" "--playlists ${playlistDir}"
+      ] ++ lib.optionals (cfg.receiver.enable && cfg.receiver.apiUrl != "") [
+        "--receiver-api ${cfg.receiver.apiUrl}"
+        "--now-dir ${nowDir}"
+        "--wake http://127.0.0.1:${toString wakePort}"
+      ]);
       Restart = "always";
       RestartSec = 5;
     };

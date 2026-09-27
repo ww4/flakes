@@ -537,6 +537,43 @@ def ycast_yaml(stations: list[dict], base: str, quick_picks: list[dict]) -> str:
     return out
 
 
+def parse_ycast_yaml(text: str) -> list[tuple[str, str, str]]:
+    """(category, name, url) per entry — the inverse of ycast_yaml, and kept
+    beside it so the two cannot drift.
+
+    This file is the receiver's own truth about where a station lives in its
+    menu, which is why it is read back rather than the category being derived
+    a second time from a station's kind: Rain and Rainy Mood are `fixed`, the
+    page lists them under Specialty, and the menu has them under Curated. Any
+    second guess would be wrong for those two.
+    """
+    out: list[tuple[str, str, str]] = []
+    category = ""
+    for raw in text.splitlines():
+        if not raw.strip():
+            continue
+        if not raw.startswith(" "):                 # a category header
+            category = raw.rstrip().rstrip(":")
+            continue
+        name, sep, url = raw.strip().partition(": ")
+        if not sep:
+            continue
+        try:                                        # values are JSON strings
+            out.append((category, json.loads(name), json.loads(url)))
+        except ValueError:
+            continue
+    return out
+
+
+def menu_entry_for_mount(text: str, mount: str) -> tuple[str, str] | None:
+    """(category, name) for the station serving `mount`, from the menu file."""
+    want = f"/{mount}.mp3"
+    for category, name, url in parse_ycast_yaml(text):
+        if url.endswith(want):
+            return category, name
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     from netradio.profile import Profile, load_overrides
 

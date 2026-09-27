@@ -211,6 +211,22 @@ createApp({
     },
     speakerVolume(step) { return this.speakerSet((this.speaker.volume ?? this.speakerDraft) + step); },
     speakerMute(on) { return this.speakerAction("", () => call("POST", "speaker/mute", { on })); },
+
+    // The receiver stops when an encoder restarts and does not come back by
+    // itself. netradio-resume does this automatically after Liquidsoap starts;
+    // this is the same thing on a finger, for when it stopped some other way.
+    resumeRoom() {
+      return this.receiverAction("resuming…", async () => {
+        const r = await call("POST", "admin/api/resume", {});
+        this.say(r.message || "asked the receiver to resume");
+        return null;
+      });
+    },
+    // offer it only when there is something to fix: on, on net radio, stopped
+    canResume() {
+      const np = this.receiver.now_playing || {};
+      return this.receiver.on && this.receiver.input === "NET RADIO" && np.playback !== "Play";
+    },
     isPlaying(s) {
       if (this.target === "local") return !!s.mount && this.speaker.mount === s.mount;
       if (this.target === "here") return !!s.mount && this.current === s.mount;

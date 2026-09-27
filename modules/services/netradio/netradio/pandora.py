@@ -141,6 +141,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--api", default="http://127.0.0.1:8791", help="ync-api base URL")
     ap.add_argument("--out", required=True, type=Path, help="pandora.jsonl to append to")
     ap.add_argument("--interval", type=float, default=15.0)
+    # This poller is already asking the receiver what it is doing every few
+    # seconds, so it is also the natural place to remember it: a receiver that
+    # has stopped reports no station, so the last one seen playing has to be
+    # written down while it still can be (see netradio/resume.py).
+    ap.add_argument("--receiver-state", type=Path,
+                    help="write the receiver's state here for `netradio resume` (now/receiver.json)")
+    ap.add_argument("--menu", type=Path,
+                    help="YCast's stations.yml, to map a station name back to its mount")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stdout)
     lg = Logger(args.api, args.out)
@@ -151,8 +159,19 @@ def main(argv: list[str] | None = None) -> int:
         stop = True
     signal.signal(signal.SIGTERM, on_term)
     log.info("watching %s for Pandora, writing %s", args.api, args.out)
+    if args.receiver_state:
+        log.info("remembering the receiver's station in %s", args.receiver_state)
     while not stop:
-        lg.observe(lg.status())
+        st = lg.status()
+        lg.observe(st)
+        if args.receiver_state:
+            try:
+                from netradio import resume as resume_mod
+                menu = args.menu.read_text() if args.menu and args.menu.exists() else ""
+                resume_mod.save(args.receiver_state.parent,
+                                resume_mod.observe(st, menu, resume_mod.load(args.receiver_state.parent)))
+            except Exception:
+                log.exception("could not write the receiver state")
         for _ in range(int(args.interval * 10)):
             if stop:
                 break

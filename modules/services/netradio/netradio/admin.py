@@ -42,13 +42,28 @@ MOUNT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 
 
 class Admin:
-    def __init__(self, cfg: Config, dj_dir: Path | None = None, playlists: Path | None = None):
+    def __init__(self, cfg: Config, dj_dir: Path | None = None, playlists: Path | None = None,
+                 receiver_api: str = "", now_dir: Path | None = None, wake_url: str = ""):
         self.cfg = cfg
         self.dj_dir = dj_dir            # the DJ's state: inbox/ takes skip + request files
         self.playlists = playlists      # library.m3u for search
+        self.receiver_api = receiver_api   # for the page's resume button
+        self.now_dir = now_dir
+        self.wake_url = wake_url
         self._library: list[str] | None = None
         self._library_mtime = 0.0
         self._inbox_n = itertools.count()
+
+    def resume_receiver(self) -> dict:
+        """The page's resume button: the same thing netradio-resume does after a
+        Liquidsoap restart, on a finger instead of a unit. Same guardrails —
+        `force` is deliberately NOT exposed, so this can never yank a receiver
+        off something somebody is listening to."""
+        if not (self.receiver_api and self.now_dir):
+            return {"ok": False, "message": "no receiver configured"}
+        from netradio import resume as resume_mod
+        msg = resume_mod.resume(self.receiver_api, self.now_dir, self.wake_url, force=False)
+        return {"ok": msg.startswith("resumed"), "message": msg}
 
     # -- reads
     def pandora(self) -> dict:
@@ -432,6 +447,8 @@ def make_handler(admin: Admin):
                         return self._reply(200, admin.skip(parts[2]))
                     if len(parts) == 4 and parts[:2] == ["api", "dj"] and parts[3] == "request" and method == "POST":
                         return self._reply(200, admin.request(parts[2], self._json()))
+                    if parts == ["api", "resume"] and method == "POST":
+                        return self._reply(200, admin.resume_receiver())
                     if parts == ["api", "dislike"] and method == "POST":
                         return self._reply(200, admin.dislike(self._json()))
                     if parts == ["api", "dislike"] and method == "DELETE":
@@ -489,6 +506,9 @@ def make_handler(admin: Admin):
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--config", required=True, type=Path)
+    ap.add_argument("--receiver-api", default="", help="the receiver API, for the page's resume button")
+    ap.add_argument("--now-dir", type=Path, help="where receiver.json lives (for resume)")
+    ap.add_argument("--wake", default="", help="the wake service, so resume can start the encoder first")
     ap.add_argument("--listen", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8012)
     ap.add_argument("--dj-dir", type=Path, help="the DJ's state dir (inbox/ for skip + request)")
@@ -497,7 +517,9 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(message)s", stream=sys.stdout)
-    srv = ThreadingHTTPServer((args.listen, args.port), make_handler(Admin(Config(args.config), args.dj_dir, args.playlists)))
+    srv = ThreadingHTTPServer((args.listen, args.port), make_handler(
+        Admin(Config(args.config), args.dj_dir, args.playlists,
+              receiver_api=args.receiver_api, now_dir=args.now_dir, wake_url=args.wake)))
     log.info("admin API on %s:%d, config %s", args.listen, args.port, args.config)
     srv.serve_forever()
     return 0

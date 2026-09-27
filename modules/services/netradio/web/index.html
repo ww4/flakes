@@ -147,6 +147,7 @@
     <button class="icon" @click="volumeStep(-2)" :disabled="!receiver.on">−</button>
     <input type="range" min="0" :max="receiver.volume_max || 100" step="1" v-model.number="volumeDraft" @change="setVolume(volumeDraft)" :disabled="!receiver.on" aria-label="Volume">
     <button class="icon" @click="volumeStep(2)" :disabled="!receiver.on">+</button>
+    <button class="icon resume" v-if="canResume()" @click="resumeRoom()" title="Put the receiver back on the last station">↻</button>
     <button class="icon" :class="{on: receiver.mute}" @click="mute(!receiver.mute)" :disabled="!receiver.on" :title="receiver.mute ? 'Unmute' : 'Mute'"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path v-if="!receiver.mute" d="M16 8.5a5 5 0 0 1 0 7"/><path v-else d="M16 9l5 6M21 9l-5 6"/></svg></button>
   </footer>
   <footer class="bar volume" v-else-if="target === 'local'">
