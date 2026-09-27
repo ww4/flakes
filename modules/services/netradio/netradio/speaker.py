@@ -56,9 +56,21 @@ class Mixer:
 
     CANDIDATES = ("Master", "PCM", "Speaker", "Headphone", "Digital")
 
-    def __init__(self, card: str, amixer: str = "amixer", control: str = ""):
+    # Class-level defaults so an instance built without __init__ still behaves.
+    # Tests and diagnostics do that, and every time a new instance attribute
+    # appeared they broke on AttributeError instead of on the thing under test.
+    cap = 100
+    target = 50
+    _muted = False
+
+    def __init__(self, card: str, amixer: str = "amixer", control: str = "", cap: int = 100):
         self.card = card
         self.amixer = amixer
+        # A ceiling nothing can exceed: not the UI, not a stray request, not a
+        # diagnostic. Chris found the live level at 100% on 2026-09-26 with no
+        # way to tell what had put it there, and on speakers that is the kind of
+        # accident worth making impossible rather than unlikely.
+        self.cap = max(0, min(100, int(cap)))
         self.control = control or self._find()
         self.lock = threading.RLock()
         self._muted = False
@@ -106,15 +118,16 @@ class Mixer:
         not unmute when you change its volume, and a box that boots muted
         must stay muted until someone asks for sound (Chris, 2026-09-25)."""
         if self.control:
-            self._run("sset", self.control, f"{max(0, min(100, int(level)))}%")
+            self._run("sset", self.control, f"{max(0, min(self.cap, int(level)))}%")
 
     def choose(self, level: int) -> None:
         """A user-driven level change: remember it, and slide rather than jump.
         While muted it is only remembered — changing the volume must not bring
         the sound back."""
-        level = max(0, min(100, int(level)))
+        level = max(0, min(self.cap, int(level)))
         with self.lock:
             cur, muted = self.state()
+            log.info("volume %s -> %d%s", cur, level, " (muted, remembered only)" if muted else "")
             self.target = level
             if muted:
                 return
@@ -163,6 +176,7 @@ class Mixer:
         with self.lock:
             cur, _ = self.state()
             cur = cur if cur is not None else 50
+            log.info("%s (level %s, returning to %d)", "mute" if on else "unmute", cur, self.target)
             if on:
                 if not self._muted:
                     self.target = cur          # remember where to come back to
@@ -357,6 +371,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--wake", default="", help="the wake service, e.g. http://127.0.0.1:8011 (starts the encoder)")
     ap.add_argument("--default-mount", default="", help="play this at startup (the rain, usually)")
     ap.add_argument("--start-volume", type=int, help="set the mixer here at startup")
+    ap.add_argument("--max-volume", type=int, default=100,
+                    help="a ceiling no request can exceed — protects the speakers from a stray 100%%")
     ap.add_argument("--start-muted", action="store_true",
                     help="come up silent — the stream runs, the jack is quiet until unmuted")
     ap.add_argument("--ffmpeg", default=shutil.which("ffmpeg") or "ffmpeg")
@@ -365,8 +381,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(message)s", stream=sys.stdout)
 
-    mixer = Mixer(args.card, control=args.control)
-    log.info("mixer control: %s (card %s)", mixer.control or "none found", args.card)
+    mixer = Mixer(args.card, control=args.control, cap=args.max_volume)
+    log.info("mixer control: %s (card %s), ceiling %d%%", mixer.control or "none found", args.card, mixer.cap)
     if args.start_volume is not None:
         mixer.set(args.start_volume)
     if args.start_muted:

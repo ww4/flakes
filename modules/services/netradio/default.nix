@@ -558,6 +558,17 @@ in
         description = "Play this station at boot, so a power cycle needs no phone. Empty for none.";
       };
       startVolume = lib.mkOption { type = lib.types.int; default = 35; description = "Mixer level at startup."; };
+      maxVolume = lib.mkOption {
+        type = lib.types.ints.between 0 100;
+        default = 100;
+        example = 80;
+        description = ''
+          A ceiling no request can exceed. Set it to whatever the amplifier is
+          comfortable with: the level is real output, and nothing upstream —
+          the page, a script, a stray curl — should be able to put a speaker at
+          full scale by accident.
+        '';
+      };
       startMuted = lib.mkOption {
         type = lib.types.bool;
         default = true;
@@ -1170,6 +1181,7 @@ in
         "--listen 127.0.0.1 --port ${toString speakerPort}"
         "--device ${cfg.speaker.device}"
         "--card ${speakerCard}"
+        "--max-volume ${toString cfg.speaker.maxVolume}"
       ] ++ lib.optional (speakerDefaultMount != "") "--default-mount ${speakerDefaultMount}"
         ++ [ "--start-volume ${toString speakerStartVolume}" ]
         ++ lib.optional cfg.speaker.startMuted "--start-muted"

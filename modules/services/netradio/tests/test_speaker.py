@@ -62,7 +62,7 @@ class FakeMixer(speaker.Mixer):
 class MixerParsing(unittest.TestCase):
     def test_picks_master_and_reads_level(self):
         m = speaker.Mixer.__new__(speaker.Mixer)
-        m.card, m.amixer, m._muted = "0", "amixer", False
+        m.card, m.amixer = "0", "amixer"
         with mock.patch.object(speaker.Mixer, "_run", return_value="Simple mixer control 'PCM',0\nSimple mixer control 'Master',0\n"):
             self.assertEqual(m._find(), "Master")          # Master wins over PCM
         m.control = "Master"
@@ -461,3 +461,47 @@ class Shutdown(unittest.TestCase):
                 if p.poll() is None:
                     p.kill()
                     p.wait(timeout=10)
+
+
+class VolumeCeiling(unittest.TestCase):
+    """Nothing may drive the card past the configured ceiling.
+
+    Chris found the live level at 100% on 2026-09-26 with no way to attribute
+    it — the service logged no level changes at all. Both halves are fixed: a
+    cap that cannot be exceeded, and an INFO line for every change.
+    """
+
+    def capped(self, cap, level=35):
+        m = FakeMixer.__new__(FakeMixer)
+        m.calls, m.level, m.muted, m.FADE_MS = [], level, False, 0
+        speaker.Mixer.__init__(m, "0", control="Master", cap=cap)
+        return m
+
+    def test_an_explicit_level_is_clamped(self):
+        m = self.capped(80)
+        m.choose(100)
+        self.assertEqual(m.level, 80)
+        self.assertEqual(m.target, 80, "and the remembered level is the capped one")
+
+    def test_stepping_cannot_climb_past_it(self):
+        m = self.capped(60, level=55)
+        for _ in range(10):
+            m.step(5)
+        self.assertEqual(m.level, 60)
+
+    def test_a_raw_set_is_capped_too(self):
+        m = self.capped(50)
+        m.set(99)
+        self.assertEqual(m.level, 50, "the ramp uses set(), so the ceiling has to hold there")
+
+    def test_unmuting_cannot_exceed_it(self):
+        m = self.capped(70, level=70)
+        m.mute(True)
+        m.target = 100          # however it got there
+        m.mute(False)
+        self.assertLessEqual(m.level, 70)
+
+    def test_the_default_ceiling_changes_nothing(self):
+        m = self.capped(100)
+        m.choose(100)
+        self.assertEqual(m.level, 100)
