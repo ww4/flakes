@@ -328,6 +328,11 @@ FLAP_DIGEST_INTERVAL_H = 6
 # down, and down is the louder finding.
 FLAP_DEAD_AFTER_MIN = 20
 
+# Ceiling on what a single poll may contribute to the flap ledger. A poll covers
+# ten minutes; a genuinely sick camera does not restore more often than this, so
+# anything larger is counter catch-up rather than a rate.
+MAX_DELTA_PER_POLL = 20
+
 
 def _logtime(e: dict) -> str:
     d = e.get("date")
@@ -396,14 +401,38 @@ def record_drops(st: dict, rows: list, window_h: int = FLAP_WINDOW_H) -> dict:
     totals = restored_totals(rows)
     seeding = not prev
 
+    known = st.get("cameras") or {}
     for obj, total in totals.items():
         before = prev.get(obj)
         prev[obj] = total
         if seeding or before is None:
             continue                      # first sight: baseline, never a burst
         delta = total - before
-        if delta > 0:
-            ledger.setdefault(obj, []).append([now, delta])
+        if delta <= 0:
+            continue
+        # A camera RETURNING from a known outage is not flapping. Blue Iris
+        # retries all the way through an outage and the restore counter catches
+        # up in one jump when the link is fixed: Craigmyle 2026-09-28, five
+        # cameras repaired after 19 h down, each registering ~200 "drops" in the
+        # single poll that saw them come back. That marked the just-repaired
+        # cameras the worst flappers on site and had a digest queued to page
+        # Chris about them an hour later.
+        #
+        # We already KNEW they were down — that outage was reported through the
+        # DOWN/recovered path. So re-baseline instead of crediting it. The flap
+        # ledger exists for churn the poll CANNOT see (up at both samples), and
+        # that case is untouched by this.
+        if not (known.get(obj) or {}).get("online", True):
+            print(f"  {obj}: +{delta} on return from a known outage — "
+                  f"re-baselined, not counted as flapping")
+            continue
+        # Belt and braces for any other catch-up we have not thought of: one
+        # poll covers ten minutes, so a delta far above that is not a rate.
+        if delta > MAX_DELTA_PER_POLL:
+            print(f"  {obj}: +{delta} in one poll is implausible — "
+                  f"capped at {MAX_DELTA_PER_POLL}")
+            delta = MAX_DELTA_PER_POLL
+        ledger.setdefault(obj, []).append([now, delta])
 
     cutoff = now - window_h * 3600
     out: dict = {}
