@@ -578,7 +578,7 @@ def main(argv: list[str] | None = None) -> int:
     from netradio.profile import Profile, load_overrides
 
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--root", action="append", required=True, type=Path, help="library root (repeatable)")
+    ap.add_argument("--root", action="append", default=[], type=Path, help="library root (repeatable); may be empty when Jellyfin names the roots")
     ap.add_argument("--config", required=True, type=Path, help="the runtime config dir")
     ap.add_argument("--out", required=True, type=Path, help="playlist directory")
     ap.add_argument("--pools", required=True, type=Path, help="pool directory (feeds/, artists/)")
@@ -591,6 +591,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--public-base", default="http://radioyamaha.vtuner.com/radio", help="stream URL prefix for YCast")
     ap.add_argument("--web-base", default="", help="stream URL prefix for the page's m3u/pls (https)")
     ap.add_argument("--quick-picks", type=Path, help="JSON [{name,url}] appended to YCast's menu")
+    ap.add_argument("--jellyfin-url", default="", help="ask this Jellyfin where the music is (optional)")
+    ap.add_argument("--jellyfin-key-file", type=Path, help="a file holding the Jellyfin API key")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
