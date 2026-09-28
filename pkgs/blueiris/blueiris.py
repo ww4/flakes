@@ -58,6 +58,22 @@ def load_site(site: str) -> dict:
     return cfg
 
 
+class BIError(RuntimeError):
+    """The NVR could not be reached or would not authenticate.
+
+    An EXCEPTION rather than sys.exit, because the two callers need opposite
+    things. An interactive command should die with a clear message; the WATCH
+    must stay alive and RAISE THE ALARM — the NVR being unreachable is the most
+    severe thing it can discover, not a reason to stop early.
+
+    It used to sys.exit here. That made `blueiris watch` exit 1 with a line on
+    stderr and send NOTHING, and the unit carries SuccessExitStatus="0 1" so
+    systemd did not flag it either. A whole customer site could be off the air
+    and the only trace was a journal line nobody reads. Found 2026-09-27 when
+    Chris asked whether any of this still handles a straight-up outage.
+    """
+
+
 class BI:
     def __init__(self, cfg: dict):
         # Kept whole: the per-site flap thresholds live in the same env file,
@@ -75,21 +91,21 @@ class BI:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read().decode("utf-8", "replace"))
         except (urllib.error.URLError, OSError) as exc:
-            sys.exit(f"blueiris: {self.url} unreachable: {exc}")
+            raise BIError(f"{self.url} unreachable: {exc}") from exc
 
     def login(self) -> None:
         first = self._post({"cmd": "login"})
         sid = first.get("session")
         if not sid:
-            sys.exit("blueiris: server returned no session token")
+            raise BIError("server returned no session token")
         # response = md5("user:session:password"). Single pass, no realm —
         # this is NOT HTTP digest, despite looking like it.
         digest = hashlib.md5(f"{self.user}:{sid}:{self.pw}".encode()).hexdigest()
         second = self._post({"cmd": "login", "session": sid, "response": digest})
         if second.get("result") != "success":
             reason = (second.get("data") or {}).get("reason", "rejected")
-            sys.exit(f"blueiris: login failed ({reason}). Check "
-                     f"{CONF_DIR}/<site>.env")
+            raise BIError(f"login failed ({reason}). Check "
+                          f"{CONF_DIR}/<site>.env")
         self.session = sid
 
     def cmd(self, name: str, timeout: int = 30, **kw) -> dict:
@@ -299,6 +315,19 @@ _RESTORED = "signal: restored"
 # the COMPLETE current set, and only when that set has changed.
 FLAP_DIGEST_INTERVAL_H = 6
 
+# How long a flapping camera must stay DOWN before it stops counting as flapping
+# and is reported as a plain outage.
+#
+# Without this, flapping suppression swallows a real death permanently. The
+# camera goes down, the DOWN alert is suppressed because it is "flapping", and
+# there is never a second transition to catch later — so it stays dead and
+# silent forever. Found 2026-09-27 when Chris asked whether the flapping work
+# still handles a straight-up outage. It did not.
+#
+# Flapping MEANS it keeps coming back. Once it stops coming back, it is simply
+# down, and down is the louder finding.
+FLAP_DEAD_AFTER_MIN = 20
+
 
 def _logtime(e: dict) -> str:
     d = e.get("date")
@@ -415,7 +444,15 @@ def flap_transitions(st: dict, cams: list, drops: dict,
     names = {c["optionValue"]: (c.get("optionDisplay") or c["optionValue"])
              for c in cams}
     flaps = st.setdefault("flapping", {})
+    dead = st.get("dead") or {}
     for short in names:
+        # Already escalated to a plain outage. Its drop count is still high from
+        # before it died, so without this it would be re-admitted to the
+        # flapping set on the very next poll — re-escalating (a duplicate DOWN
+        # every 10 min) and suppressing its eventual recovery notice.
+        if short in dead:
+            flaps.pop(short, None)
+            continue
         n = drops.get(short, 0)
         if n >= enter and short not in flaps:
             flaps[short] = {"since": _now(), "drops": n}
@@ -568,10 +605,45 @@ def migrate_flap_state(st: dict) -> None:
     st["flapver"] = FLAP_STATE_VERSION
 
 
+def watch_unreachable(site: str, detail: str) -> int:
+    """The NVR itself is unreachable. Alert ONCE, then stay quiet until it is back.
+
+    This is the most severe finding the watch has — every camera on the site is
+    unmonitored, and quite possibly off the air — and until 2026-09-27 it was the
+    only finding that produced no notification whatsoever.
+
+    Still does NOT pierce quiet hours. Chris's rule (2026-08-19) covers "all
+    classes of network traffic", and a customer NVR being offline is squarely
+    one: it is held and delivered after 07:00 like everything else. Severity
+    changes what is said, never when.
+    """
+    st = load_state(site)
+    flush_held(st)
+    if not st.get("unreachable_since"):
+        st["unreachable_since"] = _now()
+        emit(st, f"blueiris: NVR UNREACHABLE — {site}",
+             f"Cannot reach the {site} NVR:\n  {detail}\n\n"
+             f"Nothing at this site is being monitored while this lasts — "
+             f"treat camera silence as unknown, not healthy.\n\n"
+             f"Usually the site's internet, the NVR host being off, or "
+             f"Tailscale down on it. You will get one more message when it "
+             f"comes back.",
+             "high", "warning")
+    else:
+        print(f"  still unreachable since {st['unreachable_since']} — "
+              f"already alerted")
+    save_state(site, st)
+    return 1
+
+
 def cmd_watch(bi: "BI", site: str) -> int:
     st = load_state(site)
     migrate_flap_state(st)
     flush_held(st)
+    if st.pop("unreachable_since", None):
+        emit(st, f"blueiris: NVR reachable again — {site}",
+             f"The {site} NVR is answering again; monitoring has resumed.",
+             "default", "white_check_mark")
     cams = bi.cameras()
 
     # An empty list is a BROKEN CHECK, not a quiet estate.
@@ -607,8 +679,16 @@ def cmd_watch(bi: "BI", site: str) -> int:
             online_since = prev["online_since"]
         else:
             online_since = _now() if online else None
+        # The mirror image, and it is what lets a flapping camera's DEATH be
+        # distinguished from another of its dips.
+        if not online and prev and not prev.get("online") \
+                and prev.get("offline_since"):
+            offline_since = prev["offline_since"]
+        else:
+            offline_since = None if online else _now()
         known[short] = {"name": name, "online": online, "last": _now(),
                         "error": err, "online_since": online_since,
+                        "offline_since": offline_since,
                         "drops24h": drops.get(short, 0)}
         if seeding or prev is None:
             continue
@@ -643,14 +723,42 @@ def cmd_watch(bi: "BI", site: str) -> int:
             continue
         if short in flapping:
             # Covered by the flapping digest. Reporting each individual drop on
-            # top of that IS the alarm storm.
+            # top of that IS the alarm storm. Escalated below if it STAYS down.
             print(f"  {name} went down — in the FLAPPING digest, not alerting")
             continue
         down_now.append((name, short, err))
 
+    # A flapping camera that has stopped coming back is not flapping any more,
+    # it is DEAD — and its down-transition was already suppressed, so nothing
+    # else will ever report it. Escalate on sustained absence.
+    from datetime import datetime, timedelta, timezone
+    for short in sorted(flapping):
+        cam = known.get(short) or {}
+        if cam.get("online") or mute_active(st, short)[0]:
+            continue
+        since = cam.get("offline_since")
+        if not since:
+            continue
+        try:
+            gone_since = datetime.fromisoformat(since)
+        except ValueError:
+            continue
+        if datetime.now(timezone.utc) - gone_since < timedelta(
+                minutes=FLAP_DEAD_AFTER_MIN):
+            continue
+        (st.get("flapping") or {}).pop(short, None)
+        flapping.discard(short)
+        st.setdefault("dead", {})[short] = _now()
+        name = cam.get("name", short)
+        print(f"  {name} down {FLAP_DEAD_AFTER_MIN}min+ — escalating from "
+              f"flapping to DOWN")
+        down_now.append((name, short,
+                         cam.get("error") or "down since %s" % since[11:16]))
+
     up_now = []
     for name, short in came_back:
-        if short in flapping:
+        was_dead = (st.get("dead") or {}).pop(short, None)
+        if short in flapping and not was_dead:
             print(f"  {name} back up — in the FLAPPING digest, not alerting")
             continue
         if mute_active(st, short)[0]:
@@ -787,11 +895,21 @@ def main() -> int:
     if args.cmd == "muted":
         return cmd_muted(args.site, args.json)
 
-    bi = BI(load_site(args.site))
-    bi.login()
-
+    # The watch must SURVIVE an unreachable NVR and alert about it; every other
+    # command should just die with a clear message.
     if args.cmd == "watch":
+        try:
+            bi = BI(load_site(args.site))
+            bi.login()
+        except BIError as exc:
+            return watch_unreachable(args.site, str(exc))
         return cmd_watch(bi, args.site)
+
+    try:
+        bi = BI(load_site(args.site))
+        bi.login()
+    except BIError as exc:
+        sys.exit(f"blueiris: {exc}")
 
     if args.cmd in ("cams", "offline"):
         cams = bi.cameras()
