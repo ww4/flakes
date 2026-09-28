@@ -613,6 +613,43 @@ in
       };
     };
 
+    # --- stars in the library files ----------------------------------------
+    # OFF by default, because it MODIFIES the audio files: a POPM frame in an
+    # mp3, RATING/FMPS_RATING in a flac, the iTunes atom in an m4a. That is what
+    # makes a rating visible in Jellyfin and in anything else that reads one.
+    # It runs both ways — a star already in a file becomes an opinion — and it
+    # cannot feed on its own writes, because each track remembers the last value
+    # written or seen and only a DIFFERENCE counts as a human gesture.
+    stars = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Keep star ratings in the library files in step with the listener's
+          skips and thumbs. Writes tags into the audio files, so it is off
+          until asked for.
+        '';
+      };
+      write = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Write a score out as stars. Turn off for import-only, which touches nothing.";
+      };
+      read = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Take a star found in a file as the listener's opinion and move the
+          score to match. A deliberate rating outranks accumulated skips.
+        '';
+      };
+      onCalendar = lib.mkOption {
+        type = lib.types.str;
+        default = "05:30";
+        description = "When the pass runs — after the nightly rescan, by default.";
+      };
+    };
+
     # --- playback devices --------------------------------------------------
     # A device is anything that can be told to play a station, and it is
     # described rather than special-cased: a base URL plus what it can do. The
@@ -1367,6 +1404,35 @@ in
       OnActiveSec = "2min";
       OnCalendar = "01:00";
       Persistent = true;
+    };
+  };
+
+  # --- stars: the library files and the ratings agreeing -------------------
+  systemd.services.netradio-stars = lib.mkIf cfg.stars.enable {
+    description = "Sync star ratings between the listener's feedback and the library files";
+    after = [ "netradio-credentials.service" ] ++ cfg.requiresMounts;
+    requires = [ "netradio-credentials.service" ];
+    serviceConfig = hardening // {
+      Type = "oneshot";
+      User = user;
+      Group = user;
+      SupplementaryGroups = libraryGroups;   # it WRITES to the library
+      ReadWritePaths = [ configDir ] ++ libraryRoots;
+      Nice = 15;
+      IOSchedulingClass = "idle";
+      ExecStart = lib.concatStringsSep " " ([
+        "${netradio}/bin/netradio stars"
+        "--config ${configDir}"
+      ] ++ lib.optional (!cfg.stars.write) "--no-write"
+        ++ lib.optional (!cfg.stars.read) "--no-read");
+    };
+  };
+  systemd.timers.netradio-stars = lib.mkIf cfg.stars.enable {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = cfg.stars.onCalendar;
+      Persistent = true;
+      RandomizedDelaySec = "5min";
     };
   };
 
