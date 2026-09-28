@@ -124,6 +124,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/yamaha-ync.nix       # the living-room receiver: JSON API for the radio page + MCP server (public pkg ww4/yamaha-ync)
     ./modules/services/asterisk.nix         # house PBX (pjsip): dial 0 for the switchboard, 1XX for a handset — LAN/tailnet only
     ./modules/services/switchboard.nix      # dial 0: whisper -> intents / claude -p -> piper (FastAGI behind Asterisk)
+    ./modules/services/media-gate.nix       # do finished downloads actually parse as media? (ffprobe allowlist, reports only)
     ./modules/agent/daybook.nix             # 09:00/20:00 claude -p bookends: plan the day / review + tomorrow
   ];
 
