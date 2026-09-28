@@ -384,7 +384,8 @@ def write_m3u(path: Path, paths: list[str]) -> None:
 
 def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set[str],
           summary: Path | None = None, ycast: Path | None = None, public_base: str = "",
-          quick_picks: list[dict] | None = None, web_base: str = "") -> dict:
+          quick_picks: list[dict] | None = None, web_base: str = "",
+          menu_codecs: set[str] | None = None) -> dict:
     """Everything after the walk. Returns {mount: count}."""
     from netradio import feeds as feedrules
 
@@ -502,7 +503,7 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
             write_atomic(now / "stations-lo.m3u", m3u(stations, web_base, "-lo"))
             write_atomic(now / "stations.pls", pls(stations, web_base))
     if ycast:
-        write_atomic(ycast, ycast_yaml(stations, public_base, quick_picks or []))
+        write_atomic(ycast, ycast_yaml(stations, public_base, quick_picks or [], menu_codecs))
     return counts
 
 
@@ -517,9 +518,16 @@ def pls(stations: list[dict], base: str) -> str:
     return out + f"NumberOfEntries={len(stations)}\nVersion=2\n"
 
 
-def ycast_yaml(stations: list[dict], base: str, quick_picks: list[dict]) -> str:
+def ycast_yaml(stations: list[dict], base: str, quick_picks: list[dict],
+               codecs: set[str] | None = None) -> str:
     """YCast's stations.yml: category → name → url. Hand-emitted so the order
-    is the catalogue order; values are JSON strings, which is valid YAML."""
+    is the catalogue order; values are JSON strings, which is valid YAML.
+
+    `codecs` is what the device browsing this menu can decode, from its own
+    declaration. A station it cannot play is worse than one it is not shown —
+    the listener selects it and gets silence — so anything in a codec it lacks
+    is left out. The library's own stations are always MP3, so only the outside
+    Quick Picks are filtered (Chris, 2026-09-27)."""
     def line(name, url):
         return f"  {json.dumps(name)}: {json.dumps(url)}\n"
     out = "Curated:\n"
@@ -530,9 +538,15 @@ def ycast_yaml(stations: list[dict], base: str, quick_picks: list[dict]) -> str:
     for s in stations:
         if s.get("kind") == "specialty":
             out += line(s["name"], f"{base}/{s['mount']}.mp3")
-    if quick_picks:
+    playable = [q for q in quick_picks
+                if codecs is None or (q.get("codec") or "mp3") in codecs]
+    if len(playable) != len(quick_picks):
+        missing = sorted({(q.get("codec") or "mp3") for q in quick_picks if q not in playable})
+        log.info("%d outside station(s) kept out of the menu — this device cannot decode %s",
+                 len(quick_picks) - len(playable), ", ".join(missing))
+    if playable:
         out += "\nQuick Picks:\n"
-        for q in quick_picks:
+        for q in playable:
             out += line(q["name"], q["url"])
     return out
 
@@ -590,7 +604,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ycast", type=Path, help="write YCast's stations.yml here")
     ap.add_argument("--public-base", default="http://radioyamaha.vtuner.com/radio", help="stream URL prefix for YCast")
     ap.add_argument("--web-base", default="", help="stream URL prefix for the page's m3u/pls (https)")
-    ap.add_argument("--quick-picks", type=Path, help="JSON [{name,url}] appended to YCast's menu")
+    ap.add_argument("--quick-picks", type=Path, help="JSON [{name,url,codec}] appended to YCast's menu")
+    ap.add_argument("--menu-codecs", default="",
+                    help="what the device browsing the menu can decode, comma separated. An outside "
+                         "station in anything else is left out: unplayable is worse than absent")
     ap.add_argument("--jellyfin-url", default="", help="ask this Jellyfin where the music is (optional)")
     ap.add_argument("--jellyfin-key-file", type=Path, help="a file holding the Jellyfin API key")
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -652,7 +669,10 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError):
             quick = []
     station_counts = build(tracks, Config(args.config), args.out, args.pools, talk=talk, summary=args.summary,
-                           ycast=args.ycast, public_base=args.public_base, quick_picks=quick, web_base=args.web_base)
+                           ycast=args.ycast, public_base=args.public_base, quick_picks=quick,
+                           web_base=args.web_base,
+                           menu_codecs=({c.strip() for c in args.menu_codecs.split(",") if c.strip()}
+                                        or None))
 
     log.info("%d audio files, %d untagged, %d excluded, %d talk, %d unreadable dirs, %d with catalogue genres; tag cache %d hits / %d reads",
              counts["files"], counts["untagged"], counts["excluded"], len(talk), counts["unreadable_dirs"], counts["catalogue_genres"],
