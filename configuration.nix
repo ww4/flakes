@@ -259,7 +259,7 @@ let hm = homelab-modules.nixosModules; in
       # The R-N301's spec lists MP3, WMA and MPEG4 AAC — that last one is AAC-LC.
       # Deliberately NOT he-aac: the 32 kbps SecureNetSystems streams are
       # HE-AACv2 (measured 2026-09-27) and a 2014 decoder will not take them, so
-      # they stay out of the receiver's menu and off the phone's Quick Picks only
+      # they stay out of the receiver's menu and off the phone's Internet Radio only
       # for the receiver.
       codecs = [ "mp3" "wma" "aac-lc" ];
     };
@@ -288,7 +288,7 @@ let hm = homelab-modules.nixosModules; in
     # different profile and a 2014 net-radio decoder usually refuses it. They
     # will play on the phone and the browser; the receiver may well not take
     # them. The MP3 ones play everywhere.
-    extraQuickPicks = [
+    extraInternetRadio = [
       # WLXO Mount Sterling, classic country. hankthelegend.com
       { name = "Hank FM 105.5";   url = "http://ice9.securenetsystems.net/WLXO"; codec = "he-aac"; }
       # WFKY Frankfort, "Froggy" country. froggykycountry.com

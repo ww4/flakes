@@ -1,7 +1,7 @@
 // Library radio — the page, as a Vue 3 app (global build, no bundler), and
 // the phone remote for the living-room receiver. All same-origin:
 //   now/catalogue.json     the station list (written by the scanner)
-//   now/quick-picks.json   the internet stations in the receiver's menu
+//   now/internet-radio.json   the internet stations in the receiver's menu
 //   now/stations.json      per-station track counts
 //   icecast-status         mounts up, titles, listener counts
 //   now/<mount>.json       last played;  now/<mount>-next.json  what the DJ queued
@@ -65,7 +65,7 @@ createApp({
       const g = [{ kind: "curated", title: "Curated", stations: curated }];
       if (specialty.length) g.push({ kind: "specialty", title: "Specialty", stations: specialty });
       if (this.target === "room" && this.quick.length)
-        g.push({ kind: "quick", title: "Quick Picks", stations: this.quick.map(q => ({ mount: "", name: q.name, kind: "quick" })) });
+        g.push({ kind: "quick", title: "Internet Radio", stations: this.quick.map(q => ({ mount: "", name: q.name, kind: "quick" })) });
       return g;
     },
     currentStation() { return this.stations.find(s => s.mount === this.current) || { name: "", mount: "" }; },
@@ -114,7 +114,7 @@ createApp({
     say(msg) { this.toast = msg; clearTimeout(this._toastT); this._toastT = setTimeout(() => { this.toast = ""; }, 4000); },
 
     async refresh() {
-      const [cat, quick, counts, ic] = await Promise.all([getJSON("now/catalogue.json"), getJSON("now/quick-picks.json"), getJSON("now/stations.json"), getJSON("icecast-status")]);
+      const [cat, quick, counts, ic] = await Promise.all([getJSON("now/catalogue.json"), getJSON("now/internet-radio.json"), getJSON("now/stations.json"), getJSON("icecast-status")]);
       if (cat) { this.stations = cat; this.scanning = false; } else if (!this.stations.length) this.scanning = true;
       if (quick) this.quick = quick;
       if (counts) this.counts = counts;
@@ -210,7 +210,7 @@ createApp({
     selectInput(name) { return this.receiverAction(`switching to ${name}…`, () => call("POST", "receiver/input", { name })); },
     tunerPreset(n) { return this.receiverAction("tuning…", () => call("POST", "receiver/tuner", { preset: n })); },
     playOnReceiver(s) {
-      const category = s.kind === "quick" ? "Quick Picks" : s.kind === "specialty" ? "Specialty" : "Curated";
+      const category = s.kind === "quick" ? "Internet Radio" : s.kind === "specialty" ? "Specialty" : "Curated";
       return this.receiverAction(`tuning the ${this.receiver.name || "receiver"} to ${s.name}…`,
         () => call("POST", "receiver/menu/path", { path: ["My Stations", category, s.name] }));
     },

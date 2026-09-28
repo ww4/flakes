@@ -155,8 +155,15 @@ def base_mount(mount: str) -> str:
     return mount
 
 
-def all_mounts(stations: list[dict]) -> set[str]:
-    return {s["mount"] + suf for s in stations for suf in ("",) + QUALITY_SUFFIXES}
+def all_mounts(stations: list[dict], relays: list[dict] | None = None) -> set[str]:
+    """Every mount the wake service may be asked to start.
+
+    A relay — an outside station re-encoded for a device that cannot decode the
+    original — is wakeable exactly like a library station, and idles out the
+    same way. It has no quality variants: there is one upstream and re-encoding
+    it twice would be paying twice for the same thing."""
+    out = {s["mount"] + suf for s in stations for suf in ("",) + QUALITY_SUFFIXES}
+    return out | {r["mount"] for r in relays or []}
 
 
 def has_tracks(playlist: Path) -> bool:
@@ -214,6 +221,7 @@ def idle_loop(ctl: Controller, interval: float) -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--stations", required=True, type=Path)
+    ap.add_argument("--relays", type=Path, help="JSON [{mount,name,url}] of on-demand relays")
     ap.add_argument("--playlists", required=True, type=Path)
     ap.add_argument("--socket", required=True, type=Path, help="liquidsoap server socket")
     ap.add_argument("--icecast-status", default="http://127.0.0.1:8000/status-json.xsl")
@@ -226,7 +234,13 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(message)s", stream=sys.stdout)
 
-    mounts = all_mounts(json.loads(args.stations.read_text()))
+    relays = []
+    if args.relays and args.relays.exists():
+        try:
+            relays = json.loads(args.relays.read_text())
+        except ValueError as e:
+            log.warning("ignoring %s: %s", args.relays, e)
+    mounts = all_mounts(json.loads(args.stations.read_text()), relays)
     ctl = Controller(mounts, Liquidsoap(args.socket), Icecast(args.icecast_status),
                      args.playlists, idle_after=args.idle_after)
     threading.Thread(target=idle_loop, args=(ctl, args.tick), daemon=True).start()

@@ -28,7 +28,7 @@
 #                                      • Radiobrowser: the community index
 #                                        (genres / countries / popular)
 #                                      • My Stations: the library stations
-#                                        below + a few quick picks
+#                                        below + a few internet radio
 #                       /radio/X.mp3 → auth_request → netradio-wake (:8011)
 #                                      starts Liquidsoap output X, waits for
 #                                      Icecast to list it, then nginx proxies
@@ -164,7 +164,7 @@ let
   seedFeeds = cfg.seed.feeds;
   seedStations = cfg.seed.stations;
   seedSchedule = cfg.seed.schedule;
-  quickPicks = cfg.quickPicks ++ cfg.extraQuickPicks;
+  internetRadio = cfg.internetRadio ++ cfg.extraInternetRadio;
   # What the receiver browsing YCast can decode. The `room` device is the one
   # with a menu to walk, so its declaration is what filters that menu; the web
   # page is a browser and is offered everything.
@@ -256,7 +256,7 @@ let
   # A few known-good plain-HTTP streams so the input has something to play
   # before any browsing (all verified 2026-09-15). Discovery is Radiobrowser's
   # job; this is not a curated list.
-  defaultQuickPicks = [
+  defaultInternetRadio = [
     { name = "NPR News";            url = "http://npr-ice.streamguys1.com/live.mp3"; }
     { name = "WFPK Louisville";     url = "http://lpm.streamguys1.com/wfpk-web"; }
     { name = "WUKY Lexington";      url = "http://wuky.streamguys1.com/wuky"; }
@@ -269,11 +269,30 @@ let
     { name = "SomaFM Groove Salad"; url = "http://ice1.somafm.com/groovesalad-128-mp3"; }
     { name = "SomaFM Secret Agent"; url = "http://ice1.somafm.com/secretagent-128-mp3"; }
   ];
-  quickPicksJson = pkgs.writeText "netradio-quick-picks.json" (builtins.toJSON quickPicks);
-  # A stations.yml with only the Quick Picks, for YCast to start on before
+  # An outside station the receiver cannot decode is not dropped: it gets a
+  # RELAY — the same stream re-encoded to MP3 on its own mount, started on
+  # demand and stopped when the last listener leaves, like every other mount
+  # here. The listener sees one list; the codec is plumbing, not a category
+  # (Chris, 2026-09-28). About 4% of a core while somebody is listening.
+  slugOf = name:
+    let
+      allowed = lib.stringToCharacters "abcdefghijklmnopqrstuvwxyz0123456789";
+      mapped = lib.concatMapStrings (c: if lib.elem c allowed then c else "-")
+                 (lib.stringToCharacters (lib.toLower name));
+    in "ir-" + lib.concatStringsSep "-" (lib.filter (x: x != "") (lib.splitString "-" mapped));
+
+  needsRelay = e: !(lib.elem (e.codec or "mp3") receiverCodecs);
+  relays = map (e: { mount = slugOf e.name; inherit (e) name url; })
+               (lib.filter needsRelay internetRadio);
+  relaysJson = pkgs.writeText "netradio-relays.json" (builtins.toJSON relays);
+
+  # the menu needs to know which entry has a relay, so it can point at it
+  internetRadioJson = pkgs.writeText "netradio-internet-radio.json" (builtins.toJSON
+    (map (e: if needsRelay e then e // { relay = slugOf e.name; } else e) internetRadio));
+  # A stations.yml with only the Internet Radio, for YCast to start on before
   # the scanner has written the real one (JSON is valid YAML).
   ycastSeedYaml = pkgs.writeText "netradio-stations-seed.yml"
-    (builtins.toJSON { "Quick Picks" = builtins.listToAttrs (map (p: { name = p.name; value = p.url; }) quickPicks); });
+    (builtins.toJSON { "Internet Radio" = builtins.listToAttrs (map (p: { name = p.name; value = p.url; }) internetRadio); });
 
   # Library streams, shared by both vhosts. auth_request wakes the encoder
   # first; then the listener is proxied straight to Icecast, unbuffered, with
@@ -858,7 +877,7 @@ in
       '';
     };
 
-    quickPicks = lib.mkOption {
+    internetRadio = lib.mkOption {
       type = lib.types.listOf (lib.types.submodule {
         options = {
           name = lib.mkOption { type = lib.types.str; description = "Shown in the menu."; };
@@ -870,15 +889,15 @@ in
           };
         };
       });
-      default = defaultQuickPicks;
+      default = defaultInternetRadio;
       description = ''
         A handful of outside stations, so the input plays something before any
         browsing. Setting this REPLACES the starter list; to keep it and add your
-        own local stations, use `extraQuickPicks`.
+        own local stations, use `extraInternetRadio`.
       '';
     };
 
-    extraQuickPicks = lib.mkOption {
+    extraInternetRadio = lib.mkOption {
       type = lib.types.listOf (lib.types.submodule {
         options = {
           name = lib.mkOption { type = lib.types.str; description = "Shown in the menu."; };
@@ -1225,6 +1244,7 @@ in
       # path unit does it when the mount list changed).
       ExecStartPre = lib.concatStringsSep " " [
         "${netradio}/bin/netradio liq" "--config ${configDir}" "--socket ${liqSocket}"
+        "--relays ${relaysJson}"
         "--playlists ${playlistDir}" "--now-dir ${nowDir}" "--port ${toString icecastPort}" "--out ${liqScript}"
       ];
       ExecStart = "${lib.getExe pkgs.liquidsoap} ${liqScript}";
@@ -1281,6 +1301,7 @@ in
       ExecStart = lib.concatStringsSep " " [
         "${netradio}/bin/netradio wake"
         "--stations ${configDir}/stations.json"
+        "--relays ${relaysJson}"
         "--playlists ${playlistDir}"
         "--socket ${liqSocket}"
         "--icecast-status http://127.0.0.1:${toString icecastPort}/status-json.xsl"
@@ -1449,7 +1470,7 @@ in
         ++ lib.optional cfg.vtuner.enable "--public-base http://${vtunerHost}/radio"
         ++ [
         "--web-base ${if cfg.tls then "https" else "http"}://${radioHost}/radio"
-        "--quick-picks ${quickPicksJson}"
+        "--internet-radio ${internetRadioJson}"
       ] ++ lib.optional cfg.vtuner.enable
         "--menu-codecs ${lib.concatStringsSep "," receiverCodecs}"
       ++ [
@@ -1683,7 +1704,7 @@ in
     # started it before anything had written the file at its new path, and
     # the receiver's menu read "'My Stations' feature not configured." for
     # the rest of the day. The scanner is the only writer, and it runs on a
-    # timer — so seed the file with the Quick Picks (JSON is YAML) when it
+    # timer — so seed the file with the Internet Radio (JSON is YAML) when it
     # is missing, before YCast looks.
     after = [ "network-online.target" "netradio-credentials.service" ];
     wants = [ "network-online.target" ];

@@ -83,14 +83,34 @@ def station(mount, name) =
   out(mount ^ "-lo", mount ^ "-lo", 96)
 end
 
+# An outside station re-encoded to MP3, for a device that cannot decode what it
+# is served in. Same on-demand shape as a library station: `start=false`, so
+# nothing runs until the wake service starts it and it stops again when the last
+# listener leaves. Costs about 4% of a core while somebody is actually listening
+# (measured: 10 s of HE-AACv2 transcoded in 0.61 s at 38% of one core).
+#
+# mksafe so a dropout is silence rather than a dead output — the stream belongs
+# to somebody else and will go away sometimes.
+def relay(mount, name, stream) =
+  s = mksafe(input.http(stream))
+  output.icecast(%mp3(bitrate=128), id=mount, start=false,
+                 host="127.0.0.1", port={port}, password=password,
+                 mount="/" ^ mount ^ ".mp3", name=name, genre=name,
+                 description="Internet radio", public=false, s)
+end
+
 '''
 
 
-def render(stations: list[dict], *, socket: str, playlists: str, now_dir: str, port: int) -> str:
+def render(stations: list[dict], *, socket: str, playlists: str, now_dir: str, port: int,
+           relays: list[dict] | None = None) -> str:
     body = HEADER.format(socket=json.dumps(socket), playlists=json.dumps(playlists),
                          now_dir=json.dumps(now_dir), port=port)
     for s in stations:
         body += f"station({json.dumps(s['mount'])}, {json.dumps(s['name'])})\n"
+    for r in relays or []:
+        body += (f"relay({json.dumps(r['mount'])}, {json.dumps(r['name'])}, "
+                 f"{json.dumps(r['url'])})\n")
     return body
 
 
@@ -102,12 +122,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--now-dir", required=True)
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--out", required=True, type=Path)
+    ap.add_argument("--relays", type=Path,
+                    help="JSON [{mount,name,url}] of outside stations to re-encode on demand")
     args = ap.parse_args(argv)
     stations = Config(args.config).stations()
     if not stations:
         print("no stations in config — nothing to run", file=sys.stderr)
         return 1
-    args.out.write_text(render(stations, socket=args.socket, playlists=args.playlists,
+    relays = []
+    if args.relays and args.relays.exists():
+        try:
+            relays = json.loads(args.relays.read_text())
+        except ValueError as e:
+            print(f"ignoring {args.relays}: {e}", file=sys.stderr)
+    args.out.write_text(render(stations, relays=relays, socket=args.socket, playlists=args.playlists,
                                now_dir=args.now_dir, port=args.port))
     print(f"{args.out}: {len(stations)} stations")
     return 0
