@@ -164,7 +164,11 @@ let
   seedFeeds = cfg.seed.feeds;
   seedStations = cfg.seed.stations;
   seedSchedule = cfg.seed.schedule;
-  quickPicks = cfg.quickPicks;
+  quickPicks = cfg.quickPicks ++ cfg.extraQuickPicks;
+  # What the receiver browsing YCast can decode. The `room` device is the one
+  # with a menu to walk, so its declaration is what filters that menu; the web
+  # page is a browser and is offered everything.
+  receiverCodecs = if cfg.devices ? room then cfg.devices.room.codecs else [ "mp3" ];
   radioHost = cfg.domain;
 
   defaultFeeds = {
@@ -344,7 +348,14 @@ let
   # it can, and this derivation is nginx's document root, so nothing deploys
   # without it passing.
   radioWeb = pkgs.runCommand "netradio-web" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-    NETRADIO_WEB=${./web} python3 -m unittest discover -s ${./tests} -t ${./tests} -p 'test_web.py' -v
+    NETRADIO_WEB=${./web} NETRADIO_NIX=${./default.nix} \
+      python3 -m unittest discover -s ${./tests} -t ${./tests} -p 'test_web.py' -v
+    # …and the check that every flag this file puts on a command line is one the
+    # command declares. Nothing else catches that: argparse rejects an unknown
+    # flag at RUNTIME, so #351 built green and then failed the deploy with
+    # status 4 (2026-09-27).
+    NETRADIO_NIX=${./default.nix} NETRADIO_PKG=${./netradio} \
+      python3 -m unittest discover -s ${./tests} -t ${./tests} -p 'test_unit_flags.py' -v
 
     mkdir -p $out/admin $out/vendor
     cp ${siteJson} $out/site.json
@@ -619,6 +630,20 @@ in
         example = [ "yamaha-ync-api.service" ];
         description = "Units serving `apiUrl`, to order the play logger after.";
       };
+      codecs = lib.mkOption {
+        type = lib.types.listOf (lib.types.enum [ "mp3" "aac-lc" "he-aac" "wma" "flac" "ogg" "opus" ]);
+        default = [ "mp3" ];
+        example = [ "mp3" "wma" "aac-lc" ];
+        description = ''
+          What this receiver can decode from an internet stream. Only stations in
+          these codecs reach its menu, because one it cannot play is worse than
+          one it is not shown.
+
+          ⚠️ Read the spec carefully: "MPEG4 AAC" means `aac-lc`. The 32 kbps
+          streams many stations now serve are HE-AACv2, a different profile that
+          a 2014 decoder refuses — so listing `aac-lc` does NOT admit them.
+        '';
+      };
     };
 
     # --- an optional Jellyfin tie-in ---------------------------------------
@@ -731,6 +756,21 @@ in
             default = [ "play" "stop" "volume" "mute" "stations" ];
             description = "What this device can do. play/stop/volume/mute plus `stations` are the contract; the rest are extras the page shows only when declared.";
           };
+          codecs = lib.mkOption {
+            type = lib.types.listOf (lib.types.enum [ "mp3" "aac-lc" "he-aac" "wma" "flac" "ogg" "opus" ]);
+            default = [ "mp3" ];
+            example = [ "mp3" "aac-lc" "wma" ];
+            description = ''
+              What this device can actually decode, which decides which outside
+              stations it is offered. A station it cannot play is worse than one
+              it is not shown: the listener selects it and gets silence.
+
+              ⚠️ `aac-lc` and `he-aac` are different answers. A 2014 receiver
+              whose spec says "MPEG4 AAC" means AAC-LC; the 32 kbps streams many
+              stations now serve are HE-AACv2 and it will refuse them (measured
+              on two Kentucky country stations, 2026-09-27).
+            '';
+          };
           statePath = lib.mkOption {
             type = lib.types.str;
             default = "state";
@@ -823,10 +863,40 @@ in
         options = {
           name = lib.mkOption { type = lib.types.str; description = "Shown in the menu."; };
           url = lib.mkOption { type = lib.types.str; description = "A plain-HTTP stream (a receiver cannot do TLS)."; };
+          codec = lib.mkOption {
+            type = lib.types.enum [ "mp3" "aac-lc" "he-aac" "wma" "flac" "ogg" "opus" ];
+            default = "mp3";
+            description = "What the stream is, so a device that cannot decode it is not offered it.";
+          };
         };
       });
       default = defaultQuickPicks;
-      description = "A handful of outside stations, so the input plays something before any browsing.";
+      description = ''
+        A handful of outside stations, so the input plays something before any
+        browsing. Setting this REPLACES the starter list; to keep it and add your
+        own local stations, use `extraQuickPicks`.
+      '';
+    };
+
+    extraQuickPicks = lib.mkOption {
+      type = lib.types.listOf (lib.types.submodule {
+        options = {
+          name = lib.mkOption { type = lib.types.str; description = "Shown in the menu."; };
+          url = lib.mkOption { type = lib.types.str; description = "A plain-HTTP stream (a receiver cannot do TLS)."; };
+          codec = lib.mkOption {
+            type = lib.types.enum [ "mp3" "aac-lc" "he-aac" "wma" "flac" "ogg" "opus" ];
+            default = "mp3";
+            description = "What the stream is, so a device that cannot decode it is not offered it.";
+          };
+        };
+      });
+      default = [ ];
+      example = lib.literalExpression ''[ { name = "WMMT 88.7"; url = "http://example/radio.mp3"; } ]'';
+      description = ''
+        Local stations to add to the starter list. Separate so a site's own
+        stations are site configuration and the module keeps a generic default —
+        the same split as the seeded stations.
+      '';
     };
 
     seed = {
@@ -905,6 +975,9 @@ in
       room = {
         name = cfg.receiver.label;
         endpoint = cfg.receiver.apiUrl;
+        # Overridden per receiver in site config; mp3 is the one thing every
+        # net-radio device has ever decoded.
+        codecs = cfg.receiver.codecs;
         # yamaha-ync answers /status, not /state. Declared rather than
         # rewritten: the adapter is one word of config.
         statePath = "status";
@@ -1377,6 +1450,9 @@ in
         ++ [
         "--web-base ${if cfg.tls then "https" else "http"}://${radioHost}/radio"
         "--quick-picks ${quickPicksJson}"
+      ] ++ lib.optional cfg.vtuner.enable
+        "--menu-codecs ${lib.concatStringsSep "," receiverCodecs}"
+      ++ [
       ] ++ lib.optionals (jellyfinReady && cfg.jellyfin.discoverRoots) [
         "--jellyfin-url ${cfg.jellyfin.url}"
         "--jellyfin-key-file ${cfg.jellyfin.keyFile}"

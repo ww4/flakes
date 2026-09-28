@@ -261,3 +261,51 @@ class YcastMenuRoundTrip(unittest.TestCase):
                              "http://host/radio", [])
         self.assertEqual(pl.menu_entry_for_mount(text, "country"), ("Curated", "Country"))
         self.assertEqual(pl.menu_entry_for_mount(text, "90s-country"), ("Curated", "Hits"))
+
+
+class MenuCodecFilter(unittest.TestCase):
+    """A device is offered only what it can decode.
+
+    Chris, 2026-09-27: the codecs belong to the receiver's own declaration, and
+    they decide what shows up in Quick Picks. The reason is concrete — Hank FM
+    and Froggy both serve HE-AACv2 at 32 kbps, and the R-N301 decodes AAC-LC,
+    which is a different profile. Offering them would give the listener a menu
+    entry that plays silence.
+    """
+
+    STATIONS = [{"name": "Classic Country", "mount": "country", "kind": "curated"}]
+    PICKS = [{"name": "WMMT", "url": "http://x/r.mp3", "codec": "mp3"},
+             {"name": "Hank FM 105.5", "url": "http://y/WLXO", "codec": "he-aac"},
+             {"name": "WETS", "url": "http://z/live-1", "codec": "mp3"}]
+
+    def names(self, codecs):
+        from netradio import playlists as pl
+        text = pl.ycast_yaml(self.STATIONS, "http://b/radio", self.PICKS, codecs)
+        return [n for _, n, _ in pl.parse_ycast_yaml(text)]
+
+    def test_a_receiver_that_only_does_mp3_is_not_shown_the_aac_one(self):
+        got = self.names({"mp3"})
+        self.assertIn("WMMT", got)
+        self.assertIn("WETS", got)
+        self.assertNotIn("Hank FM 105.5", got)
+
+    def test_aac_lc_does_NOT_admit_he_aac(self):
+        """The distinction the whole option exists for."""
+        self.assertNotIn("Hank FM 105.5", self.names({"mp3", "wma", "aac-lc"}))
+
+    def test_a_device_that_declares_he_aac_gets_it(self):
+        self.assertIn("Hank FM 105.5", self.names({"mp3", "he-aac"}))
+
+    def test_no_declaration_filters_nothing(self):
+        self.assertIn("Hank FM 105.5", self.names(None))
+
+    def test_the_librarys_own_stations_are_never_filtered_out(self):
+        """They are ours and they are MP3; a codec list must not hide them."""
+        for codecs in ({"mp3"}, {"wma"}, set()):
+            self.assertIn("Classic Country", self.names(codecs), f"codecs={codecs}")
+
+    def test_a_pick_with_no_codec_is_treated_as_mp3(self):
+        from netradio import playlists as pl
+        picks = [{"name": "Unlabelled", "url": "http://x/r.mp3"}]
+        text = pl.ycast_yaml(self.STATIONS, "http://b/radio", picks, {"mp3"})
+        self.assertIn("Unlabelled", [n for _, n, _ in pl.parse_ycast_yaml(text)])

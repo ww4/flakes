@@ -256,6 +256,12 @@ let hm = homelab-modules.nixosModules; in
       label = config.services.yamaha-ync.name;
       apiUrl = "http://127.0.0.1:${toString config.services.yamaha-ync.apiPort}";
       afterUnits = [ "yamaha-ync-api.service" ];
+      # The R-N301's spec lists MP3, WMA and MPEG4 AAC — that last one is AAC-LC.
+      # Deliberately NOT he-aac: the 32 kbps SecureNetSystems streams are
+      # HE-AACv2 (measured 2026-09-27) and a 2014 decoder will not take them, so
+      # they stay out of the receiver's menu and off the phone's Quick Picks only
+      # for the receiver.
+      codecs = [ "mp3" "wma" "aac-lc" ];
     };
 
     # The receiver's Net Radio input: Blocky answers the vTuner names with the
@@ -273,6 +279,28 @@ let hm = homelab-modules.nixosModules; in
     compile = { enable = true; workingDirectory = "/home/claude/nixos-homelab-improvements"; };
 
     lastfmEnvFile = config.sops.secrets."lastfm-env".path;
+
+    # Local stations, verified 2026-09-27 by fetching each one and reading the
+    # codec off it rather than trusting a directory listing.
+    #
+    # ⚠️ The two country stations are HE-AACv2 at 32 kbps (SecureNetSystems).
+    # The R-N301's spec says "MPEG4 AAC", which is AAC-LC — HE-AACv2 is a
+    # different profile and a 2014 net-radio decoder usually refuses it. They
+    # will play on the phone and the browser; the receiver may well not take
+    # them. The MP3 ones play everywhere.
+    extraQuickPicks = [
+      # WLXO Mount Sterling, classic country. hankthelegend.com
+      { name = "Hank FM 105.5";   url = "http://ice9.securenetsystems.net/WLXO"; codec = "he-aac"; }
+      # WFKY Frankfort, "Froggy" country. froggykycountry.com
+      { name = "Froggy 104.9";    url = "http://ice9.securenetsystems.net/WFKY"; codec = "he-aac"; }
+      # WMMT Whitesburg — Appalshop's Possum Radio. MP3 128k.
+      # ⚠️ NOT the URL in the Radio Browser index: that one answers as "XB
+      # Radio", a stale mount. This is what TuneIn resolves, reliability 100.
+      { name = "WMMT 88.7 Possum Radio"; url = "http://mira.streamerr.co/listen/wmmt_88.7fm/radio.mp3"; }
+      # WETS Johnson City. HD1 is the main service, HD2 is its Americana stream.
+      { name = "WETS 89.5";       url = "http://wets-fm.streamguys1.com/live-1"; }
+      { name = "WETS Americana";  url = "http://wets-fm.streamguys1.com/live-2"; }
+    ];
 
     # The Jellyfin already running on this box: it says where the music is (it
     # named /mnt/fusion/XMAS/Music and /mnt/fusion/pinchflat/music, which the
