@@ -1,5 +1,5 @@
 // Library radio — the remote (Vue 3 global build, no bundler). Same-origin data:
-//   now/catalogue.json, now/quick-picks.json, now/stations.json, icecast-status
+//   now/catalogue.json, now/internet-radio.json, now/stations.json, icecast-status
 //   now/<mount>.json (last played), now/<mount>-next.json (the DJ's queue)
 //   receiver/*      the receiver's JSON API (yamaha-ync-api via nginx)
 //   admin/api/dj/*, admin/api/dislike, admin/api/search   listener feedback
@@ -51,7 +51,7 @@ createApp({
       const g = [{ kind: "curated", title: "Curated", stations: curated }];
       if (specialty.length) g.push({ kind: "specialty", title: "Specialty", stations: specialty });
       if (this.target === "room") {
-        if (this.quick.length) g.push({ kind: "quick", title: "Quick Picks", stations: this.quick.map(q => ({ mount: "", name: q.name, kind: "quick" })) });
+        if (this.quick.length) g.push({ kind: "quick", title: "Internet Radio", stations: this.quick.map(q => ({ mount: "", name: q.name, kind: "quick" })) });
         if (this.pandora.length) g.push({ kind: "pandora", title: "Pandora", stations: this.pandora.map(n => ({ mount: "", name: n, kind: "pandora" })) });
         if (this.presets.length) g.push({ kind: "preset", title: "Radio presets", stations: this.presets.map(p => ({ mount: "", name: p.text.replace(/^\d+\s*:\s*/, ""), kind: "preset", number: p.number, sub: `preset ${p.number}` })) });
       }
@@ -239,7 +239,7 @@ createApp({
     },
 
     async refresh() {
-      const [cat, quick, counts, ic] = await Promise.all([getJSON("now/catalogue.json"), getJSON("now/quick-picks.json"), getJSON("now/stations.json"), getJSON("icecast-status")]);
+      const [cat, quick, counts, ic] = await Promise.all([getJSON("now/catalogue.json"), getJSON("now/internet-radio.json"), getJSON("now/stations.json"), getJSON("icecast-status")]);
       if (cat) { this.stations = cat; this.scanning = false; } else if (!this.stations.length) this.scanning = true;
       if (quick) this.quick = quick;
       if (!this._tilesAt || Date.now() - this._tilesAt > 600000) { const t = await getJSON("now/tiles.json"); if (t) { this.tiles = t; this._tilesAt = Date.now(); } }
@@ -276,7 +276,7 @@ createApp({
       this.remember(s);
       if (s.kind === "preset") return this.receiverAction("tuning…", async () => { if (this.receiver.input !== "TUNER") await call("POST", "receiver/input", { name: "TUNER" }); return call("POST", "receiver/tuner", { preset: s.number }); });
       if (s.kind === "pandora") return this.receiverAction(`starting ${s.name}…`, () => call("POST", "receiver/menu/path", { source: "Pandora", path: [s.name] }));
-      const category = s.kind === "quick" ? "Quick Picks" : s.kind === "specialty" ? "Specialty" : "Curated";
+      const category = s.kind === "quick" ? "Internet Radio" : s.kind === "specialty" ? "Specialty" : "Curated";
       return this.receiverAction(`tuning to ${s.name}…`, () => call("POST", "receiver/menu/path", { path: ["My Stations", category, s.name] }));
     },
     stopTarget() {

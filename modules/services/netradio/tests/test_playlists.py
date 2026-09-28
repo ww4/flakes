@@ -101,7 +101,7 @@ class Build(unittest.TestCase):
         talk = {str(self.root / "Talker/E/01 f.mp3")}
         n = pl.build(tracks, self.cfg, self.out, self.pools, talk=talk,
                      summary=Path(self.tmp.name) / "summary.json", ycast=Path(self.tmp.name) / "stations.yml",
-                     public_base="http://h/radio", quick_picks=[{"name": "NPR", "url": "http://npr"}],
+                     public_base="http://h/radio", internet_radio=[{"name": "NPR", "url": "http://npr"}],
                      web_base="https://r/radio")
         # country's core: the "Other"-tagged Louvin track is not country by tag; the
         # Byrds are country by a later tag only (fringe); Dan Gellert says Country
@@ -250,7 +250,7 @@ class YcastMenuRoundTrip(unittest.TestCase):
         got = pl.parse_ycast_yaml(text)
         self.assertEqual([(c, n) for c, n, _ in got],
                          [("Curated", 'A "quoted" name'), ("Curated", "Soul & R&B"),
-                          ("Specialty", "A Cappella & Lined-Out Singing"), ("Quick Picks", "NPR")])
+                          ("Specialty", "A Cappella & Lined-Out Singing"), ("Internet Radio", "NPR")])
         self.assertEqual(pl.menu_entry_for_mount(text, "soul"), ("Curated", "Soul & R&B"))
         self.assertIsNone(pl.menu_entry_for_mount(text, "nosuch"))
 
@@ -267,7 +267,7 @@ class MenuCodecFilter(unittest.TestCase):
     """A device is offered only what it can decode.
 
     Chris, 2026-09-27: the codecs belong to the receiver's own declaration, and
-    they decide what shows up in Quick Picks. The reason is concrete — Hank FM
+    they decide what shows up in Internet Radio. The reason is concrete — Hank FM
     and Froggy both serve HE-AACv2 at 32 kbps, and the R-N301 decodes AAC-LC,
     which is a different profile. Offering them would give the listener a menu
     entry that plays silence.

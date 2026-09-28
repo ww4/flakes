@@ -384,7 +384,7 @@ def write_m3u(path: Path, paths: list[str]) -> None:
 
 def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set[str],
           summary: Path | None = None, ycast: Path | None = None, public_base: str = "",
-          quick_picks: list[dict] | None = None, web_base: str = "",
+          internet_radio: list[dict] | None = None, web_base: str = "",
           menu_codecs: set[str] | None = None) -> dict:
     """Everything after the walk. Returns {mount: count}."""
     from netradio import feeds as feedrules
@@ -495,7 +495,7 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
         now = summary.parent
         write_atomic(now / "catalogue.json", json.dumps([{"mount": s["mount"], "name": s["name"], "kind": s.get("kind", "curated")}
                                                           for s in stations]))
-        write_atomic(now / "quick-picks.json", json.dumps(quick_picks or []))   # the receiver's menu has them too
+        write_atomic(now / "internet-radio.json", json.dumps(internet_radio or []))   # the receiver's menu has them too
         primary = {t.path: (t.genres[0] if t.genres else "") for t in playable}
         write_atomic(now / "tiles.json", json.dumps(station_tiles(stations, station_pools, artists, artist_of, primary)))
         if web_base:
@@ -503,7 +503,7 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
             write_atomic(now / "stations-lo.m3u", m3u(stations, web_base, "-lo"))
             write_atomic(now / "stations.pls", pls(stations, web_base))
     if ycast:
-        write_atomic(ycast, ycast_yaml(stations, public_base, quick_picks or [], menu_codecs))
+        write_atomic(ycast, ycast_yaml(stations, public_base, internet_radio or [], menu_codecs))
     return counts
 
 
@@ -518,7 +518,7 @@ def pls(stations: list[dict], base: str) -> str:
     return out + f"NumberOfEntries={len(stations)}\nVersion=2\n"
 
 
-def ycast_yaml(stations: list[dict], base: str, quick_picks: list[dict],
+def ycast_yaml(stations: list[dict], base: str, internet_radio: list[dict],
                codecs: set[str] | None = None) -> str:
     """YCast's stations.yml: category → name → url. Hand-emitted so the order
     is the catalogue order; values are JSON strings, which is valid YAML.
@@ -527,7 +527,7 @@ def ycast_yaml(stations: list[dict], base: str, quick_picks: list[dict],
     declaration. A station it cannot play is worse than one it is not shown —
     the listener selects it and gets silence — so anything in a codec it lacks
     is left out. The library's own stations are always MP3, so only the outside
-    Quick Picks are filtered (Chris, 2026-09-27)."""
+    Internet Radio are filtered (Chris, 2026-09-27)."""
     def line(name, url):
         return f"  {json.dumps(name)}: {json.dumps(url)}\n"
     out = "Curated:\n"
@@ -538,16 +538,26 @@ def ycast_yaml(stations: list[dict], base: str, quick_picks: list[dict],
     for s in stations:
         if s.get("kind") == "specialty":
             out += line(s["name"], f"{base}/{s['mount']}.mp3")
-    playable = [q for q in quick_picks
-                if codecs is None or (q.get("codec") or "mp3") in codecs]
-    if len(playable) != len(quick_picks):
-        missing = sorted({(q.get("codec") or "mp3") for q in quick_picks if q not in playable})
-        log.info("%d outside station(s) kept out of the menu — this device cannot decode %s",
-                 len(quick_picks) - len(playable), ", ".join(missing))
-    if playable:
-        out += "\nQuick Picks:\n"
-        for q in playable:
-            out += line(q["name"], q["url"])
+    # A station this device cannot decode is not dropped if there is a relay for
+    # it: the relay is the same station re-encoded to MP3 on demand, on our own
+    # mount, so the listener sees one list either way. The codec is plumbing,
+    # not a category (Chris, 2026-09-28).
+    shown, dropped = [], []
+    for q in internet_radio:
+        if codecs is None or (q.get("codec") or "mp3") in codecs:
+            shown.append((q["name"], q["url"]))
+        elif q.get("relay"):
+            shown.append((q["name"], f"{base}/{q['relay']}.mp3"))
+        else:
+            dropped.append(q)
+    if dropped:
+        log.info("%d outside station(s) kept out of the menu — this device cannot decode %s "
+                 "and no relay is configured for them",
+                 len(dropped), ", ".join(sorted({(q.get("codec") or "mp3") for q in dropped})))
+    if shown:
+        out += "\nInternet Radio:\n"
+        for name, url in shown:
+            out += line(name, url)
     return out
 
 
@@ -604,7 +614,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ycast", type=Path, help="write YCast's stations.yml here")
     ap.add_argument("--public-base", default="http://radioyamaha.vtuner.com/radio", help="stream URL prefix for YCast")
     ap.add_argument("--web-base", default="", help="stream URL prefix for the page's m3u/pls (https)")
-    ap.add_argument("--quick-picks", type=Path, help="JSON [{name,url,codec}] appended to YCast's menu")
+    ap.add_argument("--internet-radio", type=Path, help="JSON [{name,url,codec}] appended to YCast's menu")
     ap.add_argument("--menu-codecs", default="",
                     help="what the device browsing the menu can decode, comma separated. An outside "
                          "station in anything else is left out: unplayable is worse than absent")
@@ -663,13 +673,13 @@ def main(argv: list[str] | None = None) -> int:
                 t.era = verdicts[t.path].era
 
     quick = []
-    if args.quick_picks:
+    if args.internet_radio:
         try:
-            quick = json.loads(args.quick_picks.read_text())
+            quick = json.loads(args.internet_radio.read_text())
         except (OSError, ValueError):
             quick = []
     station_counts = build(tracks, Config(args.config), args.out, args.pools, talk=talk, summary=args.summary,
-                           ycast=args.ycast, public_base=args.public_base, quick_picks=quick,
+                           ycast=args.ycast, public_base=args.public_base, internet_radio=quick,
                            web_base=args.web_base,
                            menu_codecs=({c.strip() for c in args.menu_codecs.split(",") if c.strip()}
                                         or None))
