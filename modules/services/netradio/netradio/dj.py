@@ -540,18 +540,18 @@ class StationDJ:
         if not playable:
             return None
         pool = [t for t in playable if t not in self.recent] or playable
-        # The listener's accumulated opinion decides the odds: a thumbed track
-        # comes round oftener, a skipped one seldomer, and one skipped four
+        # The listener's opinion decides the odds: a hearted track comes round
+        # four times as often, a skipped one seldomer, and one skipped four
         # times stops coming at all (netradio/ratings.py). An artist explicitly
         # marked "less" keeps its old quarter-odds on top of that.
         self.load_ratings()
-        path = ratings.pick(self.ratings, pool, artist_of_path, self.rng) or self.rng.choice(pool)
+        path = ratings.pick(self.ratings, pool, self.rng) or self.rng.choice(pool)
         less = self.dislikes.get("artists") or {}
         if less and artist_of_path(path) in less:
             for _ in range(7):
                 if self.rng.random() < 0.25:
                     break
-                alt = ratings.pick(self.ratings, pool, artist_of_path, self.rng)
+                alt = ratings.pick(self.ratings, pool, self.rng)
                 if not alt or artist_of_path(alt) not in less:
                     path = alt or path
                     break

@@ -273,12 +273,31 @@ let hm = homelab-modules.nixosModules; in
     compile = { enable = true; workingDirectory = "/home/claude/nixos-homelab-improvements"; };
 
     lastfmEnvFile = config.sops.secrets."lastfm-env".path;
+
+    # The Jellyfin already running on this box: it says where the music is (it
+    # named /mnt/fusion/XMAS/Music and /mnt/fusion/pinchflat/music, which the
+    # hand-written roots above had missed), and the page's heart button mirrors
+    # to its favourites in both directions.
+    jellyfin = {
+      enable = true;
+      keyFile = config.sops.secrets."jellyfin-api-netradio".path;
+    };
   };
 
   # Genre tags (beets lastgenre) and the DJ's similar-artist lookups. Read-only
   # use. Owner netradio; group users so the agent's catalogue jobs (as claude)
   # can read it too — a low-value key. Handed over via the secrets-inbox
   # 2026-09-16; edit with `sops secrets/lastfm-env.yaml`.
+  # netradio's own view of the Jellyfin key. The agent's copy in
+  # modules/agent/jellyfin-api-secret.nix is owner claude 0400 and stays that
+  # way; sops-nix can expose the same key twice with different owners.
+  sops.secrets."jellyfin-api-netradio" = {
+    sopsFile = ./secrets/jellyfin-api.yaml;
+    key = "jellyfin-api";
+    owner = "netradio";
+    mode = "0400";
+  };
+
   sops.secrets."lastfm-env" = {
     sopsFile = ./secrets/lastfm-env.yaml;
     key = "lastfm-env";

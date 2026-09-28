@@ -50,7 +50,12 @@
            track, and enough presses retire it (Chris, 2026-09-27). The thumb
            sits where "Less" was and interrupts nothing. -->
       <button @click="skip" title="Skip — and play less of this"><svg viewBox="0 0 24 24"><path d="M5 5l9 7-9 7zM16 5h3v14h-3z"/></svg><span>Skip</span></button>
-      <button class="thumb" :class="{on: thumbed}" @click="thumbUp" title="More like this"><svg viewBox="0 0 24 24"><path d="M9 21h8.5a2 2 0 0 0 2-1.6L21 12.5V11a2 2 0 0 0-2-2h-5l1-4.5a1.5 1.5 0 0 0-2.8-1L9 11zM7 21H3V11h4z"/></svg><span>{{ thumbLabel }}</span></button>
+      <!-- a TOGGLE, not a tally: filled when hearted, outlined when not. A flag
+           cannot be run up the way a counter can, so a favourite cannot be
+           pressed into unbalancing a station (Chris, 2026-09-27). -->
+      <button class="heart" :class="{on: hearted}" @click="toggleHeart" :title="hearted ? 'Remove the heart' : 'Heart this — play it more often'">
+        <svg viewBox="0 0 24 24" :fill="hearted ? 'currentColor' : 'none'"><path d="M12 20s-7-4.5-7-9.5A3.8 3.8 0 0 1 12 7a3.8 3.8 0 0 1 7 3.5C19 15.5 12 20 12 20z"/></svg>
+        <span>{{ hearted ? 'Hearted' : 'Heart' }}</span></button>
       <button @click="dislike('track')" title="Never again"><svg viewBox="0 0 24 24"><path d="M15 3H6.5a2 2 0 0 0-2 1.6L3 11.5V13a2 2 0 0 0 2 2h5l-1 4.5a1.5 1.5 0 0 0 2.8 1L15 13zM17 3h4v10h-4z"/></svg><span>Never</span></button>
       <button @click="tab = 'request'" title="Request a song"><svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg><span>Request</span></button>
     </div>

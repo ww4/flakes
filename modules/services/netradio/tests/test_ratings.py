@@ -1,4 +1,4 @@
-"""Skips and thumbs, and what they do to the odds."""
+"""Skips accumulate; the heart is a toggle. What that does to the odds."""
 
 import random
 import unittest
@@ -11,117 +11,113 @@ Q = "/mnt/fusion/Music/Bill Monroe/Bluegrass 1950/04 Blue Moon.mp3"
 OTHER = "/mnt/fusion/Music/Hank Williams/Moanin/01 Lovesick.mp3"
 
 
-def artist_of(path):
-    parts = [p for p in path.split("/") if p]
-    return parts[-3].strip().lower() if len(parts) >= 3 else ""
-
-
-class Scoring(unittest.TestCase):
-    def test_a_skip_costs_ground_and_a_thumb_buys_it_back(self):
+class Skips(unittest.TestCase):
+    def test_each_skip_halves_the_odds(self):
         st = {}
-        ratings.record(st, kind="skip", path=P, artist="Bill Monroe", title="Uncle Pen")
-        self.assertEqual(ratings.track_score(st, P), -1)
-        ratings.record(st, kind="thumb", path=P, artist="Bill Monroe", title="Uncle Pen")
-        self.assertEqual(ratings.track_score(st, P), 0)
+        for n, want in ((0, 1.0), (1, 0.5), (2, 0.25), (3, 0.125)):
+            self.assertAlmostEqual(ratings.weight(st, P), want, msg=f"{n} skips")
+            ratings.record_skip(st, P)
 
-    def test_four_skips_take_it_out_of_rotation_with_no_verdict(self):
-        """The escalation Chris asked for: nothing has to be declared "never"
-        for repeated skipping to stop a track coming back."""
+    def test_the_fourth_skip_retires_it_with_no_verdict(self):
+        """Nothing has to be declared "never" for repeated skipping to stop a
+        track coming back."""
         st = {}
-        for n in range(1, 5):
-            ratings.record(st, kind="skip", path=P, artist="Bill Monroe")
-            w = ratings.weight(st, P, "Bill Monroe")
-            if n < 4:
-                self.assertGreater(w, 0, f"skip {n} must not banish it outright")
-            else:
-                self.assertEqual(w, 0.0, "the fourth skip retires it")
+        for _ in range(4):
+            ratings.record_skip(st, P)
+        self.assertEqual(ratings.weight(st, P), 0.0)
 
-    def test_one_skip_only_halves_it(self):
-        """A skip because you were not in the mood is not a life sentence."""
+    def test_one_skip_is_not_a_life_sentence(self):
         st = {}
-        ratings.record(st, kind="skip", path=P)
-        self.assertAlmostEqual(ratings.weight(st, P), 0.5)
+        ratings.record_skip(st, P)
+        self.assertGreater(ratings.weight(st, P), 0.0)
 
-    def test_thumbs_are_capped_so_a_favourite_cannot_take_over(self):
+    def test_a_skip_with_no_path_is_ignored_rather_than_stored_under_nothing(self):
         st = {}
-        for _ in range(10):
-            ratings.record(st, kind="thumb", path=P, artist="Bill Monroe")
-        self.assertLessEqual(ratings.weight(st, P, "Bill Monroe"), ratings.MAX_WEIGHT)
+        ratings.record_skip(st, "")
+        self.assertEqual(st.get("tracks", {}), {})
 
-    def test_the_artist_moves_at_half_strength_and_cannot_banish_anything(self):
+
+class Heart(unittest.TestCase):
+    """Chris, 2026-09-27: "It's not cumulative, it's just a toggle. Heart tracks
+    play more often. That's all." """
+
+    def test_a_heart_cannot_be_run_up(self):
         st = {}
-        for _ in range(9):      # nine skips of OTHER tracks by the same artist
-            ratings.record(st, kind="skip", path="", artist="Bill Monroe")
-        self.assertEqual(ratings.artist_score(st, "Bill Monroe"), -9)
-        # an unrated track by that artist is quieter, but still offered
-        self.assertGreater(ratings.weight(st, Q, "Bill Monroe"), 0.0)
+        ratings.set_heart(st, P, True)
+        once = ratings.weight(st, P)
+        for _ in range(20):
+            ratings.set_heart(st, P, True)
+        self.assertEqual(ratings.weight(st, P), once,
+                         "pressing it twenty times must be the same as once")
 
-    def test_the_artist_key_matches_however_it_is_capitalised(self):
+    def test_it_is_worth_a_fixed_amount(self):
         st = {}
-        ratings.record(st, kind="thumb", path=P, artist="Bill Monroe")
-        self.assertEqual(ratings.artist_score(st, "  bill monroe "), 1)
+        ratings.set_heart(st, P, True)
+        self.assertEqual(ratings.weight(st, P), ratings.HEART)
 
-    def test_an_unknown_kind_is_refused(self):
-        with self.assertRaises(ValueError):
-            ratings.record({}, kind="shrug", path=P)
+    def test_a_heart_outranks_even_enough_skips_to_retire_it(self):
+        """Someone went and favourited this; it should not stay suppressed
+        because they skipped it one distracted evening."""
+        st = {}
+        for _ in range(6):
+            ratings.record_skip(st, P)
+        self.assertEqual(ratings.weight(st, P), 0.0)
+        ratings.set_heart(st, P, True)
+        self.assertEqual(ratings.weight(st, P), ratings.HEART)
+
+    def test_un_hearting_adds_no_skip(self):
+        """"Not a favourite" is a long way from "play this less"."""
+        st = {}
+        ratings.set_heart(st, P, True)
+        ratings.set_heart(st, P, False)
+        self.assertEqual(ratings.skips(st, P), 0)
+        self.assertAlmostEqual(ratings.weight(st, P), 1.0)
+
+    def test_un_hearting_restores_whatever_the_skips_said(self):
+        st = {}
+        ratings.record_skip(st, P)
+        ratings.set_heart(st, P, True)
+        ratings.set_heart(st, P, False)
+        self.assertAlmostEqual(ratings.weight(st, P), 0.5, msg="the skip is still on the record")
 
 
 class Picking(unittest.TestCase):
-    def test_a_thumbed_track_really_does_come_round_oftener(self):
+    def test_a_hearted_track_comes_round_oftener(self):
         st = {}
-        for _ in range(2):
-            ratings.record(st, kind="thumb", path=P, artist="Bill Monroe")
+        ratings.set_heart(st, P, True)
         rng = random.Random(7)
-        pool = [P, Q, OTHER]
-        got = Counter(ratings.pick(st, pool, artist_of, rng) for _ in range(3000))
+        got = Counter(ratings.pick(st, [P, Q, OTHER], rng) for _ in range(3000))
         self.assertGreater(got[P], got[Q] * 2, got)
+
+    def test_but_it_does_not_take_the_station_over(self):
+        """4x, not 40x — the others still get a real share."""
+        st = {}
+        ratings.set_heart(st, P, True)
+        rng = random.Random(9)
+        got = Counter(ratings.pick(st, [P, Q, OTHER], rng) for _ in range(3000))
+        self.assertGreater(got[Q], 300, got)
+        self.assertGreater(got[OTHER], 300, got)
 
     def test_a_retired_track_is_never_offered_while_others_remain(self):
         st = {}
         for _ in range(4):
-            ratings.record(st, kind="skip", path=P, artist="Bill Monroe")
+            ratings.record_skip(st, P)
         rng = random.Random(11)
-        got = Counter(ratings.pick(st, [P, OTHER], artist_of, rng) for _ in range(500))
+        got = Counter(ratings.pick(st, [P, OTHER], rng) for _ in range(500))
         self.assertEqual(got[P], 0, got)
-        self.assertEqual(got[OTHER], 500)
 
     def test_a_station_skipped_to_nothing_plays_anyway_rather_than_going_silent(self):
         st = {}
         for p in (P, Q):
             for _ in range(5):
-                ratings.record(st, kind="skip", path=p, artist=artist_of(p))
-        rng = random.Random(3)
-        picked = ratings.pick(st, [P, Q], artist_of, rng)
-        self.assertIn(picked, (P, Q), "silence is worse than a song you once skipped")
+                ratings.record_skip(st, p)
+        self.assertIn(ratings.pick(st, [P, Q], random.Random(3)), (P, Q))
 
     def test_an_empty_pool_picks_nothing(self):
-        self.assertIsNone(ratings.pick({}, [], artist_of, random.Random(1)))
+        self.assertIsNone(ratings.pick({}, [], random.Random(1)))
 
     def test_with_no_opinions_every_track_is_equally_likely(self):
         rng = random.Random(5)
-        got = Counter(ratings.pick({}, [P, Q, OTHER], artist_of, rng) for _ in range(3000))
+        got = Counter(ratings.pick({}, [P, Q, OTHER], rng) for _ in range(3000))
         for n in got.values():
             self.assertGreater(n, 800, got)
-
-
-class Stars(unittest.TestCase):
-    """The translation Chris asked about — thumbs into library stars."""
-
-    def test_no_opinion_is_not_zero_stars_but_no_rating_at_all(self):
-        self.assertIsNone(ratings.stars({}, P))
-
-    def test_the_mapping(self):
-        for n, want in ((1, 4), (2, 5), (5, 5)):
-            st = {}
-            for _ in range(n):
-                ratings.record(st, kind="thumb", path=P)
-            self.assertEqual(ratings.stars(st, P), want, f"{n} thumbs")
-        for n, want in ((1, 2), (2, 2), (3, 1), (6, 1)):
-            st = {}
-            for _ in range(n):
-                ratings.record(st, kind="skip", path=P)
-            self.assertEqual(ratings.stars(st, P), want, f"{n} skips")
-
-
-if __name__ == "__main__":
-    unittest.main()

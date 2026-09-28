@@ -136,6 +136,9 @@ let
 
   # Where the music is: every root the scanner walks.
   libraryRoots = cfg.libraryRoots;
+  # Jellyfin is only usable when it is enabled AND a key was handed over.
+  jellyfinReady = cfg.jellyfin.enable && cfg.jellyfin.keyFile != null;
+
   # The group that can read those roots, for the units that open the files.
   libraryGroups = lib.optional (cfg.libraryGroup != null) cfg.libraryGroup;
 
@@ -453,8 +456,13 @@ in
 
     libraryRoots = lib.mkOption {
       type = lib.types.listOf lib.types.path;
+      default = [ ];
       example = [ "/srv/music" ];
-      description = "Every directory the scanner walks for audio files.";
+      description = ''
+        Every directory the scanner walks for audio files. May be left empty
+        when `jellyfin.discoverRoots` is on and Jellyfin knows where the music
+        is; anything named here is scanned as well as what Jellyfin reports.
+      '';
     };
 
     libraryGroup = lib.mkOption {
@@ -613,40 +621,71 @@ in
       };
     };
 
-    # --- stars in the library files ----------------------------------------
-    # OFF by default, because it MODIFIES the audio files: a POPM frame in an
-    # mp3, RATING/FMPS_RATING in a flac, the iTunes atom in an m4a. That is what
-    # makes a rating visible in Jellyfin and in anything else that reads one.
-    # It runs both ways — a star already in a file becomes an opinion — and it
-    # cannot feed on its own writes, because each track remembers the last value
-    # written or seen and only a DIFFERENCE counts as a human gesture.
-    stars = {
+    # --- an optional Jellyfin tie-in ---------------------------------------
+    # Two independent conveniences for someone who already runs Jellyfin, and
+    # nothing that netradio depends on: the library still lives on disk and is
+    # still played from disk.
+    #
+    #   discoverRoots  Jellyfin says where the music is, so `libraryRoots` need
+    #                  not be written out by hand. It also catches folders a
+    #                  hand-written list forgets — on gromit it named two roots
+    #                  netradio was not scanning, one of them 786 Christmas
+    #                  files (2026-09-27).
+    #   hearts         the page's heart button mirrors to Jellyfin's favourite
+    #                  flag, and favourites set in Jellyfin come back.
+    #
+    # ⚠️ Jellyfin has no STAR rating for a music track — measured on 10.11.11,
+    # not assumed: an Audio item's UserData is
+    # PlaybackPositionTicks/PlayCount/IsFavorite/Played/Key/ItemId, the item
+    # carries no rating field, and 0 of 400 sampled had a CommunityRating. The
+    # heart is the only channel there is.
+    #
+    # With this off the heart button still works; it just stays local, and the
+    # hearts merge in if Jellyfin is connected later.
+    jellyfin = {
       enable = lib.mkOption {
         type = lib.types.bool;
         default = false;
+        description = "Tie netradio to an existing Jellyfin for library folders and the heart.";
+      };
+      url = lib.mkOption {
+        type = lib.types.str;
+        default = "http://127.0.0.1:8096";
+        description = "Jellyfin's base URL.";
+      };
+      keyFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        example = "/run/secrets/jellyfin-api";
         description = ''
-          Keep star ratings in the library files in step with the listener's
-          skips and thumbs. Writes tags into the audio files, so it is off
-          until asked for.
+          A file holding the API key, readable by the netradio user — a bare key
+          or a `JELLYFIN_API_KEY=…` line. This module names no secret; hand it a
+          path from sops-nix or anything else.
         '';
       };
-      write = lib.mkOption {
-        type = lib.types.bool;
-        default = true;
-        description = "Write a score out as stars. Turn off for import-only, which touches nothing.";
-      };
-      read = lib.mkOption {
-        type = lib.types.bool;
-        default = true;
+      user = lib.mkOption {
+        type = lib.types.str;
+        default = "";
         description = ''
-          Take a star found in a file as the listener's opinion and move the
-          score to match. A deliberate rating outranks accumulated skips.
+          Whose favourites count, as a Jellyfin user id. Empty means the first
+          administrator — a household has more than one account, and the other
+          one's favourites are not this listener's.
         '';
+      };
+      discoverRoots = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Add Jellyfin's own music folders to the scan, alongside any libraryRoots.";
+      };
+      hearts = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Mirror the heart button to Jellyfin's favourites, in both directions.";
       };
       onCalendar = lib.mkOption {
         type = lib.types.str;
-        default = "05:30";
-        description = "When the pass runs — after the nightly rescan, by default.";
+        default = "hourly";
+        description = "How often to merge hearts with Jellyfin.";
       };
     };
 
@@ -825,7 +864,17 @@ in
   # reads services.netradio.devices, so a third one is config, not code.
   # A device that cannot do the four verbs is not a device, and finding that
   # out by tapping a dead button in the page is the wrong time.
-  assertions =
+  assertions = [
+    {
+      assertion = libraryRoots != [ ] || (jellyfinReady && cfg.jellyfin.discoverRoots);
+      message = "services.netradio: set libraryRoots, or enable jellyfin.discoverRoots with a keyFile — "
+                + "otherwise the scanner has nowhere to look for music.";
+    }
+    {
+      assertion = !cfg.jellyfin.enable || cfg.jellyfin.keyFile != null;
+      message = "services.netradio.jellyfin.enable needs jellyfin.keyFile: every call to Jellyfin is authenticated.";
+    }
+  ] ++
     (lib.mapAttrsToList (id: d: {
       assertion = lib.all (c: lib.elem c d.capabilities) [ "play" "stop" "volume" "mute" ];
       message = "services.netradio.devices.${id}: capabilities must include play, stop, volume and mute — "
@@ -1328,6 +1377,10 @@ in
         ++ [
         "--web-base ${if cfg.tls then "https" else "http"}://${radioHost}/radio"
         "--quick-picks ${quickPicksJson}"
+      ] ++ lib.optionals (jellyfinReady && cfg.jellyfin.discoverRoots) [
+        "--jellyfin-url ${cfg.jellyfin.url}"
+        "--jellyfin-key-file ${cfg.jellyfin.keyFile}"
+      ] ++ [
         "--profile ${profileJson}"
         "--overrides ${profileOverrides}"
       ] ++ map (r: "--root ${r}") libraryRoots);
@@ -1407,32 +1460,30 @@ in
     };
   };
 
-  # --- stars: the library files and the ratings agreeing -------------------
-  systemd.services.netradio-stars = lib.mkIf cfg.stars.enable {
-    description = "Sync star ratings between the listener's feedback and the library files";
-    after = [ "netradio-credentials.service" ] ++ cfg.requiresMounts;
-    requires = [ "netradio-credentials.service" ];
+  # --- hearts: merge with Jellyfin's favourites ---------------------------
+  systemd.services.netradio-hearts = lib.mkIf (jellyfinReady && cfg.jellyfin.hearts) {
+    description = "Merge the heart flags with Jellyfin's favourites";
+    after = [ "netradio-credentials.service" "jellyfin.service" ];
     serviceConfig = hardening // {
       Type = "oneshot";
       User = user;
       Group = user;
-      SupplementaryGroups = libraryGroups;   # it WRITES to the library
-      ReadWritePaths = [ configDir ] ++ libraryRoots;
-      Nice = 15;
-      IOSchedulingClass = "idle";
+      ReadWritePaths = [ configDir ];
       ExecStart = lib.concatStringsSep " " ([
-        "${netradio}/bin/netradio stars"
+        "${netradio}/bin/netradio jellyfin"
         "--config ${configDir}"
-      ] ++ lib.optional (!cfg.stars.write) "--no-write"
-        ++ lib.optional (!cfg.stars.read) "--no-read");
+        "--url ${cfg.jellyfin.url}"
+        "--key-file ${cfg.jellyfin.keyFile}"
+      ] ++ lib.optional (cfg.jellyfin.user != "") "--user ${cfg.jellyfin.user}");
     };
   };
-  systemd.timers.netradio-stars = lib.mkIf cfg.stars.enable {
+  systemd.timers.netradio-hearts = lib.mkIf (jellyfinReady && cfg.jellyfin.hearts) {
     wantedBy = [ "timers.target" ];
     timerConfig = {
-      OnCalendar = cfg.stars.onCalendar;
+      OnCalendar = cfg.jellyfin.onCalendar;
+      OnBootSec = "5min";
       Persistent = true;
-      RandomizedDelaySec = "5min";
+      RandomizedDelaySec = "2min";
     };
   };
 
@@ -1456,7 +1507,11 @@ in
         "--receiver-api ${cfg.receiver.apiUrl}"
         "--now-dir ${nowDir}"
         "--wake http://127.0.0.1:${toString wakePort}"
-      ]);
+      ] ++ lib.optionals (jellyfinReady && cfg.jellyfin.hearts) [
+        "--jellyfin-url ${cfg.jellyfin.url}"
+        "--jellyfin-key-file ${cfg.jellyfin.keyFile}"
+      ] ++ lib.optional (jellyfinReady && cfg.jellyfin.hearts && cfg.jellyfin.user != "")
+        "--jellyfin-user ${cfg.jellyfin.user}");
       Restart = "always";
       RestartSec = 5;
     };

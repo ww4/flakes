@@ -1,42 +1,32 @@
 """What the listener thinks of a track, and what that does to how often it plays.
 
-Chris, 2026-09-27: "Merge the next and less button. If I want less of something
-then you should automatically skip it, and if I do skip something you should
-probably play less of it. It's the same input. In its place put a thumbs up.
-This shouldn't interrupt the flow but you can collect thumbs and put them
-towards repeat plays."
+Two gestures, and they are deliberately not symmetrical.
 
-So there is one negative gesture and one positive one:
+  SKIP    skips the track now AND counts against it. Pressed once it is a
+          shrug; pressed on the same track repeatedly it stops coming back.
+          Nothing has to be declared "never" for that to happen.
+  HEART   a TOGGLE, not a tally, and it lives in Jellyfin. A hearted track
+          plays more often. That is all it does.
 
-  SKIP   skips the track now AND counts against it. Pressed once it is a
-         shrug; pressed on the same track repeatedly it stops coming back.
-         Nothing has to be declared "never" for that to happen.
-  THUMB  counts for it, and does nothing else — no interruption, which is the
-         whole point of a thumb.
+Chris settled the positive side on 2026-09-27: "It\'s not cumulative, it\'s just
+a toggle. Heart tracks play more often. That\'s all. Simplify the heuristic and
+[it] doesn\'t throw the station off balance if somebody clicks the thumb too many
+times." A counter can be pressed twenty times; a flag cannot, so the boost is
+bounded by construction rather than by a cap bolted on afterwards.
 
-A score is simply `thumbs - skips`, and the score becomes a weight. For the
-TRACK's own score:
+The weights:
 
-    score   -4     -3     -2    -1     0    +1   +2   +3
-    weight  out   1/8    1/4   1/2     1     2    4    8
+    skips     0     1     2     3     4+
+    weight    1    1/2   1/4   1/8   out
 
-The artist's score multiplies that at half strength, and the product is capped
-both ways — so a much-thumbed song by a much-thumbed artist comes round oftener
-but cannot take a station over, which unbounded multiplication would let it do
-(a thrice-thumbed track measured 22x before the cap).
+    hearted:  4x, whatever the skips say — the heart is the more deliberate
+              gesture, and a track someone went and favourited should not be
+              quietly suppressed because they skipped it one distracted evening
 
-Two properties worth stating, because they are why this shape and not a
-threshold: it is gradual (one skip halves a track's chances rather than
-banishing it, so a skip because you were not in the mood is not a life
-sentence), and it is escalating (four skips and it is gone without a verdict
-ever being pronounced).
-
-The artist carries a score too, aggregated from their tracks, applied at
-HALF strength — dampened deliberately, so disliking one song does not quietly
-mute a whole catalogue.
-
-`dislikes.json` is untouched and still means what it meant: an explicit,
-permanent no. This file is the soft, accumulating opinion beside it.
+Skips are still a running count, because "less of this" only means anything if
+it accumulates. There is no artist score here: `dislikes.json` already carries an
+explicit "less of this artist", and a second, implicit artist penalty was a way
+for one skipped song to quietly mute a whole catalogue.
 """
 
 from __future__ import annotations
@@ -48,96 +38,83 @@ from typing import Iterable
 
 log = logging.getLogger("netradio.ratings")
 
-EMPTY: dict = {"tracks": {}, "artists": {}}
+EMPTY: dict = {"tracks": {}}
 
-# score -> weight is 2**score, clamped. OUT is the score at which a track stops
-# being offered at all; +3 is as much as a thumb can buy, so a favourite cannot
-# crowd a station down to a handful of songs.
-OUT = -4
-MAX_UP = 3
-# The artist's own score counts half as much as the track's, and cannot on its
-# own remove anything — only a track's score can do that.
-ARTIST_DAMPING = 0.5
-ARTIST_FLOOR = -3
-# The most any combination of thumbs may buy. Without it the track and artist
-# terms multiply without limit and one favourite crowds out everything else.
-MAX_WEIGHT = 8.0
+# Four skips and a track is out of rotation.
+OUT = 4
+# What a heart is worth. One number, not a curve — the whole point is that it
+# cannot be run up.
+HEART = 4.0
 
 
 def now() -> str:
     return dt.datetime.now().replace(microsecond=0).isoformat(timespec="minutes")
 
 
-def norm_artist(name: str) -> str:
-    """The same key dislikes.json uses for artists, so the two agree."""
-    return (name or "").strip().lower()
+def _entry(store: dict, path: str) -> dict:
+    return store.setdefault("tracks", {}).setdefault(path, {"skips": 0, "heart": False})
 
 
-def _entry(store: dict, kind: str, key: str) -> dict:
-    return store.setdefault(kind, {}).setdefault(key, {"skips": 0, "thumbs": 0})
-
-
-def record(store: dict, *, kind: str, path: str, artist: str = "", title: str = "") -> dict:
-    """Count one gesture. `kind` is "skip" or "thumb". Returns the store."""
-    if kind not in ("skip", "thumb"):
-        raise ValueError(f"unknown feedback: {kind!r}")
-    field = "skips" if kind == "skip" else "thumbs"
-    if path:
-        t = _entry(store, "tracks", path)
-        t[field] = int(t.get(field, 0)) + 1
-        t["artist"], t["title"], t["when"] = artist or t.get("artist", ""), title or t.get("title", ""), now()
-    if artist:
-        a = _entry(store, "artists", norm_artist(artist))
-        a[field] = int(a.get(field, 0)) + 1
-        a["when"] = now()
+def record_skip(store: dict, path: str, artist: str = "", title: str = "") -> dict:
+    """Count a skip against a track."""
+    if not path:
+        return store
+    e = _entry(store, path)
+    e["skips"] = int(e.get("skips", 0)) + 1
+    e["artist"], e["title"], e["when"] = artist or e.get("artist", ""), title or e.get("title", ""), now()
     return store
 
 
-def score(entry: dict | None) -> int:
-    if not entry:
-        return 0
-    return int(entry.get("thumbs", 0)) - int(entry.get("skips", 0))
+def set_heart(store: dict, path: str, on: bool, artist: str = "", title: str = "") -> dict:
+    """Set or clear the heart. A toggle: calling it twice is the same as once.
+
+    Un-hearting does not add a skip. Removing a heart says "not a favourite",
+    which is a long way from "play this less", and inferring the stronger
+    statement from the weaker one is how a system starts contradicting the
+    person using it.
+    """
+    if not path:
+        return store
+    e = _entry(store, path)
+    e["heart"] = bool(on)
+    e["artist"], e["title"], e["when"] = artist or e.get("artist", ""), title or e.get("title", ""), now()
+    return store
 
 
-def track_score(store: dict, path: str) -> int:
-    return score((store.get("tracks") or {}).get(path))
+def hearted(store: dict, path: str) -> bool:
+    return bool(((store.get("tracks") or {}).get(path) or {}).get("heart"))
 
 
-def artist_score(store: dict, artist: str) -> int:
-    return score((store.get("artists") or {}).get(norm_artist(artist)))
+def skips(store: dict, path: str) -> int:
+    return int(((store.get("tracks") or {}).get(path) or {}).get("skips", 0))
 
 
-def weight(store: dict, path: str, artist: str = "") -> float:
-    """How often this track should play relative to an unrated one. 0.0 means
+def weight(store: dict, path: str) -> float:
+    """How often this track should play relative to an untouched one. 0.0 means
     do not offer it."""
-    s = track_score(store, path)
-    if s <= OUT:
+    if hearted(store, path):
+        return HEART
+    n = skips(store, path)
+    if n >= OUT:
         return 0.0
-    s = min(s, MAX_UP)
-    w = 2.0 ** s
-    if artist:
-        a = max(artist_score(store, artist), ARTIST_FLOOR)
-        w *= 2.0 ** (min(a, MAX_UP) * ARTIST_DAMPING)
-    return max(min(w, MAX_WEIGHT), 0.0)
+    return 2.0 ** -n
 
 
-def weights(store: dict, paths: Iterable[str], artist_of) -> list[float]:
-    """Weights for a pool, in order. `artist_of` maps a path to an artist name —
-    the caller has that (the DJ reads it from the path's folder)."""
-    return [weight(store, p, artist_of(p)) for p in paths]
+def weights(store: dict, paths: Iterable[str]) -> list[float]:
+    return [weight(store, p) for p in paths]
 
 
-def pick(store: dict, paths: list[str], artist_of, rng) -> str | None:
+def pick(store: dict, paths: list[str], rng) -> str | None:
     """One path, chosen with the weights above.
 
     Falls back to an unweighted choice when every candidate weighs zero, which
-    happens when a small station is entirely skipped-out: better to play
-    something the listener once skipped than to go silent (and the DJ's own
-    `recent` list still keeps it from repeating).
+    happens when a small station has been skipped out entirely: better to play
+    something once skipped than to go silent, and the DJ\'s `recent` list still
+    keeps it from repeating.
     """
     if not paths:
         return None
-    ws = weights(store, paths, artist_of)
+    ws = weights(store, paths)
     if not any(w > 0 for w in ws):
         log.info("every candidate is skipped out (%d of them); playing anyway", len(paths))
         return rng.choice(paths)
@@ -153,32 +130,6 @@ def pick(store: dict, paths: list[str], artist_of, rng) -> str | None:
 
 def summary(store: dict) -> str:
     tracks = store.get("tracks") or {}
-    artists = store.get("artists") or {}
-    up = sum(1 for e in tracks.values() if score(e) > 0)
-    down = sum(1 for e in tracks.values() if score(e) < 0)
-    out = sum(1 for e in tracks.values() if score(e) <= OUT)
-    return (f"{len(tracks)} tracks rated ({up} up, {down} down, {out} out), "
-            f"{len(artists)} artists")
-
-
-def stars(store: dict, path: str) -> int | None:
-    """The score as a 1-5 star rating, for writing back into the library, or
-    None when the track has no opinion either way.
-
-        score  <=-3  -2  -1   0   +1  +2  >=+3
-        stars     1   2   2   -    4   5     5
-
-    Nothing writes this yet — it is here because the mapping is the part worth
-    agreeing on before anything touches the files (Chris asked whether thumbs
-    could become stars; the answer is yes, and this is the translation).
-    """
-    s = track_score(store, path)
-    if s == 0:
-        return None
-    if s <= -3:
-        return 1
-    if s < 0:
-        return 2
-    if s == 1:
-        return 4
-    return 5
+    hearts = sum(1 for e in tracks.values() if e.get("heart"))
+    out = sum(1 for e in tracks.values() if int(e.get("skips", 0)) >= OUT and not e.get("heart"))
+    return f"{len(tracks)} tracks known, {hearts} hearted, {out} skipped out"

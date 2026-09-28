@@ -596,6 +596,31 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(message)s", stream=sys.stdout)
 
+    # Where the music is: the named roots, plus whatever Jellyfin says. For
+    # somebody who already runs Jellyfin its library configuration IS the
+    # answer, and a hand-written list is a second place to forget a folder — on
+    # gromit Jellyfin named two roots netradio was not scanning, one of them 786
+    # Christmas files (2026-09-27).
+    roots = list(args.root)
+    if args.jellyfin_url:
+        from netradio import jellyfin as jf_mod
+        key = jf_mod.read_key(key_file=args.jellyfin_key_file)
+        if not key:
+            log.warning("--jellyfin-url given but no readable key; using the named roots only")
+        else:
+            try:
+                found = jf_mod.Jellyfin(args.jellyfin_url, key).music_roots()
+            except Exception as e:
+                found = []
+                log.warning("could not ask Jellyfin for the music folders: %s", e)
+            for r in found:
+                if Path(r) not in roots:
+                    log.info("Jellyfin names a music folder we were not scanning: %s", r)
+                    roots.append(Path(r))
+    if not roots:
+        ap.error("no library roots: pass --root, or --jellyfin-url with a readable key")
+    args.root = roots
+
     cache = TagCache(args.cache)
     extra = {}
     if args.genres and args.genres.exists():

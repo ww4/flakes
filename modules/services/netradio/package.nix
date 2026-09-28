@@ -29,11 +29,7 @@ python3.pkgs.buildPythonApplication {
     fileset = lib.fileset.unions [ ./netradio ./tests ];
   };
 
-  # ffmpeg is in the closure anyway (the wrapper puts it on PATH); the CHECK
-  # needs it too, to make a second of real silence in each format for the
-  # rating round-trip. A synthetic MP3 does not work — mutagen declines to
-  # claim one, which failed the test against working code (2026-09-27).
-  nativeBuildInputs = [ makeWrapper ffmpeg-headless ];
+  nativeBuildInputs = [ makeWrapper ];
   propagatedBuildInputs = pyDeps python3.pkgs;
 
   doCheck = true;

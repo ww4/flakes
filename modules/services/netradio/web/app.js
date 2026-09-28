@@ -39,7 +39,7 @@ createApp({
              speaker: { playing: false, mount: "", volume: null, muted: false, error: "" }, speakerPoll: 0,
              pandora: JSON.parse((() => { try { return localStorage.getItem("radio.pandora") || "[]"; } catch (e) { return "[]"; } })()), menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
              site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "" },
-             speakerDraft: 0, speakerDragging: false, thumbedPath: "",
+             speakerDraft: 0, speakerDragging: false, hearts: {},
              remote: false, volumeDraft: 0, freqDraft: "", busy: "", toast: "", query: "", results: [], searchTimer: 0, roomPoll: 0, artFailed: "", artFailedAt: 0, tick: 0 };
   },
   computed: {
@@ -58,9 +58,8 @@ createApp({
       return g;
     },
     currentStation() { return this.stations.find(s => s.mount === this.current) || { name: "", mount: "" }; },
-    // a thumb stays lit only for the track it was given to
-    thumbed() { const t = this.nowTrack ? this.nowTrack() : null; return !!t && this.thumbedPath === t.path; },
-    thumbLabel() { return this.thumbed ? "Liked" : "More"; },
+    // lit when the playing track is hearted
+    hearted() { const t = this.nowTrack ? this.nowTrack() : null; return !!t && !!this.hearts[t.path]; },
     nowTitle() { const m = this.current; return (this.up[m + this.quality] || this.up[m] || {}).title || ""; },
     // --- what "Now" shows, per target
     np() { return (this.target === "room" && this.receiver.now_playing) || null; },
@@ -397,17 +396,26 @@ createApp({
         setTimeout(() => this.refresh(), 2500);
       } catch (e) { this.say(e.message); }
     },
-    // A thumb changes nothing about what is playing — it only changes the odds
-    // of hearing it again.
-    async thumbUp() {
+    // The heart is a toggle and changes nothing about what is playing. Where it
+    // is STORED depends on the deployment: always locally, and mirrored to
+    // Jellyfin when one is configured.
+    async toggleHeart() {
       const t = this.nowTrack();
       if (!t) { this.say("nothing to rate yet"); return; }
+      const want = !this.hearted;
       try {
         const r = await call("POST", "admin/api/feedback",
-                             { kind: "thumb", path: t.path, artist: t.artist, title: t.title });
-        this.thumbedPath = t.path;
-        this.say(r.score > 1 ? `more ${t.artist} — noted ${r.score} times` : `more like ${t.title}`);
+                             { kind: "heart", on: want, path: t.path, artist: t.artist, title: t.title });
+        this.hearts = { ...this.hearts, [t.path]: !!r.heart };
+        this.say(r.message || (r.heart ? "hearted" : "heart removed"));
       } catch (e) { this.say(e.message); }
+    },
+    // whether the playing track is hearted; asked once per track, then cached
+    async refreshHeart() {
+      const t = this.nowTrack();
+      if (!t || t.path in this.hearts) return;
+      const r = await getJSON(`admin/api/heart?path=${encodeURIComponent(t.path)}`);
+      if (r) this.hearts = { ...this.hearts, [t.path]: !!r.heart };
     },
     async dislike(scope) {
       const t = this.nowTrack();
@@ -466,8 +474,8 @@ createApp({
     window.addEventListener("resize", () => { this.wide = window.innerWidth > 640; });
     // who this box is, written at build time from the module's options
     getJSON("site.json").then(s => { if (s) { this.site = { ...this.site, ...s }; document.title = this.site.title; } });
-    this.refresh();
-    setInterval(() => { this.tick = Date.now(); this.refresh(); }, 10000);
+    this.refresh().then(() => this.refreshHeart());
+    setInterval(() => { this.tick = Date.now(); this.refresh().then(() => this.refreshHeart()); }, 10000);
     if (this.target === "room") this.pollReceiver();
     if (this.target === "local") this.pollSpeaker();
     if (this.tab === "sources" && this.target !== "room") this.tab = "now";
