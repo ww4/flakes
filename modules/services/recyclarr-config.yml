@@ -33,6 +33,49 @@ sonarr:
     quality_definition:
       type: anime
 
+    # ⚠️ LANGUAGE GUARD — every profile, not just the pretty one.
+    #
+    # 2026-09-24 Sonarr grabbed Strange New Worlds S04E10 as
+    # `...FINAL.FRENCH.720p.WEB.H264-HiggsBoson`: French audio, French subs,
+    # no English track at all. It was not fooled — it recorded the release as
+    # French and imported it anyway, because nothing told it not to.
+    #
+    # The guard already existed. TRaSH's WEB-1080p profile carries this CF at
+    # -10000 and that profile was configured correctly... and assigned to ZERO
+    # series. Everything actually in use (27 series across Any, SD, HD-720p,
+    # HD-1080p, `HD - 720p/1080p` and Retro Animation) scored it 0, so a French
+    # release was exactly as acceptable as an English one.
+    #
+    # Sonarr's quality profile has NO language field in this version — the
+    # schema endpoint confirms it — so the custom-format score is the only
+    # lever there is. -10000 against min_format_score 0 is a hard reject.
+    #
+    # This CF keys on the SERIES' original language, not a hardcoded English,
+    # so a genuinely foreign-language show still works. And it matches only
+    # when the original language is ABSENT: a dual-audio ITA+ENG release
+    # scores 0 and stays eligible, which is correct — it does contain English.
+    #
+    # WEB-1080p is deliberately absent below; its trash profile already sets
+    # this and listing it twice invites a fight.
+    custom_formats:
+      - trash_ids:
+          - ae575f95ab639ba5d15f663bf019e3e8  # Language: Not Original
+        assign_scores_to:
+          - name: Any
+            score: -10000
+          - name: SD
+            score: -10000
+          - name: HD-720p
+            score: -10000
+          - name: HD-1080p
+            score: -10000
+          - name: Ultra-HD
+            score: -10000
+          - name: "HD - 720p/1080p"
+            score: -10000
+          - name: Retro Animation
+            score: -10000
+
     custom_format_groups:
       add:
         - trash_id: 158188097a58d7687dee647e04af0da3  # [Optional] Golden Rule HD
