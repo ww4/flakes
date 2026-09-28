@@ -39,7 +39,7 @@ createApp({
              speaker: { playing: false, mount: "", volume: null, muted: false, error: "" }, speakerPoll: 0,
              pandora: JSON.parse((() => { try { return localStorage.getItem("radio.pandora") || "[]"; } catch (e) { return "[]"; } })()), menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
              site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "" },
-             speakerDraft: 0, speakerDragging: false,
+             speakerDraft: 0, speakerDragging: false, thumbedPath: "",
              remote: false, volumeDraft: 0, freqDraft: "", busy: "", toast: "", query: "", results: [], searchTimer: 0, roomPoll: 0, artFailed: "", artFailedAt: 0, tick: 0 };
   },
   computed: {
@@ -58,6 +58,9 @@ createApp({
       return g;
     },
     currentStation() { return this.stations.find(s => s.mount === this.current) || { name: "", mount: "" }; },
+    // a thumb stays lit only for the track it was given to
+    thumbed() { const t = this.nowTrack ? this.nowTrack() : null; return !!t && this.thumbedPath === t.path; },
+    thumbLabel() { return this.thumbed ? "Liked" : "More"; },
     nowTitle() { const m = this.current; return (this.up[m + this.quality] || this.up[m] || {}).title || ""; },
     // --- what "Now" shows, per target
     np() { return (this.target === "room" && this.receiver.now_playing) || null; },
@@ -375,9 +378,36 @@ createApp({
 
     // ---- feedback on a library station ---------------------------------------
     nowTrack() { const h = this.feedbackHistory; return (h && h[0] && h[0].kind !== "break") ? h[0] : null; },
+    // Skip and "less of this" are ONE press: the station moves on and the
+    // track loses ground. Four skips and it stops coming back, without anything
+    // being declared "never".
     async skip() {
       if (!this.feedbackMount) return;
-      try { await call("POST", `admin/api/dj/${this.feedbackMount}/skip`); this.say("skipping…"); setTimeout(() => this.refresh(), 2500); } catch (e) { this.say(e.message); }
+      const t = this.nowTrack();
+      try {
+        if (!t) {                       // nothing identified yet: still skip
+          await call("POST", `admin/api/dj/${this.feedbackMount}/skip`);
+          this.say("skipping…");
+        } else {
+          const r = await call("POST", "admin/api/feedback",
+                               { kind: "skip", path: t.path, artist: t.artist, title: t.title, mount: this.feedbackMount });
+          this.say(r.out_of_rotation ? `skipped — that's enough of ${t.title}`
+                                     : `skipping — less of ${t.title}`);
+        }
+        setTimeout(() => this.refresh(), 2500);
+      } catch (e) { this.say(e.message); }
+    },
+    // A thumb changes nothing about what is playing — it only changes the odds
+    // of hearing it again.
+    async thumbUp() {
+      const t = this.nowTrack();
+      if (!t) { this.say("nothing to rate yet"); return; }
+      try {
+        const r = await call("POST", "admin/api/feedback",
+                             { kind: "thumb", path: t.path, artist: t.artist, title: t.title });
+        this.thumbedPath = t.path;
+        this.say(r.score > 1 ? `more ${t.artist} — noted ${r.score} times` : `more like ${t.title}`);
+      } catch (e) { this.say(e.message); }
     },
     async dislike(scope) {
       const t = this.nowTrack();

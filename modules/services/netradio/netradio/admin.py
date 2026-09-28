@@ -33,6 +33,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from netradio import feeds as feedrules
+from netradio import ratings
 from netradio import schedule as sched
 from netradio.config import write_atomic, FAMILIES, Config, compatible, new_id
 
@@ -300,6 +301,43 @@ class Admin:
         # name in the DJ's mouth (2026-09-25)
         return self._inbox(mount, {"action": "request", "path": path})
 
+    def feedback(self, body: dict) -> dict:
+        """One gesture from the listener: {"kind": "skip"|"thumb", "path": …,
+        "artist": …, "title": …, "mount": …}.
+
+        Chris merged "next" and "less" into one press (2026-09-27): skipping a
+        track IS saying less of it, so a skip both moves the station on and
+        counts against the track. A thumb counts for it and changes nothing
+        else — no skip, no interruption, which is the point of a thumb.
+
+        Escalation is arithmetic rather than a verdict: each skip halves a
+        track's odds and four of them take it out of rotation, so nothing has
+        to be declared "never" to stop hearing it. `dislike` is still there for
+        when you do want to say it outright.
+        """
+        kind = str(body.get("kind") or "")
+        if kind not in ("skip", "thumb"):
+            raise ValueError('kind must be "skip" or "thumb"')
+        path = str(body.get("path") or "")
+        artist, title = str(body.get("artist") or ""), str(body.get("title") or "")
+        mount = str(body.get("mount") or "")
+        if not path and kind == "thumb":
+            raise ValueError("path required")
+
+        store = self.cfg.ratings()
+        ratings.record(store, kind=kind, path=path, artist=artist, title=title)
+        self.cfg.save_ratings(store)
+
+        out = {"kind": kind, "path": path,
+               "score": ratings.track_score(store, path),
+               "artist_score": ratings.artist_score(store, artist) if artist else 0,
+               "stars": ratings.stars(store, path),
+               "out_of_rotation": ratings.weight(store, path, artist) == 0.0}
+        # a skip is also, immediately, a skip
+        if kind == "skip" and mount:
+            out.update(self._inbox(mount, {"action": "skip"}))
+        return out
+
     def dislike(self, body: dict) -> dict:
         """{"path": …, "scope": "track"|"artist", "title": …, "artist": …}.
         A track dislike keeps that file off every station from the next scan
@@ -447,6 +485,8 @@ def make_handler(admin: Admin):
                         return self._reply(200, admin.skip(parts[2]))
                     if len(parts) == 4 and parts[:2] == ["api", "dj"] and parts[3] == "request" and method == "POST":
                         return self._reply(200, admin.request(parts[2], self._json()))
+                    if parts == ["api", "feedback"] and method == "POST":
+                        return self._reply(200, admin.feedback(self._json()))
                     if parts == ["api", "resume"] and method == "POST":
                         return self._reply(200, admin.resume_receiver())
                     if parts == ["api", "dislike"] and method == "POST":
