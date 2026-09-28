@@ -35,6 +35,7 @@ from pathlib import Path
 
 import datetime as dt
 
+from netradio import ratings
 from netradio import schedule as sched
 from netradio.config import Config
 from netradio.profile import Profile
@@ -187,10 +188,17 @@ class Kokoro:
 
 
 def artist_of_path(path: str) -> str:
-    """The library folder's artist (/mnt/…/Music/<Artist>/…), normalised the
-    way dislikes.json keys artists."""
-    parts = path.split("/")
-    return parts[4].strip().lower() if len(parts) > 5 else ""
+    """The library folder's artist, normalised the way dislikes.json and
+    ratings.json key artists.
+
+    Read from the TAIL — <Artist>/<Album>/<file> — not from an absolute index.
+    This held `parts[4]`, which lines up only under the first library root: for
+    anything under /mnt/fusion/arr/media/music it returned "media", so the
+    "less of this artist" weighting silently did nothing for every album Lidarr
+    imported. Same bug as feeds.artist_hit had (fixed 2026-09-26); it matters
+    more here now that ratings are keyed on it."""
+    parts = [p for p in path.split("/") if p]
+    return parts[-3].strip().lower() if len(parts) >= 3 else ""
 
 
 def read_tags(path: str) -> Track:
@@ -446,6 +454,8 @@ class StationDJ:
         self.inbox = inbox if inbox is not None else out_dir.parent / "inbox"
         self.dislikes: dict = {"tracks": {}, "artists": {}}
         self.dislikes_mtime = 0.0
+        self.ratings: dict = {"tracks": {}, "artists": {}}
+        self.ratings_mtime = 0.0
         self.pushed: list[dict] = []        # what was queued, in order, for that
         self.last_break_text = ""
         self.programme = programme          # segments/spotlights (curated stations)
@@ -530,13 +540,36 @@ class StationDJ:
         if not playable:
             return None
         pool = [t for t in playable if t not in self.recent] or playable
+        # The listener's opinion decides the odds: a hearted track comes round
+        # four times as often, a skipped one seldomer, and one skipped four
+        # times stops coming at all (netradio/ratings.py). An artist explicitly
+        # marked "less" keeps its old quarter-odds on top of that.
+        self.load_ratings()
+        path = ratings.pick(self.ratings, pool, self.rng) or self.rng.choice(pool)
         less = self.dislikes.get("artists") or {}
-        for _ in range(8):   # an artist marked "less" gets a quarter of the plays it would have had
-            path = self.rng.choice(pool)
-            if not less or artist_of_path(path) not in less or self.rng.random() < 0.25:
-                break
+        if less and artist_of_path(path) in less:
+            for _ in range(7):
+                if self.rng.random() < 0.25:
+                    break
+                alt = ratings.pick(self.ratings, pool, self.rng)
+                if not alt or artist_of_path(alt) not in less:
+                    path = alt or path
+                    break
         self.recent.append(path)
         return read_tags(path)
+
+    def load_ratings(self) -> None:
+        cfg = self.programme.cfg if self.programme is not None else None
+        if cfg is None:
+            return
+        try:
+            mtime = (cfg.root / "ratings.json").stat().st_mtime
+        except OSError:
+            return
+        if mtime != self.ratings_mtime:
+            self.ratings = cfg.ratings()
+            self.ratings_mtime = mtime
+            log.info("%s: ratings loaded: %s", self.mount, ratings.summary(self.ratings))
 
     def load_dislikes(self) -> None:
         cfg = self.programme.cfg if self.programme is not None else None

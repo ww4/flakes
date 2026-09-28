@@ -234,3 +234,30 @@ class ArtistScope(unittest.TestCase):
                                          folder_artist="Clannad", folder_album="Magical Ring"))
         self.assertFalse(feeds.artist_hit(["Clannad :: Anam"], "", "/anything/at/all/x.mp3",
                                           folder_artist="Clannad", folder_album="Magical Ring"))
+
+
+class YcastMenuRoundTrip(unittest.TestCase):
+    """The menu file is now READ as well as written — it is the receiver's own
+    truth about where a station sits in its menu. Reader and writer live beside
+    each other; this keeps them honest."""
+
+    def test_what_is_written_can_be_read_back(self):
+        from netradio import playlists as pl
+        stations = [{"name": 'A "quoted" name', "mount": "quoted", "kind": "curated"},
+                    {"name": "Soul & R&B", "mount": "soul", "kind": "curated"},
+                    {"name": "A Cappella & Lined-Out Singing", "mount": "a-cappella", "kind": "specialty"}]
+        text = pl.ycast_yaml(stations, "http://host/radio", [{"name": "NPR", "url": "http://npr/x.mp3"}])
+        got = pl.parse_ycast_yaml(text)
+        self.assertEqual([(c, n) for c, n, _ in got],
+                         [("Curated", 'A "quoted" name'), ("Curated", "Soul & R&B"),
+                          ("Specialty", "A Cappella & Lined-Out Singing"), ("Quick Picks", "NPR")])
+        self.assertEqual(pl.menu_entry_for_mount(text, "soul"), ("Curated", "Soul & R&B"))
+        self.assertIsNone(pl.menu_entry_for_mount(text, "nosuch"))
+
+    def test_a_mount_that_is_a_suffix_of_another_does_not_collide(self):
+        from netradio import playlists as pl
+        text = pl.ycast_yaml([{"name": "Country", "mount": "country", "kind": "curated"},
+                              {"name": "Hits", "mount": "90s-country", "kind": "curated"}],
+                             "http://host/radio", [])
+        self.assertEqual(pl.menu_entry_for_mount(text, "country"), ("Curated", "Country"))
+        self.assertEqual(pl.menu_entry_for_mount(text, "90s-country"), ("Curated", "Hits"))

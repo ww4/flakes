@@ -33,6 +33,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from netradio import feeds as feedrules
+from netradio import jellyfin
+from netradio import ratings
 from netradio import schedule as sched
 from netradio.config import write_atomic, FAMILIES, Config, compatible, new_id
 
@@ -42,13 +44,30 @@ MOUNT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 
 
 class Admin:
-    def __init__(self, cfg: Config, dj_dir: Path | None = None, playlists: Path | None = None):
+    def __init__(self, cfg: Config, dj_dir: Path | None = None, playlists: Path | None = None,
+                 receiver_api: str = "", now_dir: Path | None = None, wake_url: str = "",
+                 jellyfin_url: str = "", jellyfin_key: str = "", jellyfin_user: str = ""):
         self.cfg = cfg
         self.dj_dir = dj_dir            # the DJ's state: inbox/ takes skip + request files
         self.playlists = playlists      # library.m3u for search
+        self.receiver_api = receiver_api   # for the page's resume button
+        self.now_dir = now_dir
+        self.wake_url = wake_url
+        self.jellyfin_url, self.jellyfin_key, self.jellyfin_user = jellyfin_url, jellyfin_key, jellyfin_user
         self._library: list[str] | None = None
         self._library_mtime = 0.0
         self._inbox_n = itertools.count()
+
+    def resume_receiver(self) -> dict:
+        """The page's resume button: the same thing netradio-resume does after a
+        Liquidsoap restart, on a finger instead of a unit. Same guardrails —
+        `force` is deliberately NOT exposed, so this can never yank a receiver
+        off something somebody is listening to."""
+        if not (self.receiver_api and self.now_dir):
+            return {"ok": False, "message": "no receiver configured"}
+        from netradio import resume as resume_mod
+        msg = resume_mod.resume(self.receiver_api, self.now_dir, self.wake_url, force=False)
+        return {"ok": msg.startswith("resumed"), "message": msg}
 
     # -- reads
     def pandora(self) -> dict:
@@ -285,6 +304,58 @@ class Admin:
         # name in the DJ's mouth (2026-09-25)
         return self._inbox(mount, {"action": "request", "path": path})
 
+    def feedback(self, body: dict) -> dict:
+        """One gesture from the listener.
+
+            {"kind": "skip",  "path":…, "artist":…, "title":…, "mount":…}
+            {"kind": "heart", "path":…, "on": true|false, "artist":…, "title":…}
+
+        Skip and "less of this" are one press (Chris, 2026-09-27): skipping a
+        track both moves the station on and counts against it, and four skips
+        retire it without anything being declared "never".
+
+        The heart is a TOGGLE, not a tally — "it's not cumulative… heart tracks
+        play more often, that's all". A flag cannot be run up the way a counter
+        can, so a favourite cannot be pressed twenty times into unbalancing a
+        station. It is stored locally whether or not Jellyfin is configured, and
+        mirrored there when it is.
+        """
+        kind = str(body.get("kind") or "")
+        if kind not in ("skip", "heart"):
+            raise ValueError('kind must be "skip" or "heart"')
+        path = str(body.get("path") or "")
+        artist, title = str(body.get("artist") or ""), str(body.get("title") or "")
+
+        if kind == "heart":
+            if not path:
+                raise ValueError("path required")
+            return jellyfin.toggle(self.cfg, self._jellyfin(), path,
+                                   bool(body.get("on", True)), artist, title)
+
+        store = self.cfg.ratings()
+        ratings.record_skip(store, path, artist, title)
+        self.cfg.save_ratings(store)
+        out = {"kind": "skip", "path": path, "skips": ratings.skips(store, path),
+               "heart": ratings.hearted(store, path),
+               "out_of_rotation": ratings.weight(store, path) == 0.0}
+        mount = str(body.get("mount") or "")
+        if mount:
+            out.update(self._inbox(mount, {"action": "skip"}))
+        return out
+
+    def heart_state(self, path: str) -> dict:
+        """Whether a track is hearted, for the page to light its button."""
+        store = self.cfg.ratings()
+        return {"path": path, "heart": ratings.hearted(store, path),
+                "skips": ratings.skips(store, path)}
+
+    def _jellyfin(self):
+        """The Jellyfin mirror, or None when it is not configured — in which
+        case the heart still works and simply stays local."""
+        if not (self.jellyfin_url and self.jellyfin_key):
+            return None
+        return jellyfin.Jellyfin(self.jellyfin_url, self.jellyfin_key, self.jellyfin_user)
+
     def dislike(self, body: dict) -> dict:
         """{"path": …, "scope": "track"|"artist", "title": …, "artist": …}.
         A track dislike keeps that file off every station from the next scan
@@ -432,6 +503,12 @@ def make_handler(admin: Admin):
                         return self._reply(200, admin.skip(parts[2]))
                     if len(parts) == 4 and parts[:2] == ["api", "dj"] and parts[3] == "request" and method == "POST":
                         return self._reply(200, admin.request(parts[2], self._json()))
+                    if parts == ["api", "feedback"] and method == "POST":
+                        return self._reply(200, admin.feedback(self._json()))
+                    if parts == ["api", "heart"] and method == "GET":
+                        return self._reply(200, admin.heart_state((q.get("path") or [""])[0]))
+                    if parts == ["api", "resume"] and method == "POST":
+                        return self._reply(200, admin.resume_receiver())
                     if parts == ["api", "dislike"] and method == "POST":
                         return self._reply(200, admin.dislike(self._json()))
                     if parts == ["api", "dislike"] and method == "DELETE":
@@ -489,6 +566,12 @@ def make_handler(admin: Admin):
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--config", required=True, type=Path)
+    ap.add_argument("--receiver-api", default="", help="the receiver API, for the page's resume button")
+    ap.add_argument("--now-dir", type=Path, help="where receiver.json lives (for resume)")
+    ap.add_argument("--wake", default="", help="the wake service, so resume can start the encoder first")
+    ap.add_argument("--jellyfin-url", default="", help="mirror hearts to this Jellyfin (optional)")
+    ap.add_argument("--jellyfin-key-file", type=Path, help="a file holding the Jellyfin API key")
+    ap.add_argument("--jellyfin-user", default="", help="Jellyfin user id (default: the first admin)")
     ap.add_argument("--listen", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8012)
     ap.add_argument("--dj-dir", type=Path, help="the DJ's state dir (inbox/ for skip + request)")
@@ -497,7 +580,12 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(message)s", stream=sys.stdout)
-    srv = ThreadingHTTPServer((args.listen, args.port), make_handler(Admin(Config(args.config), args.dj_dir, args.playlists)))
+    srv = ThreadingHTTPServer((args.listen, args.port), make_handler(
+        Admin(Config(args.config), args.dj_dir, args.playlists,
+              receiver_api=args.receiver_api, now_dir=args.now_dir, wake_url=args.wake,
+              jellyfin_url=args.jellyfin_url,
+              jellyfin_key=jellyfin.read_key(key_file=args.jellyfin_key_file),
+              jellyfin_user=args.jellyfin_user)))
     log.info("admin API on %s:%d, config %s", args.listen, args.port, args.config)
     srv.serve_forever()
     return 0

@@ -537,6 +537,43 @@ def ycast_yaml(stations: list[dict], base: str, quick_picks: list[dict]) -> str:
     return out
 
 
+def parse_ycast_yaml(text: str) -> list[tuple[str, str, str]]:
+    """(category, name, url) per entry — the inverse of ycast_yaml, and kept
+    beside it so the two cannot drift.
+
+    This file is the receiver's own truth about where a station lives in its
+    menu, which is why it is read back rather than the category being derived
+    a second time from a station's kind: Rain and Rainy Mood are `fixed`, the
+    page lists them under Specialty, and the menu has them under Curated. Any
+    second guess would be wrong for those two.
+    """
+    out: list[tuple[str, str, str]] = []
+    category = ""
+    for raw in text.splitlines():
+        if not raw.strip():
+            continue
+        if not raw.startswith(" "):                 # a category header
+            category = raw.rstrip().rstrip(":")
+            continue
+        name, sep, url = raw.strip().partition(": ")
+        if not sep:
+            continue
+        try:                                        # values are JSON strings
+            out.append((category, json.loads(name), json.loads(url)))
+        except ValueError:
+            continue
+    return out
+
+
+def menu_entry_for_mount(text: str, mount: str) -> tuple[str, str] | None:
+    """(category, name) for the station serving `mount`, from the menu file."""
+    want = f"/{mount}.mp3"
+    for category, name, url in parse_ycast_yaml(text):
+        if url.endswith(want):
+            return category, name
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     from netradio.profile import Profile, load_overrides
 
@@ -558,6 +595,31 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(message)s", stream=sys.stdout)
+
+    # Where the music is: the named roots, plus whatever Jellyfin says. For
+    # somebody who already runs Jellyfin its library configuration IS the
+    # answer, and a hand-written list is a second place to forget a folder — on
+    # gromit Jellyfin named two roots netradio was not scanning, one of them 786
+    # Christmas files (2026-09-27).
+    roots = list(args.root)
+    if args.jellyfin_url:
+        from netradio import jellyfin as jf_mod
+        key = jf_mod.read_key(key_file=args.jellyfin_key_file)
+        if not key:
+            log.warning("--jellyfin-url given but no readable key; using the named roots only")
+        else:
+            try:
+                found = jf_mod.Jellyfin(args.jellyfin_url, key).music_roots()
+            except Exception as e:
+                found = []
+                log.warning("could not ask Jellyfin for the music folders: %s", e)
+            for r in found:
+                if Path(r) not in roots:
+                    log.info("Jellyfin names a music folder we were not scanning: %s", r)
+                    roots.append(Path(r))
+    if not roots:
+        ap.error("no library roots: pass --root, or --jellyfin-url with a readable key")
+    args.root = roots
 
     cache = TagCache(args.cache)
     extra = {}

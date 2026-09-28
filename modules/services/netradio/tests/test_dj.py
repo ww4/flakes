@@ -1,6 +1,7 @@
 import logging
 import random
 import tempfile
+import re
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -147,11 +148,19 @@ class StationDJTests(unittest.TestCase):
             self.ls.play()
         text = self.tts.texts[0]
         pushed_tracks = [u for u in self.ls.pushed if not u.startswith("annotate:")]
-        names = [Path(u).stem[3:] for u in pushed_tracks]
+        # split off the track number rather than slicing a fixed 3 chars: the
+        # fixture numbers past 9, so stem[3:] left a leading space on "010 Song11"
+        names = [Path(u).stem.split(" ", 1)[-1].strip() for u in pushed_tracks]
+        # Match on WORD BOUNDARIES: the fixture's names are Song0..Song11, so a
+        # plain substring test reports "Song1" as present whenever "Song11" is.
+        # That produced a false failure the moment weighted picking changed which
+        # tracks a seeded run chooses (2026-09-27) — the break was correct.
+        def named(n):
+            return re.search(rf"\b{re.escape(n)}\b", text) is not None
         for n in names[:3]:
-            self.assertIn(n, text, text)
-        self.assertIn(names[3], text, text)          # the one queued right after the break
-        self.assertNotIn(names[4], text, text)
+            self.assertTrue(named(n), f"{n} should be named in: {text}")
+        self.assertTrue(named(names[3]), f"{names[3]} (queued after the break) in: {text}")
+        self.assertFalse(named(names[4]), f"{names[4]} should NOT be named in: {text}")
         break_uri = [u for u in self.ls.pushed if u.startswith("annotate:")][0]
         self.assertIn('liq_amplify="1.8"', break_uri)
         self.assertIn('title="Station break"', break_uri)

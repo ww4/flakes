@@ -80,6 +80,15 @@ class Config:
     def save_dislikes(self, data: dict) -> None:
         self._write("dislikes.json", data)
 
+    def ratings(self) -> dict:
+        """The soft, accumulating opinion: skips and thumbs per track and
+        artist (netradio/ratings.py). Beside dislikes.json, which is the
+        explicit permanent no."""
+        return self._read("ratings.json", {"tracks": {}, "artists": {}})
+
+    def save_ratings(self, data: dict) -> None:
+        self._write("ratings.json", data)
+
     def feeds(self) -> dict:
         return self._read("feeds.json", {})
 

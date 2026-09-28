@@ -136,6 +136,9 @@ let
 
   # Where the music is: every root the scanner walks.
   libraryRoots = cfg.libraryRoots;
+  # Jellyfin is only usable when it is enabled AND a key was handed over.
+  jellyfinReady = cfg.jellyfin.enable && cfg.jellyfin.keyFile != null;
+
   # The group that can read those roots, for the units that open the files.
   libraryGroups = lib.optional (cfg.libraryGroup != null) cfg.libraryGroup;
 
@@ -453,8 +456,13 @@ in
 
     libraryRoots = lib.mkOption {
       type = lib.types.listOf lib.types.path;
+      default = [ ];
       example = [ "/srv/music" ];
-      description = "Every directory the scanner walks for audio files.";
+      description = ''
+        Every directory the scanner walks for audio files. May be left empty
+        when `jellyfin.discoverRoots` is on and Jellyfin knows where the music
+        is; anything named here is scanned as well as what Jellyfin reports.
+      '';
     };
 
     libraryGroup = lib.mkOption {
@@ -610,6 +618,74 @@ in
         default = [ ];
         example = [ "yamaha-ync-api.service" ];
         description = "Units serving `apiUrl`, to order the play logger after.";
+      };
+    };
+
+    # --- an optional Jellyfin tie-in ---------------------------------------
+    # Two independent conveniences for someone who already runs Jellyfin, and
+    # nothing that netradio depends on: the library still lives on disk and is
+    # still played from disk.
+    #
+    #   discoverRoots  Jellyfin says where the music is, so `libraryRoots` need
+    #                  not be written out by hand. It also catches folders a
+    #                  hand-written list forgets — on gromit it named two roots
+    #                  netradio was not scanning, one of them 786 Christmas
+    #                  files (2026-09-27).
+    #   hearts         the page's heart button mirrors to Jellyfin's favourite
+    #                  flag, and favourites set in Jellyfin come back.
+    #
+    # ⚠️ Jellyfin has no STAR rating for a music track — measured on 10.11.11,
+    # not assumed: an Audio item's UserData is
+    # PlaybackPositionTicks/PlayCount/IsFavorite/Played/Key/ItemId, the item
+    # carries no rating field, and 0 of 400 sampled had a CommunityRating. The
+    # heart is the only channel there is.
+    #
+    # With this off the heart button still works; it just stays local, and the
+    # hearts merge in if Jellyfin is connected later.
+    jellyfin = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Tie netradio to an existing Jellyfin for library folders and the heart.";
+      };
+      url = lib.mkOption {
+        type = lib.types.str;
+        default = "http://127.0.0.1:8096";
+        description = "Jellyfin's base URL.";
+      };
+      keyFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        example = "/run/secrets/jellyfin-api";
+        description = ''
+          A file holding the API key, readable by the netradio user — a bare key
+          or a `JELLYFIN_API_KEY=…` line. This module names no secret; hand it a
+          path from sops-nix or anything else.
+        '';
+      };
+      user = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = ''
+          Whose favourites count, as a Jellyfin user id. Empty means the first
+          administrator — a household has more than one account, and the other
+          one's favourites are not this listener's.
+        '';
+      };
+      discoverRoots = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Add Jellyfin's own music folders to the scan, alongside any libraryRoots.";
+      };
+      hearts = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Mirror the heart button to Jellyfin's favourites, in both directions.";
+      };
+      onCalendar = lib.mkOption {
+        type = lib.types.str;
+        default = "hourly";
+        description = "How often to merge hearts with Jellyfin.";
       };
     };
 
@@ -788,7 +864,17 @@ in
   # reads services.netradio.devices, so a third one is config, not code.
   # A device that cannot do the four verbs is not a device, and finding that
   # out by tapping a dead button in the page is the wrong time.
-  assertions =
+  assertions = [
+    {
+      assertion = libraryRoots != [ ] || (jellyfinReady && cfg.jellyfin.discoverRoots);
+      message = "services.netradio: set libraryRoots, or enable jellyfin.discoverRoots with a keyFile — "
+                + "otherwise the scanner has nowhere to look for music.";
+    }
+    {
+      assertion = !cfg.jellyfin.enable || cfg.jellyfin.keyFile != null;
+      message = "services.netradio.jellyfin.enable needs jellyfin.keyFile: every call to Jellyfin is authenticated.";
+    }
+  ] ++
     (lib.mapAttrsToList (id: d: {
       assertion = lib.all (c: lib.elem c d.capabilities) [ "play" "stop" "volume" "mute" ];
       message = "services.netradio.devices.${id}: capabilities must include play, stop, volume and mute — "
@@ -1223,10 +1309,42 @@ in
         "--api ${cfg.receiver.apiUrl}"
         "--out ${configDir}/pandora.jsonl"
         "--interval 15"
+        "--receiver-state ${nowDir}/receiver.json"
+        "--menu ${configDir}/stations.yml"
       ];
-      ReadWritePaths = [ configDir ];
+      ReadWritePaths = [ configDir nowDir ];
       Restart = "always";
       RestartSec = 30;
+    };
+  };
+
+  # --- put the receiver back after an encoder restart ---------------------------
+  # Liquidsoap restarts on any deploy that changes the package, which drops
+  # every listener. The phone reconnects and the local speaker has a watchdog;
+  # a receiver does not — an R-N301 goes to Stop and stays there, which is how
+  # Classic Country was silent in the living room for four hours on 2026-09-27.
+  # `wantedBy` on the Liquidsoap unit means this runs every time it starts.
+  # The guardrails live in netradio/resume.py: powered on, already on net
+  # radio, not already playing, and only a station it was seen playing.
+  systemd.services.netradio-resume = lib.mkIf (cfg.receiver.enable && cfg.receiver.apiUrl != "") {
+    description = "Put the receiver back on the station it was playing";
+    after = [ "netradio-liquidsoap.service" "netradio-wake.service" ] ++ cfg.receiver.afterUnits;
+    wants = [ "netradio-wake.service" ];
+    wantedBy = [ "netradio-liquidsoap.service" ];
+    serviceConfig = hardening // {
+      Type = "oneshot";
+      User = user;
+      Group = user;
+      ExecStart = lib.concatStringsSep " " [
+        "${netradio}/bin/netradio resume"
+        "--api ${cfg.receiver.apiUrl}"
+        "--now-dir ${nowDir}"
+        "--wake http://127.0.0.1:${toString wakePort}"
+        # a receiver takes a moment to notice the stream went away; asking it
+        # while it still thinks it is playing would be a no-op
+        "--settle 15"
+      ];
+      TimeoutStartSec = "5min";
     };
   };
 
@@ -1259,6 +1377,10 @@ in
         ++ [
         "--web-base ${if cfg.tls then "https" else "http"}://${radioHost}/radio"
         "--quick-picks ${quickPicksJson}"
+      ] ++ lib.optionals (jellyfinReady && cfg.jellyfin.discoverRoots) [
+        "--jellyfin-url ${cfg.jellyfin.url}"
+        "--jellyfin-key-file ${cfg.jellyfin.keyFile}"
+      ] ++ [
         "--profile ${profileJson}"
         "--overrides ${profileOverrides}"
       ] ++ map (r: "--root ${r}") libraryRoots);
@@ -1338,6 +1460,33 @@ in
     };
   };
 
+  # --- hearts: merge with Jellyfin's favourites ---------------------------
+  systemd.services.netradio-hearts = lib.mkIf (jellyfinReady && cfg.jellyfin.hearts) {
+    description = "Merge the heart flags with Jellyfin's favourites";
+    after = [ "netradio-credentials.service" "jellyfin.service" ];
+    serviceConfig = hardening // {
+      Type = "oneshot";
+      User = user;
+      Group = user;
+      ReadWritePaths = [ configDir ];
+      ExecStart = lib.concatStringsSep " " ([
+        "${netradio}/bin/netradio jellyfin"
+        "--config ${configDir}"
+        "--url ${cfg.jellyfin.url}"
+        "--key-file ${cfg.jellyfin.keyFile}"
+      ] ++ lib.optional (cfg.jellyfin.user != "") "--user ${cfg.jellyfin.user}");
+    };
+  };
+  systemd.timers.netradio-hearts = lib.mkIf (jellyfinReady && cfg.jellyfin.hearts) {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = cfg.jellyfin.onCalendar;
+      OnBootSec = "5min";
+      Persistent = true;
+      RandomizedDelaySec = "2min";
+    };
+  };
+
   # --- the admin API ------------------------------------------------------------
   # Edits the runtime config; files requests under config/requests/ for the
   # privileged side below. Loopback; nginx proxies /admin/api/ to it.
@@ -1350,7 +1499,19 @@ in
       User = user;
       Group = user;
       ReadWritePaths = [ configDir "${djDir}/inbox" ];
-      ExecStart = "${netradio}/bin/netradio admin --config ${configDir} --listen 127.0.0.1 --port ${toString adminPort} --dj-dir ${djDir} --playlists ${playlistDir}";
+      ExecStart = lib.concatStringsSep " " ([
+        "${netradio}/bin/netradio admin"
+        "--config ${configDir}" "--listen 127.0.0.1" "--port ${toString adminPort}"
+        "--dj-dir ${djDir}" "--playlists ${playlistDir}"
+      ] ++ lib.optionals (cfg.receiver.enable && cfg.receiver.apiUrl != "") [
+        "--receiver-api ${cfg.receiver.apiUrl}"
+        "--now-dir ${nowDir}"
+        "--wake http://127.0.0.1:${toString wakePort}"
+      ] ++ lib.optionals (jellyfinReady && cfg.jellyfin.hearts) [
+        "--jellyfin-url ${cfg.jellyfin.url}"
+        "--jellyfin-key-file ${cfg.jellyfin.keyFile}"
+      ] ++ lib.optional (jellyfinReady && cfg.jellyfin.hearts && cfg.jellyfin.user != "")
+        "--jellyfin-user ${cfg.jellyfin.user}");
       Restart = "always";
       RestartSec = 5;
     };
