@@ -303,8 +303,33 @@ def has_art(path: str) -> bool:
     return bool(getattr(f, "pictures", None))
 
 
+STATION_ART_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def station_art(art_dir, mount: str):
+    """A picture for the station itself, if one has been put there.
+
+    Stations with no artists to draw a mosaic from — an ambient rain bed, or
+    "Everything", which is the whole library rather than four acts — showed a
+    monogram and nothing else. Dropping <art_dir>/<mount>.jpg gives them a
+    face, and because the result goes into the tile's `covers` it travels
+    through the art endpoint and the pages unchanged.
+    """
+    if not art_dir:
+        return None
+    for ext in STATION_ART_SUFFIXES:
+        f = art_dir / f"{mount}{ext}"
+        try:
+            if f.is_file() and os.access(f, os.R_OK):
+                return f
+        except OSError:
+            pass
+    return None
+
+
 def station_tiles(stations: list[dict], station_pools: dict[str, list[str]], artists: dict, artist_of: dict,
-                  primary: dict[str, str] | None = None, want: int = 4, shortlist: int = 12) -> dict:
+                  primary: dict[str, str] | None = None, want: int = 4, shortlist: int = 12,
+                  art_dir=None) -> dict:
     """What each station's tile shows: {mount: {"covers": [track paths]}}
     — up to `want` covers from the artists with the most tracks in the
     station's own pool, one album each, no cover reused across stations
@@ -319,6 +344,10 @@ def station_tiles(stations: list[dict], station_pools: dict[str, list[str]], art
     for s in order:
         m = s["mount"]
         base = s.get("base") or {}
+        art = station_art(art_dir, m)
+        if art is not None:
+            tiles[m] = {"covers": [str(art)]}               # a picture chosen for this station
+            continue
         if s.get("kind") == "fixed":
             tiles[m] = {"icon": "rain", "covers": []}       # an ambient bed has no artists to show
             continue
@@ -393,7 +422,7 @@ def write_m3u(path: Path, paths: list[str]) -> None:
 def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set[str],
           summary: Path | None = None, ycast: Path | None = None, public_base: str = "",
           internet_radio: list[dict] | None = None, web_base: str = "",
-          menu_codecs: set[str] | None = None) -> dict:
+          menu_codecs: set[str] | None = None, station_art_dir: Path | None = None) -> dict:
     """Everything after the walk. Returns {mount: count}."""
     from netradio import feeds as feedrules
 
@@ -505,7 +534,8 @@ def build(tracks: list[Track], cfg: Config, out: Path, pools: Path, *, talk: set
                                                           for s in stations]))
         write_atomic(now / "internet-radio.json", json.dumps(internet_radio or []))   # the receiver's menu has them too
         primary = {t.path: (t.genres[0] if t.genres else "") for t in playable}
-        write_atomic(now / "tiles.json", json.dumps(station_tiles(stations, station_pools, artists, artist_of, primary)))
+        write_atomic(now / "tiles.json", json.dumps(station_tiles(stations, station_pools, artists, artist_of, primary,
+                                                                   art_dir=station_art_dir)))
         if web_base:
             write_atomic(now / "stations.m3u", m3u(stations, web_base, ""))
             write_atomic(now / "stations-lo.m3u", m3u(stations, web_base, "-lo"))
@@ -626,6 +656,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--menu-codecs", default="",
                     help="what the device browsing the menu can decode, comma separated. An outside "
                          "station in anything else is left out: unplayable is worse than absent")
+    ap.add_argument("--station-art", type=Path, help="directory of <mount>.jpg pictures for stations")
     ap.add_argument("--jellyfin-url", default="", help="ask this Jellyfin where the music is (optional)")
     ap.add_argument("--jellyfin-key-file", type=Path, help="a file holding the Jellyfin API key")
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -690,7 +721,8 @@ def main(argv: list[str] | None = None) -> int:
                            ycast=args.ycast, public_base=args.public_base, internet_radio=quick,
                            web_base=args.web_base,
                            menu_codecs=({c.strip() for c in args.menu_codecs.split(",") if c.strip()}
-                                        or None))
+                                        or None),
+                           station_art_dir=args.station_art)
 
     log.info("%d audio files, %d untagged, %d excluded, %d talk, %d unreadable dirs, %d with catalogue genres; tag cache %d hits / %d reads",
              counts["files"], counts["untagged"], counts["excluded"], len(talk), counts["unreadable_dirs"], counts["catalogue_genres"],

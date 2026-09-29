@@ -357,7 +357,7 @@ createApp({
                   .catch(err => { this.status = `couldn't start (${err.message})`; });
       this.refresh();
     },
-    stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; this.stopViz(); },
+    stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; this.stopViz(); this.mediaSession(); },
     retune() { try { localStorage.setItem("radio.quality", this.quality); } catch (e) {} if (this.current) this.play(this.current); },
     playTarget(s) {
       if (this.target === "room") return this.playOnReceiver(s);
@@ -575,6 +575,40 @@ createApp({
       } catch (e) { this.say(e.message); }
     },
 
+    // ---- the OS's own media controls -------------------------------------
+    // Desktop browsers put the same metadata on the system media keys and the
+    // notification shade. Same closed action list as on the phone: skip maps
+    // to `nexttrack`, and there is no heart action to map one to.
+    mediaSession() {
+      if (!("mediaSession" in navigator)) return;
+      const ms = navigator.mediaSession;
+      if (this.target !== "here" || !this.current) { ms.metadata = null; ms.playbackState = "none"; return; }
+      const t = this.playingTrack;
+      const cover = this.artOk() ? new URL(this.art, location.href).href : "";
+      const title = (t && t.title) || this.nowLine1 || this.nowStation || "Library radio";
+      const key = [title, t && t.artist, cover].join("\u0000");
+      if (key === this._msKey) { ms.playbackState = "playing"; return; }
+      this._msKey = key;
+      try {
+        ms.metadata = new MediaMetadata({
+          title,
+          artist: (t && t.artist) || "",
+          album: this.nowStation || this.site.title,
+          artwork: cover ? [96, 192, 384, 512].map(px => ({ src: cover, sizes: `${px}x${px}`, type: "image/jpeg" })) : [],
+        });
+        ms.playbackState = "playing";
+      } catch (e) { /* older browsers manage without */ }
+    },
+    setMediaHandlers() {
+      if (!("mediaSession" in navigator)) return;
+      const set = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch (e) {} };
+      set("play", () => this.resumePlay());
+      set("pause", () => this.stop());        // a live stream has no resume point
+      set("stop", () => this.stop());
+      set("nexttrack", () => this.skip());
+      set("previoustrack", null);
+    },
+
     // ---- the spectrum in the bar (this browser only) ---------------------
     startViz() {
       const audio = this.$refs.audio, canvas = this.$refs.viz;
@@ -618,8 +652,9 @@ createApp({
     window.addEventListener("resize", () => { this.narrow = !window.matchMedia("(min-width: 900px)").matches; });
     // who this box is, written at build time from the module's options
     getJSON("site.json").then(s => { if (s) { this.site = { ...this.site, ...s }; document.title = this.site.title; } });
-    this.refresh().then(() => this.refreshHeart());
-    setInterval(() => { this.tick = Date.now(); this.refresh().then(() => this.refreshHeart()); }, 10000);
+    this.setMediaHandlers();
+    this.refresh().then(() => { this.refreshHeart(); this.mediaSession(); });
+    setInterval(() => { this.tick = Date.now(); this.refresh().then(() => { this.refreshHeart(); this.mediaSession(); }); }, 10000);
     if (this.target === "room") this.pollReceiver();
     if (this.target === "local") this.pollSpeaker();
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});

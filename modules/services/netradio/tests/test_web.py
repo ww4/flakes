@@ -119,6 +119,17 @@ class SpeakerTargetParity(unittest.TestCase):
             self.assertIn("now/tiles.json", js, f"{script} never loads the cover manifest")
             self.assertIn("admin/api/art", js, f"{script} never asks for a cover")
 
+    def test_both_pages_tell_the_OS_what_is_playing(self):
+        """Without MediaSession the phone's notification is a bare pause button
+        over the page title — no track, no artist, no cover (Chris, 2026-09-28).
+        Skip is wired to `nexttrack`; there is no heart action to wire, and no
+        amount of wanting one changes MediaSessionAction's closed list."""
+        for script in SCRIPTS:
+            js = self.script(script)
+            self.assertIn("MediaMetadata", js, f"{script} never tells the OS what is playing")
+            self.assertIn('setActionHandler', js, f"{script} sets no media control handlers")
+            self.assertIn('"nexttrack"', js, f"{script} does not offer skip on the notification")
+
     def test_the_desktop_page_can_drive_and_recover_the_receiver(self):
         """Without resume, a receiver left stopped by a deploy stays stopped
         until somebody notices it went quiet (2026-09-27)."""

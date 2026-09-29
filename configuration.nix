@@ -229,6 +229,15 @@ let hm = homelab-modules.nixosModules; in
     title = "Rosemary Acres Radio";
     # The Jellyfin library, and where Lidarr puts new albums (lidarr.nix).
     libraryRoots = [ "/mnt/fusion/Music" "/mnt/fusion/arr/media/music" ];
+
+    # The two ambient beds have no album covers to build a tile from, so they
+    # get pictures of their own. rainymood.jpg is a crop of rainymood.com's own
+    # backdrop — the site whose loop the station plays, branding cropped out.
+    # rain.jpg is generated (see the netradio artwork PR), so nothing borrowed.
+    stationArt = {
+      rain = ./art/netradio/rain.jpg;
+      rainymood = ./art/netradio/rainymood.jpg;
+    };
     libraryGroup = "media";                 # the library is jellyfin:media 0770/0774
     requiresMounts = [ "mnt-fusion.mount" ];
 
