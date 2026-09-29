@@ -68,6 +68,9 @@ createApp({
       // broken-image glyph — worse than the coloured monogram it should fall
       // back to. Retried after 30 s so a slow art service is not written off.
       badArt: {},
+      // matches index.html's own wide-screen test, so the two pages agree
+      // about what counts as a phone
+      narrow: !window.matchMedia("(min-width: 900px)").matches,
     };
   },
 
@@ -166,8 +169,11 @@ createApp({
     },
     hearted() { const t = this.playingTrack; return !!t && !!this.hearts[t.path]; },
     art() {
+      // sized, not the original: covers in this library run to 3 MB, and the
+      // hero is 340 CSS px. Asking for the full file made the one image on the
+      // page the biggest thing on it.
       const t = this.playingTrack;
-      return t && t.path ? `admin/api/art?path=${encodeURIComponent(t.path)}` : "";
+      return t && t.path ? `admin/api/art?path=${encodeURIComponent(t.path)}&size=700` : "";
     },
     barCovers() {
       const t = this.playingTrack;
@@ -609,6 +615,7 @@ createApp({
     audio.addEventListener("waiting", () => { this.status = "buffering…"; });
     audio.addEventListener("playing", () => { this.status = ""; });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") this.remote = false; });
+    window.addEventListener("resize", () => { this.narrow = !window.matchMedia("(min-width: 900px)").matches; });
     // who this box is, written at build time from the module's options
     getJSON("site.json").then(s => { if (s) { this.site = { ...this.site, ...s }; document.title = this.site.title; } });
     this.refresh().then(() => this.refreshHeart());

@@ -22,9 +22,11 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import itertools
 import json
 import logging
+import os
 import re
 import sys
 import threading
@@ -41,12 +43,18 @@ from netradio.config import write_atomic, FAMILIES, Config, compatible, new_id
 log = logging.getLogger("netradio.admin")
 LOCK = threading.Lock()
 MOUNT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
+# Cover files that count as a track's artwork, in preference order. Kept
+# beside `art()` AND the cache fingerprint, so the two cannot disagree
+# about what the thumbnail was derived from.
+COVER_NAMES = ("cover.jpg", "Cover.jpg", "folder.jpg", "Folder.jpg",
+               "cover.png", "front.jpg", "Front.jpg", "album.jpg")
 
 
 class Admin:
     def __init__(self, cfg: Config, dj_dir: Path | None = None, playlists: Path | None = None,
                  receiver_api: str = "", now_dir: Path | None = None, wake_url: str = "",
-                 jellyfin_url: str = "", jellyfin_key: str = "", jellyfin_user: str = ""):
+                 jellyfin_url: str = "", jellyfin_key: str = "", jellyfin_user: str = "",
+                 thumb_cache: Path | None = None, thumb_cache_max: int = 5000):
         self.cfg = cfg
         self.dj_dir = dj_dir            # the DJ's state: inbox/ takes skip + request files
         self.playlists = playlists      # library.m3u for search
@@ -55,8 +63,16 @@ class Admin:
         self.wake_url = wake_url
         self.jellyfin_url, self.jellyfin_key, self.jellyfin_user = jellyfin_url, jellyfin_key, jellyfin_user
         self._library: list[str] | None = None
+        self._library_set: frozenset[str] = frozenset()
         self._library_mtime = 0.0
         self._inbox_n = itertools.count()
+        # Where resized covers are kept between requests. Without it every
+        # thumbnail costs a full mutagen decode of the track (some are 29 MB)
+        # plus a Pillow decode/resize — 147 of those made the desktop wall take
+        # ~17 s to paint on a LAN (2026-09-28).
+        self.thumb_cache = thumb_cache
+        self.thumb_cache_max = thumb_cache_max
+        self._thumb_writes = itertools.count()
 
     def resume_receiver(self) -> dict:
         """The page's resume button: the same thing netradio-resume does after a
@@ -297,7 +313,7 @@ class Admin:
 
     def request(self, mount: str, body: dict) -> dict:
         path = str(body.get("path") or "")
-        if path not in set(self.library()):
+        if not self.in_library(path):
             raise ValueError("not a library track")
         # deliberately no requester name: nothing in the app sends one, and an
         # unauthenticated free-text field would let anyone on the tailnet put a
@@ -407,11 +423,85 @@ class Admin:
             for pic in getattr(f, "pictures", []) or []:         # flac
                 return bytes(pic.data), pic.mime or "image/jpeg"
         folder = Path(path).parent
-        for name in ("cover.jpg", "Cover.jpg", "folder.jpg", "Folder.jpg", "cover.png", "front.jpg", "Front.jpg", "album.jpg"):
+        for name in COVER_NAMES:
             fp = folder / name
             if fp.exists():
                 return fp.read_bytes(), "image/png" if name.endswith(".png") else "image/jpeg"
         return None
+
+    # ---- the thumbnail cache --------------------------------------------
+    # A miss costs a mutagen decode of the whole track plus a Pillow resize;
+    # a hit is one read(). The page asks for up to four covers per station and
+    # the rail asks again at a smaller size, so on a first visit this is ~150
+    # requests — which is what made the wall take ~17 s on a LAN.
+    #
+    # MISSES ARE CACHED TOO. "This track has no artwork" is the expensive
+    # answer: it means mutagen read the entire file (some are 29 MB) and found
+    # nothing, and without a negative entry that happens again on every load.
+
+    def _thumb_path(self, path: str, size: int) -> Path | None:
+        if self.thumb_cache is None:
+            return None
+        key = hashlib.sha256(f"{path}\0{size}\0{art_stamp(path)}".encode()).hexdigest()
+        return self.thumb_cache / key[:2] / key
+
+    def cached_art(self, path: str, size: int) -> tuple[bytes, str] | None:
+        """`art()` plus the resize, memoised on disk. None means no artwork."""
+        cache = self._thumb_path(path, size)
+        if cache is not None:
+            try:
+                if cache.with_suffix(".none").exists():
+                    return None                       # remembered miss
+                return cache.read_bytes(), "image/jpeg"
+            except OSError:
+                pass                                  # not cached yet, or unreadable: fall through
+
+        try:
+            got = self.art(path)
+        except OSError as e:                          # unreadable file or cover
+            log.warning("art %s: %s", path, e)
+            got = None
+        if got and size:
+            got = thumbnail(got[0], size)
+
+        if cache is not None:
+            self._thumb_store(cache, got)
+        return got
+
+    def _thumb_store(self, cache: Path, got: tuple[bytes, str] | None) -> None:
+        """Write the entry, atomically so a half-written file is never served."""
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            target = cache if got else cache.with_suffix(".none")
+            tmp = target.with_name(target.name + f".tmp{os.getpid()}")
+            tmp.write_bytes(got[0] if got else b"")
+            tmp.replace(target)
+        except OSError as e:
+            log.warning("could not cache %s: %s", cache, e)
+            return
+        if next(self._thumb_writes) % 200 == 199:
+            self._thumb_prune()
+
+    def _thumb_prune(self) -> None:
+        """Keep the cache bounded. Entries are never invalidated in place — a
+        changed cover just hashes to a new key — so the old ones have to be
+        swept up eventually."""
+        if self.thumb_cache is None:
+            return
+        try:
+            files = [f for f in self.thumb_cache.rglob("*") if f.is_file()]
+        except OSError:
+            return
+        if len(files) <= self.thumb_cache_max:
+            return
+        files.sort(key=lambda f: f.stat().st_mtime if f.exists() else 0)
+        drop = files[: len(files) - int(self.thumb_cache_max * 0.8)]
+        for f in drop:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+        log.info("thumbnail cache: pruned %d of %d entries", len(drop), len(files))
 
     def library(self) -> list[str]:
         if not self.playlists:
@@ -423,8 +513,15 @@ class Admin:
             return []
         if self._library is None or mtime != self._library_mtime:
             self._library = [l.strip() for l in f.read_text().splitlines() if l.strip() and not l.startswith("#")]
+            # `art` asks "is this a library track?" on every request, and
+            # `set(self.library())` rebuilt a 22,857-entry set each time.
+            self._library_set = frozenset(self._library)
             self._library_mtime = mtime
         return self._library
+
+    def in_library(self, path: str) -> bool:
+        self.library()                      # refresh if library.m3u changed
+        return path in self._library_set
 
     def search(self, q: str, limit: int = 30) -> list[dict]:
         """Library tracks whose artist/album/file name carry every word of q."""
@@ -442,6 +539,29 @@ class Admin:
                 if len(out) >= limit:
                     break
         return out
+
+
+def art_stamp(path: str) -> str:
+    """What a cached thumbnail actually depends on: the track itself (an
+    embedded picture) and any cover file beside it. Both are stat()s, so this
+    is cheap enough to do on every request — and it is EXACT, unlike keying on
+    the track's mtime alone, which would serve a stale thumbnail forever after
+    someone dropped a new cover.jpg into the folder.
+    """
+    parts: list[str] = []
+    try:
+        st = os.stat(path)
+        parts.append(f"t:{st.st_mtime_ns}:{st.st_size}")
+    except OSError:
+        parts.append("t:-")
+    folder = Path(path).parent
+    for name in COVER_NAMES:
+        try:
+            st = os.stat(folder / name)
+            parts.append(f"{name}:{st.st_mtime_ns}:{st.st_size}")
+        except OSError:
+            pass
+    return "|".join(parts)
 
 
 def thumbnail(data: bytes, size: int) -> tuple[bytes, str]:
@@ -520,17 +640,13 @@ def make_handler(admin: Admin):
                     if parts == ["api", "art"] and method == "GET":
                         qs = parse_qs(u.query)
                         path = qs.get("path", [""])[0]
-                        try:
-                            got = admin.art(path)
-                        except OSError as e:       # unreadable file or cover: no art, not a 500
-                            log.warning("art %s: %s", path, e)
-                            got = None
+                        raw = qs.get("size", [""])[0]
+                        # a thumbnail for the tiles (a full cover can be 600 KB)
+                        size = int(raw) if raw.isdigit() else 0
+                        got = admin.cached_art(path, size)
                         if not got:
                             return self._reply(404, {"error": "no art"})
                         data, mime = got
-                        size = qs.get("size", [""])[0]
-                        if size.isdigit():          # a thumbnail for the tiles (a full cover can be 600 KB)
-                            data, mime = thumbnail(data, int(size))
                         self.send_response(200)
                         self.send_header("Content-Type", mime)
                         self.send_header("Cache-Control", "public, max-age=86400")
@@ -572,6 +688,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--jellyfin-url", default="", help="mirror hearts to this Jellyfin (optional)")
     ap.add_argument("--jellyfin-key-file", type=Path, help="a file holding the Jellyfin API key")
     ap.add_argument("--jellyfin-user", default="", help="Jellyfin user id (default: the first admin)")
+    ap.add_argument("--thumb-cache", type=Path,
+                    help="directory for resized cover art; without it every thumbnail is recomputed")
+    ap.add_argument("--thumb-cache-max", type=int, default=5000,
+                    help="entries to keep before pruning the oldest")
     ap.add_argument("--listen", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8012)
     ap.add_argument("--dj-dir", type=Path, help="the DJ's state dir (inbox/ for skip + request)")
@@ -585,7 +705,8 @@ def main(argv: list[str] | None = None) -> int:
               receiver_api=args.receiver_api, now_dir=args.now_dir, wake_url=args.wake,
               jellyfin_url=args.jellyfin_url,
               jellyfin_key=jellyfin.read_key(key_file=args.jellyfin_key_file),
-              jellyfin_user=args.jellyfin_user)))
+              jellyfin_user=args.jellyfin_user,
+              thumb_cache=args.thumb_cache, thumb_cache_max=args.thumb_cache_max)))
     log.info("admin API on %s:%d, config %s", args.listen, args.port, args.config)
     srv.serve_forever()
     return 0

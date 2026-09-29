@@ -1612,10 +1612,17 @@ in
       User = user;
       Group = user;
       ReadWritePaths = [ configDir "${djDir}/inbox" ];
+      # /var/cache/netradio, made and owned by systemd. Resized cover art lives
+      # here between requests: without it every thumbnail costs a full mutagen
+      # decode of the track plus a Pillow resize, and the desktop wall asks for
+      # ~150 of them on a cold load (2026-09-28).
+      CacheDirectory = "netradio";
+      CacheDirectoryMode = "0750";
       ExecStart = lib.concatStringsSep " " ([
         "${netradio}/bin/netradio admin"
         "--config ${configDir}" "--listen 127.0.0.1" "--port ${toString adminPort}"
         "--dj-dir ${djDir}" "--playlists ${playlistDir}"
+        "--thumb-cache /var/cache/netradio/thumbs"
       ] ++ lib.optionals (cfg.receiver.enable && cfg.receiver.apiUrl != "") [
         "--receiver-api ${cfg.receiver.apiUrl}"
         "--now-dir ${nowDir}"
