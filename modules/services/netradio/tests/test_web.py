@@ -177,6 +177,16 @@ class SpeakerTargetParity(unittest.TestCase):
                           f"{script} ignores a clean shutdown, which is what a Liquidsoap restart looks like")
             self.assertIn("RECONNECT_GIVE_UP", js, f"{script} would retry for ever")
 
+    def test_the_browser_is_an_output_with_a_volume_like_the_others(self):
+        """The receiver and the sound card had a level; the tab had none, so the
+        only way down was the OS mixer (Chris, 2026-09-29)."""
+        js = self.script("desktop.js")
+        self.assertIn("applyHereVolume", js, "desktop.js cannot set the tab's own volume")
+        self.assertIn("radio.volume", js, "the level is forgotten on reload")
+        html = (WEB / "desktop.html").read_text()
+        self.assertNotIn('class="vol" v-if="target !== \'here\'"', html,
+                         "the volume control is still hidden for this browser")
+
     def test_the_desktop_page_can_drive_and_recover_the_receiver(self):
         """Without resume, a receiver left stopped by a deploy stays stopped
         until somebody notices it went quiet (2026-09-27)."""

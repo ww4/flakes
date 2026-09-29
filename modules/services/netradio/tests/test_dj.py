@@ -71,10 +71,11 @@ class FakeLS:
     """Liquidsoap's queue commands, minimally: push returns a RID, queue lists
     pending RIDs; `play()` consumes one, as a track ending would."""
 
-    def __init__(self):
+    def __init__(self, no_flush=False):
         self.pending = []
         self.pushed = []
         self.rid = 0
+        self.no_flush = no_flush      # an older Liquidsoap without flush_and_skip
 
     def command(self, cmd):
         if cmd.startswith("q_x.push "):
@@ -89,6 +90,14 @@ class FakeLS:
             # Liquidsoap 2.4 has no such command; the real server answers this
             # way and the DJ must never depend on it again (2026-09-25)
             return "ERROR: unknown command, type \"help\" to get a list of commands."
+        if cmd == "q_x.flush_and_skip":
+            # the real one: ends the current request AND empties the queue
+            if self.no_flush:
+                return "ERROR: unknown command, type \"help\" to get a list of commands."
+            self.flushed = getattr(self, "flushed", 0) + 1
+            self.skipped = getattr(self, "skipped", 0) + 1
+            self.pending = []
+            return "Done"
         if cmd == "src_x.skip":
             self.skipped = getattr(self, "skipped", 0) + 1
             return "Done"
@@ -235,10 +244,14 @@ class Feedback(unittest.TestCase):
         self.dj.fill()
         self.assertEqual(self.ls.skipped, 1)
         self.assertFalse(list(inbox.glob("x-*.json")))                     # consumed
-        # NOTHING already queued is dropped: Liquidsoap 2.4 cannot remove a
-        # queued item, so a request joins the back of a shallow queue
+        # A SKIP drops what was queued behind it, because those items carry a
+        # break describing a running order that is not going to happen now
+        # (2026-09-29). Liquidsoap cannot remove one item, so the queue goes
+        # and fill() writes it again in the same pass — see the next test for
+        # the request case, where nothing is dropped.
+        self.assertEqual(self.ls.flushed, 1)
         for rid in pending_before:
-            self.assertIn(rid, self.ls.pending)
+            self.assertNotIn(rid, self.ls.pending)
         self.assertIn("Song3", " ".join(self.tts.texts))                   # announced on air by title
         self.assertTrue(any(self.tracks[0] in u for u in self.ls.pushed[-4:]))
         self.assertTrue(any(e.get("request") for e in self.dj.pushed))
@@ -415,3 +428,99 @@ class BreakFilesSurviveARestart(unittest.TestCase):
                 d.render_break(f"Break {i}.")
             self.assertLessEqual(len(list(out.glob("break-*.wav"))), dj.KEEP_BREAKS,
                                  "the prune stopped bounding the directory")
+
+
+class HowItReadsOutASet(unittest.TestCase):
+    """Consecutive tracks by one artist are gathered rather than repeating the
+    name, and a record is sometimes placed in time (Chris, 2026-09-29):
+    "Uncle Pen, Molly and Tenbrooks and Wheel Hoss from Bill Monroe", and
+    "Blue Night by Hot Rize, from their 1985 album Traditional Ties".
+    """
+
+    def t(self, title, artist, album="", year=""):
+        return dj.Track(f"/m/{artist}/{title}.mp3", title, artist, album, year)
+
+    def test_a_run_by_one_artist_names_them_once(self):
+        run = [self.t("Uncle Pen", "Bill Monroe"), self.t("Wheel Hoss", "Bill Monroe"),
+               self.t("Molly and Tenbrooks", "Bill Monroe")]
+        said = dj.say_tracks(run, random.Random(3))
+        self.assertEqual(said.count("Bill Monroe"), 1, f"the name is repeated: {said}")
+        for title in ("Uncle Pen", "Wheel Hoss", "Molly and Tenbrooks"):
+            self.assertIn(title, said)
+
+    def test_only_CONSECUTIVE_tracks_are_gathered(self):
+        """The order is what was played. Grouping a non-adjacent artist would
+        reorder the set and make the sentence untrue."""
+        mixed = [self.t("A", "Monroe"), self.t("B", "Flatt"), self.t("C", "Monroe")]
+        said = dj.say_tracks(mixed, random.Random(3))
+        self.assertEqual(said.count("Monroe"), 2, f"non-adjacent tracks were gathered: {said}")
+
+    def test_different_artists_are_still_named_separately(self):
+        two = [self.t("A", "Monroe"), self.t("B", "Flatt")]
+        said = dj.say_tracks(two, random.Random(3))
+        self.assertIn("Monroe", said)
+        self.assertIn("Flatt", said)
+
+    def test_a_record_can_be_placed_in_time(self):
+        t = self.t("Blue Night", "Hot Rize", "Traditional Ties", "1985")
+        saids = {dj.say_track(t, random.Random(s), place=True) for s in range(40)}
+        self.assertTrue(any("1985" in x for x in saids), "never mentions the year")
+        self.assertTrue(any("Traditional Ties" in x for x in saids), "never mentions the album")
+
+    def test_it_never_invents_a_year_it_does_not_have(self):
+        bare = self.t("Song", "Artist")           # no album, no year in the tags
+        for seed in range(30):
+            said = dj.say_track(bare, random.Random(seed), place=True)
+            self.assertNotIn("album", said, f"placed a track with no album: {said}")
+            self.assertNotRegex(said, r"\b(18|19|20)\d\d\b", f"invented a year: {said}")
+
+    def test_it_does_not_say_the_year_twice_when_the_album_carries_it(self):
+        t = self.t("Song", "Artist", "Bluegrass 1959", "1959")
+        for seed in range(40):
+            said = dj.say_track(t, random.Random(seed), place=True)
+            self.assertLessEqual(said.count("1959"), 1, f"said the year twice: {said}")
+
+    def test_a_break_gathers_the_run_it_just_played(self):
+        prev = [self.t("Wheel Hoss", "Bill Monroe"), self.t("Uncle Pen", "Bill Monroe")]
+        nxt = self.t("Blue Night", "Hot Rize")
+        text = dj.compose(prev, nxt, "Bluegrass", random.Random(5))
+        self.assertEqual(text.count("Bill Monroe"), 1, f"repeated the name on air: {text}")
+
+
+class SkipRewritesTheSpot(unittest.TestCase):
+    """A break is written when its track is queued and names what came before
+    and what comes next. Skip or "never" a song — "never" sends a skip too —
+    and everything queued is describing a running order that will not happen,
+    so the DJ announces a track the listener has just banned (Chris,
+    2026-09-29). Liquidsoap 2.4 cannot remove one queued item, so the queue is
+    dropped and fill() writes it again.
+    """
+
+    def test_a_request_on_its_own_does_not_clear_the_queue(self):
+        """The older lesson, still true: a request joins the BACK of the queue.
+        Only a skip clears it."""
+        ls = FakeLS()
+        ls.command("q_x.push annotate:a=1:/m/A/Al/01 One.mp3")
+        before = list(ls.pending)
+        ls.command("q_x.push annotate:a=1:/m/A/Al/02 Two.mp3")
+        self.assertEqual(ls.pending[:1], before)
+        self.assertEqual(getattr(ls, "flushed", 0), 0)
+
+    def test_flush_and_skip_is_one_command_not_two(self):
+        """Two commands would take two tracks — the mistake this file already
+        made with the output's skip sitting above the crossfade (2026-09-19)."""
+        ls = FakeLS()
+        ls.command("q_x.push annotate:a=1:/m/A/Al/01 One.mp3")
+        ls.command("q_x.flush_and_skip")
+        self.assertEqual(ls.skipped, 1, "skipped more than once")
+        self.assertEqual(ls.pending, [])
+
+    def test_it_falls_back_when_liquidsoap_has_no_flush_and_skip(self):
+        """A stale break is a poor thing; a skip button that does nothing is
+        worse."""
+        dj_ = dj.StationDJ.__new__(dj.StationDJ)
+        dj_.mount, dj_.ls = "x", FakeLS(no_flush=True)
+        dj_.pushed, dj_.since_break, dj_.until_break = [{"a": 1}], [1], 3
+        dj_.skip_and_rewrite()
+        self.assertEqual(dj_.ls.skipped, 1, "the fallback skip never happened")
+        self.assertEqual(dj_.pushed, [{"a": 1}], "state was cleared although nothing was flushed")
