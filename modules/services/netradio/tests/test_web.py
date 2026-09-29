@@ -382,6 +382,67 @@ class SpeakerTargetParity(unittest.TestCase):
         self.assertIn("admin/api/resume", js, "desktop.js cannot put the receiver back")
 
 
+class OnePageAtEveryWidth(unittest.TestCase):
+    """Narrowing the window must re-lay the page out where it stands.
+
+    The player had no width media query at all — every rule assumed three
+    columns — so a narrow screen got a banner telling it to go to the phone
+    page instead, and crossing the threshold meant a navigation, a fresh
+    document and a dropped stream. Chris: "switch the viewport to mobile but
+    keep the same page logic and don't reload anything. Just redo the CSS"
+    (2026-09-29).
+    """
+
+    def test_the_player_has_a_narrow_layout(self):
+        css = (WEB / "desktop.css").read_text()
+        widths = re.findall(r"@media[^{]*max-width:\s*(\d+)px", css)
+        self.assertTrue(widths, "desktop.css still has no width breakpoint — "
+                                "a narrow screen gets the three-column layout")
+        self.assertIn(".app.sheet .rail", css,
+                      "the rail has no narrow form, so it would sit on top of the content")
+
+    def test_nothing_sends_you_to_another_page_when_it_gets_narrow(self):
+        html = (WEB / "desktop.html").read_text()
+        js = (WEB / "desktop.js").read_text()
+        # the ELEMENT, not the word: the comment explaining its removal says
+        # "escape" too, and a substring test failed on that
+        self.assertNotRegex(html, r'class="escape"',
+                            "the 'go to the phone view' banner is still there — the page "
+                            "should lay itself out instead of sending you away")
+        # a resize handler may re-measure, but it must never navigate
+        for m in re.finditer(r'addEventListener\("resize",(.{0,160})', js, re.S):
+            self.assertNotRegex(m.group(1), r"location\s*\.\s*(replace|assign|href)",
+                                "resizing navigates, which drops the stream")
+
+
+class TrackNotices(unittest.TestCase):
+    """A notice when the track changes. Windows gives a web page no per-track
+    toast of its own — the media session buys transport controls, not a notice
+    — and Chris wanted what the phone does: "it would just be handy to see what
+    came on the radio" (2026-09-29)."""
+
+    def test_it_is_off_until_asked_for_and_asked_from_a_gesture(self):
+        js = (WEB / "desktop.js").read_text()
+        html = (WEB / "desktop.html").read_text()
+        self.assertIn("Notification.requestPermission", js, "nothing ever asks for permission")
+        self.assertIn('@click="askNotify"', html,
+                      "permission is not requested from a click — a browser refuses otherwise, "
+                      "and an uninvited prompt is rude")
+        self.assertNotRegex(js, r"mounted\(\)[\s\S]{0,800}requestPermission",
+                            "permission is requested on load rather than on request")
+        self.assertIn('localStorage.setItem("radio.notify"', js, "the choice is forgotten on reload")
+
+    def test_one_notice_at_a_time_and_none_for_what_was_already_playing(self):
+        js = (WEB / "desktop.js").read_text()
+        self.assertIn('tag: "netradio-track"', js,
+                      "without a tag an evening's listening stacks a tower of notices")
+        self.assertIn("_noticeReady", js,
+                      "the track already playing when the page opens would notify on load")
+        self.assertIn("noticeKey", js,
+                      "watching the track object directly re-fires on every poll that "
+                      "returns the same track")
+
+
 class Packaging(unittest.TestCase):
     """Every asset a page asks the browser for must be one the derivation
     copies. Nothing else catches this: an uncopied stylesheet is a 404 at

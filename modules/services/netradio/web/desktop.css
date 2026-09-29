@@ -399,20 +399,14 @@ body { overflow: hidden; height: 100vh; }
    footer, and index.html keeps redirecting here because the choice is
    remembered in localStorage. On a narrow screen the escape is the first thing
    on the page and impossible to miss. */
-.escape {
-  display: block; padding: .7rem 1rem; background: var(--accent); color: #17120e;
-  font-weight: 600; font-size: .92rem; text-align: center; text-decoration: none;
-}
-.escape:hover, .escape:focus-visible { background: var(--accent-2); color: #fff; }
-.escape { flex: none; }
-
 .railfoot {
   display: flex; flex-wrap: wrap; gap: .1rem .7rem; align-items: baseline;
   padding: .55rem .95rem .7rem; border-top: 1px solid var(--line);
   font-size: .73rem;
 }
 .railfoot a, .railfoot button.lnk { color: var(--muted); text-decoration: none; }
-.railfoot button.lnk { background: none; border: 0; padding: 0; font: inherit; text-align: left; }
+.railfoot button.lnk { background: none; border: 0; padding: 0; font: inherit; text-align: left; cursor: pointer; }
+.railfoot button.lnk.on { color: var(--accent); }
 .railfoot a:hover, .railfoot a:focus-visible,
 .railfoot button.lnk:hover, .railfoot button.lnk:focus-visible { color: var(--accent); text-decoration: underline; }
 /* The admin panel takes the main column, like the wall does. It scrolls itself
@@ -434,3 +428,91 @@ body { overflow: hidden; height: 100vh; }
                  stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .bedtoggle:hover { color: var(--fg); border-color: #4a4642; }
 .bedtoggle.on { color: var(--accent); border-color: var(--accent-2); background: #d9743f14; }
+
+/* ===== narrow: the same page, laid out for a phone ==========================
+ *
+ * This page used to have no narrow layout at all — every rule above assumes
+ * three columns — so a phone that landed here got a banner telling it to go
+ * somewhere else, and crossing the width threshold meant a navigation and a
+ * dropped stream. Chris: "switch the viewport to mobile but keep the same page
+ * logic and don't reload anything. Just redo the CSS" (2026-09-29).
+ *
+ * So: exactly that. Same DOM, same component, same <audio> element still
+ * playing. The grid is abandoned for a single scrolling column, the rail
+ * becomes a sheet over the top, and the transport is pinned to the bottom
+ * where a thumb can reach it.
+ */
+@media (max-width: 899px) {
+  /* One column that scrolls as a whole, so the station screen and the history
+     beneath it are one gesture rather than two scroll traps. */
+  .app, .app.no-aside {
+    display: block; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding-bottom: var(--bar);
+  }
+
+  /* ---- the rail, as an off-canvas sheet ---------------------------------- */
+  .rail {
+    position: fixed; top: 0; bottom: 0; left: 0; width: min(85vw, 320px);
+    z-index: 60; transform: translateX(-101%);
+    transition: transform .18s ease-out;
+    box-shadow: .4rem 0 1.8rem #000a;
+  }
+  .app.sheet .rail { transform: none; }
+  .scrim {
+    position: fixed; inset: 0; z-index: 55; border: 0; padding: 0;
+    background: #000a; backdrop-filter: blur(1px);
+  }
+  .sheetbtn {
+    flex: 0 0 auto; width: 38px; height: 38px; margin-right: .1rem;
+    border: 1px solid var(--line-2); border-radius: .45rem;
+    background: var(--panel); color: var(--fg); font-size: 1rem; line-height: 1;
+  }
+
+  /* ---- the main column --------------------------------------------------- */
+  .wall { padding: .85rem .75rem 1.4rem; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(144px, 1fr)); gap: .6rem; }
+  .wall h5 { margin-top: .6rem; }
+
+  /* The station screen stops being a centred box in a fixed viewport and
+     becomes the top of a page. The wash stays behind it. */
+  .now {
+    overflow: visible; justify-content: flex-start;
+    padding: 1.1rem .9rem 1.4rem; gap: .85rem;
+  }
+  .now .wash { position: absolute; }
+
+  /* The admin is a view of this page too (#378), so it gets the same
+     treatment: it flows with the single column instead of scrolling inside a
+     grid cell that no longer exists. */
+  .adminpanel { overflow: visible; }
+  .adminpanel .atabs { padding-left: .8rem; padding-right: .8rem; }
+
+  /* Just Played / Up Next follow the station screen in the same scroll
+     instead of being a column nobody narrow can see. */
+  .aside {
+    border-left: 0; border-top: 1px solid var(--line);
+    overflow: visible; padding: .85rem .8rem 1.2rem;
+  }
+
+  /* ---- the transport, pinned where a thumb is ---------------------------- */
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  /* The volume slider and the bitrate toggle want a pointer and a lot of
+     room, and a phone has its own volume keys — so those go. The mute and the
+     rain toggle stay: they are one tap each and neither has an equivalent
+     anywhere else on the device. */
+  .bright { padding-right: .5rem; gap: .35rem; }
+  .bright .vol, .bright .qual, .bright .lvl { display: none; }
+  .bnow { padding: 0 .6rem; gap: .5rem; }
+  .bnow .mos { width: 42px; height: 42px; }
+}
+
+/* A very small phone: the tiles go to two-up and the transport loses its
+   secondary button rather than wrapping onto a second line. */
+@media (max-width: 420px) {
+  .grid { grid-template-columns: repeat(2, 1fr); gap: .5rem; }
+  .bnow .mos { display: none; }
+}

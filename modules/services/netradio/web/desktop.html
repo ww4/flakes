@@ -15,14 +15,17 @@
 <link rel="stylesheet" href="admin/admin.css">
 
 <div id="app" v-cloak>
-  <!-- A phone that tapped the desktop link had NO way back: this page
-       dropped the old footer, and index.html keeps redirecting here
-       because the choice is remembered (Chris, 2026-09-28). On a narrow
-       screen the way out is the first thing on the page. -->
-  <a class="escape" v-if="narrow" href="./?view=remote">
-    Desktop layout — tap for the phone view</a>
+  <!-- There is no "escape to the phone view" banner any more. It existed
+       because this page had no narrow layout and told you to leave instead
+       (2026-09-28). It has one now, so narrowing the window re-lays the page
+       out where it stands: no navigation, nothing reloaded, and the stream in
+       the <audio> element untouched (Chris, 2026-09-29). -->
 
-  <div class="app" :class="{'no-aside': view !== 'station', narrow: narrow}">
+  <div class="app" :class="{'no-aside': view !== 'station', narrow: narrow, sheet: drawer}">
+
+    <!-- On a narrow screen the rail is an off-canvas sheet; this dismisses it
+         by tapping beside it. -->
+    <button class="scrim" v-if="narrow && drawer" @click="drawer = false" aria-label="Close the station list"></button>
 
   <!-- ===== left rail: where it plays, then what plays ====================== -->
   <nav class="rail">
@@ -76,6 +79,9 @@
       <a href="now/stations.m3u" title="For a radio app">M3U</a>
       <a href="now/stations.pls" title="For a radio app">PLS</a>
       <a href="now/stations-lo.m3u" title="96 kbps, for cellular">96k</a>
+      <button class="lnk" :class="{on: notify}" @click="askNotify"
+              :title="notifyState === 'denied' ? 'Blocked — allow notifications for this site in your browser settings' : 'A notice when the track changes'">
+        {{ notify ? 'Notices on' : 'Notify' }}</button>
     </div>
   </nav>
 
@@ -247,6 +253,7 @@
   <!-- ===== the transport bar, common to every view ========================= -->
   <div class="bar">
     <div class="bnow">
+      <button class="sheetbtn" v-if="narrow" @click="drawer = !drawer" :aria-expanded="String(drawer)" aria-label="Stations and outputs">☰</button>
       <span class="mos" :class="{one: barCovers.length === 1}">
         <template v-if="barCovers.length >= 4"><img v-for="c in barCovers.slice(0, 4)" :key="c" :src="thumb(c, 100)" alt="" @error="imgError(c, $event)"></template>
         <img v-else-if="barCovers.length" :src="thumb(barCovers[0], 160)" alt="" @error="imgError(barCovers[0], $event)">

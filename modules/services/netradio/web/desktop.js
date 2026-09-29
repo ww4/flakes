@@ -48,12 +48,13 @@ createApp({
   // fetched the first time it is opened and not before.
   components: { "admin-panel": adminPanel("admin/panel.html", "admin/") },
   data() {
-    let quality = "", target = "here", view = "wall", openMount = "", hereVol = 100, bedVol = 35, bedOn = false;
+    let quality = "", target = "here", view = "wall", openMount = "", hereVol = 100, bedVol = 35, bedOn = false, notify = false;
     try {
       hereVol = Math.max(0, Math.min(100, parseInt(localStorage.getItem("radio.volume"), 10) || 100));
       bedVol = Math.max(0, Math.min(100, parseInt(localStorage.getItem("radio.bedVolume"), 10) || 35));
       bedOn = localStorage.getItem("radio.bed") === "1";
       quality = localStorage.getItem("radio.quality") || "";
+      notify = localStorage.getItem("radio.notify") === "1";
       target = localStorage.getItem("radio.target") || "here";
       view = localStorage.getItem("radio.desktopView") || "wall";
       openMount = localStorage.getItem("radio.openMount") || "";
@@ -96,6 +97,14 @@ createApp({
       // matches index.html's own wide-screen test, so the two pages agree
       // about what counts as a phone
       narrow: !window.matchMedia("(min-width: 900px)").matches,
+      drawer: false,            // the rail, as an off-canvas sheet on a narrow screen
+      // Windows shows no per-track toast of its own — the media session gives
+      // it transport controls, not a notice. Chris wanted the same thing the
+      // phone does: "it would just be handy to see what came on the radio"
+      // (2026-09-29). Off until asked for, because a permission prompt nobody
+      // invited is rude, and the browser only grants one from a gesture anyway.
+      notify,
+      notifyState: (typeof Notification !== "undefined" ? Notification.permission : "unsupported"),
     };
   },
 
@@ -196,6 +205,13 @@ createApp({
       return (h && h[0] && h[0].kind !== "break") ? h[0] : null;
     },
     hearted() { const t = this.playingTrack; return !!t && !!this.hearts[t.path]; },
+    // What a track notice is ABOUT. Derived rather than watched directly, so a
+    // refresh that returns the same track is not a change — the history is
+    // re-fetched every ten seconds and would otherwise notify on every poll.
+    noticeKey() {
+      const t = this.playingTrack;
+      return this.anythingPlaying && t && t.title ? `${t.artist}\u0000${t.title}` : "";
+    },
     art() {
       // sized, not the original: covers in this library run to 3 MB, and the
       // hero is 340 CSS px. Asking for the full file made the one image on the
@@ -289,6 +305,7 @@ createApp({
       this.syncVolume();
     },
     view(v) { try { localStorage.setItem("radio.desktopView", v); } catch (e) {} },
+    noticeKey(now) { if (now) this.showTrackNotice(); },
     openMount(m) { try { localStorage.setItem("radio.openMount", m); } catch (e) {} if (m) this.refresh(); },
     "receiver.volume"() { this.syncVolume(); },
     "receiver.input"() { if (this.view === "sources") this.loadMenu(); },
@@ -344,6 +361,7 @@ createApp({
       if (!s.mount) return this.playTarget(s);
       this.openMount = s.mount;
       this.view = "station";
+      this.drawer = false;              // on a phone the sheet is in the way once you have chosen
     },
 
     // ---- loading ---------------------------------------------------------
@@ -725,6 +743,49 @@ createApp({
       set("previoustrack", null);
     },
 
+    // ---- telling you what came on ----------------------------------------
+    // Windows gives a web page no per-track toast of its own: the media session
+    // buys transport controls, not a notice. The Notification API is the thing
+    // that does it, and it needs permission, which a browser grants only from a
+    // gesture — so this hangs off the switch rather than off page load.
+    async askNotify() {
+      if (typeof Notification === "undefined") { this.say("This browser has no notifications."); return; }
+      if (this.notify) { this.notify = false; this.saveNotify(); return; }
+      if (Notification.permission === "denied") {
+        this.notifyState = "denied";
+        this.say("Notifications are blocked for this site — allow them in the browser's site settings.");
+        return;
+      }
+      let state = Notification.permission;
+      if (state !== "granted") {
+        try { state = await Notification.requestPermission(); } catch (e) { state = "denied"; }
+      }
+      this.notifyState = state;
+      this.notify = state === "granted";
+      this.saveNotify();
+      if (!this.notify) this.say("Notifications were not allowed.");
+    },
+    saveNotify() { try { localStorage.setItem("radio.notify", this.notify ? "1" : "0"); } catch (e) {} },
+    showTrackNotice() {
+      if (!this.notify || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+      if (!this._noticeReady) return;      // not for whatever was already playing when the page opened
+      const t = this.playingTrack;
+      if (!t || !t.title) return;
+      try {
+        // ONE notice at a time: the tag replaces the previous one instead of
+        // stacking a tower of them through an evening's listening. It is a
+        // notice, not an alert, so it makes no sound and steals no focus.
+        const n = new Notification(t.title, {
+          body: [t.artist, this.nowStation].filter(Boolean).join(" · "),
+          icon: this.artOk() ? new URL(this.thumb(t.path, 192), location.href).href : undefined,
+          tag: "netradio-track",
+          renotify: false,
+          silent: true,
+        });
+        n.onclick = () => { try { window.focus(); } catch (e) {} n.close(); };
+      } catch (e) { /* a browser that refuses is not worth a broken page */ }
+    },
+
     // ---- the rain bed ----------------------------------------------------
     // A second <audio> on its own mount, with its own level. It follows the
     // music: it plays while something is playing in this browser and stops
@@ -855,6 +916,15 @@ createApp({
       this.applyBed();
       this.refreshZones();          // site.json is what says which outputs exist
     });
+    // Whatever is already on when the page opens is not news; only a CHANGE
+    // after we have settled is worth a notice.
+    setTimeout(() => { this._noticeReady = true; }, 6000);
+    // A permission revoked in site settings while the page was open leaves the
+    // switch on and lying, so re-read what the browser actually thinks.
+    if (typeof Notification !== "undefined") {
+      this.notifyState = Notification.permission;
+      if (this.notify && Notification.permission !== "granted") { this.notify = false; this.saveNotify(); }
+    }
     this.applyHereVolume();
     this.setMediaHandlers();
     this.refresh().then(() => { this.refreshHeart(); this.mediaSession(); });
