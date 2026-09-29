@@ -27,6 +27,20 @@ const { createApp } = Vue;
 // beyond this the station is probably gone rather than restarting.
 const RECONNECT_GIVE_UP = 40;
 
+// Carrying the stream across the view switch.
+//
+// The phone remote and this page are separate documents. Following "Phone
+// view" or "Desktop view" is a real navigation, the document is torn down, and
+// the <audio> element goes with it — so the stream stops. Chris, reasonably:
+// "it shouldn't need to drop the stream just to change CSS around" (2026-09-29).
+// It isn't CSS, but it shouldn't cost him the stream either.
+//
+// So the page on the way out writes down what it was playing, and the page on
+// the way in picks it up. The note is short-lived on purpose: a window this
+// small covers a click from one view to the other (and a reload, which gets
+// the same treatment for free) while a tab opened tomorrow starts silent.
+const HANDOVER_MS = 90000;
+
 createApp({
   data() {
     let quality = "", target = "here", view = "wall", openMount = "", hereVol = 100, bedVol = 35, bedOn = false;
@@ -44,6 +58,7 @@ createApp({
       view, qtab: "played", openMount, target, quality,
       stations: [], quick: [], counts: {}, up: {}, tiles: {}, histories: {}, nexts: {}, hearts: {},
       current: null, status: "", scanning: false, busy: "", toast: "", tick: 0,
+      blocked: "",              // a mount the browser refused to start on its own; the play button takes it
       query: "", results: [], searchTimer: 0,
       site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "", hasLocal: false, hasRoom: true, bedMount: "" },
       receiver: { name: "", on: false, input: "", volume: 0, volume_max: 100, mute: false, error: "" },
@@ -366,11 +381,42 @@ createApp({
       audio.src = this.streamUrl(m);
       this.applyHereVolume();
       this.$nextTick(() => this.applyBed());
-      audio.play().then(() => { this.status = ""; this.$nextTick(() => this.startViz()); })
-                  .catch(err => { this.status = `couldn't start (${err.message})`; });
+      audio.play().then(() => { this.status = ""; this.blocked = ""; this.noteHandover(); this.$nextTick(() => this.startViz()); })
+                  .catch(err => {
+                    // A browser will not start audio by itself unless it has
+                    // decided this site is one you play audio on. When it
+                    // refuses, say so plainly and leave the button ready —
+                    // never a dead page that looks like it should be playing.
+                    if (err && err.name === "NotAllowedError") {
+                      this.blocked = m; this.current = null;
+                      this.status = "press play to pick it back up";
+                    } else {
+                      this.status = `couldn't start (${err.message})`;
+                    }
+                  });
       this.refresh();
     },
-    stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; clearTimeout(this._reTimer); this._reTries = 0; this.stopViz(); this.applyBed(); this.mediaSession(); },
+    stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; this.blocked = ""; this.forgetHandover(); clearTimeout(this._reTimer); this._reTries = 0; this.stopViz(); this.applyBed(); this.mediaSession(); },
+
+    // ---- the view switch -------------------------------------------------
+    noteHandover() {
+      try {
+        if (this.current && this.target === "here")
+          localStorage.setItem("radio.handover", JSON.stringify({ mount: this.current, at: Date.now() }));
+        else localStorage.removeItem("radio.handover");
+      } catch (e) {}
+    },
+    forgetHandover() { try { localStorage.removeItem("radio.handover"); } catch (e) {} },
+    takeHandover() {
+      let h = null;
+      try {
+        h = JSON.parse(localStorage.getItem("radio.handover") || "null");
+        localStorage.removeItem("radio.handover");     // one-shot; pagehide re-arms it
+      } catch (e) {}
+      if (!h || !h.mount || !(Date.now() - (h.at || 0) < HANDOVER_MS)) return;
+      if (this.target !== "here") return;              // the speakers never stopped
+      this.play(h.mount);
+    },
     retune() { try { localStorage.setItem("radio.quality", this.quality); } catch (e) {} if (this.current) this.play(this.current); },
     playTarget(s) {
       if (this.target === "room") return this.playOnReceiver(s);
@@ -385,6 +431,9 @@ createApp({
     // the bar's play button with nothing playing: start the station being
     // looked at, else this box's default, else the first in the list
     resumePlay() {
+      // What the browser refused to start for us comes first: it is what the
+      // listener was actually hearing a moment ago.
+      if (this.blocked && this.target === "here") { const m = this.blocked; this.blocked = ""; return this.play(m); }
       const s = this.openStationObj.mount ? this.openStationObj
               : this.stations.find(x => x.mount === this.site.localMount) || this.stations[0];
       if (s) return this.playTarget(s);
@@ -780,6 +829,11 @@ createApp({
     audio.addEventListener("waiting", () => { this.status = "buffering…"; });
     audio.addEventListener("playing", () => { this.status = ""; this._reTries = 0; });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") this.remote = false; });
+    // Leaving for the other view — or simply reloading. Write down what was
+    // playing so the page that comes next can pick it up. `pagehide` rather
+    // than `unload`, which a bfcache-ing browser may never fire.
+    window.addEventListener("pagehide", () => this.noteHandover());
+    this.takeHandover();
     window.addEventListener("resize", () => { this.narrow = !window.matchMedia("(min-width: 900px)").matches; });
     // who this box is, written at build time from the module's options
     getJSON("site.json").then(s => {
