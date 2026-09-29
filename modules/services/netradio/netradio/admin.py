@@ -30,6 +30,9 @@ import os
 import re
 import sys
 import threading
+import time
+import unicodedata
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -46,6 +49,12 @@ MOUNT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 # Cover files that count as a track's artwork, in preference order. Kept
 # beside `art()` AND the cache fingerprint, so the two cannot disagree
 # about what the thumbnail was derived from.
+def _fold(s: str) -> str:
+    """Match artist names across accents and case: the folder is whatever the
+    ripper wrote, Jellyfin's name is whatever the metadata said."""
+    return unicodedata.normalize("NFKD", s).casefold().strip()
+
+
 COVER_NAMES = ("cover.jpg", "Cover.jpg", "folder.jpg", "Folder.jpg",
                "cover.png", "front.jpg", "Front.jpg", "album.jpg")
 
@@ -54,7 +63,8 @@ class Admin:
     def __init__(self, cfg: Config, dj_dir: Path | None = None, playlists: Path | None = None,
                  receiver_api: str = "", now_dir: Path | None = None, wake_url: str = "",
                  jellyfin_url: str = "", jellyfin_key: str = "", jellyfin_user: str = "",
-                 thumb_cache: Path | None = None, thumb_cache_max: int = 5000):
+                 thumb_cache: Path | None = None, thumb_cache_max: int = 5000,
+                 station_art: Path | None = None, jellyfin_hearts: bool = False):
         self.cfg = cfg
         self.dj_dir = dj_dir            # the DJ's state: inbox/ takes skip + request files
         self.playlists = playlists      # library.m3u for search
@@ -62,6 +72,7 @@ class Admin:
         self.now_dir = now_dir
         self.wake_url = wake_url
         self.jellyfin_url, self.jellyfin_key, self.jellyfin_user = jellyfin_url, jellyfin_key, jellyfin_user
+        self.jellyfin_hearts = jellyfin_hearts   # mirror favourites, as opposed to just reading artwork
         self._library: list[str] | None = None
         self._library_set: frozenset[str] = frozenset()
         self._library_mtime = 0.0
@@ -72,6 +83,9 @@ class Admin:
         # ~17 s to paint on a LAN (2026-09-28).
         self.thumb_cache = thumb_cache
         self.thumb_cache_max = thumb_cache_max
+        self.station_art = station_art      # <mount>.jpg pictures for stations
+        self._jf_artists: dict[str, str] | None = None   # normalised name -> item id
+        self._jf_artists_at = 0.0
         self._thumb_writes = itertools.count()
 
     def resume_receiver(self) -> dict:
@@ -367,8 +381,14 @@ class Admin:
 
     def _jellyfin(self):
         """The Jellyfin mirror, or None when it is not configured — in which
-        case the heart still works and simply stays local."""
-        if not (self.jellyfin_url and self.jellyfin_key):
+        case the heart still works and simply stays local.
+
+        `jellyfin_hearts` is separate from having a URL and key, because artist
+        artwork wants the same credentials without implying that favourites
+        should be mirrored. Connecting Jellyfin for pictures must not quietly
+        start writing to somebody's library.
+        """
+        if not (self.jellyfin_url and self.jellyfin_key and self.jellyfin_hearts):
             return None
         return jellyfin.Jellyfin(self.jellyfin_url, self.jellyfin_key, self.jellyfin_user)
 
@@ -402,8 +422,17 @@ class Admin:
 
     def art(self, path: str) -> tuple[bytes, str] | None:
         """Cover art for a library track: the file's embedded picture, else a
-        cover/folder image beside it. (bytes, mime) or None."""
-        if path not in set(self.library()):
+        cover/folder image beside it, else the artist's picture from Jellyfin.
+        (bytes, mime) or None."""
+        # A station's own picture is not a library track, but it is ours and it
+        # sits in a directory we were told about.
+        if self.station_art is not None and self._under(path, self.station_art):
+            data = Path(path).read_bytes()
+            return data, "image/png" if path.lower().endswith(".png") else "image/jpeg"
+        # in_library(), not `path not in set(self.library())`, which rebuilt a
+        # 22,857-entry set on every call. #361 claimed this fix and applied it
+        # one method too early — to request(), which is not the hot path.
+        if not self.in_library(path):
             raise ValueError("not a library track")
         try:
             import mutagen
@@ -427,7 +456,61 @@ class Admin:
             fp = folder / name
             if fp.exists():
                 return fp.read_bytes(), "image/png" if name.endswith(".png") else "image/jpeg"
-        return None
+        # Nothing on disk. Jellyfin knows what a lot of these artists look like
+        # even when the album has no sleeve — 502 of 1,668 artists had a picture
+        # when this was added, which lifted cover coverage from 79% to 84% and
+        # put faces on the ones that actually come round often: Bill Monroe, the
+        # Stanley Brothers, the Louvins (2026-09-28).
+        return self.artist_art(path)
+
+    @staticmethod
+    def _under(path: str, root: Path) -> bool:
+        try:
+            return Path(path).resolve().is_relative_to(root.resolve())
+        except (OSError, ValueError):
+            return False
+
+    def artist_art(self, path: str) -> tuple[bytes, str] | None:
+        """The artist's picture from Jellyfin, for a track whose album has no
+        sleeve. The library is laid out .../Music/<Artist>/<Album>/<track>."""
+        if not (self.jellyfin_url and self.jellyfin_key):
+            return None
+        parts = Path(path).parts
+        if len(parts) < 3:
+            return None
+        item = self._jellyfin_artist_id(parts[-3])
+        if not item:
+            return None
+        try:
+            req = urllib.request.Request(
+                f"{self.jellyfin_url.rstrip('/')}/Items/{item}/Images/Primary?maxHeight=700",
+                headers={"X-Emby-Token": self.jellyfin_key})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return r.read(), r.headers.get("Content-Type") or "image/jpeg"
+        except Exception as e:
+            log.debug("no Jellyfin picture for %s: %s", parts[-3], e)
+            return None
+
+    def _jellyfin_artist_id(self, name: str) -> str:
+        """Artists that HAVE a picture, by normalised name. Fetched once an hour:
+        it is one request for the whole library, against a name we would
+        otherwise have to search for per track."""
+        now = time.time()
+        if self._jf_artists is None or now - self._jf_artists_at > 3600:
+            self._jf_artists = {}
+            try:
+                req = urllib.request.Request(
+                    f"{self.jellyfin_url.rstrip('/')}/Artists?Recursive=true&Limit=5000&Fields=ImageTags",
+                    headers={"X-Emby-Token": self.jellyfin_key})
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    for it in (json.loads(r.read()).get("Items") or []):
+                        if (it.get("ImageTags") or {}).get("Primary") and it.get("Name"):
+                            self._jf_artists[_fold(it["Name"])] = it["Id"]
+                log.info("Jellyfin: %d artists with a picture", len(self._jf_artists))
+            except Exception as e:
+                log.warning("could not list Jellyfin artists: %s", e)
+            self._jf_artists_at = now
+        return self._jf_artists.get(_fold(name), "")
 
     # ---- the thumbnail cache --------------------------------------------
     # A miss costs a mutagen decode of the whole track plus a Pillow resize;
@@ -688,6 +771,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--jellyfin-url", default="", help="mirror hearts to this Jellyfin (optional)")
     ap.add_argument("--jellyfin-key-file", type=Path, help="a file holding the Jellyfin API key")
     ap.add_argument("--jellyfin-user", default="", help="Jellyfin user id (default: the first admin)")
+    ap.add_argument("--jellyfin-hearts", action="store_true",
+                    help="mirror the heart to Jellyfin favourites (artwork needs no such permission)")
+    ap.add_argument("--station-art", type=Path, help="directory of <mount>.jpg pictures for stations")
     ap.add_argument("--thumb-cache", type=Path,
                     help="directory for resized cover art; without it every thumbnail is recomputed")
     ap.add_argument("--thumb-cache-max", type=int, default=5000,
@@ -706,7 +792,8 @@ def main(argv: list[str] | None = None) -> int:
               jellyfin_url=args.jellyfin_url,
               jellyfin_key=jellyfin.read_key(key_file=args.jellyfin_key_file),
               jellyfin_user=args.jellyfin_user,
-              thumb_cache=args.thumb_cache, thumb_cache_max=args.thumb_cache_max)))
+              thumb_cache=args.thumb_cache, thumb_cache_max=args.thumb_cache_max,
+              station_art=args.station_art, jellyfin_hearts=args.jellyfin_hearts)))
     log.info("admin API on %s:%d, config %s", args.listen, args.port, args.config)
     srv.serve_forever()
     return 0

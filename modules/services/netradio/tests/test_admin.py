@@ -1,6 +1,7 @@
 import json
 import logging
 import tempfile
+from unittest import mock
 import threading
 import unittest
 import urllib.request
@@ -312,3 +313,113 @@ class ThumbnailCache(unittest.TestCase):
             self.assertTrue(a.in_library(str(alb / "01 x.mp3")))
             self.assertFalse(a.in_library("/nowhere.mp3"))
             self.assertIs(a._library_set, a._library_set, "the set should be held, not recomputed")
+
+
+class StationArtwork(unittest.TestCase):
+    """A station with no artists to draw a mosaic from — an ambient rain bed, or
+    "Everything", which is the whole library rather than four acts — had only a
+    monogram. A picture at <art_dir>/<mount>.jpg becomes its tile, and because
+    the path goes into the tile's `covers` it travels through the existing art
+    endpoint and the pages unchanged (2026-09-28).
+    """
+
+    def test_a_station_picture_is_served_though_it_is_not_a_library_track(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); (root / "config").mkdir(); (root / "pl").mkdir()
+            art = root / "art"; art.mkdir()
+            pic = art / "rain.jpg"; pic.write_bytes(b"\xff\xd8rain")
+            (root / "pl" / "library.m3u").write_text("#EXTM3U\n/mnt/music/a.mp3\n")
+            a = admin.Admin(config.Config(root / "config"), None, root / "pl", station_art=art)
+            self.assertEqual(a.art(str(pic)), (b"\xff\xd8rain", "image/jpeg"))
+
+    def test_the_art_endpoint_is_still_not_a_file_browser(self):
+        """`art` refuses anything that is neither a library track nor station
+        artwork — the station-art directory must not become a way to read the
+        rest of the disk."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); (root / "config").mkdir(); (root / "pl").mkdir()
+            art = root / "art"; art.mkdir()
+            secret = root / "secret.txt"; secret.write_bytes(b"not yours")
+            (root / "pl" / "library.m3u").write_text("#EXTM3U\n/mnt/music/a.mp3\n")
+            a = admin.Admin(config.Config(root / "config"), None, root / "pl", station_art=art)
+            with self.assertRaises(ValueError):
+                a.art(str(secret))
+            with self.assertRaises(ValueError):
+                a.art(str(art / ".." / "secret.txt"))      # no escaping by traversal
+
+    def test_station_art_wins_over_the_mosaic_and_the_icon(self):
+        from netradio import playlists as pl
+        with tempfile.TemporaryDirectory() as d:
+            art = Path(d); (art / "rain.jpg").write_bytes(b"\xff\xd8x")
+            stations = [{"mount": "rain", "name": "Rain", "kind": "fixed"}]
+            tiles = pl.station_tiles(stations, {}, {}, {}, art_dir=art)
+            self.assertEqual(tiles["rain"]["covers"], [str(art / "rain.jpg")])
+            self.assertNotIn("icon", tiles["rain"])
+
+    def test_without_a_picture_a_fixed_station_still_gets_its_icon(self):
+        from netradio import playlists as pl
+        with tempfile.TemporaryDirectory() as d:
+            stations = [{"mount": "rain", "name": "Rain", "kind": "fixed"}]
+            tiles = pl.station_tiles(stations, {}, {}, {}, art_dir=Path(d))
+            self.assertEqual(tiles["rain"], {"icon": "rain", "covers": []})
+
+
+class JellyfinArtistArtwork(unittest.TestCase):
+    """When an album has no sleeve, Jellyfin often still knows what the artist
+    looks like. 502 of 1,668 artists had a picture when this was added, taking
+    cover coverage from 79% to 84% — and landing on the ones that come round
+    often (Bill Monroe, the Stanley Brothers, the Louvins).
+    """
+
+    def _admin(self, root, **kw):
+        (root / "config").mkdir(exist_ok=True); (root / "pl").mkdir(exist_ok=True)
+        alb = root / "Music" / "Bill Monroe" / "Bluegrass 1959"
+        alb.mkdir(parents=True, exist_ok=True)
+        track = alb / "01 x.mp3"; track.write_bytes(b"\x00" * 64)     # no art of any kind
+        (root / "pl" / "library.m3u").write_text(f"#EXTM3U\n{track}\n")
+        return admin.Admin(config.Config(root / "config"), None, root / "pl", **kw), track
+
+    def test_the_artists_picture_stands_in_for_a_missing_sleeve(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, track = self._admin(Path(d), jellyfin_url="http://jf", jellyfin_key="k")
+            a._jf_artists, a._jf_artists_at = {"bill monroe": "ITEM1"}, 9e18
+            with mock.patch.object(admin.urllib.request, "urlopen") as u:
+                u.return_value.__enter__.return_value.read.return_value = b"\xff\xd8jf"
+                u.return_value.__enter__.return_value.headers = {"Content-Type": "image/jpeg"}
+                self.assertEqual(a.art(str(track)), (b"\xff\xd8jf", "image/jpeg"))
+
+    def test_names_match_across_case_and_accents(self):
+        self.assertEqual(admin._fold("Bill Monroe"), admin._fold("bill  monroe".replace("  ", " ")))
+        self.assertEqual(admin._fold("Beyoncé"), admin._fold("BEYONCÉ"))
+
+    def test_no_jellyfin_means_no_art_rather_than_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, track = self._admin(Path(d))
+            self.assertIsNone(a.art(str(track)))
+
+    def test_credentials_alone_do_not_start_mirroring_hearts(self):
+        """Connecting Jellyfin for pictures must not quietly begin writing
+        favourites into somebody's library."""
+        with tempfile.TemporaryDirectory() as d:
+            a, _ = self._admin(Path(d), jellyfin_url="http://jf", jellyfin_key="k")
+            self.assertIsNone(a._jellyfin(), "artwork credentials enabled heart mirroring")
+            b, _ = self._admin(Path(d), jellyfin_url="http://jf", jellyfin_key="k", jellyfin_hearts=True)
+            self.assertIsNotNone(b._jellyfin())
+
+
+class RequestIsNotAnArtEndpoint(unittest.TestCase):
+    """`request()` and `art()` both begin "is this a library track?", and an
+    edit meant for one landed in the other twice on 2026-09-28 — once shipping
+    in #361, once caught here. They are not interchangeable: request() queues a
+    song, art() returns bytes.
+    """
+
+    def test_request_still_refuses_a_station_picture(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); (root / "config").mkdir(); (root / "pl").mkdir()
+            art = root / "art"; art.mkdir()
+            pic = art / "rain.jpg"; pic.write_bytes(b"\xff\xd8rain")
+            (root / "pl" / "library.m3u").write_text("#EXTM3U\n/mnt/music/a.mp3\n")
+            a = admin.Admin(config.Config(root / "config"), root / "dj", root / "pl", station_art=art)
+            with self.assertRaises(ValueError):
+                a.request("rain", {"path": str(pic)})

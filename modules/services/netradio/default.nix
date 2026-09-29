@@ -138,6 +138,13 @@ let
   libraryRoots = cfg.libraryRoots;
   # Jellyfin is only usable when it is enabled AND a key was handed over.
   jellyfinReady = cfg.jellyfin.enable && cfg.jellyfin.keyFile != null;
+  # Pictures for stations that have no album art to draw a mosaic from:
+  # <mount>.jpg here becomes that station's tile. Runtime, not the store,
+  # so one can be dropped in without a rebuild.
+  stationArtDir = "${configDir}/art";
+  # a station picture keeps its own extension, so a PNG is served as a PNG
+  extOf = src: let parts = lib.splitString "." (builtins.baseNameOf src);
+               in if builtins.length parts > 1 then lib.last parts else "jpg";
 
   # The group that can read those roots, for the units that open the files.
   libraryGroups = lib.optional (cfg.libraryGroup != null) cfg.libraryGroup;
@@ -481,6 +488,28 @@ in
         Playlists, the runtime config, the DJ's rendered breaks, the profile
         and the generated Icecast passwords. Survives a rebuild; the seeds
         below are copied in only where a file does not already exist.
+      '';
+    };
+
+    stationArt = lib.mkOption {
+      type = lib.types.attrsOf lib.types.path;
+      default = { };
+      example = lib.literalExpression ''
+        {
+          rain = ./art/rain.jpg;
+          rainymood = ./art/rainymood.jpg;
+        }
+      '';
+      description = ''
+        A picture for a station, by mount. Stations whose tile is otherwise a
+        mosaic of their own album covers need nothing here; this is for the
+        ones that have no covers to draw on — an ambient rain bed, or a station
+        that is the whole library rather than a handful of artists.
+
+        The file is linked into the runtime art directory and becomes that
+        station's tile everywhere the mosaic would have been. No image ships
+        with this module: pictures are a matter of taste and of whose rights
+        they are, so they come from your own configuration.
       '';
     };
 
@@ -1343,7 +1372,13 @@ in
     "d ${ambientDir}/rain 0755 ${user} ${user} -"
     "d ${ambientDir}/rainymood 0755 ${user} ${user} -"
     "d ${ambientDir}/rainymood/src 0755 ${user} ${user} -"
-  ];
+    # where a picture per station goes: <mount>.jpg. Group-writable so an
+    # operator can drop one in without becoming the service user.
+    "d ${stationArtDir} 0775 ${user} ${user} -"
+  ] ++ lib.mapAttrsToList (mount: src:
+    # `L+` replaces whatever is there, so changing the option in the config is
+    # enough — no stale picture survives a rebuild.
+    "L+ ${stationArtDir}/${mount}.${extOf src} - - - - ${src}") cfg.stationArt;
 
   systemd.services.netradio-ambient = {
     description = "Fetch the ambient beds (rain) and write the fixed station's playlist";
@@ -1480,6 +1515,7 @@ in
         "--genres ${configDir}/genres.json"   # optional: the beets + Last.fm catalogue's words per file
         "--summary ${nowDir}/stations.json"
         "--ycast ${configDir}/stations.yml"
+        "--station-art ${stationArtDir}"
       ]
         # The URL the receiver is handed, which must be the plain-HTTP vhost it
         # can actually parse — only meaningful when that stand-in exists.
@@ -1627,10 +1663,15 @@ in
         "--receiver-api ${cfg.receiver.apiUrl}"
         "--now-dir ${nowDir}"
         "--wake http://127.0.0.1:${toString wakePort}"
-      ] ++ lib.optionals (jellyfinReady && cfg.jellyfin.hearts) [
+        "--station-art ${stationArtDir}"
+      ] ++ lib.optionals jellyfinReady [
+        # the credentials alone; they let the art endpoint fall back to an
+        # artist's Jellyfin picture when an album has no sleeve
         "--jellyfin-url ${cfg.jellyfin.url}"
         "--jellyfin-key-file ${cfg.jellyfin.keyFile}"
-      ] ++ lib.optional (jellyfinReady && cfg.jellyfin.hearts && cfg.jellyfin.user != "")
+      ] ++ lib.optional (jellyfinReady && cfg.jellyfin.hearts)
+        "--jellyfin-hearts"
+      ++ lib.optional (jellyfinReady && cfg.jellyfin.user != "")
         "--jellyfin-user ${cfg.jellyfin.user}");
       Restart = "always";
       RestartSec = 5;
