@@ -110,7 +110,8 @@ createApp({
       // onerror falls back to the coloured tile.
       if (this.nowKind === "library") {
         const t = this.nowTrack();
-        return t && t.path ? `admin/api/art?path=${encodeURIComponent(t.path)}` : "";
+        // sized: the full cover can be 3 MB and the hero is ~390 px wide
+        return t && t.path ? `admin/api/art?path=${encodeURIComponent(t.path)}&size=700` : "";
       }
       const np = this.np;
       if (!np || !np.album_art_url) return "";

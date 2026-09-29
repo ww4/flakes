@@ -166,8 +166,11 @@ createApp({
     },
     hearted() { const t = this.playingTrack; return !!t && !!this.hearts[t.path]; },
     art() {
+      // sized, not the original: covers in this library run to 3 MB, and the
+      // hero is 340 CSS px. Asking for the full file made the one image on the
+      // page the biggest thing on it.
       const t = this.playingTrack;
-      return t && t.path ? `admin/api/art?path=${encodeURIComponent(t.path)}` : "";
+      return t && t.path ? `admin/api/art?path=${encodeURIComponent(t.path)}&size=700` : "";
     },
     barCovers() {
       const t = this.playingTrack;

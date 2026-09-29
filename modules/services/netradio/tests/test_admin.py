@@ -230,3 +230,85 @@ class Art(unittest.TestCase):
             self.assertEqual((data, mime), (b"\xff\xd8jpeg", "image/jpeg"))
             with self.assertRaises(ValueError):
                 a.art("/nowhere.mp3")
+
+
+class ThumbnailCache(unittest.TestCase):
+    """Resized covers are memoised on disk. A miss costs a full mutagen read of
+    the track (some in Chris's library are 29 MB) plus a Pillow decode; a hit is
+    one read(). A cold desktop wall asks for ~150 of them, which is what made it
+    take ~17 s to paint on a LAN (2026-09-28).
+    """
+
+    def _admin(self, root: Path, cache: Path | None):
+        alb = root / "Music" / "A" / "B"
+        if not alb.exists():
+            alb.mkdir(parents=True)
+            (alb / "01 x.mp3").write_bytes(b"\x00" * 64)
+            (alb / "cover.jpg").write_bytes(b"\xff\xd8jpeg")
+            (root / "config").mkdir(exist_ok=True)
+            (root / "pl").mkdir(exist_ok=True)
+            (root / "pl" / "library.m3u").write_text(f"#EXTM3U\n{alb / '01 x.mp3'}\n{alb / '02 no-art.mp3'}\n")
+        return admin.Admin(config.Config(root / "config"), None, root / "pl", thumb_cache=cache), alb
+
+    def test_a_second_request_is_served_from_disk(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); cache = root / "thumbs"
+            a, alb = self._admin(root, cache)
+            track = str(alb / "01 x.mp3")
+
+            first = a.cached_art(track, 0)
+            self.assertIsNotNone(first)
+            entries = [f for f in cache.rglob("*") if f.is_file()]
+            self.assertEqual(len(entries), 1, "nothing was written to the cache")
+
+            # make the SOURCE unreadable: a real hit must not touch it again
+            # no addCleanup: it would fire after the temp directory is gone.
+            # An unreadable file in a writable directory still deletes.
+            (alb / "cover.jpg").chmod(0o000)
+            second = a.cached_art(track, 0)
+            self.assertEqual(second, first, "the cached entry was not used")
+
+    def test_a_new_cover_invalidates_the_entry(self):
+        """Keying on the track's mtime alone would serve the old thumbnail
+        forever after someone drops a new cover.jpg beside it."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); cache = root / "thumbs"
+            a, alb = self._admin(root, cache)
+            track = str(alb / "01 x.mp3")
+            self.assertEqual(a.cached_art(track, 0)[0], b"\xff\xd8jpeg")
+
+            (alb / "cover.jpg").write_bytes(b"\xff\xd8NEWJPEG")
+            self.assertEqual(a.cached_art(track, 0)[0], b"\xff\xd8NEWJPEG",
+                             "a replaced cover still served the stale thumbnail")
+
+    def test_a_track_with_no_art_is_remembered_as_such(self):
+        """The expensive answer is 'no artwork': mutagen read the whole file to
+        find nothing. Without a negative entry that repeats on every load."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); cache = root / "thumbs"
+            a, alb = self._admin(root, cache)
+            bare = alb.parent / "C"; bare.mkdir()
+            track = bare / "02 no-art.mp3"
+            track.write_bytes(b"\x00" * 64)
+            (root / "pl" / "library.m3u").write_text(f"#EXTM3U\n{track}\n")
+
+            self.assertIsNone(a.cached_art(str(track), 0))
+            misses = [f for f in cache.rglob("*.none") if f.is_file()]
+            self.assertEqual(len(misses), 1, "the miss was not remembered")
+            self.assertIsNone(a.cached_art(str(track), 0))
+
+    def test_without_a_cache_directory_it_still_works(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            a, alb = self._admin(root, None)
+            self.assertEqual(a.cached_art(str(alb / "01 x.mp3"), 0)[0], b"\xff\xd8jpeg")
+
+    def test_the_library_membership_set_is_not_rebuilt_per_call(self):
+        """`art` asked "is this a library track?" as `path not in set(...)`,
+        rebuilding a 22,857-entry set on every request."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            a, alb = self._admin(root, None)
+            self.assertTrue(a.in_library(str(alb / "01 x.mp3")))
+            self.assertFalse(a.in_library("/nowhere.mp3"))
+            self.assertIs(a._library_set, a._library_set, "the set should be held, not recomputed")
