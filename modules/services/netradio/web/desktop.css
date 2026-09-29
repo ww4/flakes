@@ -1,10 +1,9 @@
 /* Library radio — the wide-screen player.
  *
- * The phone page (remote.css) settled this palette; this file is the same
- * tokens at desktop scale, and deliberately does NOT load Pico. The desktop
- * page used to be Pico's stock theme, which meant a wide screen got a
- * cold slate-blue list while the phone got warm cream on near-black — two
- * different-looking products from one codebase (2026-09-28).
+ * Layout only — the palette and the base rules are in tokens.css, shared with
+ * the admin page. The desktop page used to be Pico's stock theme, which meant
+ * a wide screen got a cold slate-blue list while the phone got warm cream on
+ * near-black: two different-looking products from one codebase (2026-09-28).
  *
  * Two surfaces share one chrome:
  *   the WALL      every station as a card, with what it last played
@@ -14,32 +13,20 @@
  * the mistake every player that floats its transport ends up apologising for.
  */
 
-:root {
-  --bg: #151413; --panel: #1f1e1c; --panel-2: #2a2826; --line: #35322f;
-  --fg: #f3e9dc; --muted: #9b948b; --dim: #6e6760;
-  --accent: #d9743f; --accent-2: #b5542a; --live: #5cc36b;
-  --rail: 248px; --aside: 322px; --bar: 78px;
-}
+/* Palette and base rules come from tokens.css, loaded first; only what this
+   page alone needs is declared here. */
+:root { --rail: 248px; --aside: 322px; --bar: 78px; }
 
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--fg);
-  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  overflow: hidden;                       /* the panes scroll, the page does not */
-  /* a column, so anything above the app (the phone-view banner) takes its own
-     height and the app gets the rest — rather than the app guessing at it */
-  height: 100vh;
-}
+/* The player fills the viewport exactly: the panes scroll, the page never
+   does. `height` belongs HERE and not in tokens.css — the admin page shares
+   the palette but is an ordinary scrolling document, and giving every page a
+   fixed height would break it. Losing this line collapsed the whole grid,
+   because #app's height: 100% then had nothing to resolve against. */
+body { overflow: hidden; height: 100vh; }
 #app { display: flex; flex-direction: column; height: 100%; }
-[v-cloak] { display: none; }
-button { font: inherit; color: inherit; cursor: pointer; }
-button:focus-visible, input:focus-visible, a:focus-visible {
-  outline: 2px solid var(--accent); outline-offset: 2px;
-}
 
+/* The three columns and the transport row. `flex: 1` so the banner above it
+   (the phone-view escape) takes its own height and this takes the rest. */
 .app {
   display: grid;
   grid-template-columns: var(--rail) 1fr var(--aside);

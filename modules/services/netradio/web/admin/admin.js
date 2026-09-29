@@ -28,9 +28,9 @@ const TagInput = {
     key(e) { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); this.add(); } else if (e.key === "Backspace" && !this.text && this.modelValue.length) this.remove(this.modelValue[this.modelValue.length - 1]); },
   },
   template: `<span class="tags">
-    <span v-for="t in modelValue" class="tag">{{ t }}<button type="button" @click="remove(t)" title="remove">✕</button></span>
+    <span v-for="t in modelValue" :key="t" class="tag">{{ t }}<button type="button" @click="remove(t)" title="remove" aria-label="remove">✕</button></span>
     <input :list="id" v-model="text" :placeholder="placeholder" @keydown="key" @change="add" @blur="add">
-    <datalist :id="id"><option v-for="s in suggestions.filter(s => !modelValue.includes(s))" :value="s"></option></datalist>
+    <datalist :id="id"><option v-for="s in suggestions.filter(s => !modelValue.includes(s))" :key="s" :value="s"></option></datalist>
   </span>`,
 };
 
@@ -41,10 +41,16 @@ createApp({
              options: {}, tab: "feeds", openId: null, edit: {}, add: { title: "", description: "", family: [], listenable: true, shellac: false },
              slots: {}, days: DAYS, flash: "", flashErr: false, scheduleMsg: "", answers: {},
              sel: null,
-             pandora: { stations: {}, plays: 0 },
-             tabs: [{ id: "feeds", title: "Feeds" }, { id: "stations", title: "Stations" }, { id: "pandora", title: "Heard on Pandora" }] };
+             pandora: { stations: {}, plays: 0 } };
   },
   computed: {
+    // The rail says how much of each there is, so you can see there is nothing
+    // on a tab without opening it.
+    tabs() {
+      return [{ id: "feeds", title: "Feeds", count: Object.keys(this.state.feeds).length || "" },
+              { id: "stations", title: "Stations", count: this.state.stations.length || "" },
+              { id: "pandora", title: "Pandora", count: Object.keys(this.pandora.stations || {}).length || "" }];
+    },
     feedList() { return Object.entries(this.state.feeds).sort((a, b) => a[1].title.localeCompare(b[1].title)); },
     curated() { return this.state.stations.filter(s => s.kind !== "specialty"); },
     specialty() { return this.state.stations.filter(s => s.kind === "specialty"); },

@@ -16,6 +16,10 @@ from pathlib import Path
 WEB = Path(os.environ.get("NETRADIO_WEB") or (Path(__file__).resolve().parent.parent / "web"))
 PAGES = ["index.html", "desktop.html"]
 SCRIPTS = ["app.js", "desktop.js"]
+# Everything nginx serves as a page. The admin page is not part of the
+# player-parity checks — it is a different thing — but it can 404 on a missing
+# stylesheet exactly like the others, so the packaging check covers it too.
+SERVED_PAGES = PAGES + ["admin/index.html"]
 
 
 def setUpModule():
@@ -163,14 +167,18 @@ class Packaging(unittest.TestCase):
         if not nix_path or not Path(nix_path).exists():
             self.skipTest("no NETRADIO_NIX — this runs for real in the netradio-web build")
         nix = Path(nix_path).read_text()
-        for page in PAGES:
+        for page in SERVED_PAGES:
             html = (WEB / page).read_text()
             for ref in re.findall(r'(?:href|src)\s*=\s*"([^"]+)"', html):
                 if ref.startswith(("http://", "https://", "#", "data:", "/")):
                     continue
-                name = ref.split("?")[0].lstrip("./")
-                if not (WEB / name).exists():
+                # resolved against the PAGE's directory: the admin page reaches
+                # its shared files with ../, and a naive strip would look for
+                # them in the wrong place and silently skip the check
+                target = ((WEB / page).parent / ref.split("?")[0]).resolve()
+                if not target.is_file() or not target.is_relative_to(WEB.resolve()):
                     continue          # written at build time (site.json) or by the scanner (now/…)
+                name = target.name
                 # A WHOLE path component, not a substring. `assertIn("radio.js", nix)`
                 # passed against "internet-radio.json", so a genuinely missing
                 # file looked installed (found reviewing this, 2026-09-29).
