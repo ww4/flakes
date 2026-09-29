@@ -177,6 +177,29 @@ class SpeakerTargetParity(unittest.TestCase):
                           f"{script} ignores a clean shutdown, which is what a Liquidsoap restart looks like")
             self.assertIn("RECONNECT_GIVE_UP", js, f"{script} would retry for ever")
 
+    def test_switching_views_carries_the_stream_over(self):
+        """The two pages are separate documents, so the view links are real
+        navigations: the document is torn down and the <audio> element with it,
+        and the stream stops. Chris: "it shouldn't need to drop the stream just
+        to change CSS around" (2026-09-29). Both ends have to play their part —
+        the page leaving writes the note, the page arriving takes it — so this
+        checks both, in both files."""
+        for script in SCRIPTS:
+            js = self.script(script)
+            self.assertIn("noteHandover", js, f"{script} leaves nothing behind when it goes")
+            self.assertIn("takeHandover", js, f"{script} ignores what the other view left")
+            self.assertIn("radio.handover", js, f"{script} does not use the shared key")
+            self.assertIn("HANDOVER_MS", js,
+                          f"{script} would resume a stream from an arbitrarily old visit")
+            self.assertIn('addEventListener("pagehide"', js,
+                          f"{script} never writes the note — unload is not fired by a bfcache-ing browser")
+            self.assertIn("this.takeHandover();", js, f"{script} defines takeHandover but never calls it")
+            # An autoplay refusal must leave the page honest rather than
+            # showing a transport that looks like it is playing.
+            self.assertIn("NotAllowedError", js,
+                          f"{script} treats a refused autoplay as an ordinary error")
+            self.assertIn("blocked", js, f"{script} forgets what it was refused, so nothing can resume it")
+
     def test_the_browser_is_an_output_with_a_volume_like_the_others(self):
         """The receiver and the sound card had a level; the tab had none, so the
         only way down was the OS mixer (Chris, 2026-09-29)."""

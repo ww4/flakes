@@ -12,6 +12,9 @@ const { createApp } = Vue;
 // beyond this the station is probably gone rather than restarting.
 const RECONNECT_GIVE_UP = 40;
 
+// How long a note left for the other view stays good. See noteHandover().
+const HANDOVER_MS = 90000;
+
 // a stable colour per name, for tiles and the hero
 function hue(name) { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 
@@ -20,6 +23,7 @@ createApp({
     let quality = "", target = "here", tab = "now", last = { here: "", room: null, local: "" };
     try { quality = localStorage.getItem("radio.quality") || ""; target = localStorage.getItem("radio.target") || "here"; tab = localStorage.getItem("radio.tab") || "now"; last = { ...last, ...JSON.parse(localStorage.getItem("radio.last") || "{}") }; } catch (e) {}
     return { tiles: {}, stations: [], quick: [], counts: {}, up: {}, histories: {}, nexts: {}, current: null, status: "", quality, scanning: false, last,
+             blocked: "",      // a mount the browser refused to start on its own; tap the tile to take it
              ctx: null, analyser: null, raf: 0, wide: window.innerWidth > 640,
              target, tab, receiver: { name: "", on: false, input: "", volume: 0, mute: false, error: "" }, inputs: [], presets: [],
              speaker: { playing: false, mount: "", volume: null, muted: false, error: "" }, speakerPoll: 0,
@@ -268,10 +272,46 @@ createApp({
       const s = this.stations.find(s => s.mount === m); if (s) this.remember(s);
       this.current = m; this.status = "tuning…"; this._reTries = 0; clearTimeout(this._reTimer); this.tab = "now";
       audio.src = this.streamUrl(m);
-      audio.play().then(() => { this.status = ""; this.$nextTick(() => this.startViz()); }).catch(err => { this.status = `couldn't start (${err.message})`; });
+      audio.play().then(() => { this.status = ""; this.blocked = ""; this.noteHandover(); this.$nextTick(() => this.startViz()); })
+                  .catch(err => {
+                    // A browser will not start audio by itself unless it has
+                    // decided this site is one you play audio on. When it
+                    // refuses, say so plainly and leave the button ready.
+                    if (err && err.name === "NotAllowedError") {
+                      this.blocked = m; this.current = null;
+                      this.status = "press play to pick it back up";
+                    } else {
+                      this.status = `couldn't start (${err.message})`;
+                    }
+                  });
       this.refresh();
     },
-    stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; clearTimeout(this._reTimer); this._reTries = 0; this.stopViz(); this.mediaSession(); },
+    stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; this.blocked = ""; this.forgetHandover(); clearTimeout(this._reTimer); this._reTries = 0; this.stopViz(); this.mediaSession(); },
+
+    // ---- the view switch -------------------------------------------------
+    // This page and the desktop player are separate documents, so following
+    // "Desktop view" tears this one down and takes the <audio> element with
+    // it — the stream stops (Chris, 2026-09-29). Write down what was playing
+    // on the way out; the page that comes next picks it up. Short-lived on
+    // purpose: it should cover a click between the views, not tomorrow.
+    noteHandover() {
+      try {
+        if (this.current && this.target === "here")
+          localStorage.setItem("radio.handover", JSON.stringify({ mount: this.current, at: Date.now() }));
+        else localStorage.removeItem("radio.handover");
+      } catch (e) {}
+    },
+    forgetHandover() { try { localStorage.removeItem("radio.handover"); } catch (e) {} },
+    takeHandover() {
+      let h = null;
+      try {
+        h = JSON.parse(localStorage.getItem("radio.handover") || "null");
+        localStorage.removeItem("radio.handover");     // one-shot; pagehide re-arms it
+      } catch (e) {}
+      if (!h || !h.mount || !(Date.now() - (h.at || 0) < HANDOVER_MS)) return;
+      if (this.target !== "here") return;              // the speakers never stopped
+      this.play(h.mount);
+    },
     retune() { try { localStorage.setItem("radio.quality", this.quality); } catch (e) {} if (this.current) this.play(this.current); },
     playTarget(s) {
       this.tab = "now";              // always show the switch happen
@@ -558,6 +598,10 @@ createApp({
     audio.addEventListener("waiting", () => { this.status = "buffering…"; });
     audio.addEventListener("playing", () => { this.status = ""; this._reTries = 0; });
     window.addEventListener("resize", () => { this.wide = window.innerWidth > 640; });
+    // Leaving for the desktop view — or simply reloading. `pagehide` rather
+    // than `unload`, which a bfcache-ing browser may never fire.
+    window.addEventListener("pagehide", () => this.noteHandover());
+    this.takeHandover();
     // who this box is, written at build time from the module's options
     getJSON("site.json").then(s => { if (s) { this.site = { ...this.site, ...s }; document.title = this.site.title; } });
     this.setMediaHandlers();
