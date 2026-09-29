@@ -40,8 +40,21 @@ def station(mount, name) =
   # output's `<mount>.skip` sits above the crossfade, which lets the abort
   # through twice (two tracks gone, five seconds late — 2026-09-19). Skipping
   # the fallback itself ends the selected source's track and nothing else.
+  #
+  # It has to be the FALLBACK and not the queue. `q_<mount>.flush_and_skip`
+  # skips the queue, and the queue is only one of the two things that can be
+  # on air: after a restart, or any time the DJ has fallen behind, `pl` holds
+  # the microphone and a skip aimed at the queue is silent (Chris pressed it
+  # four times against a Bowie track on Ambient, 2026-09-29 15:24).
   server.register(namespace="src_" ^ mount, description="Skip the playing track.", "skip",
                   fun (_) -> begin sw.skip() "Done" end)
+  # Drop what is QUEUED without touching what is playing. Liquidsoap's own
+  # `flush_and_skip` does both at once, which is the wrong shape here: the DJ
+  # wants to throw away a running order it is about to rewrite, write the new
+  # one, and only then take the current track off. Two separate commands, so
+  # the refill can sit between them.
+  server.register(namespace="src_" ^ mount, description="Drop everything queued behind the playing track.", "flush",
+                  fun (_) -> begin q.set_queue([]) "Done" end)
   # Breaks carry liq_amplify (speech renders ~8 dB under the music).
   s = amplify(1., override="liq_amplify", sw)
   s = crossfade(s)
