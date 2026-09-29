@@ -332,6 +332,24 @@ class StationArtwork(unittest.TestCase):
             a = admin.Admin(config.Config(root / "config"), None, root / "pl", station_art=art)
             self.assertEqual(a.art(str(pic)), (b"\xff\xd8rain", "image/jpeg"))
 
+    def test_a_picture_installed_as_a_symlink_is_served(self):
+        """How the module ACTUALLY installs them: a tmpfiles `L+` link into the
+        Nix store. The first version of this check called Path.resolve(), which
+        follows the link out to /nix/store — so the picture was no longer "under"
+        the art directory and every station tile came back 400. The test that
+        was supposed to cover this used a plain file, which is not how it is
+        deployed (2026-09-28).
+        """
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); (root / "config").mkdir(); (root / "pl").mkdir()
+            art = root / "art"; art.mkdir()
+            store = root / "store"; store.mkdir()
+            real = store / "abcdef-rain.jpg"; real.write_bytes(b"\xff\xd8rain")
+            link = art / "rain.jpg"; link.symlink_to(real)
+            (root / "pl" / "library.m3u").write_text("#EXTM3U\n/mnt/music/a.mp3\n")
+            a = admin.Admin(config.Config(root / "config"), None, root / "pl", station_art=art)
+            self.assertEqual(a.art(str(link)), (b"\xff\xd8rain", "image/jpeg"))
+
     def test_the_art_endpoint_is_still_not_a_file_browser(self):
         """`art` refuses anything that is neither a library track nor station
         artwork — the station-art directory must not become a way to read the

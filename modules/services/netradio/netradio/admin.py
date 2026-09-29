@@ -465,8 +465,21 @@ class Admin:
 
     @staticmethod
     def _under(path: str, root: Path) -> bool:
+        """Is this path inside the station-art directory?
+
+        Normalised LEXICALLY, not resolved. `Path.resolve()` follows symlinks,
+        and the pictures are installed as symlinks into the Nix store — so
+        resolving turned /var/lib/netradio/config/art/rain.jpg into
+        /nix/store/…-rain.jpg, which is not under the art directory, and every
+        station picture came back 400 (2026-09-28). normpath still collapses
+        `..`, so nothing escapes the directory that way; the directory itself
+        is root-created and service-owned, and what is in it was put there by
+        the module.
+        """
         try:
-            return Path(path).resolve().is_relative_to(root.resolve())
+            p = os.path.normpath(os.path.abspath(path))
+            r = os.path.normpath(os.path.abspath(root))
+            return p == r or p.startswith(r + os.sep)
         except (OSError, ValueError):
             return False
 
