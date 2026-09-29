@@ -268,7 +268,7 @@ createApp({
       audio.play().then(() => { this.status = ""; this.$nextTick(() => this.startViz()); }).catch(err => { this.status = `couldn't start (${err.message})`; });
       this.refresh();
     },
-    stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; this.stopViz(); },
+    stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; this.stopViz(); this.mediaSession(); },
     retune() { try { localStorage.setItem("radio.quality", this.quality); } catch (e) {} if (this.current) this.play(this.current); },
     playTarget(s) {
       this.tab = "now";              // always show the switch happen
@@ -441,6 +441,51 @@ createApp({
       } catch (e) { this.say(e.message); }
     },
 
+    // ---- what Android's notification and the lock screen show ------------------
+    // Without this the page hands the OS nothing, so the notification is a bare
+    // pause button over the page title — no track, no artist, no cover
+    // (Chris, 2026-09-28). Only meaningful for the "here" target: on room or
+    // local the audio is coming out of something else entirely.
+    //
+    // ⚠️ There is no heart here and there cannot be. MediaSessionAction is a
+    // closed list — play, pause, stop, seek*, previoustrack, nexttrack, skipad,
+    // and a few call-related ones — and Android gives a web page no custom
+    // notification buttons. Skip maps to `nexttrack`; the heart stays on the
+    // page.
+    mediaSession() {
+      if (!("mediaSession" in navigator)) return;
+      const ms = navigator.mediaSession;
+      if (this.target !== "here" || !this.current) { ms.metadata = null; ms.playbackState = "none"; return; }
+      const t = this.nowTrack();
+      const cover = this.artOk() ? new URL(this.art, location.href).href : "";
+      const title = (t && t.title) || this.nowLine1 || this.currentStation.name || "Library radio";
+      const key = [title, t && t.artist, cover].join("\u0000");
+      if (key === this._msKey) { ms.playbackState = "playing"; return; }   // same track: leave it alone
+      this._msKey = key;
+      try {
+        ms.metadata = new MediaMetadata({
+          title,
+          artist: (t && t.artist) || "",
+          // the station, where a player would put the album — it is the thing
+          // you actually want to see on a lock screen
+          album: this.currentStation.name || this.site.title,
+          artwork: cover ? [96, 192, 384, 512].map(px => ({ src: cover, sizes: `${px}x${px}`, type: "image/jpeg" })) : [],
+        });
+        ms.playbackState = "playing";
+      } catch (e) { /* older browsers: the bare notification is still fine */ }
+    },
+    setMediaHandlers() {
+      if (!("mediaSession" in navigator)) return;
+      const set = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch (e) {} };
+      set("play", () => { const s = this.lastStation; if (s) this.playTarget(s); });
+      // a live stream cannot be resumed where it left off, so pause IS stop —
+      // better that than a button that silently loses your place
+      set("pause", () => this.stop());
+      set("stop", () => this.stop());
+      set("nexttrack", () => this.skip());
+      set("previoustrack", null);      // there is no going back on a radio
+    },
+
     // ---- visualiser (this phone) ----------------------------------------------
     startViz() {
       const audio = this.$refs.audio, canvas = this.$refs.viz;
@@ -475,8 +520,9 @@ createApp({
     window.addEventListener("resize", () => { this.wide = window.innerWidth > 640; });
     // who this box is, written at build time from the module's options
     getJSON("site.json").then(s => { if (s) { this.site = { ...this.site, ...s }; document.title = this.site.title; } });
-    this.refresh().then(() => this.refreshHeart());
-    setInterval(() => { this.tick = Date.now(); this.refresh().then(() => this.refreshHeart()); }, 10000);
+    this.setMediaHandlers();
+    this.refresh().then(() => { this.refreshHeart(); this.mediaSession(); });
+    setInterval(() => { this.tick = Date.now(); this.refresh().then(() => { this.refreshHeart(); this.mediaSession(); }); }, 10000);
     if (this.target === "room") this.pollReceiver();
     if (this.target === "local") this.pollSpeaker();
     if (this.tab === "sources" && this.target !== "room") this.tab = "now";
