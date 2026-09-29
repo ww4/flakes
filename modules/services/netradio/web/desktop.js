@@ -59,6 +59,7 @@ createApp({
       stations: [], quick: [], counts: {}, up: {}, tiles: {}, histories: {}, nexts: {}, hearts: {},
       current: null, status: "", scanning: false, busy: "", toast: "", tick: 0,
       blocked: "",              // a mount the browser refused to start on its own; the play button takes it
+      paused: false,            // paused by the OS transport: still tuned, and still holding the media session
       query: "", results: [], searchTimer: 0,
       site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "", hasLocal: false, hasRoom: true, bedMount: "" },
       receiver: { name: "", on: false, input: "", volume: 0, volume_max: 100, mute: false, error: "" },
@@ -155,7 +156,7 @@ createApp({
     anythingPlaying() {
       return this.target === "room" ? (this.receiver.on && this.playbackState === "Play")
            : this.target === "local" ? !!this.speaker.playing
-           : !!this.current;
+           : (!!this.current && !this.paused);
     },
     nowStation() {
       const m = this.playingMount;
@@ -377,7 +378,7 @@ createApp({
     // ---- playing ---------------------------------------------------------
     play(m) {
       const audio = this.$refs.audio;
-      this.current = m; this.status = "tuning…"; this._reTries = 0; clearTimeout(this._reTimer);
+      this.current = m; this.paused = false; this.status = "tuning…"; this._reTries = 0; clearTimeout(this._reTimer);
       audio.src = this.streamUrl(m);
       this.applyHereVolume();
       this.$nextTick(() => this.applyBed());
@@ -431,8 +432,9 @@ createApp({
     // the bar's play button with nothing playing: start the station being
     // looked at, else this box's default, else the first in the list
     resumePlay() {
-      // What the browser refused to start for us comes first: it is what the
-      // listener was actually hearing a moment ago.
+      // What the listener was actually hearing comes first — paused by the
+      // media key, then a mount the browser refused to start for us.
+      if (this.paused && this.current && this.target === "here") return this.resumeHere();
       if (this.blocked && this.target === "here") { const m = this.blocked; this.blocked = ""; return this.play(m); }
       const s = this.openStationObj.mount ? this.openStationObj
               : this.stations.find(x => x.mount === this.site.localMount) || this.stations[0];
@@ -477,6 +479,7 @@ createApp({
       // so this is the tab's own level rather than the machine's.
       a.volume = this.hereMuted ? 0 : this.hereVol / 100;
       a.muted = this.hereMuted;
+      this.applyBed();          // the bed is this browser's sound as well
     },
     shownVolume() { return this.target === "local" ? (this.speaker.volume ?? 0) : Math.round(this.receiver.volume || 0); },
 
@@ -690,11 +693,12 @@ createApp({
       if (!("mediaSession" in navigator)) return;
       const ms = navigator.mediaSession;
       if (this.target !== "here" || !this.current) { ms.metadata = null; ms.playbackState = "none"; return; }
+      const playing = this.paused ? "paused" : "playing";
       const t = this.playingTrack;
       const cover = this.artOk() ? new URL(this.art, location.href).href : "";
       const title = (t && t.title) || this.nowLine1 || this.nowStation || "Library radio";
       const key = [title, t && t.artist, cover].join("\u0000");
-      if (key === this._msKey) { ms.playbackState = "playing"; return; }
+      if (key === this._msKey) { ms.playbackState = playing; return; }
       this._msKey = key;
       try {
         ms.metadata = new MediaMetadata({
@@ -703,14 +707,14 @@ createApp({
           album: this.nowStation || this.site.title,
           artwork: cover ? [96, 192, 384, 512].map(px => ({ src: cover, sizes: `${px}x${px}`, type: "image/jpeg" })) : [],
         });
-        ms.playbackState = "playing";
+        ms.playbackState = playing;
       } catch (e) { /* older browsers manage without */ }
     },
     setMediaHandlers() {
       if (!("mediaSession" in navigator)) return;
       const set = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch (e) {} };
-      set("play", () => this.resumePlay());
-      set("pause", () => this.stop());        // a live stream has no resume point
+      set("play", () => this.resumeHere());
+      set("pause", () => this.pauseHere());   // pause, NOT stop: stop ends the session
       set("stop", () => this.stop());
       set("nexttrack", () => this.skip());
       set("previoustrack", null);
@@ -734,8 +738,13 @@ createApp({
     applyBed() {
       const b = this.$refs.bed;
       if (!b || !this.site.bedMount) return;
-      const wanted = this.bedOn && this.target === "here" && !!this.current;
-      b.volume = this.bedVol / 100;
+      const wanted = this.bedOn && this.target === "here" && !!this.current && !this.paused;
+      // Mute is this browser going quiet, so it has to reach the bed too. It
+      // muted only the music, and the rain carried on over the silence
+      // (Chris, 2026-09-29). The bed keeps its own LEVEL — that is the slider's
+      // job — and mute rides on top of it.
+      b.volume = this.hereMuted ? 0 : this.bedVol / 100;
+      b.muted = this.hereMuted;
       if (wanted) {
         if (!b.src) b.src = `radio/${this.site.bedMount}.mp3?t=${Date.now()}`;
         if (b.paused) b.play().catch(() => {});      // a wake can take a moment; the retry below covers it

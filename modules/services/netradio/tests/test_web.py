@@ -224,6 +224,42 @@ class SpeakerTargetParity(unittest.TestCase):
         self.assertIn("site.bedMount", html,
                       "the panel is shown whether or not a bed mount is configured")
 
+    def test_mute_silences_the_rain_as_well_as_the_music(self):
+        """Mute is this browser going quiet. It reached only the <audio> with the
+        music in it, so the rain bed carried on playing over the silence
+        (Chris, 2026-09-29). The bed keeps its own LEVEL — that is what its
+        slider is for — and mute rides on top of it."""
+        js = self.script("desktop.js")
+        self.assertIn("this.hereMuted ? 0 : this.bedVol", js,
+                      "the bed's level ignores mute")
+        self.assertIn("b.muted = this.hereMuted", js, "the bed element is never muted")
+        # and mute has to REACH it: setting the flag is no good if nothing applies it
+        self.assertRegex(js, r"a\.muted = this\.hereMuted;\s*\n\s*this\.applyBed\(\);",
+                         "applyHereVolume does not push the change to the bed")
+
+    def test_the_os_transport_pauses_rather_than_stops(self):
+        """The keyboard's play/pause key, the lock screen and a headset button
+        all talk to whichever page holds the media session — and a page only
+        holds one while it has media LOADED. `stop()` throws the src away, which
+        ends the session, so the key had nothing to come back to and pressing
+        play did nothing (Chris, 2026-09-29).
+
+        So the key pauses: the element stays loaded, the session stays ours, and
+        the state we report has to be the truth or the OS shows the wrong icon
+        and sends the wrong action back.
+        """
+        for script in SCRIPTS:
+            js = self.script(script)
+            self.assertIn("pauseHere", js, f"{script} has no pause that keeps the session")
+            self.assertIn('set("pause", () => this.pauseHere())', js,
+                          f"{script} still hands the pause key to stop(), which ends the session")
+            self.assertIn('set("play", () => this.resumeHere())', js,
+                          f"{script} does not resume what was paused")
+            self.assertNotIn('ms.playbackState = "playing";', js,
+                             f"{script} reports 'playing' unconditionally — it is wrong while paused")
+            self.assertIn('this.paused ? "paused" : "playing"', js,
+                          f"{script} never reports the paused state to the OS")
+
     def test_the_desktop_page_can_drive_and_recover_the_receiver(self):
         """Without resume, a receiver left stopped by a deploy stays stopped
         until somebody notices it went quiet (2026-09-27)."""
