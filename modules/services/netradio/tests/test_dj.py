@@ -347,3 +347,71 @@ class Excursion(unittest.TestCase):
         self.dj.load_playlist()
         self.assertEqual(self.dj.fringe, [])
         self.assertFalse(any("Fringe" in self.dj.choose().path for _ in range(50)))
+
+
+class BreakFilesSurviveARestart(unittest.TestCase):
+    """The DJ renders a break to break-NNNNNN.wav, queues that path, and prunes
+    older ones. Liquidsoap only opens the file when the break's turn comes,
+    minutes later — so anything that removes it in between loses the break
+    silently: Liquidsoap logs `Nonexistent file or ill-formed URI` and plays on,
+    while the DJ's own log still says it queued a break.
+
+    2026-09-28: the counter restarted at 0 with every DJ restart, so the first
+    break was written as break-000001.wav; the prune kept "the newest
+    KEEP_BREAKS by NAME"; and 000001 sorted FIRST among the previous run's
+    leftovers, so the file just written was the one deleted. Two deploys that
+    evening cost two breaks on the station being listened to.
+    """
+
+    def _dj(self, out_dir, breaks_made):
+        """A DJ with the counter it would really have. `breaks_made=0` is a DJ
+        that has just restarted — the case that broke."""
+        d = dj.StationDJ.__new__(dj.StationDJ)
+        d.mount, d.name = "modern-old-time", "Modern Old-time"
+        d.out_dir = out_dir
+        d.voice_gain = "1.8"
+        d.breaks_made = breaks_made
+        d.tts = mock.Mock()
+        d.tts.render.return_value = b"RIFFfake-wav"
+        return d
+
+    @staticmethod
+    def _leftovers(out, lo=2, hi=6):
+        for n in range(lo, hi):
+            (out / f"break-{n:06d}.wav").write_bytes(b"old")
+
+    def test_a_restarted_dj_does_not_delete_the_break_it_just_wrote(self):
+        with tempfile.TemporaryDirectory() as t:
+            out = Path(t)
+            self._leftovers(out)                 # break-000002 … break-000005
+            d = self._dj(out, breaks_made=0)     # …and a counter back at zero
+
+            uri = d.render_break("Here is the news.")
+            self.assertIsNotNone(uri)
+            path = Path(uri[uri.rindex(":") + 1:])          # annotate:…:<path>
+            self.assertTrue(path.exists(),
+                            f"the DJ deleted the break it had just written ({path.name}); "
+                            f"Liquidsoap skips it and the station goes quiet")
+
+    def test_the_counter_resumes_from_what_is_on_disk(self):
+        with tempfile.TemporaryDirectory() as t:
+            out = Path(t)
+            self._leftovers(out)
+            self.assertEqual(dj._highest_break(out), 5)
+            d = self._dj(out, breaks_made=dj._highest_break(out))
+            uri = d.render_break("Hello.")
+            self.assertTrue(Path(uri[uri.rindex(":") + 1:]).name.endswith("000006.wav"),
+                            "numbering restarted and would overwrite a file still on disk")
+
+    def test_an_empty_directory_starts_at_one(self):
+        with tempfile.TemporaryDirectory() as t:
+            self.assertEqual(dj._highest_break(Path(t)), 0)
+
+    def test_the_directory_stays_bounded(self):
+        with tempfile.TemporaryDirectory() as t:
+            out = Path(t)
+            d = self._dj(out, breaks_made=0)
+            for i in range(10):
+                d.render_break(f"Break {i}.")
+            self.assertLessEqual(len(list(out.glob("break-*.wav"))), dj.KEEP_BREAKS,
+                                 "the prune stopped bounding the directory")
