@@ -24,6 +24,7 @@ createApp({
     try { quality = localStorage.getItem("radio.quality") || ""; target = localStorage.getItem("radio.target") || "here"; tab = localStorage.getItem("radio.tab") || "now"; last = { ...last, ...JSON.parse(localStorage.getItem("radio.last") || "{}") }; } catch (e) {}
     return { tiles: {}, stations: [], quick: [], counts: {}, up: {}, histories: {}, nexts: {}, current: null, status: "", quality, scanning: false, last,
              blocked: "",      // a mount the browser refused to start on its own; tap the tile to take it
+             paused: false,    // paused by the OS transport: still tuned, still holding the media session
              ctx: null, analyser: null, raf: 0, wide: window.innerWidth > 640,
              target, tab, receiver: { name: "", on: false, input: "", volume: 0, mute: false, error: "" }, inputs: [], presets: [],
              speaker: { playing: false, mount: "", volume: null, muted: false, error: "" }, speakerPoll: 0,
@@ -270,7 +271,7 @@ createApp({
     play(m) {
       const audio = this.$refs.audio;
       const s = this.stations.find(s => s.mount === m); if (s) this.remember(s);
-      this.current = m; this.status = "tuning…"; this._reTries = 0; clearTimeout(this._reTimer); this.tab = "now";
+      this.current = m; this.paused = false; this.status = "tuning…"; this._reTries = 0; clearTimeout(this._reTimer); this.tab = "now";
       audio.src = this.streamUrl(m);
       audio.play().then(() => { this.status = ""; this.blocked = ""; this.noteHandover(); this.$nextTick(() => this.startViz()); })
                   .catch(err => {
@@ -286,7 +287,26 @@ createApp({
                   });
       this.refresh();
     },
-    stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; this.blocked = ""; this.forgetHandover(); clearTimeout(this._reTimer); this._reTries = 0; this.stopViz(); this.mediaSession(); },
+    stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; this.paused = false; this.blocked = ""; this.forgetHandover(); clearTimeout(this._reTimer); this._reTries = 0; this.stopViz(); this.mediaSession(); },
+
+    // The OS transport — the headset button, the lock screen, the keyboard's
+    // play key — talks to whichever page holds the media session, and a page
+    // only holds one while it has media loaded. `stop()` throws the src away,
+    // which ends the session: the key then has nothing to come back to and
+    // pressing play did nothing (Chris, 2026-09-29). So the key PAUSES.
+    pauseHere() {
+      const a = this.$refs.audio;
+      if (!a || !this.current || this.paused) return;
+      a.pause();
+      this.paused = true;
+      clearTimeout(this._reTimer);      // a pause is not a dropped stream
+      this.stopViz();
+      this.mediaSession();
+    },
+    resumeHere() {
+      if (this.current) { this.paused = false; return this.play(this.current); }
+      const s = this.lastStation; if (s) this.playTarget(s);
+    },
 
     // ---- the view switch -------------------------------------------------
     // This page and the desktop player are separate documents, so following
@@ -310,6 +330,7 @@ createApp({
       } catch (e) {}
       if (!h || !h.mount || !(Date.now() - (h.at || 0) < HANDOVER_MS)) return;
       if (this.target !== "here") return;              // the speakers never stopped
+      if (this.paused) return;                         // paused on purpose: stay paused
       this.play(h.mount);
     },
     retune() { try { localStorage.setItem("radio.quality", this.quality); } catch (e) {} if (this.current) this.play(this.current); },
@@ -499,11 +520,12 @@ createApp({
       if (!("mediaSession" in navigator)) return;
       const ms = navigator.mediaSession;
       if (this.target !== "here" || !this.current) { ms.metadata = null; ms.playbackState = "none"; return; }
+      const playing = this.paused ? "paused" : "playing";
       const t = this.nowTrack();
       const cover = this.artOk() ? new URL(this.art, location.href).href : "";
       const title = (t && t.title) || this.nowLine1 || this.currentStation.name || "Library radio";
       const key = [title, t && t.artist, cover].join("\u0000");
-      if (key === this._msKey) { ms.playbackState = "playing"; return; }   // same track: leave it alone
+      if (key === this._msKey) { ms.playbackState = playing; return; }   // same track: leave it alone
       this._msKey = key;
       try {
         ms.metadata = new MediaMetadata({
@@ -514,16 +536,16 @@ createApp({
           album: this.currentStation.name || this.site.title,
           artwork: cover ? [96, 192, 384, 512].map(px => ({ src: cover, sizes: `${px}x${px}`, type: "image/jpeg" })) : [],
         });
-        ms.playbackState = "playing";
+        ms.playbackState = playing;
       } catch (e) { /* older browsers: the bare notification is still fine */ }
     },
     setMediaHandlers() {
       if (!("mediaSession" in navigator)) return;
       const set = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch (e) {} };
-      set("play", () => { const s = this.lastStation; if (s) this.playTarget(s); });
+      set("play", () => this.resumeHere());
       // a live stream cannot be resumed where it left off, so pause IS stop —
       // better that than a button that silently loses your place
-      set("pause", () => this.stop());
+      set("pause", () => this.pauseHere());   // pause, NOT stop: stop ends the media session
       set("stop", () => this.stop());
       set("nexttrack", () => this.skip());
       set("previoustrack", null);      // there is no going back on a radio
