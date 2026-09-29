@@ -48,11 +48,61 @@ STATE_VERSION = 1
 # Anything here is never part of a legitimate media grab. Hits are reported
 # regardless of category — an executable in a "manual" torrent is still an
 # executable we are seeding.
-DANGEROUS_EXT = {
-    "exe", "scr", "bat", "cmd", "com", "msi", "cpl", "hta", "pif", "lnk",
-    "vbs", "vbe", "js", "jse", "wsf", "wsh", "ps1", "psm1", "reg", "inf",
+#
+# Split by whether CONTENT can corroborate the extension. A .exe either has a
+# PE header or it does not; a .bat is just text, so nothing about its bytes
+# distinguishes a malicious one from a harmless one.
+BINARY_EXEC_EXT = {
+    "exe", "scr", "com", "cpl", "msi", "pif", "dll",
     "jar", "apk", "app", "run", "elf",
 }
+SCRIPT_EXEC_EXT = {
+    "bat", "cmd", "hta", "lnk", "vbs", "vbe", "js", "jse",
+    "wsf", "wsh", "ps1", "psm1", "reg", "inf",
+}
+DANGEROUS_EXT = BINARY_EXEC_EXT | SCRIPT_EXEC_EXT
+
+# Leading bytes of the things a BINARY_EXEC_EXT file would have to be to
+# deserve the name.
+EXEC_MAGIC = (
+    b"MZ",                # DOS/PE  — .exe .scr .com .cpl .dll .pif
+    b"\x7fELF",           # ELF     — Linux
+    b"PK\x03\x04",        # ZIP     — .jar .apk are zip containers
+    b"\xd0\xcf\x11\xe0",  # OLE     — .msi
+    b"#!",                # shebang — .run and friends
+    b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf",   # Mach-O
+    b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe",                          # Mach-O fat / Java class
+)
+
+
+def looks_executable(path: Path) -> tuple[bool, str]:
+    """Do this file's first bytes back up its extension?
+
+    The tool exists because an extension is a claim, not a fact. Trusting a
+    DANGEROUS_EXT to mean "dangerous" is the same mistake in the other
+    direction, and it is not hypothetical: the first two things this ever
+    flagged in anger were both `RARBG_DO_NOT_MIRROR.exe` — 99 bytes of ASCII
+    reading "This is not an .exe file", shipped inside old RARBG releases to
+    discourage mirroring. Two alerts, two non-events, on the channel reserved
+    for real ones.
+
+    Checking the bytes is better than special-casing that filename, which
+    would be a blocklist entry an attacker can simply not match.
+    """
+    try:
+        with path.open("rb") as f:
+            head = f.read(8)
+    except OSError as e:
+        # Unreadable is not exonerating — keep treating it as the extension says.
+        return True, f"unreadable ({e.__class__.__name__})"
+    if not head:
+        return False, "empty file"
+    if any(head.startswith(m) for m in EXEC_MAGIC):
+        return True, ""
+    printable = sum(32 <= b < 127 or b in (9, 10, 13) for b in head)
+    kind = "plain text" if printable == len(head) else "unrecognised data"
+    return False, f"{kind}, no executable header"
 
 VIDEO_EXT = {
     "mkv", "mp4", "m4v", "avi", "mpg", "mpeg", "wmv", "mov", "ts", "m2ts",
@@ -284,14 +334,36 @@ def main() -> int:
             findings.append({"hash": h, "name": name, "category": cat,
                              "kind": kind, "detail": detail, "severity": severity})
 
-        # Tier 1 — free, every torrent, every run.
+        # Tier 1 — extensions. Free for every torrent on every pass; only a
+        # flagged file costs a read, and then only its first 8 bytes.
         hits = [n for n, e in zip(names, exts)
                 if e in DANGEROUS_EXT and not in_disc_structure(n)]
-        if hits:
-            bad = sorted({ext_of(n) for n in hits})
+        real: list[tuple[str, str]] = []
+        fake: list[tuple[str, str]] = []
+        for n in hits:
+            e = ext_of(n)
+            if e in SCRIPT_EXEC_EXT:
+                # A .bat is text by definition — content cannot exonerate it.
+                real.append((n, "script"))
+                continue
+            ok, why = looks_executable(
+                translate(f"{t.get('save_path', '').rstrip('/')}/{n}", path_map))
+            (real if ok else fake).append((n, why))
+
+        if real:
+            exts_seen = sorted({"." + ext_of(n) for n, _ in real})
             add("executable",
-                f"contains {', '.join('.' + b for b in bad)}: "
-                f"{hits[0].rsplit('/', 1)[-1]}", "high")
+                f"contains {', '.join(exts_seen)}: {real[0][0].rsplit('/', 1)[-1]}",
+                "high")
+        if fake:
+            # Named like an executable, isn't one. Worth recording — we are
+            # still handing strangers a file that lies about what it is — but
+            # not worth the channel reserved for things that are real.
+            add("mislabeled-exec",
+                f"{fake[0][0].rsplit('/', 1)[-1]} claims "
+                f".{ext_of(fake[0][0])} but is {fake[0][1]}"
+                + (f" (+{len(fake) - 1} more)" if len(fake) > 1 else ""),
+                "low")
 
         if cat not in managed:
             continue
