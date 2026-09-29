@@ -29,9 +29,11 @@ const RECONNECT_GIVE_UP = 40;
 
 createApp({
   data() {
-    let quality = "", target = "here", view = "wall", openMount = "", hereVol = 100;
+    let quality = "", target = "here", view = "wall", openMount = "", hereVol = 100, bedVol = 35, bedOn = false;
     try {
       hereVol = Math.max(0, Math.min(100, parseInt(localStorage.getItem("radio.volume"), 10) || 100));
+      bedVol = Math.max(0, Math.min(100, parseInt(localStorage.getItem("radio.bedVolume"), 10) || 35));
+      bedOn = localStorage.getItem("radio.bed") === "1";
       quality = localStorage.getItem("radio.quality") || "";
       target = localStorage.getItem("radio.target") || "here";
       view = localStorage.getItem("radio.desktopView") || "wall";
@@ -43,7 +45,7 @@ createApp({
       stations: [], quick: [], counts: {}, up: {}, tiles: {}, histories: {}, nexts: {}, hearts: {},
       current: null, status: "", scanning: false, busy: "", toast: "", tick: 0,
       query: "", results: [], searchTimer: 0,
-      site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "", hasLocal: false, hasRoom: true },
+      site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "", hasLocal: false, hasRoom: true, bedMount: "" },
       receiver: { name: "", on: false, input: "", volume: 0, volume_max: 100, mute: false, error: "" },
       inputs: [], presets: [], menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
       speaker: { playing: false, mount: "", volume: null, muted: false, error: "" },
@@ -53,6 +55,11 @@ createApp({
       // (Chris, 2026-09-29). Kept in localStorage so a reload is not a
       // surprise at full volume.
       hereVol, hereMuted: false,
+      // The rain bed: a SECOND stream, mixed here rather than at the station.
+      // Mixing it into the broadcast would put rain under everyone who tuned
+      // in — including a receiver that cannot turn it off — and one level
+      // cannot suit both a soft track and a loud one (Chris, 2026-09-29).
+      bedOn, bedVol,
       roomPoll: 0, speakerPoll: 0, ctx: null, analyser: null, raf: 0,
       // Whether each output has actually answered yet. The rail shows all
       // of them at once, and until 2026-09-29 it rendered the ones that
@@ -358,11 +365,12 @@ createApp({
       this.current = m; this.status = "tuning…"; this._reTries = 0; clearTimeout(this._reTimer);
       audio.src = this.streamUrl(m);
       this.applyHereVolume();
+      this.$nextTick(() => this.applyBed());
       audio.play().then(() => { this.status = ""; this.$nextTick(() => this.startViz()); })
                   .catch(err => { this.status = `couldn't start (${err.message})`; });
       this.refresh();
     },
-    stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; clearTimeout(this._reTimer); this._reTries = 0; this.stopViz(); this.mediaSession(); },
+    stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; clearTimeout(this._reTimer); this._reTries = 0; this.stopViz(); this.applyBed(); this.mediaSession(); },
     retune() { try { localStorage.setItem("radio.quality", this.quality); } catch (e) {} if (this.current) this.play(this.current); },
     playTarget(s) {
       if (this.target === "room") return this.playOnReceiver(s);
@@ -659,6 +667,34 @@ createApp({
       set("previoustrack", null);
     },
 
+    // ---- the rain bed ----------------------------------------------------
+    // A second <audio> on its own mount, with its own level. It follows the
+    // music: it plays while something is playing in this browser and stops
+    // when that stops, so it never becomes rain on its own by accident.
+    // Requesting the mount also wakes its encoder, the same as any other.
+    bedToggle() {
+      this.bedOn = !this.bedOn;
+      try { localStorage.setItem("radio.bed", this.bedOn ? "1" : "0"); } catch (e) {}
+      this.applyBed();
+    },
+    bedSet(level) {
+      this.bedVol = Math.max(0, Math.min(100, Math.round(level)));
+      try { localStorage.setItem("radio.bedVolume", String(this.bedVol)); } catch (e) {}
+      this.applyBed();
+    },
+    applyBed() {
+      const b = this.$refs.bed;
+      if (!b || !this.site.bedMount) return;
+      const wanted = this.bedOn && this.target === "here" && !!this.current;
+      b.volume = this.bedVol / 100;
+      if (wanted) {
+        if (!b.src) b.src = `radio/${this.site.bedMount}.mp3?t=${Date.now()}`;
+        if (b.paused) b.play().catch(() => {});      // a wake can take a moment; the retry below covers it
+      } else if (b.src) {
+        b.pause(); b.removeAttribute("src"); b.load();
+      }
+    },
+
     // ---- keeping the stream alive across a restart -----------------------
     // Every deploy restarts Liquidsoap, which drops every listener. The page
     // used to set "stream error — try again" and stop, so a browser left
@@ -680,6 +716,7 @@ createApp({
       const audio = this.$refs.audio;
       audio.src = this.streamUrl(m);        // a fresh URL, so nothing is cached
       this.applyHereVolume();
+      this.$nextTick(() => this.applyBed());
       audio.play()
         .then(() => { this.status = ""; this._reTries = 0; this.$nextTick(() => this.startViz()); })
         .catch(() => this.scheduleReconnect());
@@ -734,6 +771,12 @@ createApp({
     // "error" is what a mid-flight drop looks like. Both mean reconnect.
     audio.addEventListener("error", () => this.scheduleReconnect());
     audio.addEventListener("ended", () => this.scheduleReconnect());
+    const bed = this.$refs.bed;
+    if (bed) {
+      const again = () => { if (this.bedOn && this.current) setTimeout(() => { bed.removeAttribute("src"); this.applyBed(); }, 2000); };
+      bed.addEventListener("error", again);
+      bed.addEventListener("ended", again);
+    }
     audio.addEventListener("waiting", () => { this.status = "buffering…"; });
     audio.addEventListener("playing", () => { this.status = ""; this._reTries = 0; });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") this.remote = false; });
@@ -741,6 +784,7 @@ createApp({
     // who this box is, written at build time from the module's options
     getJSON("site.json").then(s => {
       if (s) { this.site = { ...this.site, ...s }; document.title = this.site.title; }
+      this.applyBed();
       this.refreshZones();          // site.json is what says which outputs exist
     });
     this.applyHereVolume();

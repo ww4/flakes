@@ -413,3 +413,19 @@ body { overflow: hidden; height: 100vh; }
 }
 .railfoot a { color: var(--muted); text-decoration: none; }
 .railfoot a:hover, .railfoot a:focus-visible { color: var(--accent); text-decoration: underline; }
+
+/* ---- the rain bed -------------------------------------------------------- */
+/* A second stream with its own level, so the bed is the listener's choice and
+   not the station's. Collapsed to just its button until it is switched on —
+   the slider only means anything when there is rain to set. */
+.bed { display: flex; align-items: center; gap: .4rem; }
+.bed input { width: 76px; accent-color: var(--accent); }
+.bedtoggle {
+  width: 30px; height: 30px; flex: none; display: grid; place-items: center;
+  border: 1px solid var(--line); border-radius: 50%;
+  background: transparent; color: var(--muted);
+}
+.bedtoggle svg { width: 17px; height: 17px; fill: none; stroke: currentColor;
+                 stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.bedtoggle:hover { color: var(--fg); border-color: #4a4642; }
+.bedtoggle.on { color: var(--accent); border-color: var(--accent-2); background: #d9743f14; }

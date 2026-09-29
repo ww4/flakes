@@ -234,6 +234,10 @@ let hm = homelab-modules.nixosModules; in
     # rescan during a Jellyfin outage would have quietly emptied the Holiday
     # station, whose 897 tracks all live under XMAS/Music. Discovery stays on;
     # it is now a convenience rather than a dependency (2026-09-29).
+    # Rain under whatever else is playing, offered per listener rather than
+    # mixed into the broadcast. The seamless loop, not the variety station.
+    bedMount = "rainymood";
+
     libraryRoots = [
       "/mnt/fusion/Music"
       "/mnt/fusion/arr/media/music"

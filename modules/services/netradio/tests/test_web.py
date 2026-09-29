@@ -187,6 +187,20 @@ class SpeakerTargetParity(unittest.TestCase):
         self.assertNotIn('class="vol" v-if="target !== \'here\'"', html,
                          "the volume control is still hidden for this browser")
 
+    def test_the_rain_bed_is_mixed_at_the_listener(self):
+        """Some music sits well over rain. Mixing it into the STATION would put
+        rain under everyone who tuned in — including a receiver that cannot turn
+        it off — and one level cannot suit both a soft track and a loud one
+        (Chris, 2026-09-29). So it is a second stream with its own level, and
+        the page must not be able to broadcast it."""
+        js = self.script("desktop.js")
+        html = (WEB / "desktop.html").read_text()
+        self.assertIn("applyBed", js, "desktop.js cannot play a bed")
+        self.assertIn("radio.bedVolume", js, "the bed has no level of its own")
+        self.assertIn('ref="bed"', html, "there is no second audio element to mix")
+        self.assertIn("site.bedMount", html,
+                      "the panel is shown whether or not a bed mount is configured")
+
     def test_the_desktop_page_can_drive_and_recover_the_receiver(self):
         """Without resume, a receiver left stopped by a deploy stays stopped
         until somebody notices it went quiet (2026-09-27)."""
