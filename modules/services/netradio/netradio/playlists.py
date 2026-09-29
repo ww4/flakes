@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from netradio.config import FAMILY_SOUND, FAMILY_WORDS, Config, write_atomic
+from netradio.conventions import COVER_NAMES, NOT_AN_ARTIST
 
 log = logging.getLogger("netradio.playlists")
 
@@ -268,9 +269,6 @@ def build_artists(tracks: list[Track]) -> dict:
     return out
 
 
-# a folder that is not an artist (same idea as the spotlight chooser's)
-NOT_AN_ARTIST = re.compile(r"\b(19|20)\d\d\b|various|unknown|compilation|soundtrack|sampler", re.I)
-COVER_NAMES = ("cover.jpg", "Cover.jpg", "folder.jpg", "Folder.jpg", "cover.png", "front.jpg", "Front.jpg", "album.jpg")
 
 
 def has_art(path: str) -> bool:

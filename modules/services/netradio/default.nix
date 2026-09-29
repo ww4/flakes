@@ -329,17 +329,13 @@ let
   };
 
   # The radio page and the admin page (web/): Vue 3 (global build, no
-  # bundler) on Pico CSS, both vendored here by hash — the vhost is
+  # bundler), vendored here by hash — the vhost is
   # Tailscale-only, so nothing loads from a CDN at runtime. Everything
   # station-shaped the pages need is RUNTIME data (the scanner's now/ files
   # and the admin API); nothing here depends on the station list.
   vueJs = pkgs.fetchurl {
     url = "https://cdn.jsdelivr.net/npm/vue@3.5.13/dist/vue.global.prod.js";
     hash = "sha256-xFm6fMjbZcmCWJ+l1kx/9HiHfo5bD9dWgyB87GpOieg=";
-  };
-  picoCss = pkgs.fetchurl {
-    url = "https://cdn.jsdelivr.net/npm/@picocss/pico@2.0.6/css/pico.min.css";
-    hash = "sha256-3V/VWRr9ge4h3MEXrYXAFNw/HxncLXt9EB6grMKSdMI=";
   };
   # The names the page puts on its three playback targets. Written at build
   # time rather than hardcoded in app.js, so the page does not say "Gromit
@@ -385,12 +381,11 @@ let
 
     mkdir -p $out/admin $out/vendor
     cp ${siteJson} $out/site.json
-    cp ${./web}/index.html ${./web}/app.js ${./web}/remote.css ${./web}/ui.css $out/
+    cp ${./web}/index.html ${./web}/app.js ${./web}/remote.css ${./web}/radio.js ${./web}/tokens.css $out/   # radio.js: shared fetch helpers; tokens.css: the shared palette
     cp ${./web}/desktop.html ${./web}/desktop.js ${./web}/desktop.css $out/   # the wide-screen page (the remote redirects there)
     cp ${./web}/manifest.webmanifest ${./web}/sw.js ${./web}/icon.svg ${./web}/icon-192.png ${./web}/icon-512.png $out/   # the PWA
-    cp ${./web/admin}/index.html ${./web/admin}/admin.js $out/admin/
+    cp ${./web/admin}/index.html ${./web/admin}/admin.js ${./web/admin}/admin.css $out/admin/
     cp ${vueJs} $out/vendor/vue.global.prod.js
-    cp ${picoCss} $out/vendor/pico.min.css
   '';
 
   # YCast's menu (config/stations.yml) and the Liquidsoap script

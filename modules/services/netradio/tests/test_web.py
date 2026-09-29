@@ -16,6 +16,10 @@ from pathlib import Path
 WEB = Path(os.environ.get("NETRADIO_WEB") or (Path(__file__).resolve().parent.parent / "web"))
 PAGES = ["index.html", "desktop.html"]
 SCRIPTS = ["app.js", "desktop.js"]
+# Everything nginx serves as a page. The admin page is not part of the
+# player-parity checks — it is a different thing — but it can 404 on a missing
+# stylesheet exactly like the others, so the packaging check covers it too.
+SERVED_PAGES = PAGES + ["admin/index.html"]
 
 
 def setUpModule():
@@ -58,7 +62,10 @@ class TemplateScope(unittest.TestCase):
         for page, script in zip(PAGES, SCRIPTS):
             html = (WEB / page).read_text()
             js = (WEB / script).read_text()
-            bad = template_calls(html) & module_functions(js)
+            # radio.js too: the shared fetch helpers are module scope like any
+            # other, and a template calling one fails exactly the same way.
+            shared = (WEB / "radio.js").read_text() if (WEB / "radio.js").exists() else ""
+            bad = template_calls(html) & (module_functions(js) | module_functions(shared))
             self.assertEqual(bad, set(),
                              f"{page} calls module-scope {sorted(bad)} from {script} — "
                              f"move it onto the component as a method")
@@ -160,16 +167,23 @@ class Packaging(unittest.TestCase):
         if not nix_path or not Path(nix_path).exists():
             self.skipTest("no NETRADIO_NIX — this runs for real in the netradio-web build")
         nix = Path(nix_path).read_text()
-        for page in PAGES:
+        for page in SERVED_PAGES:
             html = (WEB / page).read_text()
             for ref in re.findall(r'(?:href|src)\s*=\s*"([^"]+)"', html):
                 if ref.startswith(("http://", "https://", "#", "data:", "/")):
                     continue
-                name = ref.split("?")[0].lstrip("./")
-                if not (WEB / name).exists():
+                # resolved against the PAGE's directory: the admin page reaches
+                # its shared files with ../, and a naive strip would look for
+                # them in the wrong place and silently skip the check
+                target = ((WEB / page).parent / ref.split("?")[0]).resolve()
+                if not target.is_file() or not target.is_relative_to(WEB.resolve()):
                     continue          # written at build time (site.json) or by the scanner (now/…)
-                self.assertIn(name, nix,
-                              f"{page} loads {name}, which default.nix never copies into $out — "
+                name = target.name
+                # A WHOLE path component, not a substring. `assertIn("radio.js", nix)`
+                # passed against "internet-radio.json", so a genuinely missing
+                # file looked installed (found reviewing this, 2026-09-29).
+                if not re.search(rf"(?<![\w.-]){re.escape(name)}(?!\w)", nix):
+                    self.fail(f"{page} loads {name}, which default.nix never copies into $out — "
                               f"it 404s on the deployed page")
 
 
