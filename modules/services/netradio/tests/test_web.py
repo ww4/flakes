@@ -147,6 +147,23 @@ class SpeakerTargetParity(unittest.TestCase):
         self.assertIn("heroArt", (WEB / "index.html").read_text(),
                       "index.html's hero does not use it")
 
+    def test_the_rail_does_not_report_a_status_it_never_fetched(self):
+        """The desktop rail lists every output at once. Only the SELECTED one
+        was ever polled, so the others rendered straight from the component's
+        defaults — a speaker that was playing read "stopped" until you clicked
+        it (Chris, 2026-09-29). A status nobody asked for is a guess, and it
+        must not look like a fact.
+        """
+        js = self.script("desktop.js")
+        self.assertIn("refreshZones", js,
+                      "desktop.js never polls the outputs that are not selected")
+        for flag in ("speakerSeen", "receiverSeen"):
+            self.assertIn(flag, js, f"desktop.js cannot tell whether {flag} is known or assumed")
+        self.assertIn('"checking…"', js,
+                      "the rail asserts a state before the first answer instead of saying so")
+        # and it has to actually run: on load, and on the tick
+        self.assertIn("this.refreshZones();", js, "refreshZones is defined but never called")
+
     def test_the_desktop_page_can_drive_and_recover_the_receiver(self):
         """Without resume, a receiver left stopped by a deploy stays stopped
         until somebody notices it went quiet (2026-09-27)."""
