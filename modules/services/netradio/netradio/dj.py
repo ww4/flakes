@@ -53,6 +53,21 @@ LOOKAHEAD = 2           # items queued behind the playing one. A real station ke
 NO_REPEAT = 300         # tracks remembered to avoid replaying too soon
 POLL = 5.0              # seconds between queue checks
 KEEP_BREAKS = 4         # rendered break files kept per station
+
+
+def _highest_break(out_dir) -> int:
+    """The largest break-NNNNNN.wav already in the station's directory, so a
+    restarted DJ carries on numbering instead of starting over on top of files
+    that are still there."""
+    best = 0
+    try:
+        for f in out_dir.glob("break-*.wav"):
+            digits = f.stem.split("-")[-1]
+            if digits.isdigit():
+                best = max(best, int(digits))
+    except OSError:
+        pass
+    return best
 INBOX_RETRY_S = 60      # a skip/request press is retried this long if Liquidsoap is down, then dropped
 EXCURSION = 0.1         # share of base-programme picks from the station's fringe (<mount>-fringe.m3u);
                         # a station's `excursion` setting overrides it
@@ -440,7 +455,12 @@ class StationDJ:
         self.recent: deque[str] = deque(maxlen=NO_REPEAT)
         self.since_break: list[Track] = []
         self.until_break = self.rng.randint(*breaks_every)
-        self.breaks_made = 0
+        # Resume from what is already on disk. A fresh counter meant the
+        # first break after every restart was written as break-000001.wav —
+        # which then OVERWROTE a leftover of that name (possibly one Liquidsoap
+        # was still reading) and, worse, sorted first among the leftovers so the
+        # prune below deleted it. See render_break (2026-09-28).
+        self.breaks_made = _highest_break(out_dir)
         self.profile_path = profile
         self.overrides_path = overrides
         self.profile_mtime = -1.0
@@ -774,7 +794,16 @@ class StationDJ:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         path = self.out_dir / f"break-{self.breaks_made:06d}.wav"
         path.write_bytes(wav)
-        for old in sorted(self.out_dir.glob("break-*.wav"))[:-KEEP_BREAKS]:
+        # Keep the newest KEEP_BREAKS by MTIME, and never the one just written.
+        # Sorting by NAME assumed the counter only ever goes up; it resets on
+        # every restart, so the newest file could sort first and be the one
+        # deleted. That is exactly what happened: Liquidsoap then logged
+        # `Nonexistent file or ill-formed URI ".../break-000001.wav"` and
+        # skipped the break silently — the DJ went quiet once after every
+        # restart, with nothing in its own log to show for it (2026-09-28).
+        others = sorted((f for f in self.out_dir.glob("break-*.wav") if f != path),
+                        key=lambda f: f.stat().st_mtime)
+        for old in others[:max(0, len(others) - (KEEP_BREAKS - 1))]:
             old.unlink(missing_ok=True)
         log.info("%s: break: %s", self.mount, text)
         self.last_break_text = text
