@@ -574,6 +574,7 @@ class StationDJ:
         self.programme = programme          # segments/spotlights (curated stations)
         self.segment: dict | None = None    # the slot the queue is currently drawing from
         self.promo_next = False             # say the day's schedule at the next break
+        self.skip_when_filled = False       # a skip is owed, once fill() has rewritten the queue
 
     # -- inputs
     def load_playlist(self) -> None:
@@ -732,7 +733,7 @@ class StationDJ:
             self.play_requests(pending)
 
     def skip_and_rewrite(self) -> None:
-        """Skip what is playing AND throw away what was queued behind it.
+        """Throw away what was queued, and arrange for the skip once it is rewritten.
 
         A break is written when its track is queued, and names what came before
         and what comes next. Skip or "never" a song and everything already
@@ -740,30 +741,50 @@ class StationDJ:
         — the DJ cheerfully announcing a track the listener has just banned
         (Chris, 2026-09-29). Liquidsoap 2.4 cannot remove one item from a
         request queue, so the only way to unsay it is to drop the queue and let
-        fill() write it again; fill() calls this from handle_inbox and tops up
-        immediately afterwards, so the gap is one pass.
+        fill() write it again.
 
-        `flush_and_skip` does both in ONE command. Two commands — skip, then
-        flush — would take two tracks, which is the mistake this file already
-        made once with the output's skip sitting above the crossfade
-        (2026-09-19). If Liquidsoap does not know the command, fall back to the
-        plain skip: a stale break is a poor thing, a skip button that does
-        nothing is worse.
+        Which is three steps in one pass, and the ORDER is the whole point:
+
+            flush the queue   → the stale break and its track are gone
+            fill()            → a fresh break, naming what really follows
+            skip the fallback → the current track ends, the new queue takes over
+
+        Skipping first would leave the fallback with an empty queue, and the
+        station's plain shuffle — unfiltered by the listener's skips and nevers
+        — would hold the air for a whole track before the DJ could get back in.
+
+        The skip must go to `src_<mount>` (the FALLBACK), never to the queue.
+        `q_<mount>.flush_and_skip` looked like the tidy one-command version of
+        this and shipped on 2026-09-29; it is silent whenever the queue is not
+        the source on air, which is exactly the case after every deploy. Chris
+        pressed skip four times at 15:24 against a Bowie track the shuffle had
+        picked up during a restart, and heard all 2:23 of it.
         """
-        reply = self.ls.command(f"q_{self.mount}.flush_and_skip")
-        if not reply.startswith("ERROR"):
+        reply = self.ls.command(f"src_{self.mount}.flush")
+        if reply.startswith("ERROR"):
+            log.warning("%s: flush refused (%s) — skipping without rewriting the break",
+                        self.mount, reply.strip())
+        else:
             self.pushed = []
             self.since_break = []
             self.until_break = 0          # the next thing queued gets a fresh break
-            log.info("%s: skipped, and dropped the queue so the break is rewritten", self.mount)
+        self.skip_when_filled = True
+
+    def finish_skip(self) -> None:
+        """Take the current track off, now that the queue behind it is rewritten.
+
+        Called at the end of fill(). Separate from skip_and_rewrite() only so
+        the refill can happen in between; the flag is a flag and not a counter
+        because four presses in a row are still one skip of whatever is on air.
+        """
+        if not self.skip_when_filled:
             return
-        log.warning("%s: flush_and_skip refused (%s) — falling back to a plain skip",
-                    self.mount, reply.strip())
+        self.skip_when_filled = False
         reply = self.ls.command(f"src_{self.mount}.skip")
         if reply.startswith("ERROR"):
-            log.error("%s: skip refused by Liquidsoap: %s", self.mount, reply)
+            log.error("%s: skip refused by Liquidsoap: %s", self.mount, reply.strip())
         else:
-            log.info("%s: skipped on request", self.mount)
+            log.info("%s: skipped, and the queue behind it was rewritten", self.mount)
 
     def play_requests(self, wanted: list[str]) -> None:
         """Queue a batch of listener requests, announced together.
@@ -938,7 +959,10 @@ class StationDJ:
 
     def fill(self) -> None:
         """Top the queue up to `lookahead`. Each step queues one track, with a
-        break in front of it when the count says so."""
+        break in front of it when the count says so.
+
+        A skip asked for by handle_inbox() is taken at the END of this, once
+        there is something written to take over — see skip_and_rewrite()."""
         self.check_settings()
         self.check_segment()
         self.handle_inbox()
@@ -946,8 +970,10 @@ class StationDJ:
         while n < self.lookahead:
             track, following = self.next_track()
             if track is None:
+                # Nothing to queue is no reason to leave the button dead: the
+                # station's shuffle will cover, which is what it is for.
                 log.warning("%s: playlist empty, nothing to queue", self.mount)
-                return
+                break
             if self.until_break <= 0 and self.breaks_every != (0, 0):
                 uri = self.make_break(track)
                 if uri:
@@ -960,6 +986,7 @@ class StationDJ:
             self.since_break.append(track)
             self.until_break -= 1
             n += 1
+        self.finish_skip()
         self.write_next(n)
 
     def run(self, stop: threading.Event) -> None:

@@ -379,6 +379,16 @@ let
     # status 4 (2026-09-27).
     NETRADIO_NIX=${./default.nix} NETRADIO_PKG=${./netradio} \
       python3 -m unittest discover -s ${./tests} -t ${./tests} -p 'test_unit_flags.py' -v
+    # …and that Liquidsoap accepts the script its encoders run on. That script
+    # is rendered at SERVICE START, so until now a typo in the template was
+    # caught by liquidsoap itself — with every station off the air at once.
+    # --check parses and type-checks and opens no outputs. liquidsoap is
+    # already in this module's closure, so this costs the check and nothing else.
+    # This one has to IMPORT the package to render, where the two above only
+    # read files, so the store path needs a directory actually called netradio.
+    mkdir -p pkgroot && ln -s ${./netradio} pkgroot/netradio
+    PYTHONPATH=$PWD/pkgroot NETRADIO_LIQUIDSOAP=${pkgs.liquidsoap}/bin/liquidsoap \
+      python3 -m unittest discover -s ${./tests} -t ${./tests} -p 'test_liq.py' -v
 
     mkdir -p $out/admin $out/vendor
     cp ${siteJson} $out/site.json

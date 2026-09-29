@@ -68,14 +68,43 @@ class Cleaning(unittest.TestCase):
 
 
 class FakeLS:
-    """Liquidsoap's queue commands, minimally: push returns a RID, queue lists
-    pending RIDs; `play()` consumes one, as a track ending would."""
+    """Liquidsoap's server, enough of it to tell the two SOURCES apart.
+
+    A station is `fallback(track_sensitive=true, [q, pl])` — the DJ's queue and
+    the station's plain shuffle — and either one can hold the air. A skip aimed
+    at the QUEUE does nothing at all while the shuffle is playing, which is how
+    a dead skip button shipped on 2026-09-29: the old fake had a single source,
+    so a skip sent to the wrong one still counted as a skip.
+
+    `on_air` is what a listener hears. `play()` ends it, as a track running out
+    would, and the fallback re-selects: the queue if it has anything, else the
+    shuffle.
+    """
 
     def __init__(self, no_flush=False):
         self.pending = []
         self.pushed = []
         self.rid = 0
-        self.no_flush = no_flush      # an older Liquidsoap without flush_and_skip
+        self.no_flush = no_flush      # an older Liquidsoap that knows neither command
+        self.shuffled = 0
+        self.on_air = self._shuffle_track()   # nothing queued yet, so the shuffle covers
+        self.heard = [self.on_air]            # everything that has held the air, in order
+
+    def _shuffle_track(self):
+        """The shuffle hands out a different track each time it is asked, so a
+        skip that lands can be told from one that did nothing."""
+        self.shuffled += 1
+        return f"shuffle-{self.shuffled}"
+
+    def _select(self):
+        """What the fallback picks at a track boundary: the queue if it has
+        anything, else the station's shuffle."""
+        self.on_air = self.pending.pop(0) if self.pending else self._shuffle_track()
+        self.heard.append(self.on_air)
+
+    @property
+    def shuffle_on_air(self):
+        return isinstance(self.on_air, str) and self.on_air.startswith("shuffle")
 
     def command(self, cmd):
         if cmd.startswith("q_x.push "):
@@ -91,20 +120,33 @@ class FakeLS:
             # way and the DJ must never depend on it again (2026-09-25)
             return "ERROR: unknown command, type \"help\" to get a list of commands."
         if cmd == "q_x.flush_and_skip":
-            # the real one: ends the current request AND empties the queue
+            # Liquidsoap's own: empties the queue and skips THE QUEUE's track.
+            # Silent whenever the shuffle is the source on air.
             if self.no_flush:
                 return "ERROR: unknown command, type \"help\" to get a list of commands."
             self.flushed = getattr(self, "flushed", 0) + 1
-            self.skipped = getattr(self, "skipped", 0) + 1
+            self.pending = []
+            if not self.shuffle_on_air:
+                self.skipped = getattr(self, "skipped", 0) + 1
+                self._select()
+            return "Done"
+        if cmd == "src_x.flush":
+            # ours: drop what is queued, leave the air alone
+            if self.no_flush:
+                return "ERROR: unknown command, type \"help\" to get a list of commands."
+            self.flushed = getattr(self, "flushed", 0) + 1
             self.pending = []
             return "Done"
         if cmd == "src_x.skip":
+            # ours: end whatever the FALLBACK selected, queue or shuffle
             self.skipped = getattr(self, "skipped", 0) + 1
+            self._select()
             return "Done"
         raise AssertionError(cmd)
 
     def play(self):
-        self.pending.pop(0)
+        """A track runs out and the fallback re-selects."""
+        self._select()
 
 
 class FakeTTS:
@@ -321,6 +363,7 @@ class Feedback(unittest.TestCase):
         self.assertTrue(fresh.exists())
         self.ls.command = real
         self.dj.handle_inbox()
+        self.dj.finish_skip()          # fill() does this; the skip is taken after the rewrite
         self.assertEqual(self.ls.skipped, 1)                               # fired once the socket is back
         self.assertFalse(fresh.exists())
 
@@ -334,6 +377,7 @@ class Feedback(unittest.TestCase):
         try:
             with self.assertLogs("netradio.dj", level="ERROR") as cm:
                 self.dj.handle_inbox()
+                self.dj.finish_skip()
         finally:
             logging.disable(logging.CRITICAL)
         self.assertTrue(any("skip refused" in line for line in cm.output))
@@ -506,21 +550,61 @@ class SkipRewritesTheSpot(unittest.TestCase):
         self.assertEqual(ls.pending[:1], before)
         self.assertEqual(getattr(ls, "flushed", 0), 0)
 
-    def test_flush_and_skip_is_one_command_not_two(self):
-        """Two commands would take two tracks — the mistake this file already
-        made with the output's skip sitting above the crossfade (2026-09-19)."""
+    def _dj(self, ls):
+        d = dj.StationDJ.__new__(dj.StationDJ)
+        d.mount, d.ls = "x", ls
+        d.pushed, d.since_break, d.until_break = [{"a": 1}], [1], 3
+        d.skip_when_filled = False
+        return d
+
+    def test_the_skip_takes_the_track_off_even_when_the_shuffle_is_playing(self):
+        """THE regression (Chris, 2026-09-29 15:24). After a deploy the queue is
+        empty, so the fallback's shuffle holds the air — and the shuffle honours
+        none of the listener's skips or nevers. Four presses against a Bowie
+        track on Ambient did nothing and all 2:23 of it played, because the skip
+        was being sent to the queue instead of to the fallback."""
+        ls = FakeLS()
+        self.assertTrue(ls.shuffle_on_air, "the fixture is not set up as a restart")
+        was = ls.on_air
+        d = self._dj(ls)
+        d.skip_and_rewrite()
+        d.finish_skip()
+        self.assertNotEqual(ls.on_air, was, "the button did nothing: the same track kept playing")
+        self.assertEqual(ls.skipped, 1, "skipped more than once")
+
+    def test_the_queue_is_dropped_before_the_refill_and_skipped_after(self):
+        """The order is the point. Flush first so the stale break goes; refill so
+        there is a fresh one; skip LAST so the fallback has something of the DJ's
+        to take over with, instead of dropping into the shuffle for a track."""
         ls = FakeLS()
         ls.command("q_x.push annotate:a=1:/m/A/Al/01 One.mp3")
-        ls.command("q_x.flush_and_skip")
-        self.assertEqual(ls.skipped, 1, "skipped more than once")
-        self.assertEqual(ls.pending, [])
+        ls.play()                                   # the queue is on air now
+        ls.command("q_x.push annotate:a=1:/m/A/Al/02 Stale.mp3")
+        d = self._dj(ls)
+        d.skip_and_rewrite()
+        self.assertEqual(ls.pending, [], "the stale running order survived the flush")
+        self.assertEqual(getattr(ls, "skipped", 0), 0, "skipped before the queue was rewritten")
+        self.assertEqual(d.pushed, [], "the break state was not reset for a rewrite")
+        ls.command("q_x.push annotate:a=1:/m/A/Al/03 Fresh.mp3")   # what fill() writes
+        d.finish_skip()
+        self.assertEqual(ls.skipped, 1)
+        self.assertFalse(ls.shuffle_on_air, "dropped into the shuffle instead of the rewritten queue")
 
-    def test_it_falls_back_when_liquidsoap_has_no_flush_and_skip(self):
+    def test_four_presses_in_a_row_are_one_skip(self):
+        """Chris pressed it four times. Each press rewrites the queue; only one
+        track comes off the air."""
+        ls = FakeLS()
+        d = self._dj(ls)
+        for _ in range(4):
+            d.skip_and_rewrite()
+        d.finish_skip()
+        self.assertEqual(ls.skipped, 1)
+
+    def test_it_still_skips_when_liquidsoap_cannot_flush(self):
         """A stale break is a poor thing; a skip button that does nothing is
         worse."""
-        dj_ = dj.StationDJ.__new__(dj.StationDJ)
-        dj_.mount, dj_.ls = "x", FakeLS(no_flush=True)
-        dj_.pushed, dj_.since_break, dj_.until_break = [{"a": 1}], [1], 3
-        dj_.skip_and_rewrite()
-        self.assertEqual(dj_.ls.skipped, 1, "the fallback skip never happened")
-        self.assertEqual(dj_.pushed, [{"a": 1}], "state was cleared although nothing was flushed")
+        d = self._dj(FakeLS(no_flush=True))
+        d.skip_and_rewrite()
+        d.finish_skip()
+        self.assertEqual(d.ls.skipped, 1, "the skip never happened")
+        self.assertEqual(d.pushed, [{"a": 1}], "state was cleared although nothing was flushed")
