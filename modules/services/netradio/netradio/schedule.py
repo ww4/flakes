@@ -33,6 +33,7 @@ import random
 import re
 
 from netradio.config import compatible
+from netradio.conventions import NOT_AN_ARTIST
 
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 MIN_TRACKS_FOR_SPOTLIGHT = 8      # to be offered on the admin page at all
@@ -45,7 +46,6 @@ AUTO_FULL_MARKS_TRACKS = 80       # depth stops counting past this
 AUTO_SOUND_FULL = 0.15            # a classifier mean this high is unmistakably the family
 AUTO_SHORTLIST = 25               # the pool the day's pick is drawn from
 # a folder that is not an artist: a year, a label sampler, an unknown
-NOT_AN_ARTIST = re.compile(r"\b(19|20)\d\d\b|various|unknown|compilation|soundtrack|sampler", re.I)
 
 
 def slot_days(spec) -> set[str]:
@@ -88,11 +88,6 @@ def active_slot(station: str, slots: list[dict], now: dt.datetime) -> dict | Non
 
 
 # --- auto picks ---------------------------------------------------------------
-
-def spotlight_candidates(artists: dict, families: list[str] | None) -> list[str]:
-    return sorted(a for a, info in artists.items()
-                  if info.get("tracks", 0) >= MIN_TRACKS_FOR_SPOTLIGHT and compatible(families, info.get("families")))
-
 
 def playable_count(info: dict, era_rule: dict | None) -> int:
     """How many of an artist's tracks a station with this era rule may play.

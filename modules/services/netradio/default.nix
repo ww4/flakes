@@ -385,7 +385,7 @@ let
 
     mkdir -p $out/admin $out/vendor
     cp ${siteJson} $out/site.json
-    cp ${./web}/index.html ${./web}/app.js ${./web}/remote.css ${./web}/ui.css $out/
+    cp ${./web}/index.html ${./web}/app.js ${./web}/remote.css ${./web}/ui.css ${./web}/radio.js $out/   # radio.js: the fetch helpers both pages share
     cp ${./web}/desktop.html ${./web}/desktop.js ${./web}/desktop.css $out/   # the wide-screen page (the remote redirects there)
     cp ${./web}/manifest.webmanifest ${./web}/sw.js ${./web}/icon.svg ${./web}/icon-192.png ${./web}/icon-512.png $out/   # the PWA
     cp ${./web/admin}/index.html ${./web/admin}/admin.js $out/admin/

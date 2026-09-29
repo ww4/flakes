@@ -35,7 +35,8 @@ from urllib.parse import urlparse
 
 log = logging.getLogger("netradio.wake")
 
-MOUNT_RE = re.compile(r"^/radio/([a-z0-9-]+)\.mp3$")
+# The stream path nginx hands us, NOT a mount name — it carries one.
+STREAM_PATH = re.compile(r"^/radio/([a-z0-9-]+)\.mp3$")
 
 
 class Liquidsoap:
@@ -182,7 +183,7 @@ def make_handler(ctl: Controller):
                 return
             # $request_uri is the raw request line's URI: query string included,
             # nothing decoded (nginx's own gixy check refuses $uri in a header).
-            m = MOUNT_RE.match(urlparse(self.headers.get("X-Original-URI", "")).path)
+            m = STREAM_PATH.match(urlparse(self.headers.get("X-Original-URI", "")).path)
             if not m:
                 self._reply(400, "X-Original-URI is not a /radio/<mount>.mp3 path")
                 return

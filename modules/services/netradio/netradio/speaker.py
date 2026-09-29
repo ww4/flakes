@@ -39,9 +39,10 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
+from netradio.conventions import is_mount
+
 log = logging.getLogger("netradio.speaker")
 
-MOUNT_RE = re.compile(r"^[a-z0-9-]+$")
 
 # ALSA's `default` is redirected to PipeWire by 99-pipewire-default.conf, and
 # PipeWire on this box is a per-user service belonging to the desktop session.
@@ -355,7 +356,7 @@ def make_handler(player: Player, mixer: Mixer):
             try:
                 if path == "/play":
                     mount = str(body.get("mount") or "")
-                    if not MOUNT_RE.match(mount):
+                    if not is_mount(mount):
                         return self._reply(400, {"error": "mount must be a station mount"})
                     player.play(mount)
                 elif path == "/stop":

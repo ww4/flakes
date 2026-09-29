@@ -58,7 +58,10 @@ class TemplateScope(unittest.TestCase):
         for page, script in zip(PAGES, SCRIPTS):
             html = (WEB / page).read_text()
             js = (WEB / script).read_text()
-            bad = template_calls(html) & module_functions(js)
+            # radio.js too: the shared fetch helpers are module scope like any
+            # other, and a template calling one fails exactly the same way.
+            shared = (WEB / "radio.js").read_text() if (WEB / "radio.js").exists() else ""
+            bad = template_calls(html) & (module_functions(js) | module_functions(shared))
             self.assertEqual(bad, set(),
                              f"{page} calls module-scope {sorted(bad)} from {script} — "
                              f"move it onto the component as a method")
@@ -168,8 +171,11 @@ class Packaging(unittest.TestCase):
                 name = ref.split("?")[0].lstrip("./")
                 if not (WEB / name).exists():
                     continue          # written at build time (site.json) or by the scanner (now/…)
-                self.assertIn(name, nix,
-                              f"{page} loads {name}, which default.nix never copies into $out — "
+                # A WHOLE path component, not a substring. `assertIn("radio.js", nix)`
+                # passed against "internet-radio.json", so a genuinely missing
+                # file looked installed (found reviewing this, 2026-09-29).
+                if not re.search(rf"(?<![\w.-]){re.escape(name)}(?!\w)", nix):
+                    self.fail(f"{page} loads {name}, which default.nix never copies into $out — "
                               f"it 404s on the deployed page")
 
 

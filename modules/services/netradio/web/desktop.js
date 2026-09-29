@@ -24,24 +24,6 @@
 
 const { createApp } = Vue;
 
-async function getJSON(url) {
-  try { const r = await fetch(url, { cache: "no-store" }); return r.ok ? await r.json() : null; } catch (e) { return null; }
-}
-async function call(method, url, body) {
-  const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
-  let data = null; try { data = await r.json(); } catch (e) {}
-  if (!r.ok) throw new Error((data && (data.error || data.hint)) || `${method} ${url}: ${r.status}`);
-  return data;
-}
-function mountsOf(status) {
-  let src = status && status.icestats && status.icestats.source;
-  if (!src) return {};
-  if (!Array.isArray(src)) src = [src];
-  const out = {};
-  for (const s of src) { const m = (s.listenurl || "").split("/").pop().replace(/\.mp3$/, ""); out[m] = { title: s.title || "", listeners: s.listeners | 0 }; }
-  return out;
-}
-
 createApp({
   data() {
     let quality = "", target = "here", view = "wall", openMount = "";

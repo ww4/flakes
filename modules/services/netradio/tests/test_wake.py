@@ -130,13 +130,13 @@ class Qualities(unittest.TestCase):
             self.assertEqual(ls.log, ["rock-lo.start"])
 
 
-class MountRegex(unittest.TestCase):
+class StreamPathRegex(unittest.TestCase):
     def test_paths(self):
-        self.assertEqual(wake.MOUNT_RE.match("/radio/blues-jazz.mp3").group(1), "blues-jazz")
-        self.assertIsNone(wake.MOUNT_RE.match("/radio/../etc.mp3"))
-        self.assertIsNone(wake.MOUNT_RE.match("/radio/rock.mp3?x=1"))
-        self.assertEqual(wake.MOUNT_RE.match(urlparse("/radio/rock.mp3?x=1").path).group(1), "rock")
-        self.assertIsNone(wake.MOUNT_RE.match("/rock.mp3"))
+        self.assertEqual(wake.STREAM_PATH.match("/radio/blues-jazz.mp3").group(1), "blues-jazz")
+        self.assertIsNone(wake.STREAM_PATH.match("/radio/../etc.mp3"))
+        self.assertIsNone(wake.STREAM_PATH.match("/radio/rock.mp3?x=1"))
+        self.assertEqual(wake.STREAM_PATH.match(urlparse("/radio/rock.mp3?x=1").path).group(1), "rock")
+        self.assertIsNone(wake.STREAM_PATH.match("/rock.mp3"))
 
 
 if __name__ == "__main__":

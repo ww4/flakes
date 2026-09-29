@@ -38,6 +38,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from netradio import feeds as feedrules
+from netradio.conventions import COVER_NAMES, is_mount
 from netradio import jellyfin
 from netradio import ratings
 from netradio import schedule as sched
@@ -45,18 +46,12 @@ from netradio.config import write_atomic, FAMILIES, Config, compatible, new_id
 
 log = logging.getLogger("netradio.admin")
 LOCK = threading.Lock()
-MOUNT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
-# Cover files that count as a track's artwork, in preference order. Kept
-# beside `art()` AND the cache fingerprint, so the two cannot disagree
-# about what the thumbnail was derived from.
+
+
 def _fold(s: str) -> str:
     """Match artist names across accents and case: the folder is whatever the
     ripper wrote, Jellyfin's name is whatever the metadata said."""
     return unicodedata.normalize("NFKD", s).casefold().strip()
-
-
-COVER_NAMES = ("cover.jpg", "Cover.jpg", "folder.jpg", "Folder.jpg",
-               "cover.png", "front.jpg", "Front.jpg", "album.jpg")
 
 
 class Admin:
@@ -222,7 +217,7 @@ class Admin:
         have = [s for s in stations if s.get("kind") == "specialty" and s.get("feed") == fid]
         if on and not have:
             feed = self.cfg.feeds().get(fid, {})
-            mount = fid if MOUNT_RE.match(fid) else new_id(fid, {s["mount"] for s in stations})
+            mount = fid if is_mount(fid) else new_id(fid, {s["mount"] for s in stations})
             if any(s["mount"] == mount for s in stations):
                 mount = new_id(fid, {s["mount"] for s in stations})
             stations.append({"mount": mount, "name": feed.get("title", fid), "kind": "specialty", "feed": fid,
