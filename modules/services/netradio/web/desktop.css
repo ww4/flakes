@@ -29,7 +29,11 @@ body {
   color: var(--fg);
   font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   overflow: hidden;                       /* the panes scroll, the page does not */
+  /* a column, so anything above the app (the phone-view banner) takes its own
+     height and the app gets the rest — rather than the app guessing at it */
+  height: 100vh;
 }
+#app { display: flex; flex-direction: column; height: 100%; }
 [v-cloak] { display: none; }
 button { font: inherit; color: inherit; cursor: pointer; }
 button:focus-visible, input:focus-visible, a:focus-visible {
@@ -40,7 +44,8 @@ button:focus-visible, input:focus-visible, a:focus-visible {
   display: grid;
   grid-template-columns: var(--rail) 1fr var(--aside);
   grid-template-rows: 1fr var(--bar);
-  height: 100vh;
+  flex: 1;
+  min-height: 0;
 }
 .app.no-aside { grid-template-columns: var(--rail) 1fr; }
 
@@ -401,3 +406,23 @@ button:focus-visible, input:focus-visible, a:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* ---- the way back to the phone ------------------------------------------ */
+/* A phone that tapped through to this page could not get back: the page had no
+   footer, and index.html keeps redirecting here because the choice is
+   remembered in localStorage. On a narrow screen the escape is the first thing
+   on the page and impossible to miss. */
+.escape {
+  display: block; padding: .7rem 1rem; background: var(--accent); color: #17120e;
+  font-weight: 600; font-size: .92rem; text-align: center; text-decoration: none;
+}
+.escape:hover, .escape:focus-visible { background: var(--accent-2); color: #fff; }
+.escape { flex: none; }
+
+.railfoot {
+  display: flex; flex-wrap: wrap; gap: .1rem .7rem; align-items: baseline;
+  padding: .55rem .95rem .7rem; border-top: 1px solid var(--line);
+  font-size: .73rem;
+}
+.railfoot a { color: var(--muted); text-decoration: none; }
+.railfoot a:hover, .railfoot a:focus-visible { color: var(--accent); text-decoration: underline; }

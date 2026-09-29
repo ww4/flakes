@@ -10,7 +10,15 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="desktop.css">
 
-<div class="app" :class="{'no-aside': view !== 'station'}" id="app" v-cloak>
+<div id="app" v-cloak>
+  <!-- A phone that tapped the desktop link had NO way back: this page
+       dropped the old footer, and index.html keeps redirecting here
+       because the choice is remembered (Chris, 2026-09-28). On a narrow
+       screen the way out is the first thing on the page. -->
+  <a class="escape" v-if="narrow" href="./?view=remote">
+    Desktop layout — tap for the phone view</a>
+
+  <div class="app" :class="{'no-aside': view !== 'station', narrow: narrow}">
 
   <!-- ===== left rail: where it plays, then what plays ====================== -->
   <nav class="rail">
@@ -57,6 +65,13 @@
         </button>
       </template>
       <p class="hint" v-if="scanning">The library scan is still running — stations appear when it finishes.</p>
+    </div>
+    <div class="railfoot">
+      <a href="./?view=remote">Phone view</a>
+      <a href="admin/">Admin</a>
+      <a href="now/stations.m3u" title="For a radio app">M3U</a>
+      <a href="now/stations.pls" title="For a radio app">PLS</a>
+      <a href="now/stations-lo.m3u" title="96 kbps, for cellular">96k</a>
     </div>
   </nav>
 
@@ -337,6 +352,8 @@
       <p class="r-note">No sleep timer, tone, dimmer, scenes or FM mono over the network — the receiver keeps those on the front panel.</p>
     </section>
   </div>
+
+  </div><!-- .app -->
 
   <p class="toast" v-if="toast">{{ toast }}</p>
   <audio ref="audio" preload="none" style="display:none"></audio>

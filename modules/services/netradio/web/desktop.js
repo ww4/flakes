@@ -68,6 +68,9 @@ createApp({
       // broken-image glyph — worse than the coloured monogram it should fall
       // back to. Retried after 30 s so a slow art service is not written off.
       badArt: {},
+      // matches index.html's own wide-screen test, so the two pages agree
+      // about what counts as a phone
+      narrow: !window.matchMedia("(min-width: 900px)").matches,
     };
   },
 
@@ -612,6 +615,7 @@ createApp({
     audio.addEventListener("waiting", () => { this.status = "buffering…"; });
     audio.addEventListener("playing", () => { this.status = ""; });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") this.remote = false; });
+    window.addEventListener("resize", () => { this.narrow = !window.matchMedia("(min-width: 900px)").matches; });
     // who this box is, written at build time from the module's options
     getJSON("site.json").then(s => { if (s) { this.site = { ...this.site, ...s }; document.title = this.site.title; } });
     this.refresh().then(() => this.refreshHeart());
