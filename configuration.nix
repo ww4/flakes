@@ -228,7 +228,18 @@ let hm = homelab-modules.nixosModules; in
     domain = "radio.rosemaryacres.com";
     title = "Rosemary Acres Radio";
     # The Jellyfin library, and where Lidarr puts new albums (lidarr.nix).
-    libraryRoots = [ "/mnt/fusion/Music" "/mnt/fusion/arr/media/music" ];
+    # Named explicitly rather than left to Jellyfin's library configuration to
+    # volunteer. The scanner takes these PLUS whatever Jellyfin reports, and
+    # when Jellyfin cannot be reached it falls back to `found = []` — so a
+    # rescan during a Jellyfin outage would have quietly emptied the Holiday
+    # station, whose 897 tracks all live under XMAS/Music. Discovery stays on;
+    # it is now a convenience rather than a dependency (2026-09-29).
+    libraryRoots = [
+      "/mnt/fusion/Music"
+      "/mnt/fusion/arr/media/music"
+      "/mnt/fusion/XMAS/Music"          # Holiday
+      "/mnt/fusion/pinchflat/music"     # audio pulled by pinchflat
+    ];
 
     # The two ambient beds have no album covers to build a tile from, so they
     # get pictures of their own. rainymood.jpg is a crop of rainymood.com's own
