@@ -374,6 +374,25 @@ class StationArtwork(unittest.TestCase):
             self.assertEqual(tiles["rain"]["covers"], [str(art / "rain.jpg")])
             self.assertNotIn("icon", tiles["rain"])
 
+    def test_a_station_picture_is_marked_as_one(self):
+        """`art: true` distinguishes a picture chosen FOR the station from a
+        mosaic of its albums. The phone's now-playing hero stands in with the
+        former when a track has no cover of its own; standing in with a mosaic
+        would put some other album on screen as though it were playing."""
+        from netradio import playlists as pl
+        with tempfile.TemporaryDirectory() as d:
+            art = Path(d); (art / "rain.jpg").write_bytes(b"\xff\xd8x")
+            tiles = pl.station_tiles([{"mount": "rain", "name": "Rain", "kind": "fixed"}],
+                                     {}, {}, {}, art_dir=art)
+            self.assertIs(tiles["rain"]["art"], True)
+
+    def test_a_mosaic_is_not_marked_as_station_art(self):
+        from netradio import playlists as pl
+        with tempfile.TemporaryDirectory() as d:
+            tiles = pl.station_tiles([{"mount": "folk", "name": "Folk", "kind": "curated"}],
+                                     {"folk": []}, {}, {}, art_dir=Path(d))
+            self.assertNotIn("art", tiles["folk"])
+
     def test_without_a_picture_a_fixed_station_still_gets_its_icon(self):
         from netradio import playlists as pl
         with tempfile.TemporaryDirectory() as d:

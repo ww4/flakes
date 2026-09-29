@@ -130,6 +130,16 @@ class SpeakerTargetParity(unittest.TestCase):
             self.assertIn('setActionHandler', js, f"{script} sets no media control handlers")
             self.assertIn('"nexttrack"', js, f"{script} does not offer skip on the notification")
 
+    def test_the_now_screen_falls_back_to_the_station_picture(self):
+        """An ambient bed has no track, so no track cover — and the phone's hero
+        showed a monogram even though the station has a picture of its own
+        (Chris, 2026-09-29). The desktop had this via heroCovers; the phone did
+        not, which is the usual direction of drift reversed."""
+        self.assertIn("heroArt", self.script("app.js"),
+                      "app.js has no station-picture fallback for the hero")
+        self.assertIn("heroArt", (WEB / "index.html").read_text(),
+                      "index.html's hero does not use it")
+
     def test_the_desktop_page_can_drive_and_recover_the_receiver(self):
         """Without resume, a receiver left stopped by a deploy stays stopped
         until somebody notices it went quiet (2026-09-27)."""
