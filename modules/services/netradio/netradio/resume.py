@@ -1,9 +1,11 @@
 """`netradio resume` — put the receiver back on the station it was playing.
 
 Every encoder restarts when Liquidsoap does, which is any deploy that changes
-the package, and that drops every listener for a moment. The phone reconnects
-by itself and the local speaker has a watchdog that restarts its player. A
-receiver does not: an R-N301 goes to Stop and stays there. On 2026-09-27 Chris
+the package, and that drops every listener for a moment. The browser pages
+reconnect by themselves (since 2026-09-29 — before that they said "stream error
+— try again" and stopped, which is how this comment came to be wrong) and the
+local speaker has a watchdog that restarts its player. A receiver does not: an
+R-N301 goes to Stop and stays there. On 2026-09-27 Chris
 reported no audio on Classic Country in the living room four hours after the
 deploy that had silenced it, and nothing was broken — the receiver had simply
 stopped and nobody had told it to start again.
