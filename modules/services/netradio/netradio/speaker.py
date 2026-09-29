@@ -235,7 +235,7 @@ class Player:
     def url(self, mount: str) -> str:
         return f"{self.base}/{mount}.mp3"
 
-    def wake(self, mount: str) -> None:
+    def wake(self, mount: str, wait: float = 25.0) -> bool:
         """Start the station's encoder before connecting to it.
 
         The encoders are on-demand: nginx fires `auth_request /_wake` when a
@@ -243,15 +243,35 @@ class Player:
         start that output. Connecting straight to Icecast skips all of that,
         so the mount does not exist and Icecast answers 404 — which is what
         this service did on every attempt until 2026-09-25. Calling the wake
-        service directly is the same door, without nginx's https redirect."""
+        service directly is the same door, without nginx's https redirect.
+
+        KEEPS TRYING. Straight after a deploy this service and Liquidsoap start
+        in the same second, and for the first few seconds Liquidsoap's control
+        socket does not exist yet, so the wake answers 503. One attempt then
+        gave up, ffmpeg was pointed at a mount Icecast did not have, and the
+        speakers sat in a 404 restart loop until something happened to work —
+        about fifteen seconds of silence on every deploy, and a page of alarming
+        log (2026-09-29). netradio-resume already waits like this, for the same
+        reason and after the same discovery.
+        """
         if not self.wake_url:
-            return
+            return True
         req = urllib.request.Request(self.wake_url + "/wake",
                                      headers={"X-Original-URI": f"/radio/{mount}.mp3"})
-        try:
-            urllib.request.urlopen(req, timeout=30).read()
-        except Exception as e:
-            log.warning("wake for %s failed (%s) — trying the mount anyway", mount, e)
+        deadline = time.monotonic() + max(0.0, wait)
+        last = ""
+        while True:
+            try:
+                urllib.request.urlopen(req, timeout=30).read()
+                return True
+            except Exception as e:
+                last = str(e)
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(2)
+        log.warning("wake for %s never answered within %.0fs (%s) — trying the mount anyway",
+                    mount, wait, last)
+        return False
 
     def command(self, mount: str) -> list[str]:
         """The argv, separately so a test can read the device back out of it."""
@@ -262,10 +282,10 @@ class Player:
                 "-i", self.url(mount),
                 "-f", "alsa", self.device]
 
-    def play(self, mount: str) -> None:
+    def play(self, mount: str, wake_wait: float = 25.0) -> None:
         with self.lock:
             self.stop()
-            self.wake(mount)
+            self.wake(mount, wake_wait)
             cmd = self.command(mount)
             # inherit the unit's environment (PATH comes from Environment= in
             # the service) — hardcoding PATH here broke the player anywhere
@@ -419,7 +439,10 @@ def main(argv: list[str] | None = None) -> int:
     threading.Thread(target=player.watch, args=(stop,), daemon=True).start()
 
     if args.default_mount:
-        player.play(args.default_mount)
+        # At boot this races Liquidsoap, which needs a good ten seconds
+        # before its control socket exists. Nobody is waiting on a button
+        # here, so wait properly rather than thrash on 404s.
+        player.play(args.default_mount, wake_wait=120.0)
 
     srv = ThreadingHTTPServer((args.listen, args.port), make_handler(player, mixer))
     # Serve on a THREAD and wait here. The obvious shape — serve_forever() in

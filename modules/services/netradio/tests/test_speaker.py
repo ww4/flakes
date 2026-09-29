@@ -303,13 +303,41 @@ class BedCheck(unittest.TestCase):
         self.assertEqual(seen, [("http://127.0.0.1:8011/wake", "/radio/rain.mp3")])
 
     def test_a_failed_wake_still_tries_the_mount(self):
+        """wake_wait=0: give up immediately. The point of this test is the
+        fallback, not the waiting — see the next one for that."""
         with tempfile.TemporaryDirectory() as d:
             fake = Path(d) / "player"; fake.write_text(f"#!{sys.executable}\nimport time; time.sleep(5)\n"); fake.chmod(0o755)
             pl = speaker.Player("http://127.0.0.1:8020", str(fake), wake="http://127.0.0.1:8011")
             with mock.patch.object(speaker.urllib.request, "urlopen", side_effect=OSError("down")):
-                pl.play("rain")
+                pl.play("rain", wake_wait=0)
             alive = pl.alive(); pl.stop()
         self.assertTrue(alive)
+
+    def test_the_wake_is_retried_while_liquidsoap_is_still_coming_up(self):
+        """After a deploy this service and Liquidsoap start in the same second,
+        and the wake answers 503 until Liquidsoap's control socket exists. One
+        attempt then gave up and ffmpeg was pointed at a mount Icecast did not
+        have yet — about fifteen seconds of silence on every deploy, in a 404
+        restart loop (2026-09-29)."""
+        pl = speaker.Player("http://127.0.0.1:8020", "/bin/true", wake="http://127.0.0.1:8011")
+        calls = []
+
+        def flaky(req, timeout=None):
+            calls.append(1)
+            if len(calls) < 3:
+                raise OSError("503 wake failed: no such file or directory")
+            return mock.MagicMock(read=lambda: b"")
+
+        with mock.patch.object(speaker.urllib.request, "urlopen", side_effect=flaky), \
+             mock.patch.object(speaker.time, "sleep"):          # no real waiting in a test
+            self.assertTrue(pl.wake("rain", wait=30))
+        self.assertEqual(len(calls), 3, "the wake gave up instead of waiting for Liquidsoap")
+
+    def test_the_wake_gives_up_eventually_rather_than_blocking_for_ever(self):
+        pl = speaker.Player("http://127.0.0.1:8020", "/bin/true", wake="http://127.0.0.1:8011")
+        with mock.patch.object(speaker.urllib.request, "urlopen", side_effect=OSError("down")), \
+             mock.patch.object(speaker.time, "sleep"):
+            self.assertFalse(pl.wake("rain", wait=4))
 
     def test_the_device_is_an_argument_not_an_environment_variable(self):
         # The previous version of this test asserted `pl.device == "plughw:0,0"`
@@ -439,7 +467,12 @@ class Shutdown(unittest.TestCase):
                  "--icecast", "http://127.0.0.1:1",
                  "--default-mount", "rain",
                  "--ffmpeg", str(fake)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+                # Its own process group. The service spawns the fake ffmpeg as a
+                # CHILD, and killing only the parent orphaned that child to loop
+                # for ever — one was found still running two and a half days
+                # after a test run (2026-09-29). The group is cleaned up below.
+                start_new_session=True)
             try:
                 # wait for it to be listening, so we are not racing startup
                 for _ in range(100):
@@ -462,6 +495,12 @@ class Shutdown(unittest.TestCase):
                 if p.poll() is None:
                     p.kill()
                     p.wait(timeout=10)
+                # and anything it spawned: the player is a child of the service,
+                # not of this test, so it outlives p unless the group is signalled
+                try:
+                    os.killpg(os.getpgid(p.pid), sig.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
 
 
 class VolumeCeiling(unittest.TestCase):
