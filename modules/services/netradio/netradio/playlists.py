@@ -346,7 +346,12 @@ def station_tiles(stations: list[dict], station_pools: dict[str, list[str]], art
         base = s.get("base") or {}
         art = station_art(art_dir, m)
         if art is not None:
-            tiles[m] = {"covers": [str(art)]}               # a picture chosen for this station
+            # `art: true` marks a picture chosen FOR this station, as opposed to
+            # a mosaic of its albums. The phone's now-playing hero uses it as a
+            # stand-in when the track itself has no cover; it must not do that
+            # with a mosaic, which would show some other album as though it were
+            # the one playing.
+            tiles[m] = {"covers": [str(art)], "art": True}
             continue
         if s.get("kind") == "fixed":
             tiles[m] = {"icon": "rain", "covers": []}       # an ambient bed has no artists to show

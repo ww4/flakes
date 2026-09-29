@@ -104,6 +104,23 @@ createApp({
       const np = this.np; if (!np) return "";
       return this.nowKind === "pandora" ? [np.artist, np.album].filter(Boolean).join(" · ") : (np.artist || "");
     },
+    // The station being heard, ambient beds included — `feedbackMount` excludes
+    // them, because they have no DJ to talk to.
+    heroMount() {
+      return this.target === "local" ? (this.speaker.mount || "")
+           : this.target === "here" ? (this.current || "")
+           : (this.roomMount || "");
+    },
+    // What the now-playing hero shows: the track's own cover, else a picture
+    // chosen for the station. An ambient bed has no track and so no cover, and
+    // fell through to the monogram even though the station has a picture of its
+    // own (Chris, 2026-09-29). Only `art: true` tiles qualify — a mosaic would
+    // put some other album on screen as though it were playing.
+    heroArt() {
+      if (this.artOk()) return this.art;
+      const t = this.heroMount && this.tiles[this.heroMount];
+      return t && t.art && (t.covers || []).length ? this.thumb(t.covers[0], 700) : "";
+    },
     art() {
       // a library track: its embedded picture / folder cover via the admin API;
       // Pandora & co: the unit's own album art, relayed by ync-api. The <img>'s
