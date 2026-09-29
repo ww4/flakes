@@ -1,14 +1,25 @@
-// Library radio — admin, as a Vue 3 app. Talks to /admin/api (netradio admin).
-const { createApp } = Vue;
-const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+// Library radio — the admin, as a COMPONENT rather than a page of its own.
+//
+// It used to be a third document (admin/index.html + its own createApp), which
+// meant reaching it was a navigation: the player's <audio> element was torn
+// down and the music stopped. The view handover added in #377 restarted the
+// stream on arrival, and Chris was right that that is not the same thing —
+// "the handover stops and restarts the stream. What I'm asking, is can we
+// write the admin into the same page so the music doesn't need to stop?"
+// (2026-09-29). So: no navigation at all. The desktop player renders this as a
+// view beside the wall, and nothing touches the audio element.
+//
+// Two hosts mount it, from one definition:
+//
+//   /          the player, <admin-panel base="admin/">
+//   /admin/    on its own, for a bookmark and the phone's ⚙ link
+//
+// The markup lives in panel.html and is fetched at runtime — the pages have no
+// build step, and a 250-line template inside a JavaScript string would be
+// worse than the problem it solved. `base` is what tells the component where
+// the API is from where it happens to be mounted.
 
-async function api(method, path, body) {
-  const r = await fetch(`api${path}`, { method, headers: { "Content-Type": "application/json" },
-                                        body: body === undefined ? undefined : JSON.stringify(body) });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || `${r.status}`);
-  return j;
-}
+const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
 // A tag field: chips + an input with suggestions (datalist). Enter or comma
 // adds; only suggested values are accepted when suggestions are given.
@@ -34,8 +45,11 @@ const TagInput = {
   </span>`,
 };
 
-createApp({
+window.AdminPanel = {
   components: { "tag-input": TagInput },
+  // Where the admin API is, relative to the page doing the mounting: "" from
+  // /admin/, "admin/" from the player at /.
+  props: { base: { type: String, default: "" } },
   data() {
     return { state: { feeds: {}, stations: [], schedule: [], artists: {}, families: [], today: {}, pending_requests: [] },
              options: {}, tab: "feeds", openId: null, edit: {}, add: { title: "", description: "", family: [], listenable: true, shellac: false },
@@ -44,8 +58,8 @@ createApp({
              pandora: { stations: {}, plays: 0 } };
   },
   computed: {
-    // The rail says how much of each there is, so you can see there is nothing
-    // on a tab without opening it.
+    // The tab strip says how much of each there is, so you can see there is
+    // nothing on a tab without opening it.
     tabs() {
       return [{ id: "feeds", title: "Feeds", count: Object.keys(this.state.feeds).length || "" },
               { id: "stations", title: "Stations", count: this.state.stations.length || "" },
@@ -57,10 +71,17 @@ createApp({
     selected() { return this.state.stations.find(s => s.mount === this.sel) || null; },
   },
   methods: {
+    async api(method, path, body) {
+      const r = await fetch(`${this.base}api${path}`, { method, headers: { "Content-Type": "application/json" },
+                                                       body: body === undefined ? undefined : JSON.stringify(body) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `${r.status}`);
+      return j;
+    },
     say(msg, err) { this.flash = msg; this.flashErr = !!err; clearTimeout(this._t); this._t = setTimeout(() => this.flash = "", 7000); },
     async load() {
-      this.state = await api("GET", "/state");
-      try { this.pandora = await api("GET", "/pandora"); } catch (e) {}
+      this.state = await this.api("GET", "/state");
+      try { this.pandora = await this.api("GET", "/pandora"); } catch (e) {}
       this.slots = {};
       for (const s of this.state.schedule) {
         const custom = Array.isArray(s.days);
@@ -74,24 +95,24 @@ createApp({
       try {
         const body = { title: this.edit.title, description: this.edit.description, family: this.edit.family, listenable: this.edit.listenable, shellac: this.edit.shellac };
         if (this.edit.rule.trim() !== this.edit._rule0.trim()) body.rule = JSON.parse(this.edit.rule);
-        const r = await api("PUT", `/feeds/${id}`, body);
+        const r = await this.api("PUT", `/feeds/${id}`, body);
         this.say(r.recompile ? "Saved — the description changed, so the rule will be rebuilt." : "Saved; apply requested.");
         await this.load(); this.openFeed(id);
       } catch (e) { this.say(e.message, true); }
     },
     async showAnswer(id) {
       if (this.answers[id]) { delete this.answers[id]; return; }
-      try { const r = await api("GET", `/feeds/${id}/answer`); this.answers[id] = r.answer || "(no answer kept yet — rebuild the rule once)"; }
+      try { const r = await this.api("GET", `/feeds/${id}/answer`); this.answers[id] = r.answer || "(no answer kept yet — rebuild the rule once)"; }
       catch (e) { this.say(e.message, true); }
     },
-    async compileFeed(id) { try { await api("POST", `/feeds/${id}/compile`); this.say("Rebuilding the rule from the description — a minute or two."); await this.load(); } catch (e) { this.say(e.message, true); } },
+    async compileFeed(id) { try { await this.api("POST", `/feeds/${id}/compile`); this.say("Rebuilding the rule from the description — a minute or two."); await this.load(); } catch (e) { this.say(e.message, true); } },
     async deleteFeed(id) {
       if (!confirm(`Delete feed "${this.state.feeds[id].title}"?`)) return;
-      try { await api("DELETE", `/feeds/${id}`); this.openId = null; this.say("Feed removed; apply requested."); await this.load(); } catch (e) { this.say(e.message, true); }
+      try { await this.api("DELETE", `/feeds/${id}`); this.openId = null; this.say("Feed removed; apply requested."); await this.load(); } catch (e) { this.say(e.message, true); }
     },
     async addFeed() {
       try {
-        const r = await api("POST", "/feeds", this.add);
+        const r = await this.api("POST", "/feeds", this.add);
         this.say(`Feed added as ${r.id}; the agent is building its rule.`);
         this.add = { title: "", description: "", family: [], listenable: true, shellac: false }; this.openId = r.id;
         await this.load(); this.openFeed(r.id);
@@ -104,7 +125,7 @@ createApp({
                     breaks_every: st.breaks_every === undefined || st.breaks_every === null ? "" : String(st.breaks_every),
                     excursion: typeof st.excursion === "number" ? String(Math.round(st.excursion * 100)) : "" };
       if (st.kind !== "specialty" && !this.options[st.mount])
-        this.options[st.mount] = await api("GET", `/options?station=${encodeURIComponent(st.mount)}`);
+        this.options[st.mount] = await this.api("GET", `/options?station=${encodeURIComponent(st.mount)}`);
     },
     slotsOf(mount) { return this.slots[mount] ||= []; },
     slotCount(mount) { return this.slotsOf(mount).length; },
@@ -136,21 +157,34 @@ createApp({
           body.family = this.edit.family;
           if (this.edit.excursion !== "") body.excursion = Number(this.edit.excursion);
           body.base = JSON.parse(this.edit.base || "{}");
-          const r = await api("PUT", "/schedule", this.allSlots());
+          const r = await this.api("PUT", "/schedule", this.allSlots());
           this.scheduleMsg = `schedule: ${r.count} slot(s)`;
         }
-        await api("PUT", `/stations/${st.mount}`, body);
+        await this.api("PUT", `/stations/${st.mount}`, body);
         this.say("Saved; apply requested."); this.options = {};
         await this.load(); await this.select(this.selected);
       } catch (e) { this.say(e.message, true); }
     },
-    async apply() { try { await api("POST", "/apply"); this.say("Apply requested: rescan, and a Liquidsoap restart if the station list changed."); await this.load(); } catch (e) { this.say(e.message, true); } },
+    async apply() { try { await this.api("POST", "/apply"); this.say("Apply requested: rescan, and a Liquidsoap restart if the station list changed."); await this.load(); } catch (e) { this.say(e.message, true); } },
   },
   watch: {
     openId(id) { if (id && this.tab === "feeds" && this.state.feeds[id]) this.openFeed(id); },
   },
   mounted() {
     this.load().then(() => { if (this.curated.length) this.select(this.curated[0]); }).catch(e => this.say(e.message, true));
-    setInterval(() => { if (!this.openId && this.tab === "feeds") this.load().catch(() => {}); }, 30000);   // don't clobber an open edit
+    // Don't clobber an open edit. The interval is cleared on unmount now that
+    // this can be closed without the page going away with it.
+    this._poll = setInterval(() => { if (!this.openId && this.tab === "feeds") this.load().catch(() => {}); }, 30000);
   },
-}).mount("#app");
+  unmounted() { clearInterval(this._poll); clearTimeout(this._t); },
+};
+
+// Fetch panel.html and hand back the finished component. `where` is the path to
+// the markup from the mounting page; `base` the path to the API.
+window.adminPanel = function (where, base) {
+  return Vue.defineAsyncComponent(async () => ({
+    ...window.AdminPanel,
+    props: { base: { type: String, default: base } },
+    template: await fetch(where).then(r => r.text()),
+  }));
+};

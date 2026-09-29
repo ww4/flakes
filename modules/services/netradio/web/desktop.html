@@ -10,6 +10,9 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="desktop.css">
+<!-- the admin, mounted here as a view rather than navigated to, so the
+     stream is never torn down. Its rules are scoped under .adminpanel. -->
+<link rel="stylesheet" href="admin/admin.css">
 
 <div id="app" v-cloak>
   <!-- A phone that tapped the desktop link had NO way back: this page
@@ -69,7 +72,7 @@
     </div>
     <div class="railfoot">
       <a href="./?view=remote">Phone view</a>
-      <a href="admin/">Admin</a>
+      <button class="lnk" @click="view = 'admin'">Admin</button>
       <a href="now/stations.m3u" title="For a radio app">M3U</a>
       <a href="now/stations.pls" title="For a radio app">PLS</a>
       <a href="now/stations-lo.m3u" title="96 kbps, for cellular">96k</a>
@@ -147,6 +150,12 @@
   </section>
 
   <!-- ===== the receiver's own inputs, tuner and menus ====================== -->
+  <!-- ===== the admin, in this page rather than a page of its own ==========
+       Inside the chain, ahead of the v-else: a v-else-if AFTER the catch-all
+       has no branch to attach to, and Vue fails to compile the whole root
+       template — the page renders as raw mustaches (2026-09-29). -->
+  <admin-panel v-else-if="view === 'admin'" base="admin/"></admin-panel>
+
   <main class="sources" v-else>
     <h5>Input</h5>
     <div class="chips">
@@ -374,5 +383,6 @@
 
 <script src="vendor/vue.global.prod.js"></script>
 <script src="radio.js"></script>
+<script src="admin/admin.js"></script>
 <script src="desktop.js"></script>
 </html>

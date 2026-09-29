@@ -20,6 +20,10 @@ SCRIPTS = ["app.js", "desktop.js"]
 # player-parity checks — it is a different thing — but it can 404 on a missing
 # stylesheet exactly like the others, so the packaging check covers it too.
 SERVED_PAGES = PAGES + ["admin/index.html"]
+# Template/script pairs for the scope checks. The admin's markup lives in its
+# own file now (it is a component both the player and /admin/ mount, not a page)
+# and can drift from its script exactly the way the others can.
+TEMPLATE_PAIRS = list(zip(PAGES, SCRIPTS)) + [("admin/panel.html", "admin/admin.js")]
 
 
 def setUpModule():
@@ -59,7 +63,7 @@ class TemplateScope(unittest.TestCase):
         volume silently did nothing but throw in the console, and it read as
         "the volume doesn't work" (Chris, 2026-09-26).
         """
-        for page, script in zip(PAGES, SCRIPTS):
+        for page, script in TEMPLATE_PAIRS:
             html = (WEB / page).read_text()
             js = (WEB / script).read_text()
             # radio.js too: the shared fetch helpers are module scope like any
@@ -73,7 +77,7 @@ class TemplateScope(unittest.TestCase):
     def test_every_method_a_template_calls_actually_exists(self):
         """The mirror of the above: a template naming a method that was renamed
         away fails the same silent way."""
-        for page, script in zip(PAGES, SCRIPTS):
+        for page, script in TEMPLATE_PAIRS:
             html = (WEB / page).read_text()
             js = (WEB / script).read_text()
             # method shorthand `name(...)  {`, `name: function`, `name: (…) =>`
@@ -86,6 +90,116 @@ class TemplateScope(unittest.TestCase):
             missing = template_calls(html) - defined - allowed
             self.assertEqual(missing, set(),
                              f"{page} calls {sorted(missing)}, which {script} does not define")
+
+
+class VueDirectiveChains(unittest.TestCase):
+    """A `v-else-if` / `v-else` must follow a `v-if` sibling.
+
+    Orphan one and Vue does not fail politely at that element — it fails to
+    compile the WHOLE root template, and the page renders as raw {{ mustaches }}
+    with nothing in the console but a URL. Adding the admin view put a
+    `v-else-if` after the chain's closing `v-else` and blanked the desktop page
+    entirely; every test here passed (2026-09-29). Nothing type-checks these
+    files, so this is the check that would have caught it.
+    """
+
+    def chains(self, html: str):
+        """(line, tag, directive, previous sibling's directive) per branch
+        directive, tracking siblings at each depth."""
+        from html.parser import HTMLParser
+        VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+                "link", "meta", "param", "source", "track", "wbr"}
+        found = []
+
+        class P(HTMLParser):
+            def __init__(self):
+                super().__init__(convert_charrefs=True)
+                self.stack = [[]]          # per depth: the directive of each element seen
+
+            def branch(self, attrs):
+                for k, _ in attrs:
+                    if k in ("v-if", "v-else-if", "v-else"):
+                        return k
+                return None
+
+            def handle_starttag(self, tag, attrs):
+                d = self.branch(attrs)
+                if d in ("v-else-if", "v-else"):
+                    prev = next((x for x in reversed(self.stack[-1]) if x is not None), "NOTHING") \
+                        if self.stack[-1] else "NOTHING"
+                    # only the IMMEDIATELY preceding element counts
+                    prev = self.stack[-1][-1] if self.stack[-1] else "NOTHING"
+                    found.append((self.getpos()[0], tag, d, prev))
+                self.stack[-1].append(d)
+                if tag not in VOID:
+                    self.stack.append([])
+
+            def handle_endtag(self, tag):
+                if tag not in VOID and len(self.stack) > 1:
+                    self.stack.pop()
+
+        P().feed(html)
+        return found
+
+    def test_every_else_follows_an_if(self):
+        for page in SERVED_PAGES + ["admin/panel.html"]:
+            html = (WEB / page).read_text()
+            for line, tag, directive, prev in self.chains(html):
+                self.assertIn(prev, ("v-if", "v-else-if"),
+                              f"{page}:{line} <{tag} {directive}> follows an element with "
+                              f"{prev!r} — an orphan branch, and Vue then fails to compile "
+                              f"the whole template, not just this element")
+
+
+class AdminIsAViewNotAPage(unittest.TestCase):
+    """The admin used to be a third document, so opening it was a navigation:
+    the player's <audio> element was torn down and the music stopped. Chris,
+    after the view handover: "the handover stops and restarts the stream. What
+    I'm asking, is can we write the admin into the same page so the music
+    doesn't need to stop?" (2026-09-29). So the player mounts it as a component
+    and nothing is navigated.
+    """
+
+    def test_the_player_does_not_navigate_to_the_admin(self):
+        html = (WEB / "desktop.html").read_text()
+        self.assertNotIn('href="admin/"', html,
+                         "the player still LINKS to the admin, which tears the page down "
+                         "and stops the stream — it has to be a view change")
+        self.assertIn("<admin-panel", html, "the player does not mount the admin at all")
+
+    def test_one_definition_serves_both_hosts(self):
+        """The player and /admin/ mount the same component from the same markup.
+        Two copies would drift, and the standalone page is what the phone's
+        gear icon opens."""
+        js = (WEB / "admin" / "admin.js").read_text()
+        self.assertIn("window.AdminPanel", js, "the admin is not exposed as a component")
+        self.assertIn("panel.html", (WEB / "desktop.html").read_text() + js,
+                      "nothing fetches the shared markup")
+        solo = (WEB / "admin" / "index.html").read_text()
+        self.assertIn("<admin-panel", solo, "/admin/ no longer mounts the shared component")
+        self.assertNotIn("createApp({\n  components: { \"tag-input\"", solo,
+                         "/admin/ still carries its own copy of the app")
+
+    def test_the_admin_css_cannot_restyle_the_player(self):
+        """They share a document now. Both stylesheets had a .card, a .head, a
+        .body, a .row and a .tag; unscoped, the admin's would silently repaint
+        the wall."""
+        css = (WEB / "admin" / "admin.css").read_text()
+        css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)      # comments are not selectors
+        rules = re.findall(r"([^{}]+)\{", css)
+        loose = []
+        for sel in rules:
+            for part in sel.split(","):
+                part = part.strip()
+                if not part or part.startswith("@") or part.startswith("%"):
+                    continue
+                # the standalone page's own chrome, and bare element defaults
+                # for that page, are allowed to sit outside the scope
+                if part.startswith(".adminpanel") or part.startswith(".solobar") or part == "body":
+                    continue
+                loose.append(part)
+        self.assertEqual(loose, [],
+                         f"admin.css rules outside .adminpanel would reach the player: {loose}")
 
 
 class SpeakerTargetParity(unittest.TestCase):
