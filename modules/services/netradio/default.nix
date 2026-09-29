@@ -386,6 +386,7 @@ let
     cp ${./web}/desktop.html ${./web}/desktop.js ${./web}/desktop.css $out/   # the wide-screen page (the remote redirects there)
     cp ${./web}/manifest.webmanifest ${./web}/sw.js ${./web}/icon.svg ${./web}/icon-192.png ${./web}/icon-512.png $out/   # the PWA
     cp ${./web/admin}/index.html ${./web/admin}/admin.js ${./web/admin}/admin.css $out/admin/
+    cp ${./web/admin}/panel.html $out/admin/   # the admin markup, fetched at runtime by whichever page mounts it
     cp ${vueJs} $out/vendor/vue.global.prod.js
   '';
 

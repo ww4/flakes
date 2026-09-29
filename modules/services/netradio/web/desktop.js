@@ -28,6 +28,11 @@ const { createApp } = Vue;
 const RECONNECT_GIVE_UP = 40;
 
 createApp({
+  // The admin is a component of this page, not a page of its own. Reaching
+  // it is a view change, so nothing is navigated and the <audio> element —
+  // and the stream in it — is untouched (Chris, 2026-09-29). The markup is
+  // fetched the first time it is opened and not before.
+  components: { "admin-panel": adminPanel("admin/panel.html", "admin/") },
   data() {
     let quality = "", target = "here", view = "wall", openMount = "", hereVol = 100, bedVol = 35, bedOn = false;
     try {

@@ -411,8 +411,13 @@ body { overflow: hidden; height: 100vh; }
   padding: .55rem .95rem .7rem; border-top: 1px solid var(--line);
   font-size: .73rem;
 }
-.railfoot a { color: var(--muted); text-decoration: none; }
-.railfoot a:hover, .railfoot a:focus-visible { color: var(--accent); text-decoration: underline; }
+.railfoot a, .railfoot button.lnk { color: var(--muted); text-decoration: none; }
+.railfoot button.lnk { background: none; border: 0; padding: 0; font: inherit; text-align: left; }
+.railfoot a:hover, .railfoot a:focus-visible,
+.railfoot button.lnk:hover, .railfoot button.lnk:focus-visible { color: var(--accent); text-decoration: underline; }
+/* The admin panel takes the main column, like the wall does. It scrolls itself
+   (admin.css), so the page around it stays put. */
+.app > .adminpanel { grid-row: 1 / 2; min-height: 0; min-width: 0; }
 
 /* ---- the rain bed -------------------------------------------------------- */
 /* A second stream with its own level, so the bed is the listener's choice and
