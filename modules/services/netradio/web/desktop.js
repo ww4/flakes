@@ -63,6 +63,12 @@ createApp({
       speaker: { playing: false, mount: "", volume: null, muted: false, error: "" },
       remote: false, volDraft: 0, volDragging: false,
       roomPoll: 0, speakerPoll: 0, ctx: null, analyser: null, raf: 0,
+      // Whether each output has actually answered yet. The rail shows all
+      // of them at once, and until 2026-09-29 it rendered the ones that
+      // were not selected straight from these defaults — so a speaker that
+      // was playing read "stopped" until you clicked it. A status nobody
+      // asked for is a guess, and it should not look like a fact.
+      speakerSeen: false, receiverSeen: false,
       // covers that 404'd, by path. Plenty of tracks have no embedded picture
       // and no folder cover, and an <img> that fails renders the browser's
       // broken-image glyph — worse than the coloured monogram it should fall
@@ -81,12 +87,15 @@ createApp({
                    sub: this.current ? `playing ${this.currentStation.name}` : (this.status || "idle"), dead: false }];
       if (this.site.hasRoom) z.push({
         id: "room", name: this.receiver.name || this.site.roomName,
-        live: this.receiver.on && this.playbackState === "Play",
-        sub: this.receiver.error ? this.receiver.error : this.receiver.on ? this.receiver.input : "standby",
+        live: this.receiverSeen && this.receiver.on && this.playbackState === "Play",
+        sub: !this.receiverSeen ? "checking…"
+           : this.receiver.error ? this.receiver.error
+           : this.receiver.on ? this.receiver.input : "standby",
         dead: this.receiver.error === "unreachable" });
       if (this.site.hasLocal) z.push({
-        id: "local", name: this.site.localName, live: !!this.speaker.playing,
-        sub: this.speaker.error || (this.speaker.playing ? "playing" : "stopped"),
+        id: "local", name: this.site.localName, live: this.speakerSeen && !!this.speaker.playing,
+        sub: !this.speakerSeen ? "checking…"
+           : this.speaker.error || (this.speaker.playing ? "playing" : "stopped"),
         dead: this.speaker.error === "unreachable" });
       return z;
     },
@@ -401,6 +410,7 @@ createApp({
     async pollSpeaker() {
       const st = await getJSON("speaker/state");
       this.speaker = st ? { ...st, error: st.error || "" } : { ...this.speaker, error: "unreachable" };
+      this.speakerSeen = true;
       this.syncVolume();
       clearInterval(this.speakerPoll);
       this.speakerPoll = setInterval(async () => {
@@ -423,9 +433,32 @@ createApp({
     speakerVolume(step) { return this.speakerSet((this.speaker.volume ?? this.volDraft) + step); },
     speakerMute(on) { return this.speakerAction("", () => call("POST", "speaker/mute", { on })); },
 
+    // ---- the outputs nobody has selected ---------------------------------
+    // The rail lists every output at once, so every one of them needs a status,
+    // not just the one being driven. The selected target keeps its own 5 s poll;
+    // these ride the 10 s tick, which is plenty for "is it on".
+    // Read-only: status endpoints only, nothing here changes what anything is
+    // doing.
+    async refreshZones() {
+      if (this.busy) return;
+      const jobs = [];
+      if (this.site.hasLocal && this.target !== "local") jobs.push((async () => {
+        const st = await getJSON("speaker/state");
+        this.speaker = st ? { ...st, error: st.error || "" } : { ...this.speaker, error: "unreachable" };
+        this.speakerSeen = true;
+      })());
+      if (this.site.hasRoom && this.target !== "room") jobs.push((async () => {
+        const st = await getJSON("receiver/status");
+        this.receiver = st ? { ...st, error: "" } : { ...this.receiver, error: "unreachable" };
+        this.receiverSeen = true;
+      })());
+      await Promise.all(jobs);
+    },
+
     // ---- the receiver ----------------------------------------------------
     async pollReceiver() {
       const st = await getJSON("receiver/status");
+      this.receiverSeen = true;
       if (!st) { this.receiver = { ...this.receiver, error: "unreachable" }; return; }
       this.receiver = { ...st, error: "" };
       this.syncVolume();
@@ -651,10 +684,13 @@ createApp({
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") this.remote = false; });
     window.addEventListener("resize", () => { this.narrow = !window.matchMedia("(min-width: 900px)").matches; });
     // who this box is, written at build time from the module's options
-    getJSON("site.json").then(s => { if (s) { this.site = { ...this.site, ...s }; document.title = this.site.title; } });
+    getJSON("site.json").then(s => {
+      if (s) { this.site = { ...this.site, ...s }; document.title = this.site.title; }
+      this.refreshZones();          // site.json is what says which outputs exist
+    });
     this.setMediaHandlers();
     this.refresh().then(() => { this.refreshHeart(); this.mediaSession(); });
-    setInterval(() => { this.tick = Date.now(); this.refresh().then(() => { this.refreshHeart(); this.mediaSession(); }); }, 10000);
+    setInterval(() => { this.tick = Date.now(); this.refreshZones(); this.refresh().then(() => { this.refreshHeart(); this.mediaSession(); }); }, 10000);
     if (this.target === "room") this.pollReceiver();
     if (this.target === "local") this.pollSpeaker();
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
