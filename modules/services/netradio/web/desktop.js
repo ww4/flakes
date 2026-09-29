@@ -29,8 +29,9 @@ const RECONNECT_GIVE_UP = 40;
 
 createApp({
   data() {
-    let quality = "", target = "here", view = "wall", openMount = "";
+    let quality = "", target = "here", view = "wall", openMount = "", hereVol = 100;
     try {
+      hereVol = Math.max(0, Math.min(100, parseInt(localStorage.getItem("radio.volume"), 10) || 100));
       quality = localStorage.getItem("radio.quality") || "";
       target = localStorage.getItem("radio.target") || "here";
       view = localStorage.getItem("radio.desktopView") || "wall";
@@ -47,6 +48,11 @@ createApp({
       inputs: [], presets: [], menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
       speaker: { playing: false, mount: "", volume: null, muted: false, error: "" },
       remote: false, volDraft: 0, volDragging: false,
+      // This browser's own output. The receiver and the sound card have a
+      // volume; the tab had none, so the only way down was the OS mixer
+      // (Chris, 2026-09-29). Kept in localStorage so a reload is not a
+      // surprise at full volume.
+      hereVol, hereMuted: false,
       roomPoll: 0, speakerPoll: 0, ctx: null, analyser: null, raf: 0,
       // Whether each output has actually answered yet. The rail shows all
       // of them at once, and until 2026-09-29 it rendered the ones that
@@ -234,7 +240,11 @@ createApp({
 
     // ---- the transport bar's volume, whichever target is chosen ----------
     volumeMax() { return this.target === "room" ? (this.receiver.volume_max || 100) : 100; },
-    isMuted() { return this.target === "room" ? !!this.receiver.mute : !!this.speaker.muted; },
+    isMuted() {
+      return this.target === "room" ? !!this.receiver.mute
+           : this.target === "local" ? !!this.speaker.muted
+           : this.hereMuted;
+    },
     freqText() {
       const t = this.receiver.tuner; if (!t) return "";
       return t.band === "FM" ? (t.fm.val / 100).toFixed(1) : String(t.am.val);
@@ -347,6 +357,7 @@ createApp({
       const audio = this.$refs.audio;
       this.current = m; this.status = "tuning…"; this._reTries = 0; clearTimeout(this._reTimer);
       audio.src = this.streamUrl(m);
+      this.applyHereVolume();
       audio.play().then(() => { this.status = ""; this.$nextTick(() => this.startViz()); })
                   .catch(err => { this.status = `couldn't start (${err.message})`; });
       this.refresh();
@@ -379,15 +390,36 @@ createApp({
     // ---- volume, for whichever target is chosen --------------------------
     syncVolume() {
       if (this.volDragging) return;          // never drag the slider out from under a finger
-      this.volDraft = this.target === "room" ? Math.round(this.receiver.volume || 0) : (this.speaker.volume ?? 0);
+      this.volDraft = this.target === "room" ? Math.round(this.receiver.volume || 0)
+                    : this.target === "local" ? (this.speaker.volume ?? 0)
+                    : this.hereVol;
     },
     setLevel(level) {
       if (this.target === "room") return this.setVolume(level);
       if (this.target === "local") return this.speakerSet(level);
+      return this.hereSet(level);
     },
     toggleMute() {
       if (this.target === "room") return this.mute(!this.receiver.mute);
       if (this.target === "local") return this.speakerMute(!this.speaker.muted);
+      this.hereMuted = !this.hereMuted;
+      this.applyHereVolume();
+    },
+    // ---- this browser's own volume ---------------------------------------
+    hereSet(level) {
+      this.hereVol = Math.max(0, Math.min(100, Math.round(level)));
+      this.volDraft = this.hereVol;
+      if (this.hereVol > 0) this.hereMuted = false;   // moving the slider up means unmute
+      try { localStorage.setItem("radio.volume", String(this.hereVol)); } catch (e) {}
+      this.applyHereVolume();
+    },
+    applyHereVolume() {
+      const a = this.$refs.audio;
+      if (!a) return;
+      // HTMLMediaElement.volume is 0..1 and is NOT affected by the OS mixer,
+      // so this is the tab's own level rather than the machine's.
+      a.volume = this.hereMuted ? 0 : this.hereVol / 100;
+      a.muted = this.hereMuted;
     },
     shownVolume() { return this.target === "local" ? (this.speaker.volume ?? 0) : Math.round(this.receiver.volume || 0); },
 
@@ -647,6 +679,7 @@ createApp({
       }
       const audio = this.$refs.audio;
       audio.src = this.streamUrl(m);        // a fresh URL, so nothing is cached
+      this.applyHereVolume();
       audio.play()
         .then(() => { this.status = ""; this._reTries = 0; this.$nextTick(() => this.startViz()); })
         .catch(() => this.scheduleReconnect());
@@ -710,6 +743,7 @@ createApp({
       if (s) { this.site = { ...this.site, ...s }; document.title = this.site.title; }
       this.refreshZones();          // site.json is what says which outputs exist
     });
+    this.applyHereVolume();
     this.setMediaHandlers();
     this.refresh().then(() => { this.refreshHeart(); this.mediaSession(); });
     setInterval(() => { this.tick = Date.now(); this.refreshZones(); this.refresh().then(() => { this.refreshHeart(); this.mediaSession(); }); }, 10000);

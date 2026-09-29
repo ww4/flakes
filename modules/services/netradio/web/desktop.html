@@ -269,7 +269,7 @@
     <div class="bright">
       <span class="busy" v-if="busy">{{ busy }}</span>
       <canvas ref="viz" width="240" height="60" v-show="target === 'here' && current"></canvas>
-      <div class="vol" v-if="target !== 'here'">
+      <div class="vol">
         <button class="bheart" :class="{on: isMuted}" @click="toggleMute" aria-label="Mute" style="width:30px;height:30px">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"></path><path v-if="!isMuted" d="M16 8.5a5 5 0 0 1 0 7"></path><path v-else d="M16 9l5 6M21 9l-5 6"></path></svg></button>
         <input type="range" min="0" :max="volumeMax" step="1" v-model.number="volDraft"

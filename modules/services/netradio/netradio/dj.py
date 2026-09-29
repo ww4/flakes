@@ -78,6 +78,8 @@ class Track:
     path: str
     title: str
     artist: str
+    album: str = ""
+    year: str = ""      # four digits, or "" when the tag is missing or unparseable
 
 
 # --- what the DJ says -------------------------------------------------------
@@ -130,8 +132,71 @@ FORMS = [
 ]
 
 
-def say_track(t: Track, rng: random.Random) -> str:
-    return rng.choice(FORMS).format(title=t.title, artist=t.artist)
+# Where a record sits in time. Only offered when the tags actually carry it,
+# and only now and then — a DJ who dates every single record is a discography,
+# not a broadcaster.
+PLACINGS = [
+    "{s}, from the {year} album {album}",
+    "{s}, from {album}, {year}",
+    "{s} — that's off {album}, {year}",
+    "{s}, from their {year} album {album}",
+]
+PLACE_CHANCE = 0.28
+
+
+def say_track(t: Track, rng: random.Random, place: bool = False) -> str:
+    """One track, named. With `place`, and if the tags allow it, set in time:
+    "Blue Moon of Kentucky, from the 1954 album Knee Deep in Bluegrass"."""
+    said = rng.choice(FORMS).format(title=t.title, artist=t.artist)
+    if not place:
+        return said
+    redundant = bool(t.year) and t.year in t.album          # "Bluegrass 1959", 1959
+    forms = [f for f in PLACINGS
+             if ("{year}" not in f or t.year) and ("{album}" not in f or t.album)
+             and not (redundant and "{year}" in f and "{album}" in f)]
+    if not forms:
+        return said
+    return rng.choice(forms).format(s=said, year=t.year, album=t.album)
+
+
+def say_tracks(tracks: list[Track], rng: random.Random, place: bool = False) -> str:
+    """Several tracks, read out the way a person would.
+
+    Consecutive tracks by the same artist are gathered, so a set of three by
+    one act is "Uncle Pen, Molly and Tenbrooks and Blue Moon of Kentucky from
+    Bill Monroe" rather than his name three times over (Chris, 2026-09-29).
+    Only CONSECUTIVE ones: the order is what was played, and reordering it to
+    group an artist would make the sentence a lie.
+    """
+    if not tracks:
+        return ""
+    groups: list[list[Track]] = []
+    for t in tracks:
+        if groups and _same_artist(groups[-1][-1], t):
+            groups[-1].append(t)
+        else:
+            groups.append([t])
+
+    said = []
+    for g in groups:
+        if len(g) == 1:
+            said.append(say_track(g[0], rng, place and rng.random() < PLACE_CHANCE))
+        else:
+            titles = join_list([t.title for t in g])
+            # one placing for the group at most, and only if they share an album
+            albums = {t.album for t in g if t.album}
+            years = {t.year for t in g if t.year}
+            phrase = rng.choice(["{titles} from {artist}", "{titles}, all from {artist}",
+                                 "{titles} — that's {artist}"]).format(titles=titles, artist=g[0].artist)
+            album, year = (albums.pop() if len(albums) == 1 else ""), (years.pop() if len(years) == 1 else "")
+            if place and album and year and year not in album and rng.random() < PLACE_CHANCE:
+                phrase += f", off {album}, {year}"
+            said.append(phrase)
+    return join_list(said)
+
+
+def _same_artist(a: Track, b: Track) -> bool:
+    return bool(a.artist) and a.artist.casefold() == b.artist.casefold()
 
 
 def join_list(items: list[str]) -> str:
@@ -157,13 +222,30 @@ def compose(previous: list[Track], nxt: Track, station: str, rng: random.Random)
     if previous:
         recent = previous[-1]
         earlier = list(reversed(previous[:-1]))[:3]  # newest first, at most three
-        if earlier:
+        # If the run ENDS with several by one artist, say so once: the whole
+        # tail is one phrase rather than the same name repeated.
+        run = [recent]
+        for t in earlier:
+            if _same_artist(run[-1], t):
+                run.append(t)
+            else:
+                break
+        if len(run) > 1:
+            rest = earlier[len(run) - 1:]
+            head = say_tracks(list(reversed(run)), rng, place=False)
+            if rest:
+                parts.append(rng.choice(OPENERS_MANY).format(
+                    t1=head, rest=say_tracks(rest, rng, place=True)))
+            else:
+                parts.append(rng.choice(OPENERS_ONE).format(t1=head))
+        elif earlier:
             parts.append(rng.choice(OPENERS_MANY).format(
-                t1=say_track(recent, rng),
-                rest=join_list([say_track(t, rng) for t in earlier])))
+                t1=say_track(recent, rng, rng.random() < PLACE_CHANCE),
+                rest=say_tracks(earlier, rng, place=True)))
         else:
-            parts.append(rng.choice(OPENERS_ONE).format(t1=say_track(recent, rng)))
-    tail = [rng.choice(NEXTS).format(n=say_track(nxt, rng))]
+            parts.append(rng.choice(OPENERS_ONE).format(
+                t1=say_track(recent, rng, rng.random() < PLACE_CHANCE)))
+    tail = [rng.choice(NEXTS).format(n=say_track(nxt, rng, rng.random() < PLACE_CHANCE))]
     station_line = rng.choice(STATION).format(s=station)
     if station_line:
         tail.insert(rng.randrange(2), station_line)
@@ -219,13 +301,24 @@ def artist_of_path(path: str) -> str:
 def read_tags(path: str) -> Track:
     """Title/artist from the tags; the filename and folder names when a tag
     is missing (Artist/Album/NN Title.ext is how the library is laid out)."""
-    title = artist = ""
+    title = artist = album = year = ""
     try:
         import mutagen
         f = mutagen.File(path, easy=True)
         if f is not None and f.tags:
             title = " ".join(str(x) for x in (f.tags.get("title") or []) if x)
             artist = " ".join(str(x) for x in (f.tags.get("artist") or []) if x)
+            album = " ".join(str(x) for x in (f.tags.get("album") or []) if x)
+            # `date` is anything from "1975" to "1975-04-12" to "1975-04-12T00:00:00Z";
+            # only a plausible year is any use on air
+            for key in ("originaldate", "date"):
+                for v in (f.tags.get(key) or []):
+                    m = re.search(r"\b(1[89]\d\d|20\d\d)\b", str(v))
+                    if m:
+                        year = m.group(1)
+                        break
+                if year:
+                    break
     except Exception:
         pass
     p = Path(path)
@@ -233,7 +326,7 @@ def read_tags(path: str) -> Track:
         title = re.sub(r"^\s*\d+[\s._-]*", "", p.stem).strip() or p.stem
     if not artist:
         artist = p.parent.parent.name if p.parent.parent.name not in ("", "/") else "an unknown artist"
-    return Track(path, clean(title), clean(artist))
+    return Track(path, clean(title), clean(artist), clean(album), year)
 
 
 def clean(s: str) -> str:
@@ -622,11 +715,7 @@ class StationDJ:
                 continue
             try:
                 if req.get("action") == "skip":
-                    reply = self.ls.command(f"src_{self.mount}.skip")
-                    if reply.startswith("ERROR"):    # an unknown command is a quiet failure otherwise
-                        log.error("%s: skip refused by Liquidsoap: %s", self.mount, reply)
-                    else:
-                        log.info("%s: skipped on request", self.mount)
+                    self.skip_and_rewrite()
                 elif req.get("action") == "request" and req.get("path"):
                     pending.append(req["path"])
             except OSError as e:
@@ -641,6 +730,40 @@ class StationDJ:
             f.unlink(missing_ok=True)
         if pending:
             self.play_requests(pending)
+
+    def skip_and_rewrite(self) -> None:
+        """Skip what is playing AND throw away what was queued behind it.
+
+        A break is written when its track is queued, and names what came before
+        and what comes next. Skip or "never" a song and everything already
+        queued is describing a running order that is no longer going to happen
+        — the DJ cheerfully announcing a track the listener has just banned
+        (Chris, 2026-09-29). Liquidsoap 2.4 cannot remove one item from a
+        request queue, so the only way to unsay it is to drop the queue and let
+        fill() write it again; fill() calls this from handle_inbox and tops up
+        immediately afterwards, so the gap is one pass.
+
+        `flush_and_skip` does both in ONE command. Two commands — skip, then
+        flush — would take two tracks, which is the mistake this file already
+        made once with the output's skip sitting above the crossfade
+        (2026-09-19). If Liquidsoap does not know the command, fall back to the
+        plain skip: a stale break is a poor thing, a skip button that does
+        nothing is worse.
+        """
+        reply = self.ls.command(f"q_{self.mount}.flush_and_skip")
+        if not reply.startswith("ERROR"):
+            self.pushed = []
+            self.since_break = []
+            self.until_break = 0          # the next thing queued gets a fresh break
+            log.info("%s: skipped, and dropped the queue so the break is rewritten", self.mount)
+            return
+        log.warning("%s: flush_and_skip refused (%s) — falling back to a plain skip",
+                    self.mount, reply.strip())
+        reply = self.ls.command(f"src_{self.mount}.skip")
+        if reply.startswith("ERROR"):
+            log.error("%s: skip refused by Liquidsoap: %s", self.mount, reply)
+        else:
+            log.info("%s: skipped on request", self.mount)
 
     def play_requests(self, wanted: list[str]) -> None:
         """Queue a batch of listener requests, announced together.
