@@ -359,6 +359,7 @@ let
     roomName = cfg.receiver.label;
     hasLocal = cfg.speaker.enable;
     hasRoom = cfg.receiver.enable;
+    bedMount = cfg.bedMount;
   });
 
   # Building the document root also CHECKS it. The pages are plain files with no
@@ -505,6 +506,26 @@ in
         station's tile everywhere the mosaic would have been. No image ships
         with this module: pictures are a matter of taste and of whose rights
         they are, so they come from your own configuration.
+      '';
+    };
+
+    bedMount = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      example = "rainymood";
+      description = ''
+        A station to offer as a BED underneath whatever else is playing: rain,
+        usually. The page gets a small panel with its own on/off and its own
+        level, and mixes it locally as a second stream.
+
+        It is mixed at the listener, not at the station, on purpose. Mixing it
+        into the broadcast would put rain under everyone who tuned in —
+        including a receiver that cannot turn it off — and one level cannot
+        suit both a soft track and a loud one. As a second stream each listener
+        chooses, and sets it where they want it.
+
+        Empty disables the panel. Name a mount that is a seamless loop rather
+        than a variety station: it is a bed, and it should not draw attention.
       '';
     };
 
