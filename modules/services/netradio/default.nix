@@ -1086,6 +1086,22 @@ in
           types { } default_type application/manifest+json;
         '';
       };
+      # Cover art, unlike the rest of the admin API, is immutable content, and
+      # the desktop wall asks for up to four thumbnails per station at once.
+      # `/admin/api/` below adds `no-store`, which LANDS ON TOP of the app's own
+      # `public, max-age=86400` — two Cache-Control headers, and no-store wins,
+      # so every thumbnail was refetched on every load. A wall of 48 covers took
+      # ~25 s to finish painting because of it (2026-09-28).
+      #
+      # A longer PREFIX beats a shorter one, so this wins over `/admin/api/`
+      # without a regex — and a location with its own add_header does not
+      # inherit the parent's, which is the point.
+      "/admin/api/art" = {
+        proxyPass = "http://127.0.0.1:${toString adminPort}/api/art";
+        extraConfig = ''
+          add_header Cache-Control "public, max-age=86400";
+        '';
+      };
       # The admin API (netradio admin, loopback). The page itself is static
       # under /admin/. The vhost's Tailscale/LAN gate is the perimeter.
       "/admin/api/" = {

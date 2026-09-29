@@ -309,3 +309,36 @@ class MenuCodecFilter(unittest.TestCase):
         picks = [{"name": "Unlabelled", "url": "http://x/r.mp3"}]
         text = pl.ycast_yaml(self.STATIONS, "http://b/radio", picks, {"mp3"})
         self.assertIn("Unlabelled", [n for _, n, _ in pl.parse_ycast_yaml(text)])
+
+
+class HasArtNeedsReadability(unittest.TestCase):
+    """`has_art` gates what goes into tiles.json, and `admin/api/art` has to be
+    able to serve everything it lists. A cover that exists but cannot be opened
+    breaks that promise: the manifest names it, the endpoint 404s, and the
+    station's tile comes up a square short with nothing to say why.
+
+    Real: 46 covers fetched by an agent on 2026-09-18 were written mode 0600
+    (owner-only) into a library the netradio user reads as a group member.
+    `Path.exists()` needs only directory traversal, so it returned True for
+    every one of them for ten days.
+    """
+
+    def test_a_cover_that_cannot_be_read_does_not_count(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d)
+            track = folder / "01 song.mp3"
+            track.write_bytes(b"not really audio")
+            cover = folder / "cover.jpg"
+            cover.write_bytes(b"\xff\xd8\xff\xe0 jpeg-ish")
+
+            self.assertTrue(pl.has_art(str(track)), "a readable cover should count")
+
+            # No need to restore the mode: the temp DIRECTORY is writable, so an
+            # unreadable file in it still deletes. An addCleanup would fire after
+            # the directory is already gone.
+            cover.chmod(0o000)
+            if os.access(cover, os.R_OK):
+                self.skipTest("running as a user that bypasses file modes (root)")
+            self.assertFalse(pl.has_art(str(track)),
+                             "an unreadable cover was counted as art — tiles.json will name a "
+                             "path admin/api/art cannot serve")

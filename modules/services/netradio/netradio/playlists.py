@@ -276,9 +276,17 @@ COVER_NAMES = ("cover.jpg", "Cover.jpg", "folder.jpg", "Folder.jpg", "cover.png"
 def has_art(path: str) -> bool:
     """A cover file beside the track, or a picture inside it (mp3 APIC /
     m4a covr / flac pictures). The tile picker asks this of a handful of
-    files per station, so the tag read is affordable."""
+    files per station, so the tag read is affordable.
+
+    ⚠️ READABLE, not merely present. `Path.exists()` needs only directory
+    traversal, so it says yes to a cover this process cannot open — and then
+    `admin/api/art` 404s on a path the manifest promised. 46 covers fetched by
+    an agent on 2026-09-18 were written mode 0600, and every station tile that
+    drew one came up a square short (found 2026-09-28; the files were chmod'd
+    to 0664). `os.access` is the version of this check that can actually fail.
+    """
     folder = Path(path).parent
-    if any((folder / n).exists() for n in COVER_NAMES):
+    if any(os.access(folder / n, os.R_OK) for n in COVER_NAMES):
         return True
     try:
         import mutagen
