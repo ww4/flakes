@@ -237,6 +237,12 @@ let hm = homelab-modules.nixosModules; in
     stationArt = {
       rain = ./art/netradio/rain.jpg;
       rainymood = ./art/netradio/rainymood.jpg;
+      # Everything is the whole library, so it gets the whole band: a lit
+      # tuning scale with the needle parked off-centre.
+      all = ./art/netradio/all.jpg;
+      # Holiday's 897 tracks carry no cover art at all, so there is no mosaic
+      # to build — string lights instead.
+      holiday = ./art/netradio/holiday.jpg;
     };
     libraryGroup = "media";                 # the library is jellyfin:media 0770/0774
     requiresMounts = [ "mnt-fusion.mount" ];
