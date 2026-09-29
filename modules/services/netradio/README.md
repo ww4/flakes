@@ -97,6 +97,41 @@ services.netradio.speaker = {
 > `default` is usually redirected to a per-user PipeWire that the service user
 > cannot reach. Name the hardware device.
 
+### A picture for one track
+
+A track's artwork is looked for in this order:
+
+1. **A picture named after the track, beside it** — `03 Warszawa.jpg` next to
+   `03 Warszawa.mp3`. `.jpg`, `.jpeg`, `.png` and `.webp` are read.
+2. Artwork embedded in the file's tags
+3. A cover file in the folder — `cover.jpg`, `folder.jpg`, and the rest
+4. Jellyfin's picture of the artist, if Jellyfin is configured
+
+A folder cover is an album's sleeve, which is the right idea for an album and
+the wrong idea for a folder that isn't one: a mix series, a set of singles, a
+field-recording dump. The sidecar is also the only way to correct one wrong
+embedded cover without rewriting the file's tags.
+
+Adding one takes effect immediately — the thumbnail cache is keyed on the
+sidecar as well as on the track and the folder cover, so a picture dropped into
+a library that already has every track cached still appears at once.
+
+If the pictures you have are numbered by episode rather than named after the
+tracks, this maps them:
+
+```sh
+cd /path/to/the/album
+for img in /path/to/pictures/*.jpg; do
+  n=$(basename "$img" .jpg)                       # "42"
+  for track in *_"$n"-*.mp3; do                   # the track whose name carries 42
+    [ -e "$track" ] && cp -n "$img" "${track%.mp3}.jpg"
+  done
+done
+```
+
+Adjust the glob to your filenames, and run it with `echo` in front of `cp`
+first to see what it would do.
+
 ### Pictures for stations that have no album art
 
 A station's tile is normally a mosaic of its own album covers. Stations with no
@@ -185,7 +220,7 @@ The pieces, each its own unit:
 
 | Module | |
 |---|---|
-| `conventions.py` | Facts every module must agree on: cover filenames, what a mount may be called |
+| `conventions.py` | Facts every module must agree on: cover and sidecar filenames, what a mount may be called |
 | `config.py` | Runtime paths and the JSON files under `stateDir` |
 | `playlists.py` | The scanner: tags → stations, pools, tiles |
 | `rules.py`, `feeds.py`, `schedule.py` | How a station's membership and its programme are decided |

@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import tempfile
 from unittest import mock
 import threading
@@ -231,6 +232,71 @@ class Art(unittest.TestCase):
             self.assertEqual((data, mime), (b"\xff\xd8jpeg", "image/jpeg"))
             with self.assertRaises(ValueError):
                 a.art("/nowhere.mp3")
+
+
+class SidecarArt(unittest.TestCase):
+    """A picture named after one track, beside it.
+
+    A folder cover is an album's sleeve and right for an album. It is wrong for
+    a folder that is not an album: Music For Programming is 107 separate mixes
+    in one directory with a different picture for each and no sleeve to share
+    (Chris, 2026-09-29).
+    """
+
+    def _lib(self, d):
+        root = Path(d); (root / "config").mkdir(); (root / "pl").mkdir()
+        alb = root / "Music" / "Various Artists" / "Music for Programming"
+        alb.mkdir(parents=True)
+        for n in ("mfp_1-datassette", "mfp_2-sunjammer"):
+            (alb / f"{n}.mp3").write_bytes(b"\x00" * 64)
+        (alb / "cover.jpg").write_bytes(b"\xff\xd8shared")
+        (root / "pl" / "library.m3u").write_text(
+            "#EXTM3U\n" + "\n".join(str(alb / f"{n}.mp3") for n in ("mfp_1-datassette", "mfp_2-sunjammer")) + "\n")
+        return admin.Admin(config.Config(root / "config"), None, root / "pl"), alb
+
+    def test_a_picture_named_after_the_track_beats_the_folder_cover(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, alb = self._lib(d)
+            (alb / "mfp_1-datassette.jpg").write_bytes(b"\xff\xd8episode one")
+            self.assertEqual(a.art(str(alb / "mfp_1-datassette.mp3"))[0], b"\xff\xd8episode one")
+            # its neighbour, which has none, still gets the shared sleeve
+            self.assertEqual(a.art(str(alb / "mfp_2-sunjammer.mp3"))[0], b"\xff\xd8shared")
+
+    def test_png_and_webp_are_served_as_themselves(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, alb = self._lib(d)
+            (alb / "mfp_1-datassette.png").write_bytes(b"\x89PNG one")
+            self.assertEqual(a.art(str(alb / "mfp_1-datassette.mp3"))[1], "image/png")
+            (alb / "mfp_2-sunjammer.webp").write_bytes(b"RIFF....WEBP")
+            self.assertEqual(a.art(str(alb / "mfp_2-sunjammer.mp3"))[1], "image/webp")
+
+    def test_a_sidecar_that_cannot_be_read_is_not_a_picture(self):
+        """exists() says yes to a file the service user cannot open, and the
+        endpoint then throws instead of falling through to the cover
+        (2026-09-28, 46 agent-written 0600 covers)."""
+        with tempfile.TemporaryDirectory() as d:
+            a, alb = self._lib(d)
+            bad = alb / "mfp_1-datassette.jpg"
+            bad.write_bytes(b"\xff\xd8unreadable")
+            bad.chmod(0o000)
+            if os.access(bad, os.R_OK):
+                self.skipTest("running as root: permissions prove nothing")
+            self.assertEqual(a.art(str(alb / "mfp_1-datassette.mp3"))[0], b"\xff\xd8shared")
+
+    def test_adding_one_does_not_wait_for_the_thumbnail_cache_to_expire(self):
+        """The whole point is adding pictures to a library that already has a
+        thumbnail cached for every track in it."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            a, alb = self._lib(d)
+            a.thumb_cache = root / "thumbs"
+            track = str(alb / "mfp_1-datassette.mp3")
+            before = admin.art_stamp(track)
+            self.assertEqual(a.cached_art(track, 0)[0], b"\xff\xd8shared")
+            (alb / "mfp_1-datassette.jpg").write_bytes(b"\xff\xd8episode one")
+            self.assertNotEqual(admin.art_stamp(track), before,
+                                "art_stamp ignores the sidecar, so the stale thumbnail would stand")
+            self.assertEqual(a.cached_art(track, 0)[0], b"\xff\xd8episode one")
 
 
 class ThumbnailCache(unittest.TestCase):

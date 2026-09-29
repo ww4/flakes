@@ -33,6 +33,19 @@ import re
 COVER_NAMES = ("cover.jpg", "Cover.jpg", "folder.jpg", "Folder.jpg",
                "cover.png", "front.jpg", "Front.jpg", "album.jpg")
 
+# A picture for ONE track, named after it and sitting beside it:
+#
+#   music_for_programming_42-datassette.mp3
+#   music_for_programming_42-datassette.jpg
+#
+# A folder cover is an album's sleeve, and it is the right idea for an album.
+# It is the wrong idea for a folder that is not an album — Music For
+# Programming is 107 separate mixes in one directory, with a different picture
+# for each and no sleeve to share (Chris, 2026-09-29). The sidecar also gives
+# any single track an override, which is the only way to correct one bad
+# embedded cover without rewriting the file's tags.
+SIDECAR_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".JPG", ".PNG")
+
 # A folder at artist level that is not an artist: a year, or one of the usual
 # catch-alls a ripper leaves behind.
 NOT_AN_ARTIST = re.compile(r"\b(19|20)\d\d\b|various|unknown|compilation|soundtrack|sampler", re.I)
@@ -41,6 +54,16 @@ NOT_AN_ARTIST = re.compile(r"\b(19|20)\d\d\b|various|unknown|compilation|soundtr
 # and part of a URL, so it is deliberately narrow: lowercase, starts with a
 # letter or digit, hyphens inside, and short enough to keep those paths sane.
 MOUNT = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
+
+
+def sidecar_names(path) -> tuple:
+    """The picture filenames that would belong to this track, in preference
+    order. Names only — whether any of them is there is the caller's business,
+    and `os.access(R_OK)` is the right question rather than `exists()`: a file
+    that cannot be read is not a picture the page can show (2026-09-28)."""
+    from pathlib import Path
+    p = Path(path)
+    return tuple(p.with_suffix(s) for s in SIDECAR_SUFFIXES)
 
 
 def is_mount(name: str) -> bool:
