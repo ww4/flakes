@@ -38,7 +38,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from netradio import feeds as feedrules
-from netradio.conventions import COVER_NAMES, is_mount
+from netradio.conventions import COVER_NAMES, is_mount, sidecar_names
 from netradio import jellyfin
 from netradio import ratings
 from netradio import schedule as sched
@@ -429,6 +429,13 @@ class Admin:
         # one method too early — to request(), which is not the hot path.
         if not self.in_library(path):
             raise ValueError("not a library track")
+        # A picture named after the track and sitting beside it wins over
+        # everything: it is the most specific thing anyone can say about what
+        # this one track looks like, and the only way to correct a wrong
+        # embedded cover without rewriting the file (2026-09-29).
+        for fp in sidecar_names(path):
+            if os.access(fp, os.R_OK):
+                return fp.read_bytes(), _image_type(fp.name)
         try:
             import mutagen
             f = mutagen.File(path)
@@ -449,8 +456,8 @@ class Admin:
         folder = Path(path).parent
         for name in COVER_NAMES:
             fp = folder / name
-            if fp.exists():
-                return fp.read_bytes(), "image/png" if name.endswith(".png") else "image/jpeg"
+            if os.access(fp, os.R_OK):
+                return fp.read_bytes(), _image_type(name)
         # Nothing on disk. Jellyfin knows what a lot of these artists look like
         # even when the album has no sleeve — 502 of 1,668 artists had a picture
         # when this was added, which lifted cover coverage from 79% to 84% and
@@ -632,12 +639,29 @@ class Admin:
         return out
 
 
+def _image_type(name: str) -> str:
+    """The content type for a picture filename. Only the handful of suffixes
+    this module will serve; anything else is treated as JPEG, which is what the
+    library is full of."""
+    low = name.lower()
+    if low.endswith(".png"):
+        return "image/png"
+    if low.endswith(".webp"):
+        return "image/webp"
+    return "image/jpeg"
+
+
 def art_stamp(path: str) -> str:
     """What a cached thumbnail actually depends on: the track itself (an
-    embedded picture) and any cover file beside it. Both are stat()s, so this
-    is cheap enough to do on every request — and it is EXACT, unlike keying on
-    the track's mtime alone, which would serve a stale thumbnail forever after
-    someone dropped a new cover.jpg into the folder.
+    embedded picture), a picture named after it, and any cover file beside it.
+    All stat()s, so this is cheap enough to do on every request — and it is
+    EXACT, unlike keying on the track's mtime alone, which would serve a stale
+    thumbnail forever after someone dropped a new cover.jpg into the folder.
+
+    The sidecar belongs here for the same reason, and more urgently: the whole
+    point of it is that somebody adds a picture to a library that already has
+    thumbnails cached for every track in it. Left out, the new picture would
+    not appear until the cache was pruned (2026-09-29).
     """
     parts: list[str] = []
     try:
@@ -645,6 +669,12 @@ def art_stamp(path: str) -> str:
         parts.append(f"t:{st.st_mtime_ns}:{st.st_size}")
     except OSError:
         parts.append("t:-")
+    for fp in sidecar_names(path):
+        try:
+            st = os.stat(fp)
+            parts.append(f"s:{fp.suffix}:{st.st_mtime_ns}:{st.st_size}")
+        except OSError:
+            pass
     folder = Path(path).parent
     for name in COVER_NAMES:
         try:
