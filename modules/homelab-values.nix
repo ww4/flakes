@@ -385,6 +385,16 @@
   homelab.decluttarr.envFile = config.sops.secrets."decluttarr-env".path;
   homelab.meshagent.mshFile  = config.sops.secrets."meshagent-msh".path;
 
+  # media-gate — verify finished downloads actually parse as media.
+  # /data is qBittorrent's view of /mnt/fusion/arr (see the container volume).
+  homelab.mediaGate = {
+    enable = true;
+    pathMap = [ "/data=/mnt/fusion/arr" ];
+    managedCategories = [ "tv-sonarr" "radarr" "lidarr" ];
+    ntfyUrl = "http://127.0.0.1:8090";
+    ntfyTopic = "gromit-alerts";
+  };
+
   # ── values that lived in the moved base modules ────────────────────────────
   # (was modules/system.nix)
   time.timeZone = "America/New_York";
@@ -475,6 +485,17 @@
   sops.secrets."decluttarr-env" = {
     sopsFile = ../secrets/decluttarr-env.yaml;
     key = "decluttarr-env";
+  };
+  # The same encrypted arr API keys decluttarr uses, exposed a second time to
+  # the sentinel's media checks and media-gate, which run as `claude` and
+  # cannot read the root-owned copy. One value, two readers — declaring it
+  # twice beats teaching those checks to scrape /var/lib/sonarr/config.xml,
+  # which works today only because of a group bit nobody meant as an interface.
+  sops.secrets."arr-api-keys" = {
+    sopsFile = ../secrets/decluttarr-env.yaml;
+    key = "decluttarr-env";
+    owner = "claude";
+    mode = "0400";
   };
   sops.secrets."meshagent-msh" = {
     sopsFile = ../secrets/meshagent-msh.yaml;

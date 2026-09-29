@@ -494,6 +494,134 @@ let
     '';
   };
 
+  # ── media pipeline integrity (added 2026-09-27, The Ark S03E07/E08) ─────────
+  # The arr API keys, read from the sops copy owned by the sentinel user. Same
+  # encrypted value decluttarr already uses — no new secret material.
+  arrKeys = config.sops.secrets."arr-api-keys".path;
+
+  # PRE-AIR GRAB. The single best discriminator for indexer bait: nothing
+  # legitimate publishes days before broadcast. The Ark S03E07 was grabbed
+  # 2026-09-07 for an episode that aired 2026-09-10, and S03E08 three days early
+  # likewise; both were a single Windows .exe. Comparing the grab against the
+  # airdate Sonarr already holds catches the whole class at grab time, hours
+  # before the download finishes — far earlier than any content scan can.
+  #
+  # TOLERANCE is 24 h, not zero. TVDB airDateUtc is broadcast time, a WEB-DL can
+  # legitimately surface the same evening, and a few hours of metadata skew is
+  # ordinary. The bait pattern is measured in days, so a day of slack costs
+  # nothing and removes the only plausible false positive.
+  #
+  # Sonarr only: a movie has no airdate in this sense, and judging Radarr grabs
+  # against inCinemas/digitalRelease is a genuinely different (and noisier)
+  # question.
+  preAirGrabCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-preair-grab";
+    runtimeInputs = [ pkgs.curl pkgs.jq pkgs.coreutils ];
+    text = ''
+      TOLERANCE_HOURS=24
+      set -a
+      # shellcheck source=/dev/null
+      . "${arrKeys}"
+      set +a
+
+      since=$(date -u -d '-26 hours' +%Y-%m-%dT%H:%M:%SZ)
+      h=$(curl -sS --max-time 20 -H "X-Api-Key: $SONARR_API_KEY" \
+            "http://127.0.0.1:8989/api/v3/history/since?date=$since&eventType=grabbed&includeEpisode=true" \
+            2>/dev/null || true)
+      # An unreachable Sonarr is the seeding/container checks' business, not
+      # this one's. Staying quiet here avoids two alarms for one fault — but it
+      # does mean a silent Sonarr reads as "no pre-air grabs", which is only
+      # safe BECAUSE another check owns that failure.
+      printf '%s' "$h" | jq -e 'type=="array"' >/dev/null 2>&1 || exit 1
+
+      bad=$(printf '%s' "$h" | jq -r --argjson tol "$TOLERANCE_HOURS" '
+        [ .[]
+          | select(.episode.airDateUtc != null)
+          | ((.episode.airDateUtc | fromdateiso8601) - (.date | fromdateiso8601)) as $lead
+          | select($lead > ($tol * 3600))
+          | "\(.sourceTitle) — grabbed \(($lead/86400)|floor)d before air, from \(.data.indexer // "?")"
+        ] | .[]' 2>/dev/null || true)
+
+      if [ -n "$bad" ]; then
+        n=$(printf '%s\n' "$bad" | grep -c . || true)
+        echo "$n pre-air grab(s) — nothing legitimate publishes this early, treat as indexer bait:"
+        printf '%s\n' "$bad"
+        exit 0   # fire
+      fi
+      exit 1     # all good
+    '';
+  };
+
+  # STUCK IMPORT. The fault that turned two bad grabs into a three-week outage:
+  # a blocked import parks the queue item as importPending/importBlocked, which
+  # Sonarr reads as "still working", so it never re-searches — AND the parked
+  # item then rejects every real release for that episode ("Release in queue
+  # already meets cutoff"). Nothing surfaced it; the gap was found by eye.
+  #
+  # Reports each downloadId ONCE and then stays quiet. Some of these can only be
+  # cleared by a person (a season pack whose episode numbering does not match,
+  # say), and a check that re-fires every two hours against a condition only a
+  # human can clear is a false-alarm generator that trains you to mute the
+  # channel. Decluttarr handles the machine-clearable ones inside ~45 min, so
+  # anything still here after two days is genuinely worth one look.
+  stuckImportCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-stuck-import";
+    runtimeInputs = [ pkgs.curl pkgs.jq pkgs.coreutils ];
+    text = ''
+      STALE_DAYS=2
+      SEEN=/var/lib/sentinel/stuck-import-seen.json
+      set -a
+      # shellcheck source=/dev/null
+      . "${arrKeys}"
+      set +a
+
+      [ -s "$SEEN" ] || echo '[]' > "$SEEN"
+      seen=$(cat "$SEEN")
+      cutoff=$(date -u -d "-$STALE_DAYS days" +%Y-%m-%dT%H:%M:%SZ)
+      found=""; ids=""
+
+      for app in "sonarr:8989:$SONARR_API_KEY" "radarr:7878:$RADARR_API_KEY"; do
+        name="''${app%%:*}"; rest="''${app#*:}"; port="''${rest%%:*}"; key="''${rest#*:}"
+        q=$(curl -sS --max-time 20 -H "X-Api-Key: $key" \
+              "http://127.0.0.1:$port/api/v3/queue?pageSize=200" 2>/dev/null || true)
+        printf '%s' "$q" | jq -e '.records|type=="array"' >/dev/null 2>&1 || continue
+
+        # One line per stuck downloadId: finished downloading, not importing,
+        # and older than the cutoff.
+        rows=$(printf '%s' "$q" | jq -r --arg cut "$cutoff" --arg app "$name" '
+          [ .records[]
+            | select(.status == "completed")
+            | select(.trackedDownloadState == "importPending" or .trackedDownloadState == "importBlocked")
+            | select(.added < $cut)
+            | { id: .downloadId, added: .added,
+                msg: ([.statusMessages[]?.messages[]?] | unique | .[0] // "no message") }
+          ] | unique_by(.id) | .[]
+          | "\(.id)\t\($app)\t\(.added[0:10])\t\(.msg)"' 2>/dev/null || true)
+
+        while IFS=$'\t' read -r id a added msg; do
+          [ -n "$id" ] || continue
+          printf '%s' "$seen" | jq -e --arg i "$id" 'index($i)' >/dev/null 2>&1 && continue
+          found="$found
+  [$a] stuck since $added — ''${msg:0:90}"
+          ids="$ids $id"
+        done <<< "$rows"
+      done
+
+      if [ -n "$found" ]; then
+        for id in $ids; do
+          seen=$(printf '%s' "$seen" | jq --arg i "$id" '. + [$i]')
+        done
+        # Keep the ack list from growing without bound; ids are 40-char hashes
+        # and only the recent ones can still be in a queue.
+        printf '%s' "$seen" | jq '.[-200:]' > "$SEEN.tmp" && mv "$SEEN.tmp" "$SEEN"
+        n=$(printf '%s' "$ids" | wc -w)
+        echo "$n download(s) finished but stuck un-imported for over $STALE_DAYS days (each blocks re-search for its episode):$found"
+        exit 0   # fire
+      fi
+      exit 1     # all good
+    '';
+  };
+
   sentinelConfig = {
     enabled = true;
     pollSec = 120;          # informational; the systemd timer drives the cadence
@@ -595,6 +723,19 @@ let
       # before letting it restart the client unattended.
       { id = "seeding-health"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "${seedingCheck}/bin/sentinel-check-seeding"; timeout = 45; }
+
+      # Pre-air grab — indexer bait, caught at grab time rather than after the
+      # download finishes. agent = true so the diagnosis names the indexer and
+      # the release; act = false because removing a queue item and blocklisting
+      # a release is not in the whitelisted-action set.
+      { id = "preair-grab"; type = "command"; severity = "warning"; agent = true; act = false;
+        cmd = "${preAirGrabCheck}/bin/sentinel-check-preair-grab"; timeout = 45; }
+
+      # A finished download that never imported. Reports each downloadId once
+      # (see stuckImportCheck) — some are only human-clearable and a repeating
+      # alarm against those just teaches you to ignore the topic.
+      { id = "stuck-import"; type = "command"; severity = "warning"; agent = true; act = false;
+        cmd = "${stuckImportCheck}/bin/sentinel-check-stuck-import"; timeout = 60; }
 
       # scoped sudo, but it should say what it found before touching anything.
       { id = "api-content"; type = "command"; severity = "warning"; agent = true; act = false;
