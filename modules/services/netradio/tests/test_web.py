@@ -164,6 +164,19 @@ class SpeakerTargetParity(unittest.TestCase):
         # and it has to actually run: on load, and on the tick
         self.assertIn("this.refreshZones();", js, "refreshZones is defined but never called")
 
+    def test_both_pages_reconnect_a_dropped_stream(self):
+        """Every deploy restarts Liquidsoap and drops every listener. Both pages
+        used to set "stream error — try again" and stop, so a browser left
+        playing went quiet until somebody found the tab (Chris, 2026-09-29).
+        Re-requesting the mount also wakes the encoder, so the retry both
+        restarts it and reattaches."""
+        for script in SCRIPTS:
+            js = self.script(script)
+            self.assertIn("scheduleReconnect", js, f"{script} gives up on a dropped stream")
+            self.assertIn('addEventListener("ended"', js,
+                          f"{script} ignores a clean shutdown, which is what a Liquidsoap restart looks like")
+            self.assertIn("RECONNECT_GIVE_UP", js, f"{script} would retry for ever")
+
     def test_the_desktop_page_can_drive_and_recover_the_receiver(self):
         """Without resume, a receiver left stopped by a deploy stays stopped
         until somebody notices it went quiet (2026-09-27)."""

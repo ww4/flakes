@@ -23,6 +23,9 @@
 // page grew — a wide screen is redirected here automatically, so it lost them.
 
 const { createApp } = Vue;
+// ~5 minutes of trying at the 8 s ceiling. A deploy takes about a minute;
+// beyond this the station is probably gone rather than restarting.
+const RECONNECT_GIVE_UP = 40;
 
 createApp({
   data() {
@@ -342,13 +345,13 @@ createApp({
     // ---- playing ---------------------------------------------------------
     play(m) {
       const audio = this.$refs.audio;
-      this.current = m; this.status = "tuning…";
+      this.current = m; this.status = "tuning…"; this._reTries = 0; clearTimeout(this._reTimer);
       audio.src = this.streamUrl(m);
       audio.play().then(() => { this.status = ""; this.$nextTick(() => this.startViz()); })
                   .catch(err => { this.status = `couldn't start (${err.message})`; });
       this.refresh();
     },
-    stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; this.stopViz(); this.mediaSession(); },
+    stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; clearTimeout(this._reTimer); this._reTries = 0; this.stopViz(); this.mediaSession(); },
     retune() { try { localStorage.setItem("radio.quality", this.quality); } catch (e) {} if (this.current) this.play(this.current); },
     playTarget(s) {
       if (this.target === "room") return this.playOnReceiver(s);
@@ -624,6 +627,40 @@ createApp({
       set("previoustrack", null);
     },
 
+    // ---- keeping the stream alive across a restart -----------------------
+    // Every deploy restarts Liquidsoap, which drops every listener. The page
+    // used to set "stream error — try again" and stop, so a browser left
+    // playing went quiet and somebody had to find the tab and press play
+    // (Chris, 2026-09-29). It reconnects itself now.
+    //
+    // Re-requesting the mount also WAKES it: nginx fires the wake on
+    // /radio/<mount>.mp3, so a retry both restarts the encoder and reattaches
+    // to it. Backs off 1, 2, 4, 8 s and then every 8 s, because the encoder is
+    // genuinely absent for a few seconds and hammering it helps nobody.
+    reconnect() {
+      const m = this.current;
+      if (!m) return;                       // stopped on purpose: stay stopped
+      clearTimeout(this._reTimer);
+      if (this._reTries > RECONNECT_GIVE_UP) {
+        this.status = "stream lost — press play";
+        return;
+      }
+      const audio = this.$refs.audio;
+      audio.src = this.streamUrl(m);        // a fresh URL, so nothing is cached
+      audio.play()
+        .then(() => { this.status = ""; this._reTries = 0; this.$nextTick(() => this.startViz()); })
+        .catch(() => this.scheduleReconnect());
+    },
+    scheduleReconnect() {
+      if (!this.current) return;
+      clearTimeout(this._reTimer);
+      this._reTries = (this._reTries || 0) + 1;
+      if (this._reTries > RECONNECT_GIVE_UP) { this.status = "stream lost — press play"; return; }
+      const wait = Math.min(1000 * 2 ** (this._reTries - 1), 8000);
+      this.status = "reconnecting…";
+      this._reTimer = setTimeout(() => this.reconnect(), wait);
+    },
+
     // ---- the spectrum in the bar (this browser only) ---------------------
     startViz() {
       const audio = this.$refs.audio, canvas = this.$refs.viz;
@@ -660,9 +697,12 @@ createApp({
 
   mounted() {
     const audio = this.$refs.audio;
-    audio.addEventListener("error", () => { this.status = "stream error — try again"; });
+    // "ended" is what a clean Liquidsoap shutdown looks like to the element;
+    // "error" is what a mid-flight drop looks like. Both mean reconnect.
+    audio.addEventListener("error", () => this.scheduleReconnect());
+    audio.addEventListener("ended", () => this.scheduleReconnect());
     audio.addEventListener("waiting", () => { this.status = "buffering…"; });
-    audio.addEventListener("playing", () => { this.status = ""; });
+    audio.addEventListener("playing", () => { this.status = ""; this._reTries = 0; });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") this.remote = false; });
     window.addEventListener("resize", () => { this.narrow = !window.matchMedia("(min-width: 900px)").matches; });
     // who this box is, written at build time from the module's options
