@@ -84,6 +84,12 @@ class TemplateScope(unittest.TestCase):
             defined = set(re.findall(r"^\s{4}(?:async\s+)?([A-Za-z_$][\w$]*)\s*\(", js, re.M))
             defined |= set(re.findall(r"^\s{4}([A-Za-z_$][\w$]*)\s*:\s*(?:async\s*)?(?:function|\()", js, re.M))
             defined |= set(re.findall(r"\b([A-Za-z_$][\w$]*)\s*\(", js))   # anything called in the script too
+            # …and what the page mixes in: a member that moved to shared.js is
+            # still on the component, and the template is still right to call it.
+            sh = WEB / "shared.js"
+            if sh.exists() and script in ("app.js", "desktop.js"):
+                shared = sh.read_text()
+                defined |= set(re.findall(r"^\s{4}(?:async\s+)?([A-Za-z_$][\w$]*)\s*\(", shared, re.M))
             # JS builtins and Vue helpers a template may legitimately use
             allowed = {"Math", "Number", "String", "Boolean", "Object", "Array", "JSON", "Date",
                        "parseInt", "parseFloat", "isNaN", "encodeURIComponent", "$event"}
@@ -215,7 +221,15 @@ class SpeakerTargetParity(unittest.TestCase):
     """
 
     def script(self, name: str) -> str:
-        return (WEB / name).read_text()
+        """A page's EFFECTIVE surface: its own script plus what it mixes in.
+
+        The members the two pages agreed on to the byte moved to shared.js and
+        both pages now `mixins: [RadioShared]`. A parity check that read only
+        app.js or only desktop.js would report a feature missing the moment it
+        stopped being duplicated — which is exactly backwards (2026-09-29)."""
+        own = (WEB / name).read_text()
+        shared = (WEB / "shared.js")
+        return own + ("\n" + shared.read_text() if shared.exists() else "")
 
     def test_the_desktop_page_knows_about_the_local_speaker(self):
         self.assertIn("speaker", self.script("desktop.js"),
@@ -441,6 +455,63 @@ class TrackNotices(unittest.TestCase):
         self.assertIn("noticeKey", js,
                       "watching the track object directly re-fires on every poll that "
                       "returns the same track")
+
+
+class SharedHalf(unittest.TestCase):
+    """The members the two pages agreed on to the byte live in one file.
+
+    app.js and desktop.js grew side by side: 82 method names in common, and the
+    SpeakerTargetParity class above exists only to catch the drift. Every change
+    this month had to be written twice. The 36 byte-identical members moved to
+    shared.js, which both pages mix in; Vue gives a component's own options
+    priority, so the 45 that genuinely differ keep their own version and win
+    (2026-09-29).
+    """
+
+    def members(self, path):
+        src = (WEB / path).read_text()
+        kw = {"if", "for", "while", "switch", "catch", "return", "typeof",
+              "function", "do", "else", "try", "new", "await", "delete", "in", "of", "case"}
+        return {m.group(1) for m in re.finditer(r"^\s{4}(?:async\s+)?([A-Za-z_$][\w$]*)\s*\(", src, re.M)
+                if m.group(1) not in kw}
+
+    def test_both_pages_mix_in_the_shared_half(self):
+        self.assertTrue((WEB / "shared.js").exists(), "shared.js is gone")
+        for page, script in zip(PAGES, SCRIPTS):
+            js = (WEB / script).read_text()
+            self.assertIn("mixins: [RadioShared]", js, f"{script} does not mix in the shared half")
+            html = (WEB / page).read_text()
+            self.assertIn('src="shared.js"', html, f"{page} never loads shared.js")
+            # order matters: the page's script reads RadioShared at definition time
+            self.assertLess(html.index("shared.js"), html.index(f'src="{script}"'),
+                            f"{page} loads {script} before shared.js, so RadioShared is undefined")
+
+    def test_an_override_has_to_actually_differ(self):
+        """A page may override a shared member — that is how the ones that
+        genuinely differ stay different. But an override with the SAME body is
+        the duplication coming back, and nothing else would catch it."""
+        import re as _re
+        shared_src = (WEB / "shared.js").read_text()
+
+        def bodies(src):
+            kw = {"if", "for", "while", "switch", "catch", "return", "typeof", "function",
+                  "do", "else", "try", "new", "await", "delete", "in", "of", "case"}
+            starts = [(m.start(), m.group(1)) for m in
+                      _re.finditer(r"^\s{4}(?:async\s+)?([A-Za-z_$][\w$]*)\s*\(", src, _re.M)
+                      if m.group(1) not in kw]
+            out = {}
+            for i, (pos, name) in enumerate(starts):
+                end = starts[i + 1][0] if i + 1 < len(starts) else len(src)
+                out[name] = _re.sub(r"\s+", " ", _re.sub(r"//[^\n]*", "", src[pos:end])).strip()
+            return out
+
+        sh = bodies(shared_src)
+        for script in SCRIPTS:
+            own = bodies((WEB / script).read_text())
+            same = [n for n in set(sh) & set(own) if sh[n] == own[n]]
+            self.assertEqual(same, [],
+                             f"{script} redefines {sorted(same)} identically to shared.js — "
+                             f"that is the duplication returning, delete the copy")
 
 
 class Packaging(unittest.TestCase):
