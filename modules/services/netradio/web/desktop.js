@@ -23,9 +23,6 @@
 // page grew — a wide screen is redirected here automatically, so it lost them.
 
 const { createApp } = Vue;
-// ~5 minutes of trying at the 8 s ceiling. A deploy takes about a minute;
-// beyond this the station is probably gone rather than restarting.
-const RECONNECT_GIVE_UP = 40;
 
 // Carrying the stream across the view switch.
 //
@@ -42,6 +39,10 @@ const RECONNECT_GIVE_UP = 40;
 const HANDOVER_MS = 90000;
 
 createApp({
+  // Everything the two pages agree on to the byte lives in shared.js.
+  // Anything defined below overrides it — which is how the members that
+  // genuinely differ stay different.
+  mixins: [RadioShared],
   // The admin is a component of this page, not a page of its own. Reaching
   // it is a view change, so nothing is navigated and the <audio> element —
   // and the stream in it — is untouched (Chris, 2026-09-29). The markup is
@@ -145,8 +146,6 @@ createApp({
 
     // ---- what is PLAYING on the chosen target ----------------------------
     playbackState() { return ((this.receiver.now_playing || {}).playback) || ""; },
-    currentStation() { return this.stations.find(s => s.mount === this.current) || { name: "", mount: "" }; },
-    isFixed() { return (m) => (this.stations.find(s => s.mount === m) || {}).kind === "fixed"; },
     roomMount() {
       const np = this.receiver.now_playing;
       if (!this.receiver.on || this.receiver.input !== "NET RADIO" || !np || !np.station) return null;
@@ -160,8 +159,6 @@ createApp({
     },
     // a fixed station has no DJ: nothing to skip to, request or rate
     feedbackMount() { const m = this.playingMount; return m && !this.isFixed(m) ? m : null; },
-    feedbackStation() { return this.stations.find(s => s.mount === this.feedbackMount) || { name: "" }; },
-    feedbackHistory() { return this.histories[this.feedbackMount] || []; },
     feedbackNext() { return this.nexts[this.feedbackMount] || {}; },
     canDJ() { return !!this.feedbackMount; },
     // the actions on the station screen act on the PLAYING track, so they are
@@ -313,8 +310,6 @@ createApp({
   },
 
   methods: {
-    // ---- small helpers the template uses ---------------------------------
-    thumb(path, size = 200) { return `admin/api/art?path=${encodeURIComponent(path)}&size=${size}`; },
     // Hide just the tile that failed and remember the path. Hiding keeps a
     // four-up mosaic four-up: dropping the cover from the list instead would
     // re-lay the whole card out as a single image the moment one 404'd.
@@ -326,25 +321,15 @@ createApp({
       const now = this.tickNow;
       return (paths || []).filter(p => !this.badArt[p] || now - this.badArt[p] > 30000);
     },
-    initials(name) { return (name || "").split(/[\s&]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join(""); },
-    // NOT filtered through goodArt: see imgError. The hero and the bar, which
-    // show ONE image, do filter — there a failure has to fall through to the
-    // station's monogram rather than leave a blank square.
-    tileCovers(s) { return s.mount && this.tiles[s.mount] ? (this.tiles[s.mount].covers || []) : []; },
     // In a two-line list row the artist has its own line, so the headline is
     // the title alone, with the artist beneath it. A break's own
     // title is the useful part ("Krüger Brothers spotlight"), not the word
     // "break", so it keeps it.
     rowTitle(it) { return it.kind === "break" ? (it.title || "station break") : it.title; },
     rowSub(it) { return it.kind === "break" ? "station break" : (it.artist || ""); },
-    isUp(m) { return !!m && !!(this.up[m] || this.up[m + "-lo"]); },
-    listenersOf(m) { return ((this.up[m] || {}).listeners | 0) + ((this.up[m + "-lo"] || {}).listeners | 0); },
-    countOf(m) { const c = this.counts[m]; return c ? `${c.tracks.toLocaleString()} tracks${c.fringe ? " +" + c.fringe.toLocaleString() + " fringe" : ""}` : ""; },
     shortCount(m) { const c = this.counts[m]; return c ? (c.tracks >= 1000 ? (c.tracks / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(c.tracks)) : ""; },
     // what this station last played, for its card on the wall
     lastOf(m) { const h = this.histories[m]; return (h && h[0] && h[0].kind !== "break") ? h[0] : null; },
-    streamUrl(m) { return `radio/${m}${this.quality}.mp3?t=${Date.now()}`; },
-    artError() { this.artFailed = this.art; this.artFailedAt = Date.now(); },
     // a cover that failed is retried after 30 s, not written off until the song changes
     artOk() { return !!this.art && (this.artFailed !== this.art || this.tickNow - this.artFailedAt > 30000); },
     say(msg) { this.toast = msg; clearTimeout(this._toastT); this._toastT = setTimeout(() => { this.toast = ""; }, 4000); },
@@ -422,15 +407,6 @@ createApp({
     },
     stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; this.blocked = ""; this.forgetHandover(); clearTimeout(this._reTimer); this._reTries = 0; this.stopViz(); this.applyBed(); this.mediaSession(); },
 
-    // ---- the view switch -------------------------------------------------
-    noteHandover() {
-      try {
-        if (this.current && this.target === "here")
-          localStorage.setItem("radio.handover", JSON.stringify({ mount: this.current, at: Date.now() }));
-        else localStorage.removeItem("radio.handover");
-      } catch (e) {}
-    },
-    forgetHandover() { try { localStorage.removeItem("radio.handover"); } catch (e) {} },
     takeHandover() {
       let h = null;
       try {
@@ -441,7 +417,6 @@ createApp({
       if (this.target !== "here") return;              // the speakers never stopped
       this.play(h.mount);
     },
-    retune() { try { localStorage.setItem("radio.quality", this.quality); } catch (e) {} if (this.current) this.play(this.current); },
     playTarget(s) {
       if (this.target === "room") return this.playOnReceiver(s);
       if (this.target === "local") return s.mount ? this.speakerPlay(s.mount) : undefined;
@@ -525,13 +500,11 @@ createApp({
       catch (e) { this.say(e.message); }
       finally { this.busy = ""; }
     },
-    speakerPlay(mount) { return this.speakerAction("starting…", () => call("POST", "speaker/play", { mount })); },
     speakerSet(level) {
       this.volDraft = Math.max(0, Math.min(100, Math.round(level)));
       return this.speakerAction("", () => call("POST", "speaker/volume", { level: this.volDraft }));
     },
     speakerVolume(step) { return this.speakerSet((this.speaker.volume ?? this.volDraft) + step); },
-    speakerMute(on) { return this.speakerAction("", () => call("POST", "speaker/mute", { on })); },
 
     // ---- the outputs nobody has selected ---------------------------------
     // The rail lists every output at once, so every one of them needs a status,
@@ -567,23 +540,11 @@ createApp({
       clearInterval(this.roomPoll);
       this.roomPoll = setInterval(() => { if (this.target === "room" && !this.busy) this.pollReceiver(); }, 5000);
     },
-    async receiverAction(label, fn) {
-      this.busy = label;
-      try { const r = await fn(); if (r && "on" in r) this.receiver = { ...this.receiver, ...r }; await this.pollReceiver(); await this.refresh(); }
-      catch (e) { this.say(e.message); }
-      finally { this.busy = ""; }
-    },
-    power(on) { return this.receiverAction(on ? "powering on…" : "standby…", () => call("POST", "receiver/power", { on })); },
-    mute(on) { return this.receiverAction("", () => call("POST", "receiver/mute", { on })); },
-    setVolume(level) { return this.receiverAction("", () => call("POST", "receiver/volume", { level })); },
     volumeStep(step) {
       if (this.target === "local") return this.speakerVolume(step);
       this.volDraft = Math.max(0, Math.min(this.volumeMax, this.volDraft + step));
       return this.setVolume(this.volDraft);
     },
-    selectInput(name) { return this.receiverAction(`switching to ${name}…`, () => call("POST", "receiver/input", { name })); },
-    playback(action) { return this.receiverAction("", () => call("POST", "receiver/playback", { action })); },
-    feedback(up) { return this.receiverAction("", async () => { await call("POST", "receiver/feedback", { thumbs_up: up, source: "Pandora" }); this.say(up ? "thumbs up" : "thumbs down"); }); },
     // The receiver stops dead when an encoder restarts and does not come back
     // by itself; netradio-resume does this after Liquidsoap starts, and this is
     // the same thing on a finger for when it stopped some other way.
@@ -613,18 +574,7 @@ createApp({
       const f = fm ? Math.round((t.fm.val / 100 + dir * 0.2) * 10) / 10 : t.am.val + dir * 10;
       return this.receiverAction("", () => call("POST", "receiver/tuner", { band: t.band, frequency: f }));
     },
-    seek(up) { return this.receiverAction(up ? "seeking up…" : "seeking down…", () => call("POST", "receiver/tuner/seek", { up })); },
-    tunerPreset(n) { return this.receiverAction("tuning…", () => call("POST", "receiver/tuner", { preset: n })); },
-    presetStep(up) { return this.receiverAction("", () => call("POST", "receiver/tuner", { preset: up ? "Up" : "Down" })); },
 
-    // ---- the remote, and the receiver's own menus ------------------------
-    openRemote() {
-      this.remote = true;
-      if (this.target !== "room") this.target = "room";
-      this.pollReceiver();
-      if (!this.inputs.length) getJSON("receiver/inputs").then(i => { if (i) this.inputs = i; });
-      if (!this.presets.length) getJSON("receiver/tuner/presets").then(p => { if (p) this.presets = p; });
-    },
     sourceOf(input) { return ({ "NET RADIO": "NET_RADIO", Pandora: "Pandora", SERVER: "SERVER", Spotify: "Spotify", AirPlay: "AirPlay", TUNER: "Tuner" })[input] || ""; },
     cursor(action) {
       const src = this.sourceOf(this.receiver.input);
@@ -636,15 +586,6 @@ createApp({
       if (!src || src === "Tuner") return;
       return this.receiverAction("", async () => { this.menu = await call("POST", "receiver/menu/page", { source: src, down }); });
     },
-    async loadMenu() {
-      this.menuSource = ["SERVER", "Pandora", "NET RADIO"].includes(this.receiver.input) ? this.sourceOf(this.receiver.input) : "";
-      if (!this.menuSource) return;
-      const m = await getJSON(`receiver/menu?source=${this.menuSource}`);
-      if (m) this.menu = m;
-    },
-    menuSelect(line) { return this.receiverAction("", async () => { this.menu = await call("POST", "receiver/menu/select", { source: this.menuSource, line }); }); },
-    menuBack() { return this.receiverAction("", async () => { this.menu = await call("POST", "receiver/menu/cursor", { source: this.menuSource, action: "Return" }); }); },
-    menuPage(down) { return this.receiverAction("", async () => { this.menu = await call("POST", "receiver/menu/page", { source: this.menuSource, down }); }); },
 
     // ---- feedback --------------------------------------------------------
     // Skip and "less of this" are ONE press: the station moves on and the track
@@ -692,12 +633,6 @@ createApp({
         setTimeout(() => this.refresh(), 2500);
       } catch (e) { this.say(e.message); }
     },
-    searchDebounced() {
-      clearTimeout(this.searchTimer);
-      this.searchTimer = setTimeout(async () => {
-        this.results = this.query.trim().length > 1 ? ((await getJSON(`admin/api/search?q=${encodeURIComponent(this.query)}`)) || []) : [];
-      }, 250);
-    },
     async request(r) {
       if (!this.feedbackMount) { this.say("start a library station first"); return; }
       try {
@@ -732,15 +667,6 @@ createApp({
         });
         ms.playbackState = playing;
       } catch (e) { /* older browsers manage without */ }
-    },
-    setMediaHandlers() {
-      if (!("mediaSession" in navigator)) return;
-      const set = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch (e) {} };
-      set("play", () => this.resumeHere());
-      set("pause", () => this.pauseHere());   // pause, NOT stop: stop ends the session
-      set("stop", () => this.stop());
-      set("nexttrack", () => this.skip());
-      set("previoustrack", null);
     },
 
     // ---- telling you what came on ----------------------------------------
@@ -845,47 +771,7 @@ createApp({
         .then(() => { this.status = ""; this._reTries = 0; this.$nextTick(() => this.startViz()); })
         .catch(() => this.scheduleReconnect());
     },
-    scheduleReconnect() {
-      if (!this.current) return;
-      clearTimeout(this._reTimer);
-      this._reTries = (this._reTries || 0) + 1;
-      if (this._reTries > RECONNECT_GIVE_UP) { this.status = "stream lost — press play"; return; }
-      const wait = Math.min(1000 * 2 ** (this._reTries - 1), 8000);
-      this.status = "reconnecting…";
-      this._reTimer = setTimeout(() => this.reconnect(), wait);
-    },
 
-    // ---- the spectrum in the bar (this browser only) ---------------------
-    startViz() {
-      const audio = this.$refs.audio, canvas = this.$refs.viz;
-      if (!canvas) return;
-      if (!this.ctx) {
-        const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
-        this.ctx = new AC();
-        const src = this.ctx.createMediaElementSource(audio);
-        this.analyser = this.ctx.createAnalyser();
-        this.analyser.fftSize = 256; this.analyser.smoothingTimeConstant = 0.82;
-        src.connect(this.analyser); this.analyser.connect(this.ctx.destination);
-      }
-      if (this.ctx.state === "suspended") this.ctx.resume();
-      cancelAnimationFrame(this.raf);
-      const g = canvas.getContext("2d"), data = new Uint8Array(this.analyser.frequencyBinCount);
-      const draw = () => {
-        this.raf = requestAnimationFrame(draw);
-        const c = this.$refs.viz; if (!c) return;
-        this.analyser.getByteFrequencyData(data);
-        const W = c.width, H = c.height, bars = 40, step = Math.floor(data.length * 0.75 / bars);
-        g.clearRect(0, 0, W, H); g.fillStyle = "#d9743f";
-        for (let i = 0; i < bars; i++) {
-          let v = 0; for (let j = 0; j < step; j++) v = Math.max(v, data[i * step + j]);
-          const h = (v / 255) * H, w = W / bars;
-          g.globalAlpha = 0.35 + 0.65 * (v / 255);
-          g.fillRect(i * w + 1, H - h, w - 2, h);
-        }
-        g.globalAlpha = 1;
-      };
-      draw();
-    },
     stopViz() { cancelAnimationFrame(this.raf); },
   },
 

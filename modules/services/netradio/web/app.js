@@ -8,9 +8,6 @@
 // Pandora list, a preset tile the tuner.
 
 const { createApp } = Vue;
-// ~5 minutes of trying at the 8 s ceiling. A deploy takes about a minute;
-// beyond this the station is probably gone rather than restarting.
-const RECONNECT_GIVE_UP = 40;
 
 // How long a note left for the other view stays good. See noteHandover().
 const HANDOVER_MS = 90000;
@@ -19,6 +16,10 @@ const HANDOVER_MS = 90000;
 function hue(name) { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 
 createApp({
+  // Everything the two pages agree on to the byte lives in shared.js.
+  // Anything defined below overrides it — which is how the members that
+  // genuinely differ stay different.
+  mixins: [RadioShared],
   data() {
     let quality = "", target = "here", tab = "now", last = { here: "", room: null, local: "" };
     try { quality = localStorage.getItem("radio.quality") || ""; target = localStorage.getItem("radio.target") || "here"; tab = localStorage.getItem("radio.tab") || "now"; last = { ...last, ...JSON.parse(localStorage.getItem("radio.last") || "{}") }; } catch (e) {}
@@ -48,15 +49,11 @@ createApp({
       }
       return g;
     },
-    currentStation() { return this.stations.find(s => s.mount === this.current) || { name: "", mount: "" }; },
     // lit when the playing track is hearted
     hearted() { const t = this.nowTrack ? this.nowTrack() : null; return !!t && !!this.hearts[t.path]; },
     nowTitle() { const m = this.current; return (this.up[m + this.quality] || this.up[m] || {}).title || ""; },
     // --- what "Now" shows, per target
     np() { return (this.target === "room" && this.receiver.now_playing) || null; },
-    // an ambient station (rain) has no DJ, no queue and nothing to skip:
-    // its transport is the play/stop on the bottom bar, nothing else
-    isFixed() { return (m) => (this.stations.find(s => s.mount === m) || {}).kind === "fixed"; },
     nowKind() {
       if (this.target === "local") return !this.speaker.mount ? "" : this.isFixed(this.speaker.mount) ? "ambient" : "library";
       if (this.target === "here") return !this.current ? "" : this.isFixed(this.current) ? "ambient" : "library";
@@ -155,8 +152,6 @@ createApp({
       const m = this.target === "room" ? this.roomMount : this.target === "local" ? this.speaker.mount : this.current;
       return this.isFixed(m) ? null : m;      // no history, no requests, no dislikes on a rain loop
     },
-    feedbackStation() { return this.stations.find(s => s.mount === this.feedbackMount) || { name: "" }; },
-    feedbackHistory() { return this.histories[this.feedbackMount] || []; },
     feedbackNext() { return this.nexts[this.feedbackMount] || {}; },
   },
   watch: {
@@ -172,17 +167,9 @@ createApp({
     "receiver.input"(i) { if (i === "TUNER" && this.receiver.tuner) this.freqDraft = this.freqText; if (this.tab === "sources") this.loadMenu(); },
   },
   methods: {
-    tileCovers(s) { return s.mount && this.tiles[s.mount] ? (this.tiles[s.mount].covers || []) : []; },
     tileIcon(s) { return s.mount && this.tiles[s.mount] ? (this.tiles[s.mount].icon || "") : ""; },
-    thumb(path, size = 200) { return `admin/api/art?path=${encodeURIComponent(path)}&size=${size}`; },
-    initials(name) { return (name || "").split(/[\s&]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join(""); },
     tileStyle(s) { const h = hue(s.name); return { background: `linear-gradient(160deg, hsl(${h} 40% 30%), hsl(${(h + 40) % 360} 50% 17%))` }; },
     label(it) { return it.kind === "break" ? "station break" : (it.artist ? `${it.artist} — ${it.title}` : it.title); },
-    isUp(m) { return !!m && !!(this.up[m] || this.up[m + "-lo"]); },
-    listenersOf(m) { return ((this.up[m] || {}).listeners | 0) + ((this.up[m + "-lo"] || {}).listeners | 0); },
-    countOf(m) { const c = this.counts[m]; return c ? `${c.tracks.toLocaleString()} tracks${c.fringe ? " +" + c.fringe.toLocaleString() + " fringe" : ""}` : ""; },
-    streamUrl(m) { return `radio/${m}${this.quality}.mp3?t=${Date.now()}`; },
-    artError() { this.artFailed = this.art; this.artFailedAt = Date.now(); },
     artOk() { return !!this.art && (this.artFailed !== this.art || this.tick - this.artFailedAt > 30000); },   // a failed cover is retried after 30 s, not written off until the next song
     say(msg) { this.toast = msg; clearTimeout(this._toastT); this._toastT = setTimeout(() => { this.toast = ""; }, 3500); },
     // here → the living room → this box's own speakers → back, skipping the
@@ -215,13 +202,11 @@ createApp({
       catch (e) { this.say(e.message, true); }
       finally { this.busy = ""; }
     },
-    speakerPlay(mount) { return this.speakerAction("starting…", () => call("POST", "speaker/play", { mount })); },
     speakerSet(level) {
       this.speakerDraft = Math.max(0, Math.min(100, Math.round(level)));
       return this.speakerAction("", () => call("POST", "speaker/volume", { level: this.speakerDraft }));
     },
     speakerVolume(step) { return this.speakerSet((this.speaker.volume ?? this.speakerDraft) + step); },
-    speakerMute(on) { return this.speakerAction("", () => call("POST", "speaker/mute", { on })); },
 
     // The receiver stops when an encoder restarts and does not come back by
     // itself. netradio-resume does this automatically after Liquidsoap starts;
@@ -308,20 +293,6 @@ createApp({
       const s = this.lastStation; if (s) this.playTarget(s);
     },
 
-    // ---- the view switch -------------------------------------------------
-    // This page and the desktop player are separate documents, so following
-    // "Desktop view" tears this one down and takes the <audio> element with
-    // it — the stream stops (Chris, 2026-09-29). Write down what was playing
-    // on the way out; the page that comes next picks it up. Short-lived on
-    // purpose: it should cover a click between the views, not tomorrow.
-    noteHandover() {
-      try {
-        if (this.current && this.target === "here")
-          localStorage.setItem("radio.handover", JSON.stringify({ mount: this.current, at: Date.now() }));
-        else localStorage.removeItem("radio.handover");
-      } catch (e) {}
-    },
-    forgetHandover() { try { localStorage.removeItem("radio.handover"); } catch (e) {} },
     takeHandover() {
       let h = null;
       try {
@@ -333,7 +304,6 @@ createApp({
       if (this.paused) return;                         // paused on purpose: stay paused
       this.play(h.mount);
     },
-    retune() { try { localStorage.setItem("radio.quality", this.quality); } catch (e) {} if (this.current) this.play(this.current); },
     playTarget(s) {
       this.tab = "now";              // always show the switch happen
       if (this.target === "local") { if (!s.mount) return; this.remember(s); return this.speakerPlay(s.mount); }
@@ -364,20 +334,6 @@ createApp({
       clearInterval(this.roomPoll);
       this.roomPoll = setInterval(() => { if (this.target === "room" && !this.busy) this.pollReceiver(); }, 5000);
     },
-    async receiverAction(label, fn) {
-      this.busy = label;
-      try { const r = await fn(); if (r && "on" in r) this.receiver = { ...this.receiver, ...r }; await this.pollReceiver(); await this.refresh(); }
-      catch (e) { this.say(e.message); }
-      finally { this.busy = ""; }
-    },
-    // ---- the remote ----------------------------------------------------------
-    openRemote() {
-      this.remote = true;
-      if (this.target !== "room") this.target = "room";
-      this.pollReceiver();
-      if (!this.inputs.length) getJSON("receiver/inputs").then(i => { if (i) this.inputs = i; });
-      if (!this.presets.length) getJSON("receiver/tuner/presets").then(p => { if (p) this.presets = p; });
-    },
     remoteSource() {
       const map = { "NET RADIO": "NET_RADIO", "Pandora": "Pandora", "Spotify": "Spotify",
                     "SERVER": "SERVER", "AirPlay": "AirPlay", "TUNER": "Tuner" };
@@ -393,11 +349,7 @@ createApp({
       if (!src || src === "Tuner") return;
       return this.receiverAction("", async () => { this.menu = await call("POST", "receiver/menu/page", { source: src, down }); });
     },
-    presetStep(up) { return this.receiverAction("", () => call("POST", "receiver/tuner", { preset: up ? "Up" : "Down" })); },
     band(b) { return this.receiverAction("", () => call("POST", "receiver/tuner", { band: b, frequency: b === "FM" ? 93.1 : 1300 })); },
-    power(on) { return this.receiverAction(on ? "powering on…" : "standby…", () => call("POST", "receiver/power", { on })); },
-    mute(on) { return this.receiverAction("", () => call("POST", "receiver/mute", { on })); },
-    setVolume(level) { return this.receiverAction("", () => call("POST", "receiver/volume", { level })); },
     volumeStep(step) {
       if (this.target === "local") return this.speakerVolume(step);
       this.volumeDraft = Math.max(0, Math.min(this.receiver.volume_max || 100, this.volumeDraft + step));
@@ -405,23 +357,12 @@ createApp({
     },
     // what the remote's level readout shows, for whichever target is selected
     shownVolume() { return this.target === "local" ? (this.speaker.volume ?? 0) : Math.round(this.receiver.volume); },
-    selectInput(name) { return this.receiverAction(`switching to ${name}…`, () => call("POST", "receiver/input", { name })); },
-    playback(action) { return this.receiverAction("", () => call("POST", "receiver/playback", { action })); },
-    feedback(up) { return this.receiverAction("", async () => { await call("POST", "receiver/feedback", { thumbs_up: up, source: "Pandora" }); this.say(up ? "thumbs up" : "thumbs down"); }); },
     // tuner
     band(b) { return this.receiverAction("", () => call("POST", "receiver/tuner", { band: b, frequency: b === "FM" ? this.receiver.tuner.fm.val / 100 : this.receiver.tuner.am.val })); },
     tuneStep(dir) { const t = this.receiver.tuner; const fm = t.band === "FM"; const f = fm ? Math.round((t.fm.val / 100 + dir * 0.2) * 10) / 10 : t.am.val + dir * 10; return this.receiverAction("", () => call("POST", "receiver/tuner", { band: t.band, frequency: f })); },
     tuneTo() { const t = this.receiver.tuner; return this.receiverAction("tuning…", () => call("POST", "receiver/tuner", { band: t.band, frequency: parseFloat(this.freqDraft) })); },
-    seek(up) { return this.receiverAction(up ? "seeking up…" : "seeking down…", () => call("POST", "receiver/tuner/seek", { up })); },
-    tunerPreset(n) { return this.receiverAction("tuning…", () => call("POST", "receiver/tuner", { preset: n })); },
     // menus (Pandora list, media server)
     sourceOf(input) { return ({ "NET RADIO": "NET_RADIO", Pandora: "Pandora", SERVER: "SERVER", Spotify: "Spotify", AirPlay: "AirPlay" })[input] || ""; },
-    async loadMenu() {
-      this.menuSource = ["SERVER", "Pandora", "NET RADIO"].includes(this.receiver.input) ? this.sourceOf(this.receiver.input) : "";
-      if (!this.menuSource) return;
-      const m = await getJSON(`receiver/menu?source=${this.menuSource}`);
-      if (m) this.menu = m;
-    },
     async loadPandora() {
       // the Pandora station list, from its menu's first pages
       try {
@@ -436,9 +377,6 @@ createApp({
         try { localStorage.setItem("radio.pandora", JSON.stringify(names)); } catch (e) {}
       } catch (e) {}
     },
-    menuSelect(line) { return this.receiverAction("", async () => { this.menu = await call("POST", "receiver/menu/select", { source: this.menuSource, line }); }); },
-    menuBack() { return this.receiverAction("", async () => { this.menu = await call("POST", "receiver/menu/cursor", { source: this.menuSource, action: "Return" }); }); },
-    menuPage(down) { return this.receiverAction("", async () => { this.menu = await call("POST", "receiver/menu/page", { source: this.menuSource, down }); }); },
 
     // ---- feedback on a library station ---------------------------------------
     nowTrack() { const h = this.feedbackHistory; return (h && h[0] && h[0].kind !== "break") ? h[0] : null; },
@@ -491,10 +429,6 @@ createApp({
         setTimeout(() => this.refresh(), 2500);
       } catch (e) { this.say(e.message); }
     },
-    searchDebounced() {
-      clearTimeout(this.searchTimer);
-      this.searchTimer = setTimeout(async () => { this.results = this.query.trim().length > 1 ? ((await getJSON(`admin/api/search?q=${encodeURIComponent(this.query)}`)) || []) : []; }, 250);
-    },
     async request(r) {
       if (!this.feedbackMount) { this.say("start a library station first"); return; }
       try {
@@ -539,17 +473,6 @@ createApp({
         ms.playbackState = playing;
       } catch (e) { /* older browsers: the bare notification is still fine */ }
     },
-    setMediaHandlers() {
-      if (!("mediaSession" in navigator)) return;
-      const set = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch (e) {} };
-      set("play", () => this.resumeHere());
-      // a live stream cannot be resumed where it left off, so pause IS stop —
-      // better that than a button that silently loses your place
-      set("pause", () => this.pauseHere());   // pause, NOT stop: stop ends the media session
-      set("stop", () => this.stop());
-      set("nexttrack", () => this.skip());
-      set("previoustrack", null);      // there is no going back on a radio
-    },
 
     // ---- keeping the stream alive across a restart -----------------------
     // Every deploy restarts Liquidsoap, which drops every listener. The page
@@ -575,40 +498,7 @@ createApp({
         .then(() => { this.status = ""; this._reTries = 0; this.$nextTick(() => this.startViz()); })
         .catch(() => this.scheduleReconnect());
     },
-    scheduleReconnect() {
-      if (!this.current) return;
-      clearTimeout(this._reTimer);
-      this._reTries = (this._reTries || 0) + 1;
-      if (this._reTries > RECONNECT_GIVE_UP) { this.status = "stream lost — press play"; return; }
-      const wait = Math.min(1000 * 2 ** (this._reTries - 1), 8000);
-      this.status = "reconnecting…";
-      this._reTimer = setTimeout(() => this.reconnect(), wait);
-    },
 
-    // ---- visualiser (this phone) ----------------------------------------------
-    startViz() {
-      const audio = this.$refs.audio, canvas = this.$refs.viz;
-      if (!canvas) return;
-      if (!this.ctx) {
-        const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
-        this.ctx = new AC(); const src = this.ctx.createMediaElementSource(audio);
-        this.analyser = this.ctx.createAnalyser(); this.analyser.fftSize = 256; this.analyser.smoothingTimeConstant = 0.82;
-        src.connect(this.analyser); this.analyser.connect(this.ctx.destination);
-      }
-      if (this.ctx.state === "suspended") this.ctx.resume();
-      cancelAnimationFrame(this.raf);
-      const g = canvas.getContext("2d"), data = new Uint8Array(this.analyser.frequencyBinCount);
-      const draw = () => {
-        this.raf = requestAnimationFrame(draw);
-        const c = this.$refs.viz; if (!c) return;
-        this.analyser.getByteFrequencyData(data);
-        const W = c.width, H = c.height, bars = 40, step = Math.floor(data.length * 0.75 / bars);
-        g.clearRect(0, 0, W, H); g.fillStyle = "#d9743f";
-        for (let i = 0; i < bars; i++) { let v = 0; for (let j = 0; j < step; j++) v = Math.max(v, data[i * step + j]); const h = (v / 255) * H, w = W / bars; g.globalAlpha = 0.35 + 0.65 * (v / 255); g.fillRect(i * w + 1, H - h, w - 2, h); }
-        g.globalAlpha = 1;
-      };
-      draw();
-    },
     stopViz() { cancelAnimationFrame(this.raf); },
   },
   mounted() {
