@@ -71,6 +71,9 @@ createApp({
       site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "", hasLocal: false, hasRoom: true, bedMount: "" },
       receiver: { name: "", on: false, input: "", volume: 0, volume_max: 100, mute: false, error: "" },
       inputs: [], presets: [], menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
+      // The receiver's Pandora stations. Walking its menu to list them takes a
+      // few seconds, so the last answer is kept and shown straight away.
+      pandora: JSON.parse((() => { try { return localStorage.getItem("radio.pandora") || "[]"; } catch (e) { return "[]"; } })()),
       speaker: { playing: false, mount: "", volume: null, muted: false, error: "" },
       remote: false, volDraft: 0, volDragging: false,
       // This browser's own output. The receiver and the sound card have a
@@ -130,37 +133,9 @@ createApp({
     },
     targetName() { return (this.zones.find(z => z.id === this.target) || {}).name || ""; },
 
-    groups() {
-      // a fixed station (Rain, Rainy Mood) lists as a specialty: it is a loop,
-      // not a curated genre programme
-      const curated = this.stations.filter(s => !["specialty", "fixed"].includes(s.kind));
-      const specialty = this.stations.filter(s => ["specialty", "fixed"].includes(s.kind));
-      const g = [{ kind: "curated", title: "Curated", stations: curated }];
-      if (specialty.length) g.push({ kind: "specialty", title: "Specialty", stations: specialty });
-      // the internet streams live in the receiver's own menu, so they are only
-      // reachable when the receiver is the target
-      if (this.target === "room" && this.quick.length)
-        g.push({ kind: "quick", title: "Internet Radio", stations: this.quick.map(q => ({ mount: "", name: q.name, kind: "quick" })) });
-      return g;
-    },
 
     // ---- what is PLAYING on the chosen target ----------------------------
     playbackState() { return ((this.receiver.now_playing || {}).playback) || ""; },
-    roomMount() {
-      const np = this.receiver.now_playing;
-      if (!this.receiver.on || this.receiver.input !== "NET RADIO" || !np || !np.station) return null;
-      const s = this.stations.find(s => s.name === np.station);
-      return s ? s.mount : null;
-    },
-    playingMount() {
-      return this.target === "room" ? this.roomMount
-           : this.target === "local" ? (this.speaker.mount || null)
-           : this.current;
-    },
-    // a fixed station has no DJ: nothing to skip to, request or rate
-    feedbackMount() { const m = this.playingMount; return m && !this.isFixed(m) ? m : null; },
-    feedbackNext() { return this.nexts[this.feedbackMount] || {}; },
-    canDJ() { return !!this.feedbackMount; },
     // the actions on the station screen act on the PLAYING track, so they are
     // only offered when the station being LOOKED at is the one being heard
     canActHere() { return this.canDJ && this.openMount === this.feedbackMount; },
@@ -168,25 +143,6 @@ createApp({
       return this.target === "room" ? (this.receiver.on && this.playbackState === "Play")
            : this.target === "local" ? !!this.speaker.playing
            : (!!this.current && !this.paused);
-    },
-    nowStation() {
-      const m = this.playingMount;
-      if (m) return (this.stations.find(s => s.mount === m) || {}).name || "";
-      if (this.target === "room" && this.receiver.on) {
-        const np = this.receiver.now_playing || {};
-        return np.station || this.receiver.input || "";
-      }
-      return "";
-    },
-    nowLine1() {
-      if (this.target === "room") {
-        const np = this.receiver.now_playing || {};
-        return [np.artist, np.track].filter(Boolean).join(" — ") || np.station || "";
-      }
-      const t = this.playingTrack;
-      if (t) return t.artist ? `${t.artist} — ${t.title}` : t.title;
-      const m = this.playingMount;
-      return m ? ((this.up[m] || this.up[m + "-lo"] || {}).title || "") : "";
     },
     barSub() {
       const bits = [];
@@ -197,24 +153,12 @@ createApp({
       if (!bits.length) bits.push(this.targetName);
       return bits.join(" · ");
     },
-    playingTrack() {
-      const h = this.feedbackHistory;
-      return (h && h[0] && h[0].kind !== "break") ? h[0] : null;
-    },
-    hearted() { const t = this.playingTrack; return !!t && !!this.hearts[t.path]; },
     // What a track notice is ABOUT. Derived rather than watched directly, so a
     // refresh that returns the same track is not a change — the history is
     // re-fetched every ten seconds and would otherwise notify on every poll.
     noticeKey() {
       const t = this.playingTrack;
       return this.anythingPlaying && t && t.title ? `${t.artist}\u0000${t.title}` : "";
-    },
-    art() {
-      // sized, not the original: covers in this library run to 3 MB, and the
-      // hero is 340 CSS px. Asking for the full file made the one image on the
-      // page the biggest thing on it.
-      const t = this.playingTrack;
-      return t && t.path ? `admin/api/art?path=${encodeURIComponent(t.path)}&size=700` : "";
     },
     barCovers() {
       const t = this.playingTrack;
@@ -266,18 +210,6 @@ createApp({
       }
       return bits.join(" · ");
     },
-    tickNow() { return this.tick || Date.now(); },
-    stationFacts() {
-      const out = [];
-      const c = this.counts[this.openMount];
-      if (c) {
-        out.push({ head: `${c.tracks.toLocaleString()} tracks`, sub: "in this station's own pool" });
-        if (c.fringe) out.push({ head: `+ ${c.fringe.toLocaleString()} fringe`, sub: "neighbouring genres, now and then" });
-      }
-      const seg = this.feedbackNext.segment;
-      if (seg && seg.name) out.push({ head: seg.name, sub: "the segment on air now" });
-      return out;
-    },
 
     // ---- the transport bar's volume, whichever target is chosen ----------
     volumeMax() { return this.target === "room" ? (this.receiver.volume_max || 100) : 100; },
@@ -285,10 +217,6 @@ createApp({
       return this.target === "room" ? !!this.receiver.mute
            : this.target === "local" ? !!this.speaker.muted
            : this.hereMuted;
-    },
-    freqText() {
-      const t = this.receiver.tuner; if (!t) return "";
-      return t.band === "FM" ? (t.fm.val / 100).toFixed(1) : String(t.am.val);
     },
   },
 
@@ -330,14 +258,6 @@ createApp({
     shortCount(m) { const c = this.counts[m]; return c ? (c.tracks >= 1000 ? (c.tracks / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(c.tracks)) : ""; },
     // what this station last played, for its card on the wall
     lastOf(m) { const h = this.histories[m]; return (h && h[0] && h[0].kind !== "break") ? h[0] : null; },
-    // a cover that failed is retried after 30 s, not written off until the song changes
-    artOk() { return !!this.art && (this.artFailed !== this.art || this.tickNow - this.artFailedAt > 30000); },
-    say(msg) { this.toast = msg; clearTimeout(this._toastT); this._toastT = setTimeout(() => { this.toast = ""; }, 4000); },
-    isPlaying(s) {
-      if (this.target === "room") return this.receiver.on && !!this.receiver.now_playing && this.receiver.now_playing.station === s.name;
-      if (this.target === "local") return !!s.mount && this.speaker.mount === s.mount;
-      return !!s.mount && this.current === s.mount;
-    },
     focusSearch() { const el = document.querySelector(".search input"); if (el) el.focus(); },
 
     openStation(s) {
@@ -407,25 +327,10 @@ createApp({
     },
     stop() { const a = this.$refs.audio; a.pause(); a.removeAttribute("src"); a.load(); this.current = null; this.blocked = ""; this.forgetHandover(); clearTimeout(this._reTimer); this._reTries = 0; this.stopViz(); this.applyBed(); this.mediaSession(); },
 
-    takeHandover() {
-      let h = null;
-      try {
-        h = JSON.parse(localStorage.getItem("radio.handover") || "null");
-        localStorage.removeItem("radio.handover");     // one-shot; pagehide re-arms it
-      } catch (e) {}
-      if (!h || !h.mount || !(Date.now() - (h.at || 0) < HANDOVER_MS)) return;
-      if (this.target !== "here") return;              // the speakers never stopped
-      this.play(h.mount);
-    },
     playTarget(s) {
       if (this.target === "room") return this.playOnReceiver(s);
       if (this.target === "local") return s.mount ? this.speakerPlay(s.mount) : undefined;
       return s.mount ? this.play(s.mount) : undefined;
-    },
-    stopTarget() {
-      if (this.target === "room") return this.receiverAction("stopping…", () => call("POST", "receiver/playback", { action: "Stop" }));
-      if (this.target === "local") return this.speakerAction("stopping…", () => call("POST", "speaker/stop", {}));
-      return this.stop();
     },
     // the bar's play button with nothing playing: start the station being
     // looked at, else this box's default, else the first in the list
@@ -439,6 +344,14 @@ createApp({
       if (s) return this.playTarget(s);
     },
     playOnReceiver(s) {
+      if (s.kind === "preset")
+        return this.receiverAction("tuning…", async () => {
+          if (this.receiver.input !== "TUNER") await call("POST", "receiver/input", { name: "TUNER" });
+          return call("POST", "receiver/tuner", { preset: s.number });
+        });
+      if (s.kind === "pandora")
+        return this.receiverAction(`starting ${s.name}…`,
+          () => call("POST", "receiver/menu/path", { source: "Pandora", path: [s.name] }));
       const category = s.kind === "quick" ? "Internet Radio" : s.kind === "specialty" ? "Specialty" : "Curated";
       return this.receiverAction(`tuning the ${this.receiver.name || "receiver"} to ${s.name}…`,
         () => call("POST", "receiver/menu/path", { path: ["My Stations", category, s.name] }));
@@ -479,7 +392,6 @@ createApp({
       a.muted = this.hereMuted;
       this.applyBed();          // the bed is this browser's sound as well
     },
-    shownVolume() { return this.target === "local" ? (this.speaker.volume ?? 0) : Math.round(this.receiver.volume || 0); },
 
     // ---- this box's own sound card ---------------------------------------
     async pollSpeaker() {
@@ -493,12 +405,6 @@ createApp({
         const s2 = await getJSON("speaker/state");
         if (s2) { this.speaker = { ...s2, error: s2.error || "" }; this.syncVolume(); }
       }, 5000);
-    },
-    async speakerAction(label, fn) {
-      this.busy = label;
-      try { const st = await fn(); if (st) this.speaker = { ...st, error: st.error || "" }; }
-      catch (e) { this.say(e.message); }
-      finally { this.busy = ""; }
     },
     speakerSet(level) {
       this.volDraft = Math.max(0, Math.min(100, Math.round(level)));
@@ -537,6 +443,9 @@ createApp({
       this.syncVolume();
       if (!this.inputs.length) this.inputs = (await getJSON("receiver/inputs")) || [];
       if (st.on && !this.presets.length) this.presets = (await getJSON("receiver/tuner/presets")) || [];
+      // Listing the Pandora stations means walking the receiver's menu, so it
+      // is done once, the first time the receiver is actually ON Pandora.
+      if (st.on && st.input === "Pandora" && !this._pandoraFresh) { this._pandoraFresh = true; await this.loadPandora(); }
       clearInterval(this.roomPoll);
       this.roomPoll = setInterval(() => { if (this.target === "room" && !this.busy) this.pollReceiver(); }, 5000);
     },
@@ -545,129 +454,10 @@ createApp({
       this.volDraft = Math.max(0, Math.min(this.volumeMax, this.volDraft + step));
       return this.setVolume(this.volDraft);
     },
-    // The receiver stops dead when an encoder restarts and does not come back
-    // by itself; netradio-resume does this after Liquidsoap starts, and this is
-    // the same thing on a finger for when it stopped some other way.
-    resumeRoom() {
-      return this.receiverAction("resuming…", async () => {
-        const r = await call("POST", "admin/api/resume", {});
-        this.say((r && r.message) || "asked the receiver to resume");
-        return null;
-      });
-    },
-    // offered only when there is something to fix: on, on net radio, stopped
-    canResume() {
-      if (this.target !== "room") return false;
-      const np = this.receiver.now_playing || {};
-      return this.receiver.on && this.receiver.input === "NET RADIO" && np.playback !== "Play";
-    },
 
-    // ---- the tuner -------------------------------------------------------
-    band(b) {
-      const t = this.receiver.tuner || {};
-      const f = b === "FM" ? ((t.fm && t.fm.val) || 9310) / 100 : ((t.am && t.am.val) || 1300);
-      return this.receiverAction("", () => call("POST", "receiver/tuner", { band: b, frequency: f }));
-    },
-    tuneStep(dir) {
-      const t = this.receiver.tuner; if (!t) return;
-      const fm = t.band === "FM";
-      const f = fm ? Math.round((t.fm.val / 100 + dir * 0.2) * 10) / 10 : t.am.val + dir * 10;
-      return this.receiverAction("", () => call("POST", "receiver/tuner", { band: t.band, frequency: f }));
-    },
 
-    sourceOf(input) { return ({ "NET RADIO": "NET_RADIO", Pandora: "Pandora", SERVER: "SERVER", Spotify: "Spotify", AirPlay: "AirPlay", TUNER: "Tuner" })[input] || ""; },
-    cursor(action) {
-      const src = this.sourceOf(this.receiver.input);
-      if (!src || src === "Tuner") return;
-      return this.receiverAction("", async () => { this.menu = await call("POST", "receiver/menu/cursor", { source: src, action }); });
-    },
-    remotePage(down) {
-      const src = this.sourceOf(this.receiver.input);
-      if (!src || src === "Tuner") return;
-      return this.receiverAction("", async () => { this.menu = await call("POST", "receiver/menu/page", { source: src, down }); });
-    },
 
-    // ---- feedback --------------------------------------------------------
-    // Skip and "less of this" are ONE press: the station moves on and the track
-    // loses ground. Four skips and it stops coming back, without anything
-    // having to be declared "never" (Chris, 2026-09-27).
-    async skip() {
-      if (!this.feedbackMount) return;
-      const t = this.playingTrack;
-      try {
-        if (!t) { await call("POST", `admin/api/dj/${this.feedbackMount}/skip`); this.say("skipping…"); }
-        else {
-          const r = await call("POST", "admin/api/feedback",
-                               { kind: "skip", path: t.path, artist: t.artist, title: t.title, mount: this.feedbackMount });
-          this.say(r && r.out_of_rotation ? `skipped — that's enough of ${t.title}` : `skipping — less of ${t.title}`);
-        }
-        setTimeout(() => this.refresh(), 2500);
-      } catch (e) { this.say(e.message); }
-    },
-    // A toggle, not a tally: stored locally always, and mirrored to Jellyfin
-    // when one is configured.
-    async toggleHeart() {
-      const t = this.playingTrack;
-      if (!t) { this.say("nothing to rate yet"); return; }
-      const want = !this.hearted;
-      try {
-        const r = await call("POST", "admin/api/feedback",
-                             { kind: "heart", on: want, path: t.path, artist: t.artist, title: t.title });
-        this.hearts = { ...this.hearts, [t.path]: !!(r && r.heart) };
-        this.say((r && r.message) || (r && r.heart ? "hearted" : "heart removed"));
-      } catch (e) { this.say(e.message); }
-    },
-    // asked once per track, then cached
-    async refreshHeart() {
-      const t = this.playingTrack;
-      if (!t || t.path in this.hearts) return;
-      const r = await getJSON(`admin/api/heart?path=${encodeURIComponent(t.path)}`);
-      if (r) this.hearts = { ...this.hearts, [t.path]: !!r.heart };
-    },
-    async dislike(scope) {
-      const t = this.playingTrack;
-      if (!t || !this.feedbackMount) { this.say("nothing to rate yet"); return; }
-      try {
-        await call("POST", "admin/api/dislike", { scope, path: t.path, artist: t.artist, title: t.title, mount: this.feedbackMount });
-        this.say(scope === "artist" ? `less ${t.artist} from now on` : `never again: ${t.title}`);
-        setTimeout(() => this.refresh(), 2500);
-      } catch (e) { this.say(e.message); }
-    },
-    async request(r) {
-      if (!this.feedbackMount) { this.say("start a library station first"); return; }
-      try {
-        await call("POST", `admin/api/dj/${this.feedbackMount}/request`, { path: r.path });
-        this.say(`next on ${this.feedbackStation.name}: ${r.title}`);
-        this.query = ""; this.results = [];
-        setTimeout(() => this.refresh(), 3000);
-      } catch (e) { this.say(e.message); }
-    },
 
-    // ---- the OS's own media controls -------------------------------------
-    // Desktop browsers put the same metadata on the system media keys and the
-    // notification shade. Same closed action list as on the phone: skip maps
-    // to `nexttrack`, and there is no heart action to map one to.
-    mediaSession() {
-      if (!("mediaSession" in navigator)) return;
-      const ms = navigator.mediaSession;
-      if (this.target !== "here" || !this.current) { ms.metadata = null; ms.playbackState = "none"; return; }
-      const playing = this.paused ? "paused" : "playing";
-      const t = this.playingTrack;
-      const cover = this.artOk() ? new URL(this.art, location.href).href : "";
-      const title = (t && t.title) || this.nowLine1 || this.nowStation || "Library radio";
-      const key = [title, t && t.artist, cover].join("\u0000");
-      if (key === this._msKey) { ms.playbackState = playing; return; }
-      this._msKey = key;
-      try {
-        ms.metadata = new MediaMetadata({
-          title,
-          artist: (t && t.artist) || "",
-          album: this.nowStation || this.site.title,
-          artwork: cover ? [96, 192, 384, 512].map(px => ({ src: cover, sizes: `${px}x${px}`, type: "image/jpeg" })) : [],
-        });
-        ms.playbackState = playing;
-      } catch (e) { /* older browsers manage without */ }
-    },
 
     // ---- telling you what came on ----------------------------------------
     // Windows gives a web page no per-track toast of its own: the media session
@@ -772,7 +562,6 @@ createApp({
         .catch(() => this.scheduleReconnect());
     },
 
-    stopViz() { cancelAnimationFrame(this.raf); },
   },
 
   mounted() {
