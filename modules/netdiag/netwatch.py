@@ -27,6 +27,7 @@ import secrets
 import socket
 import subprocess
 import sys
+import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -257,6 +258,29 @@ def gateway_ip() -> str:
 
 ARPSCAN_DETAIL = "no arp-scan recorded"
 
+# One empty sweep is not an empty segment — see arp_census. Worst case is
+# ARPSCAN_ATTEMPTS * the 180s run() timeout plus the delays, well inside the
+# 15-minute scan cadence (the unit has TimeoutStartSec=infinity).
+ARPSCAN_ATTEMPTS = 2
+ARPSCAN_RETRY_DELAY = 5
+
+
+def _parse_arpscan(out: str) -> dict[tuple[str, str], str]:
+    """Distinct {(ip, mac): vendor} from ONE arp-scan sweep's stdout.
+
+    Split out of arp_census so the retry loop parses each sweep identically.
+    """
+    seen: dict[tuple[str, str], str] = {}
+    for line in out.splitlines():
+        parts = line.split("\t") if "\t" in line else line.split(None, 2)
+        if len(parts) >= 2 and re.match(r"^\d+\.\d+\.\d+\.\d+$", parts[0]):
+            vendor = parts[2].strip() if len(parts) > 2 else "unknown"
+            key = (parts[0], parts[1].lower())
+            # Keep the most informative vendor string across duplicate replies.
+            if key not in seen or seen[key] in ("", "unknown"):
+                seen[key] = vendor
+    return seen
+
 
 def arp_census(iface: str) -> list[tuple[str, str, str]]:
     """Distinct [(ip, mac, vendor)] from netdiag-priv. Root under systemd.
@@ -275,23 +299,41 @@ def arp_census(iface: str) -> list[tuple[str, str, str]]:
 
     A genuine conflict is one IP with two DIFFERENT MACs. Row count never was
     the signal.
+
+    ⚠️ ONE EMPTY SWEEP IS NOT AN EMPTY SEGMENT, so an empty result is RETRIED
+    before it is believed. Twice — 2026-09-27 20:30 and 2026-10-01 16:15 — a
+    sweep came back with zero rows at `exit 0` after burning the full ~3.3s and
+    actually moving packets (~950B each way), while the segment demonstrably
+    had hosts: enp3s0 up with carrier, the kernel ARP table holding dozens of
+    neighbours, the gateway REACHABLE, and the runs on either side of it
+    reporting 7 hosts. Nothing was wrong with the link; the ARP replies simply
+    did not land in that one capture. A single sweep is not a reliable census.
+
+    ⚠️ THIS DOES NOT WEAKEN DEFENCE 1. If EVERY attempt comes back empty the
+    function still returns [], and the caller still treats that as an ERROR
+    rather than an all-clear. The retry only buys the distinction between "one
+    sweep dropped its replies" (transient, invisible to the network) and "this
+    host cannot see the segment" (real, and still paged). ARPSCAN_DETAIL
+    records every attempt so the alert body shows that all of them came back
+    empty, not just the last.
     """
-    out = run(["netdiag-priv", "arpscan", iface], timeout=180)
-    # Pin the outcome NOW. LAST_RUN is overwritten by the next run() anywhere in
-    # the process, so reading it later would silently describe a different
-    # command — the same class of mistake as attaching a count to the wrong
-    # window. The scan-empty alert reads ARPSCAN_DETAIL, never LAST_RUN.
+    # Pin each outcome as it happens. LAST_RUN is overwritten by the next run()
+    # anywhere in the process, so reading it later would silently describe a
+    # different command — the same class of mistake as attaching a count to the
+    # wrong window. The scan-empty alert reads ARPSCAN_DETAIL, never LAST_RUN.
     global ARPSCAN_DETAIL
-    ARPSCAN_DETAIL = last_run_detail()
+    details: list[str] = []
     seen: dict[tuple[str, str], str] = {}
-    for line in out.splitlines():
-        parts = line.split("\t") if "\t" in line else line.split(None, 2)
-        if len(parts) >= 2 and re.match(r"^\d+\.\d+\.\d+\.\d+$", parts[0]):
-            vendor = parts[2].strip() if len(parts) > 2 else "unknown"
-            key = (parts[0], parts[1].lower())
-            # Keep the most informative vendor string across duplicate replies.
-            if key not in seen or seen[key] in ("", "unknown"):
-                seen[key] = vendor
+    for attempt in range(1, ARPSCAN_ATTEMPTS + 1):
+        out = run(["netdiag-priv", "arpscan", iface], timeout=180)
+        details.append(
+            f"attempt {attempt}/{ARPSCAN_ATTEMPTS}: {last_run_detail()}")
+        seen = _parse_arpscan(out)
+        if seen:
+            break
+        if attempt < ARPSCAN_ATTEMPTS:
+            time.sleep(ARPSCAN_RETRY_DELAY)
+    ARPSCAN_DETAIL = "\n".join(details)
     return [(ip, mac, vendor) for (ip, mac), vendor in seen.items()]
 
 
@@ -350,14 +392,19 @@ def cmd_scan() -> int:
         # could not tell them apart because run() discarded the exit code. 41
         # such failures in 1,182 runs went unexplained. ARPSCAN_DETAIL carries
         # the exit code, stdout size and stderr from the scan itself.
-        print(f"netwatch: arp-scan on {iface} yielded no rows — {ARPSCAN_DETAIL}",
+        print(f"netwatch: arp-scan on {iface} yielded no rows "
+              f"after {ARPSCAN_ATTEMPTS} attempts — {ARPSCAN_DETAIL}",
               file=sys.stderr)
         alert_once(state, "scan-empty", "netwatch: scan found no hosts",
-                   f"arp-scan on {iface} produced zero hosts. This is a broken "
-                   f"check, not a quiet network — netwatch is not watching.\n"
+                   f"arp-scan on {iface} produced zero hosts on all "
+                   f"{ARPSCAN_ATTEMPTS} attempts. This is a broken check, not "
+                   f"a quiet network — netwatch is not watching.\n"
                    f"{ARPSCAN_DETAIL}\n"
-                   f"A non-zero exit means the SCAN broke; exit 0 with no rows "
-                   f"means it ran and genuinely saw nothing (check the link).\n"
+                   f"A non-zero exit means the SCAN broke. Exit 0 with no rows "
+                   f"does NOT prove the segment is empty — a single sweep can "
+                   f"drop every reply (seen 2026-09-27, 2026-10-01), which is "
+                   f"why this is already retried; all attempts failing points "
+                   f"at the link or this host's capture, so check both.\n"
                    f"Check: netdiag-priv arpscan {iface}",
                    "high", "warning")
         save_state(state)
