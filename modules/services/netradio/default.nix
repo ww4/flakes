@@ -245,7 +245,12 @@ let
     { mount = "jazz";       name = "Jazz";                 kind = "curated"; family = [ "blues-jazz" ];         base = { genres = [ "jazz" "big band" "swing" "fusion" "bebop" "dixieland" ]; era = noShellac; }; }
     { mount = "soul";       name = "Soul & R&B";           kind = "curated"; family = [ "blues-jazz" ];         base = { genres = [ "soul and r&b" "soul" "r&b" "funk" "motown" ]; era = noShellac; }; }
     { mount = "gospel";     name = "Gospel";               kind = "curated"; family = [ "gospel" ];             base = { genres = [ "gospel" "religious" "christian" "hymns" "sacred" "spiritual" ]; }; }
-    { mount = "classical";  name = "Classical";            kind = "curated"; family = [ "classical" ];          base = { genres = [ "classical" "baroque" "orchestral" "opera" "chamber" ]; }; }
+    # "opera" is a trap: genre tags are matched on WORD boundaries, so a rock
+    # opera tagged "Rock; Rock Opera; Classic Rock" matches it, and Quadrophenia
+    # turned up on the classical station (Chris, 2026-09-30). Excluding rock
+    # outright is the fix rather than dropping "opera", which would cost the
+    # station every actual opera in the library.
+    { mount = "classical";  name = "Classical";            kind = "curated"; family = [ "classical" ];          base = { genres = [ "classical" "baroque" "orchestral" "opera" "chamber" ]; exclude_genres = [ "rock" "metal" "punk" ]; }; }
     { mount = "holiday";    name = "Holiday";              kind = "curated"; family = [ "holiday" ];            base = { genres = [ "holiday" "christmas" "xmas" ]; }; }
     # every specialty feed is also listenable as its own station
   ] ++ lib.mapAttrsToList specialtyStation cfg.seed.feeds;

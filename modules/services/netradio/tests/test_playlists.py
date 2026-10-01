@@ -33,6 +33,32 @@ class GenreMatching(unittest.TestCase):
                       "Santa Câfé", "Billie Holiday", "Snow Bird", "Carlos Santana"]:
             self.assertFalse(pl.HOLIDAY_NAME.search(title), title)
 
+    def test_a_rock_opera_is_not_classical(self):
+        """Genre words match on WORD BOUNDARIES, so "opera" matches inside
+        "Rock Opera" — and Quadrophenia turned up on the classical station
+        (Chris, 2026-09-30: "I just heard the who play on classical radio").
+
+        Dropping "opera" from the rule would cost the station every actual
+        opera in the library, so the fix is to exclude rock outright. The
+        boundary match itself is correct and stays: "folk rock" IS folk.
+        """
+        from netradio import feeds
+        CLASSICAL = {"genres": ["classical", "baroque", "orchestral", "opera", "chamber"],
+                     "exclude_genres": ["rock", "metal", "punk"]}
+
+        def matches(tag):
+            return feeds.matches(CLASSICAL, artist="", path="/m/A/B/01 x.mp3",
+                                 genre=tag, yamnet=None, era="", folder_artist="", folder_album="")
+
+        # the actual tag on the album that caused this
+        self.assertFalse(matches("Rock; Rock Opera; Classic Rock; Hard Rock; Progressive Rock"),
+                         "a rock opera is still landing on the classical station")
+        for tag in ("Rock Opera", "Hard Rock", "Progressive Rock", "Punk", "Heavy Metal"):
+            self.assertFalse(matches(tag), f"{tag} should not be classical")
+        # and the exclusion must not take the operas with it
+        for tag in ("Opera", "Classical; Opera", "Baroque", "Chamber Music", "Orchestral"):
+            self.assertTrue(matches(tag), f"{tag} should still be classical")
+
     def test_feed_rule_shellac_default(self):
         self.assertEqual(pl.feed_rule({"rule": {"artists": ["A"]}})["era"], {"exclude": ["shellac"]})
         self.assertNotIn("era", pl.feed_rule({"rule": {"artists": ["A"]}, "shellac": True}))
