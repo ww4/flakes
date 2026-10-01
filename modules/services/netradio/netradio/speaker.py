@@ -124,12 +124,23 @@ class Mixer:
         pct = re.search(r"\[(\d{1,3})%\]", out)
         return (int(pct.group(1)) if pct else None), (self._muted or "[off]" in out)
 
-    def set(self, level: int) -> None:
+    def set(self, level: int, why: str = "") -> None:
         """Level only. Deliberately NOT `unmute` as well: the receiver does
         not unmute when you change its volume, and a box that boots muted
-        must stay muted until someone asks for sound (Chris, 2026-09-25)."""
-        if self.control:
-            self._run("sset", self.control, f"{max(0, min(self.cap, int(level)))}%")
+        must stay muted until someone asks for sound (Chris, 2026-09-25).
+
+        `why` is logged. It is empty for the steps of a ramp, which logs itself
+        once at the top instead of 25 times — but EVERY other write names its
+        reason, because twice now the level has been found at 100% with nothing
+        in the journal that put it there, and the reason it could not be traced
+        is that this function was silent (2026-09-26, 2026-10-01).
+        """
+        if not self.control:
+            return
+        want = max(0, min(self.cap, int(level)))
+        if why:
+            log.info("set %d%% (%s)", want, why)
+        self._run("sset", self.control, f"{want}%")
 
     def choose(self, level: int) -> None:
         """A user-driven level change: remember it, and slide rather than jump.
@@ -142,7 +153,7 @@ class Mixer:
             self.target = level
             if muted:
                 return
-            self._ramp(cur if cur is not None else level, level, self.fade_out_ms)
+            self._ramp(cur if cur is not None else level, level, self.fade_out_ms, "asked for")
 
     def step(self, delta: int) -> None:
         with self.lock:
@@ -152,7 +163,7 @@ class Mixer:
     # enough that a 300 ms fade is 25 subprocess calls and not 300.
     STEP_MS = 12
 
-    def _ramp(self, start: int, end: int, ms: int) -> None:
+    def _ramp(self, start: int, end: int, ms: int, why: str = "") -> None:
         """Walk the level from start to end over `ms`, so the change is a slope
         rather than a step. Each amixer write is one codec register write;
         spacing them is the whole trick.
@@ -163,8 +174,9 @@ class Mixer:
         """
         if start == end or ms <= 0:
             if start != end:
-                self.set(end)
+                self.set(end, why)
             return
+        log.info("ramp %d%% -> %d%% over %d ms%s", start, end, ms, f" ({why})" if why else "")
         steps = max(2, round(ms / self.STEP_MS))
         began = time.monotonic()
         for i in range(1, steps + 1):
@@ -173,6 +185,52 @@ class Mixer:
             remaining = due - time.monotonic()
             if remaining > 0:
                 time.sleep(remaining)
+
+    # How often to check the real level against the one we set, and how far
+    # apart they may be before it counts. A ramp holds the lock, so nothing
+    # here can catch a change in flight.
+    WATCH_S = 10.0
+    DRIFT = 3
+
+    def watch(self, stop: threading.Event) -> None:
+        """Pull the level back down if something outside this service raises it.
+
+        Twice the live level has been found at 100% with nothing in the journal
+        that put it there — 2026-09-26, and again around 03:14 on 2026-10-01,
+        which woke Chris out of a dead sleep. Both times the cause went unfound:
+        no restart, no deploy, no API call, no card reset, nothing else on the
+        box that drives amixer.
+
+        So this does not try to identify the writer. It notices that the mixer
+        no longer reads what this service set, says so LOUDLY, and puts it back.
+        That is a guard that does not depend on knowing the cause, which — given
+        two unexplained occurrences — is the only kind worth having.
+
+        Only DOWNWARD corrections. If someone has turned the card down by hand
+        that is their business; it is the rise that wakes people up.
+        """
+        while not stop.wait(self.WATCH_S):
+            try:
+                self.reconcile()
+            except Exception:
+                log.exception("volume watchdog")
+
+    def reconcile(self) -> bool:
+        """One check. Separate from the loop so it can be tested without
+        waiting on a timer. True when it had to correct something."""
+        if not self.control:
+            return False
+        with self.lock:
+            cur, _ = self.state()
+            if cur is None:
+                return False
+            want = 0 if self._muted else self.target
+            if cur <= want + self.DRIFT:
+                return False
+            log.error("mixer read %d%% but this service set %d%% — pulling it back. "
+                      "Nothing here asked for that.", cur, want)
+            self._ramp(cur, want, self.fade_out_ms, "unexplained rise")
+            return True
 
     def mute(self, on: bool) -> None:
         """Mute by taking the level to zero. The codec's mute switch is never
@@ -202,11 +260,11 @@ class Mixer:
             if on:
                 if not self._muted:
                     self.target = cur          # remember where to come back to
-                self._ramp(cur, 0, self.fade_out_ms)
+                self._ramp(cur, 0, self.fade_out_ms, "mute")
                 self._muted = True
             else:
                 self._muted = False
-                self._ramp(0, self.target, self.fade_in_ms)
+                self._ramp(0, self.target, self.fade_in_ms, "unmute")
 
 
 class Player:
@@ -430,13 +488,18 @@ def main(argv: list[str] | None = None) -> int:
     log.info("mixer control: %s (card %s), ceiling %d%%, fade %d/%d ms in/out",
              mixer.control or "none found", args.card, mixer.cap, mixer.fade_in_ms, mixer.fade_out_ms)
     if args.start_volume is not None:
-        mixer.set(args.start_volume)
+        # `target` is what the watchdog compares against and what an unmute
+        # returns to, so it has to mean the level we actually set. It was left
+        # holding whatever the card happened to read at startup.
+        mixer.target = max(0, min(mixer.cap, int(args.start_volume)))
+        mixer.set(mixer.target, "startup")
     if args.start_muted:
         mixer.mute(True)          # after the level, so the level is ready when it is unmuted
         log.info("starting muted")
     player = Player(args.icecast, args.ffmpeg, args.device, args.wake)
     stop = threading.Event()
     threading.Thread(target=player.watch, args=(stop,), daemon=True).start()
+    threading.Thread(target=mixer.watch, args=(stop,), daemon=True).start()
 
     if args.default_mount:
         # At boot this races Liquidsoap, which needs a good ten seconds

@@ -279,6 +279,13 @@ let hm = homelab-modules.nixosModules; in
       # Chris set this by ear on the rain loop (2026-09-27): where it should come
       # up, with plenty of headroom left above it.
       startVolume = 70;
+      # A hard ceiling, because the level has twice ended up at 100% with
+      # nothing in the log that put it there — 2026-09-26, and again at about
+      # 03:14 on 2026-10-01, which woke Chris out of a dead sleep. The ceiling
+      # was the answer last time and it never bit: the option defaults to 100,
+      # so it was never actually a ceiling. 70 is where he listens, and nothing
+      # on this box has a reason to go above it.
+      maxVolume = 70;
     };
 
     # The living-room R-N301, via modules/services/yamaha-ync.nix.
