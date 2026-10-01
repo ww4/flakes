@@ -79,6 +79,64 @@ class MixerParsing(unittest.TestCase):
         m.set(50); m.mute(True)                            # and these do nothing rather than raise
 
 
+class VolumeCeilingAndWatchdog(unittest.TestCase):
+    """The level has twice been found at 100% with nothing in the journal that
+    put it there — 2026-09-26, and again around 03:14 on 2026-10-01, which woke
+    Chris out of a dead sleep. Neither cause was ever found: no restart, no
+    deploy, no API call, no card reset, nothing else on the box driving amixer.
+
+    So the guard cannot depend on knowing the writer. It notices that the mixer
+    no longer reads what this service set, says so, and puts it back.
+    """
+
+    def test_an_unexplained_rise_is_pulled_back_and_logged(self):
+        m = FakeMixer(level=70)
+        m.target = 70
+        m.level = 100                      # something outside the service, as on both nights
+        logging.disable(logging.NOTSET)
+        try:
+            with self.assertLogs("netradio.speaker", level="ERROR") as cm:
+                self.assertTrue(m.reconcile())
+        finally:
+            logging.disable(logging.CRITICAL)
+        self.assertEqual(m.level, 70, "the level was not brought back down")
+        self.assertTrue(any("100" in l and "70" in l for l in cm.output),
+                        f"the log does not say what it found and what it expected: {cm.output}")
+
+    def test_a_level_someone_lowered_by_hand_is_left_alone(self):
+        """Only the rise wakes people up. Turning the card down by hand is
+        nobody's emergency, and fighting it would be rude."""
+        m = FakeMixer(level=70)
+        m.target = 70
+        m.level = 40
+        self.assertFalse(m.reconcile())
+        self.assertEqual(m.level, 40)
+
+    def test_a_level_within_tolerance_is_not_fought(self):
+        m = FakeMixer(level=70)
+        m.target = 70
+        m.level = 70 + m.DRIFT
+        self.assertFalse(m.reconcile())
+
+    def test_while_muted_anything_audible_is_a_rise(self):
+        m = FakeMixer(level=0)
+        m.target, m._muted = 70, True
+        m.level = 55
+        self.assertTrue(m.reconcile())
+        self.assertEqual(m.level, 0, "a muted speaker was left making sound")
+
+    def test_the_ceiling_clamps_every_write(self):
+        """`maxVolume` is the ceiling that was added after the first incident
+        and never bit, because its default is 100. It has to hold against a
+        direct set, not only against the UI."""
+        m = FakeMixer(level=30)
+        m.cap = 70
+        m.set(100, "test")
+        self.assertEqual(m.level, 70)
+        m.choose(95)
+        self.assertLessEqual(max(m.levels()), 70, "a ramp climbed past the ceiling")
+
+
 class Api(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
