@@ -94,7 +94,7 @@ let hm = homelab-modules.nixosModules; in
     hm.alertmanager-ntfy                    # webhook shim: alertmanager JSON -> ntfy
     ./modules/services/sentinel.nix          # Phase 1 watchdog: detect trouble + notify (no auto-action yet)
     ./modules/services/tracker-signup-watch.nix # low-freq: ntfy when a watched private tracker opens signup
-    ./modules/services/snapraid.nix         # inert until parity drive arrives (enable = false)
+    hm.snapraid                              # inert until the parity drive arrives (homelab.snapraid.enable = false)
     hm.pool-autoremount                     # self-heals pool members that drop off the USB bus (zombie-aware)
     hm.disk-io-watch                        # counts kernel I/O errors + USB resets per device — the QUIET fault shape
     hm.arr                                  # Prowlarr + Sonarr + Radarr + Jellyseerr + Gluetun + qBittorrent

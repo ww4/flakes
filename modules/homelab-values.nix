@@ -507,6 +507,25 @@
     key = "msh";
   };
 
+  # ── snapraid (library `snapraid`; moved from modules/services/snapraid.nix
+  #    2026-10-02) — INERT until the parity drive arrives ─────────────────────
+  # Data disks come from homelab.pools.fusion (memberDir + members above):
+  # sdf 7.3 TB Seagate Expansion, sdg 9.1 TB WD WD100EMAZ, 3× 2.7 TB Hitachi
+  # HUA723030 (ex-decom, 2026-05-25), sdk 3.6 TB WD My Book (ex-NTFS backup).
+  # Parity disk must be ≥ the largest member: sdg at 9.1 TB → 10 TB minimum.
+  # Activation = mount /mnt/parity1, flip enable, deploy, run the first
+  # `snapraid sync` by hand (hours), then the timers take over. Add a second
+  # parity file for two-disk fault tolerance once the array passes ~5 members.
+  homelab.snapraid = {
+    enable = false;
+    pool = "fusion";
+    parityFiles = [ "/mnt/parity1/snapraid.parity" ];
+    extraExclude = [ "/arr/downloads/incomplete/" ];   # transient *arr download chunks
+    # sync daily 04:00 (media-mirror's weekly run is Sun 08:00, well clear);
+    # scrub Mon 05:00, 12 %/run, 10-day minimum age = full coverage every ~8 weeks.
+    # All library defaults.
+  };
+
   # ── backup — restic critical tier (library `backup`; moved from
   #    modules/services/backup.nix 2026-10-02) ───────────────────────────────
   # Scope: critical-tier data only — small, irreplaceable application state.
