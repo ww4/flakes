@@ -55,6 +55,11 @@
     # Tier-2 "keepers" promotion targets (add as second root folders in the UIs).
     keepersMovies = "/mnt/fusion/Movies";
     keepersTv = "/mnt/fusion/TV Shows";
+    # The stack owns the *arr API keys: the same claude-readable sops file the
+    # agent, arr-settings and the sentinel already use. Each app is seeded with
+    # its key before start (library lib/arr-api-seed.nix) and recyclarr renders
+    # its secrets.yml from it — nothing is copied out of a UI any more.
+    apiKeyEnvFile = config.sops.secrets."arr-api".path;   # declared in agent/arr-api-secret.nix
   };
   homelab.recyclarr.configFile = ./services/recyclarr-config.yml;
 
