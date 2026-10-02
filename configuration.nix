@@ -95,6 +95,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/sentinel.nix          # Phase 1 watchdog: detect trouble + notify (no auto-action yet)
     ./modules/services/tracker-signup-watch.nix # low-freq: ntfy when a watched private tracker opens signup
     hm.snapraid                              # inert until the parity drive arrives (homelab.snapraid.enable = false)
+    ./modules/services/guide-preview.nix    # guide.<domain>: the homelab guide site, built by the agent, served from /var/lib/guide-preview
     hm.pool-autoremount                     # self-heals pool members that drop off the USB bus (zombie-aware)
     hm.disk-io-watch                        # counts kernel I/O errors + USB resets per device — the QUIET fault shape
     hm.arr                                  # Prowlarr + Sonarr + Radarr + Jellyseerr + Gluetun + qBittorrent
