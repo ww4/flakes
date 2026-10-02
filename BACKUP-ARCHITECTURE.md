@@ -34,7 +34,7 @@ perspective: it is the **offsite copy of Rick's media library**, pulled into
 
 ### Flow 1 — Gromit tier-1 → restic (local + B2)
 
-Source: see `criticalPaths` in `modules/services/backup.nix` — includes
+Source: see `homelab.backup.paths` in `modules/homelab-values.nix` (the library's `backup` module runs the jobs) — includes
 all small irreplaceable application state (Nextcloud, Audiobookshelf,
 Jellyfin, Grafana, Tandoor, Homepage, **Forgejo** with its sqlite DB +
 bare repos + LFS), plus the `/mnt/fusion/{Bitcoin,nextcloud,immich}`
@@ -306,7 +306,7 @@ sudo rsync -aH -e "ssh -i /root/.ssh/id_ed25519 -p 4089" \
 
 Everything gromit-side is in the flake:
 
-1. **`backup.nix`** declares `users.groups.restic`, the `restic-push` SFTP
+1. **The library's `backup` module** (`homelab.backup.sftpPush`) declares `users.groups.restic`, the `restic-push` SFTP
    user with bub's locked-down authorized key, chris's `restic` group
    membership, and owns the repo group/setgid/ACLs idempotently via the
    `restic-repo-perms` oneshot (runs after the backup pool mounts).

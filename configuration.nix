@@ -71,7 +71,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/vscode-server.nix
     hm.acme                                 # shared ACME DNS-01 defaults (email + token in homelab-values)
     hm.nextcloud                            # admin/OIDC secrets in homelab-values; pg backups below
-    ./modules/services/backup.nix
+    hm.backup                                # restic critical tier; paths + secrets in homelab-values
     ./modules/services/dow-uploads-backup.nix # DOW uploads bucket -> fusion pool (into restic)
     hm.ntfy                                 # write-only anon access; baseUrl/topic in homelab-values
     ./modules/services/daily-reminders.nix   # tappable ntfy nudges (reminder only — claims nothing)
