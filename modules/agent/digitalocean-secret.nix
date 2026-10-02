@@ -69,4 +69,13 @@
     owner = "claude";
     mode = "0400";
   };
+  # The Spaces key that publishes the installer ISO (configurator/tools/publish-iso.sh
+  # in homelab-modules reads it as an env file). Declared here next to the other
+  # DO credential; the encrypted file landed in PR 390 without this declaration.
+  sops.secrets."digitalocean-iso" = {
+    sopsFile = ../../secrets/digitalocean-iso.yaml;
+    key = "digitalocean-iso";
+    owner = "claude";
+    mode = "0400";
+  };
 }
