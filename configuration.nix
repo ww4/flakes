@@ -123,6 +123,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/homelab-mcp.nix      # MCP connector for Claude-in-the-app — public via the lock3 VPS jump host
     ./modules/services/cd-ripper.nix        # insert a CD in any USB drive → whipper rips it, beets files it in the library, ntfy says so
     ./modules/services/yamaha-ync.nix       # the living-room receiver: JSON API for the radio page + MCP server (public pkg ww4/yamaha-ync)
+    ./modules/services/roku                 # the Roku on the TV: ECP control for the radio page's remote
     ./modules/services/asterisk.nix         # house PBX (pjsip): dial 0 for the switchboard, 1XX for a handset — LAN/tailnet only
     ./modules/services/switchboard.nix      # dial 0: whisper -> intents / claude -p -> piper (FastAGI behind Asterisk)
     ./modules/services/media-gate.nix       # do finished downloads actually parse as media? (ffprobe allowlist, reports only)
@@ -220,6 +221,21 @@ let hm = homelab-modules.nixosModules; in
     # wallace is powered off — hosts/wallace/switchboard-inference.nix.
     remoteWhisperUrls = [ "http://100.66.171.120:8778" ];
     remoteKokoroUrls = [ "http://100.66.171.120:8880" ];
+  };
+
+  # --- the Roku on the television --------------------------------------------
+  # Feeds the TV's HDMI; the TV's optical out goes to the R-N301, so the
+  # amplifier owns the volume and the Roku owns navigation. Its own volume keys
+  # emit CEC/IR at the television and do nothing useful in that path.
+  services.roku = {
+    enable = true;
+    name = "Living room TV";
+    # Pinned rather than discovered, and the reason is the interesting bit: a
+    # SUSPENDED Roku answers ECP perfectly well but can be silent to SSDP —
+    # this one was, on 2026-10-03, invisible to a search while happily
+    # reporting its own model number. Waking it is exactly when you need to
+    # reach it, so discovery is the wrong thing to depend on here.
+    host = "192.168.1.89";          # Roku Express 4K+, 3941X, on wifi
   };
 
   # --- the radio: this box's values for modules/services/netradio -------------
