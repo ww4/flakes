@@ -314,10 +314,21 @@
   <div class="remote-wrap" v-if="remote" @click.self="remote = false">
     <section class="remote">
       <header>
-        <strong>{{ receiver.name || site.roomName }}</strong>
-        <small>{{ receiver.on ? receiver.input : (receiver.error || 'standby') }}</small>
+        <strong v-if="remoteTab === 'roku'">{{ roku.name || site.rokuName }}</strong>
+        <strong v-else>{{ receiver.name || site.roomName }}</strong>
+        <small v-if="remoteTab === 'roku'">{{ roku.error || (roku.awake ? (roku.app || 'on') : (roku.power || 'asleep')) }}</small>
+        <small v-else>{{ receiver.on ? receiver.input : (receiver.error || 'standby') }}</small>
         <button class="x" @click="remote = false" aria-label="Close">✕</button>
       </header>
+
+      <!-- Two remotes behind one button. They each want a d-pad and a
+           transport, and showing both at once is a long scroll on a phone. -->
+      <div class="rtabs" v-if="site.hasRoom && site.hasRoku">
+        <button :class="{on: remoteTab === 'room'}" @click="remoteTab = 'room'">{{ receiver.name || site.roomName }}</button>
+        <button :class="{on: remoteTab === 'roku'}" @click="remoteTab = 'roku'">{{ roku.name || site.rokuName }}</button>
+      </div>
+
+      <template v-if="remoteTab !== 'roku'">
 
       <div class="r-top">
         <button class="key" :class="{on: receiver.on}" @click="power(!receiver.on)" title="Power">⏻</button>
@@ -378,6 +389,54 @@
       </div>
 
       <p class="r-note">No sleep timer, tone, dimmer, scenes or FM mono over the network — the receiver keeps those on the front panel.</p>
+      </template>
+
+      <!-- ===== the Roku ================================================== -->
+      <template v-else>
+        <div class="keys" style="margin-bottom:.5rem">
+          <button class="key wide" @click="rokuKey('Home')">⌂ Home</button>
+          <button class="key wide" @click="rokuKey('Back')">‹ Back</button>
+        </div>
+
+        <h6>Navigate</h6>
+        <div class="dpad">
+          <button class="key up" @click="rokuKey('Up')">▲</button>
+          <button class="key left" @click="rokuKey('Left')">◀</button>
+          <button class="key sel" @click="rokuKey('Select')">OK</button>
+          <button class="key right" @click="rokuKey('Right')">▶</button>
+          <button class="key down" @click="rokuKey('Down')">▼</button>
+        </div>
+
+        <h6>Transport</h6>
+        <div class="keys">
+          <button class="key" @click="rokuKey('InstantReplay')" title="Instant replay">↺</button>
+          <button class="key" @click="rokuKey('Rev')">⏪</button>
+          <button class="key" @click="rokuKey('Play')" title="Play / pause">⏯</button>
+          <button class="key" @click="rokuKey('Fwd')">⏩</button>
+          <button class="key" @click="rokuKey('Info')" title="Options">✱</button>
+        </div>
+
+        <!-- Typing on a d-pad is the worst part of any streaming box, and ECP
+             will take the characters directly. One request per character, so
+             the reply says how many actually landed. -->
+        <h6>Type into whatever is on screen</h6>
+        <div class="rtype">
+          <input v-model="rokuText" placeholder="a search box, a password…"
+                 @keydown.enter="rokuSend" aria-label="Text to send to the Roku">
+          <button class="key" @click="rokuSend" :disabled="!rokuText.trim()">Send</button>
+        </div>
+
+        <div class="keys" style="margin-top:.6rem">
+          <button class="key wide" v-if="roku.findRemote" @click="rokuKey('FindRemote')"
+                  title="Make the physical remote beep">Find the remote</button>
+          <button class="key wide" @click="rokuKey('PowerOn')" title="Wake it">Wake</button>
+        </div>
+
+        <p class="r-note">Volume is the receiver's: the television's optical out
+          feeds it, so the Roku's own volume keys talk to a television that is not
+          in that path. Power is refused unless <code>services.roku.allowPower</code>
+          is set.</p>
+      </template>
     </section>
   </div>
 

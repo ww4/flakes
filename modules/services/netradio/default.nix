@@ -364,6 +364,8 @@ let
     roomName = cfg.receiver.label;
     hasLocal = cfg.speaker.enable;
     hasRoom = cfg.receiver.enable;
+    hasRoku = cfg.roku.enable && cfg.roku.apiUrl != "";
+    rokuName = cfg.roku.label;
     bedMount = cfg.bedMount;
   });
 
@@ -812,6 +814,36 @@ in
     #
     # `speaker.*` and `receiver.*` above are sugar that fill this in, so the
     # two devices that already exist keep working untouched.
+    # A remote for something that is NOT a playback endpoint. The `devices`
+    # registry below is a contract for things you can send a STATION to; a
+    # streaming box is not one of those, and listing it there would offer it as
+    # somewhere to play the radio. When the page is refactored to loop over
+    # `devices` rather than branch on hasRoom/hasLocal, this becomes a device
+    # declaring `keys` and no `play` — until then it follows the shape the page
+    # actually reads (2026-10-03).
+    roku = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Show a Roku remote on the page: a d-pad, transport, Home and Back,
+          and a text box for the search fields that are miserable on a physical
+          remote. Needs something serving `apiUrl` — `services.roku` is one.
+        '';
+      };
+      label = lib.mkOption {
+        type = lib.types.str;
+        default = "Roku";
+        description = "What the page calls it before the device reports its own name.";
+      };
+      apiUrl = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        example = "http://127.0.0.1:8793";
+        description = "Base URL of the Roku control API. Loopback: it is proxied under the page's own vhost, so it inherits the same access gate.";
+      };
+    };
+
     devices = lib.mkOption {
       default = { };
       description = "Playback endpoints, by id. Each is proxied at /device/<id>/ under the page's own vhost, so it inherits the same access gate and needs no port of its own — keep the endpoints on loopback.";
@@ -1187,6 +1219,18 @@ in
           extraConfig = ''
             add_header Cache-Control "no-store";
             proxy_read_timeout 90s;   # a menu walk can take a while
+          '';
+        };
+      }
+      # The Roku's control API. Navigation only — the sound leaves the
+      # television by optical to the receiver, so volume belongs to the
+      # receiver and this never carries it.
+      // lib.optionalAttrs (cfg.roku.enable && cfg.roku.apiUrl != "") {
+        "/roku/" = {
+          proxyPass = "${lib.removeSuffix "/" cfg.roku.apiUrl}/";
+          extraConfig = ''
+            add_header Cache-Control "no-store";
+            proxy_read_timeout 30s;   # a box waking from suspend answers slowly
           '';
         };
       }

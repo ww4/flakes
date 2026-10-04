@@ -429,6 +429,48 @@ class OnePageAtEveryWidth(unittest.TestCase):
                                 "resizing navigates, which drops the stream")
 
 
+class RokuRemote(unittest.TestCase):
+    """A second remote in the same modal.
+
+    Chris put a Roku on the television, whose optical out feeds the R-N301 — so
+    the amplifier owns the volume and the Roku owns navigation (2026-10-03).
+    """
+
+    def test_the_page_can_drive_a_roku(self):
+        js = (WEB / "desktop.js").read_text()
+        html = (WEB / "desktop.html").read_text()
+        self.assertIn("rokuKey", js, "no way to press a Roku key")
+        self.assertIn("roku/status", js, "the page never asks what the Roku is doing")
+        self.assertIn("rokuSend", js, "no text entry — the worst part of any streaming box")
+        self.assertIn('@click="rokuKey(\'Home\')"', html, "no Home button")
+        self.assertIn('v-model="rokuText"', html, "no field to type into")
+
+    def test_volume_is_never_sent_to_the_roku(self):
+        """Its volume keys emit CEC/IR at the television, and the television is
+        not in the audio path — the sound leaves it by optical to the receiver.
+        A volume button here would look right and do nothing."""
+        js = (WEB / "desktop.js").read_text()
+        html = (WEB / "desktop.html").read_text()
+        for key in ("VolumeUp", "VolumeDown", "VolumeMute"):
+            self.assertNotIn(f"rokuKey('{key}')", html, f"{key} offered on the Roku remote")
+            self.assertNotIn(f'roku/key/{key}', js, f"{key} sent to the Roku")
+
+    def test_the_remote_is_hidden_when_there_is_no_roku(self):
+        html = (WEB / "desktop.html").read_text()
+        self.assertIn("site.hasRoku", html,
+                      "the Roku tab shows whether or not one is configured")
+
+    def test_the_module_proxies_it_under_the_pages_own_vhost(self):
+        """Loopback service, same access gate as the page — not a second port
+        anyone has to think about."""
+        nix = (Path(os.environ["NETRADIO_NIX"]).read_text()
+               if os.environ.get("NETRADIO_NIX") else "")
+        if not nix:
+            self.skipTest("set NETRADIO_NIX")
+        self.assertIn('"/roku/"', nix, "nothing proxies the Roku API")
+        self.assertIn("hasRoku", nix, "site.json never tells the page there is one")
+
+
 class TrackNotices(unittest.TestCase):
     """A notice when the track changes. Windows gives a web page no per-track
     toast of its own — the media session buys transport controls, not a notice

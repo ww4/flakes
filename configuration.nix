@@ -305,6 +305,14 @@ let hm = homelab-modules.nixosModules; in
       maxVolume = 70;
     };
 
+    # The Roku on the television, via modules/services/roku. Navigation only:
+    # the TV's optical out feeds the receiver, so volume stays with the Yamaha.
+    roku = {
+      enable = config.services.roku.enable;
+      label = config.services.roku.name;
+      apiUrl = "http://127.0.0.1:${toString config.services.roku.apiPort}";
+    };
+
     # The living-room R-N301, via modules/services/yamaha-ync.nix.
     receiver = {
       enable = config.services.yamaha-ync.enable;
