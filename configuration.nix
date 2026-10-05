@@ -139,7 +139,7 @@ let hm = homelab-modules.nixosModules; in
   # so re-fetching it forever would be noise.
   services.contentArchives = {
     enable = true;
-    # All eight of the fleet. Only lup + twib were listed until 2026-09-09 —
+    # All nine of the fleet. Only lup + twib were listed until 2026-09-09 —
     # and because of the Environment= splitting bug (see content-archives.nix)
     # only lup was ever actually refreshed. The other six were built once on
     # 2026-08-18 and then frozen, five of them never even pushed to the forge.
@@ -150,6 +150,15 @@ let hm = homelab-modules.nixosModules; in
       { name = "twib-archive";         path = "/home/claude/twib-archive"; }
       { name = "audible-archive";      path = "/home/claude/audible-archive"; }
       { name = "wbd-archive";          path = "/home/claude/wbd-archive"; }
+      # Jupiter Extras — added 2026-10-05. This is where Clanker Therapy airs
+      # (Chris Fisher + Wes on what they have actually built with agents), and
+      # the show was in none of the eight, so Clanker Therapy 2 was never
+      # downloaded. ⚠️ Extras serves text/plain transcripts and numbers nothing,
+      # which the shared build.py could not handle — ww4/extras-archive carries
+      # the only copy that can (text/plain in TRANSCRIPT_FORMATS, and
+      # "number_from": "date" in its show.json). Its origin has no main yet:
+      # the first push is this unit's bootstrap path.
+      { name = "extras-archive";       path = "/home/claude/extras-archive"; }
       # DISCOVERY — Chris does NOT listen to these. Archived purely so
       # podcast-triage can surface the occasional episode worth his time.
       { name = "tftc-archive";         path = "/home/claude/tftc-archive"; }
