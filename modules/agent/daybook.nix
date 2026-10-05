@@ -50,6 +50,7 @@ let
   # found` (exit 127) AFTER the claude run had already done its work. Same
   # idiom as daily-reminders.nix.
   notifyPkg = import ../services/notify-pkg.nix { inherit pkgs; };
+  claude-run = import ./claude-run-pkg.nix { inherit pkgs; };
   notify = "${notifyPkg}/bin/gromit-notify";
 
   spaceDir = "/var/lib/silverbullet";
@@ -319,8 +320,17 @@ let
       };
       script = ''
         set -uo pipefail
-        out="$(timeout 20m claude -p "$(cat ${prompt})" 2>/dev/null)" \
-          || out="TLDR: Daybook ${name} run FAILED — check journalctl -u claude-daybook-${name}"
+        # stderr is kept (claude-run tees it to the journal) and an expired
+        # login is reported as itself rather than as a mystery job failure.
+        set +o errexit
+        out="$(${claude-run}/bin/claude-run 20m ${prompt})"
+        rc=$?
+        set -o errexit
+        if [ "$rc" -eq 2 ]; then
+          out="TLDR: Daybook ${name} SKIPPED — Claude login expired. Run 'claude' on gromit to re-auth."
+        elif [ "$rc" -ne 0 ]; then
+          out="TLDR: Daybook ${name} run FAILED — check journalctl -u claude-daybook-${name}"
+        fi
         tldr="$(printf '%s' "$out" | grep -m1 -iE '^TLDR:' | sed -E 's/^[Tt][Ll][Dd][Rr]:[[:space:]]*//')"
         [ -n "$tldr" ] || tldr="Daybook ${name} run finished (no TLDR line — check the journal page)."
         ${notify} "${title}" "$tldr
@@ -431,15 +441,31 @@ let
           remaining="$(grep -viE "$trigger_re" "$inbox" || true)"
           printf '%s\n' "$remaining" > "$inbox"
 
-          out="$(timeout 20m claude -p "$(cat ${onDemandPrompt})" 2>/dev/null)" \
-            || out="TLDR: On-demand daybook FAILED — check journalctl -u claude-inbox-triage"
+          set +o errexit
+          out="$(${claude-run}/bin/claude-run 20m ${onDemandPrompt})"
+          rc=$?
+          set -o errexit
+          if [ "$rc" -eq 2 ]; then
+            out="TLDR: On-demand daybook SKIPPED — Claude login expired. Run 'claude' on gromit to re-auth."
+          elif [ "$rc" -ne 0 ]; then
+            out="TLDR: On-demand daybook FAILED — check journalctl -u claude-inbox-triage"
+          fi
           tldr="$(printf '%s' "$out" | grep -m1 -iE '^TLDR:' | sed -E 's/^[Tt][Ll][Dd][Rr]:[[:space:]]*//')"
           [ -n "$tldr" ] || tldr="On-demand daybook finished (no TLDR line — check the journal page)."
           ${notify} "Daybook — on-demand run" \
             "$tldr"$'\n'"${notesUrl}/Journal/Day/$(date +%F)" default "zap"
           commit_msg="daybook on-demand $(date '+%Y-%m-%d %H:%M')"
         else
-          timeout 10m claude -p "$(cat ${triagePrompt})" 2>/dev/null || true
+          set +o errexit
+          ${claude-run}/bin/claude-run 10m ${triagePrompt} >/dev/null
+          rc=$?
+          set -o errexit
+          if [ "$rc" -eq 2 ]; then
+            gromit-notify "Inbox triage skipped — Claude login expired" \
+              "Run 'claude' on gromit to re-auth. Nothing was triaged." high "lock"
+          elif [ "$rc" -ne 0 ]; then
+            echo "inbox triage: claude-run exited $rc — see the stderr above" >&2
+          fi
           commit_msg="inbox triage $(date '+%Y-%m-%d %H:%M')"
         fi
 

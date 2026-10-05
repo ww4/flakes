@@ -29,6 +29,7 @@
 
 let
   cfg = config.services.podcastTriage;
+  claude-run = import ../agent/claude-run-pkg.nix { inherit pkgs; };
 
   interests = ./podcast-interests.json;
 
@@ -173,8 +174,17 @@ in
         echo "podcast-triage: $n candidate(s) shortlisted; handing to the reader"
         # Exit 0 regardless: a bad week for the reader must not trip the
         # failed-unit alert. Freshness is visible in the queue page itself.
-        timeout 35m claude -p "$(cat ${prompt})" 2>/dev/null || \
-          echo "podcast-triage: reader did not complete (see journalctl)"
+        # Still exit 0 on a bad week, but keep the reason: `2>/dev/null` here
+        # hid an expired login behind "reader did not complete".
+        set +o errexit
+        ${claude-run}/bin/claude-run 35m ${prompt}
+        rc=$?
+        set -o errexit
+        if [ "$rc" -eq 2 ]; then
+          echo "podcast-triage: SKIPPED — Claude login expired; run 'claude' on gromit to re-auth" >&2
+        elif [ "$rc" -ne 0 ]; then
+          echo "podcast-triage: reader did not complete (exit $rc; stderr is above)"
+        fi
       '';
     };
 

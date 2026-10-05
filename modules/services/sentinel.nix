@@ -20,6 +20,41 @@
 let
   # Helper for the backup-health check: fires (exit 0 + a message) if any key
   # backup unit's last run did not succeed.
+  # Claude subscription login — warns BEFORE the refresh token dies rather than
+  # after every scheduled run has started failing. The access token refreshes
+  # silently on use and is never the problem; the refresh token is a hard wall,
+  # and when it goes every `claude -p` unit fails at once with no fix but an
+  # interactive login. Chris found out the bad way: "Its annoying to find out
+  # I'm logged out because a bunch of auto-run commands start failing."
+  #
+  # ⚠️ Reads only the expiry timestamp — no token is printed, and no API call is
+  # made, so this costs nothing and cannot itself be the thing that fails.
+  # A revoked-but-unexpired token is NOT caught here; that shows up as a failed
+  # unit instead, and `claude-auth` tells the two apart.
+  claudeLoginCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-claude-login";
+    runtimeInputs = [ pkgs.python3 ];
+    text = ''
+      cred=/home/claude/.claude/.credentials.json
+      if [ ! -r "$cred" ]; then
+        echo "claude login: no readable credentials at $cred — every scheduled claude -p run will fail. Run 'claude' interactively on gromit."
+        exit 1
+      fi
+      # Epoch MILLISECONDS. Read as seconds this dates to 1970 and cries wolf
+      # permanently, which is worse than having no check.
+      python3 - "$cred" <<'EOF'
+import json, sys, time
+d = json.load(open(sys.argv[1]))["claudeAiOauth"]
+days = (d["refreshTokenExpiresAt"] / 1000 - time.time()) / 86400
+if days <= 7:
+    print("claude login: refresh token expires in %.1f days (%s). Run 'claude' interactively on gromit to re-auth; every scheduled claude -p unit stops when it lapses." % (
+        days, time.strftime("%Y-%m-%d %H:%M", time.localtime(d["refreshTokenExpiresAt"] / 1000))))
+    sys.exit(1)
+sys.exit(0)
+EOF
+    '';
+  };
+
   backupCheck = pkgs.writeShellApplication {
     name = "sentinel-check-backups";
     runtimeInputs = [ pkgs.systemd ];
@@ -669,6 +704,12 @@ let
       # (NOTE: catches FAILED runs; staleness/never-ran is a future refinement.)
       { id = "backup-health"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "${backupCheck}/bin/sentinel-check-backups"; }
+
+      # Fires at 7 days out, so there is a week of notice rather than a morning
+      # of mystery failures. agent = false: there is nothing to diagnose and
+      # nothing the agent can do — only an interactive login fixes it.
+      { id = "claude-login"; type = "command"; severity = "warning"; agent = false; act = false;
+        cmd = "${claudeLoginCheck}/bin/sentinel-check-claude-login"; }
 
       # Kernel OOM-kills in the last 10 min (cert renewal failures are already
       # covered by failed-units, so no separate cert check).
