@@ -75,9 +75,18 @@ sys.exit(1 if d["refreshTokenExpiresAt"]/1000 <= time.time() else 0)
     # fallback is bounded by SIZE: a real run is long, an auth error is ~73
     # bytes, so "short AND mentions auth" is a safe pattern and a long document
     # that happens to discuss OAuth is not caught by it.
+    #
+    # ⚠️ There is more than one message. Built from the newsdesk incident, this
+    # pattern caught only ONE of the three Anthropic documents as failure text
+    # (code.claude.com/docs/en/authentication and /errors):
+    #   "Failed to authenticate: OAuth session expired and could not be refreshed"
+    #   "Login expired · Please run /login"          <- was MISSED
+    #   "Anthropic profile login expired"            <- was MISSED
+    # An observed string is one sample, not the set. Keep this list and the
+    # test-case list below in step.
     bytes=$(wc -c < "$outFile")
     if grep -qiF 'Failed to authenticate' "$outFile" \
-       || { [ "$bytes" -lt 400 ] && grep -qiE 'oauth|session expired|could not be refreshed|please log ?in|unauthor' "$outFile"; }; then
+       || { [ "$bytes" -lt 400 ] && grep -qiE 'oauth|session expired|login expired|could not be refreshed|please log ?in|run /login|unauthor|authentication_failed' "$outFile"; }; then
       echo "claude-run: LOGIN EXPIRED — claude printed an auth error to stdout (exit $rc, $bytes bytes):" >&2
       sed 's/^/claude-run:   /' "$outFile" >&2
       echo "claude-run: run 'claude' interactively on gromit to re-auth. Output withheld so it cannot be published as a result." >&2
