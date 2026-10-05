@@ -43,15 +43,48 @@ pkgs.writeShellApplication {
       exit 1
     fi
 
+    # Prefer the one-year token when it is present. Sourced per invocation and
+    # never exported globally: it cannot do Remote Control or claude.ai
+    # connectors, and it OUTRANKS the /login credential in any session that
+    # reads it, so a profile-wide export would break all the herdr panes.
+    # See modules/agent/claude-oauth-token-secret.nix.
+    tokenFile=/run/secrets/claude-oauth-token
+    usingToken=0
+    tok=""
+    if [ -r "$tokenFile" ]; then
+      # PARSED, not sourced. `.` would execute the file as shell, and shellcheck
+      # rightly refuses a non-constant source (SC1090) -- which fails the build,
+      # since writeShellApplication runs shellcheck. Parsing is both buildable
+      # and safer: a malformed secret can only be rejected, never run.
+      tok="$(sed -n 's/^[[:space:]]*CLAUDE_CODE_OAUTH_TOKEN=//p' "$tokenFile" | head -1 | tr -d '"'"'"'\r ')"
+      case "$tok" in
+        sk-ant-oat*)
+          export CLAUDE_CODE_OAUTH_TOKEN="$tok"
+          usingToken=1
+          ;;
+        "")
+          echo "claude-run: $tokenFile sets no CLAUDE_CODE_OAUTH_TOKEN — falling back to the interactive credential." >&2
+          ;;
+        sk-ant-api*)
+          # Would bill per token against the API instead of the subscription.
+          echo "claude-run: REFUSING the token in $tokenFile — that is an API key (sk-ant-api), not a subscription token (sk-ant-oat). Falling back to the interactive credential." >&2
+          ;;
+        *)
+          echo "claude-run: REFUSING the token in $tokenFile — unrecognised prefix. Falling back to the interactive credential." >&2
+          ;;
+      esac
+    fi
+
     # Cheap deterministic pre-check: an already-dead refresh token cannot be a
     # job bug, so say so before spending 20 minutes finding out. The field is
     # epoch MILLISECONDS -- read as seconds it dates to 1970 and fires forever.
     cred="$HOME/.claude/.credentials.json"
-    if [ ! -r "$cred" ]; then
+    if [ "$usingToken" = 1 ]; then
+      : # the one-year token is in play; the 29-day refresh wall does not apply
+    elif [ ! -r "$cred" ]; then
       echo "claude-run: no readable credentials at $cred — run 'claude' interactively on gromit." >&2
       exit 2
-    fi
-    if ! python3 -c '
+    elif ! python3 -c '
 import json,sys,time
 d=json.load(open(sys.argv[1]))["claudeAiOauth"]
 sys.exit(1 if d["refreshTokenExpiresAt"]/1000 <= time.time() else 0)
@@ -86,7 +119,7 @@ sys.exit(1 if d["refreshTokenExpiresAt"]/1000 <= time.time() else 0)
     # test-case list below in step.
     bytes=$(wc -c < "$outFile")
     if grep -qiF 'Failed to authenticate' "$outFile" \
-       || { [ "$bytes" -lt 400 ] && grep -qiE 'oauth|session expired|login expired|could not be refreshed|please log ?in|run /login|unauthor|authentication_failed' "$outFile"; }; then
+       || { [ "$bytes" -lt 400 ] && grep -qiE 'session expired|login expired|could not be refreshed|please log ?in|run /login|unauthor|authentication_failed' "$outFile"; }; then
       echo "claude-run: LOGIN EXPIRED — claude printed an auth error to stdout (exit $rc, $bytes bytes):" >&2
       sed 's/^/claude-run:   /' "$outFile" >&2
       echo "claude-run: run 'claude' interactively on gromit to re-auth. Output withheld so it cannot be published as a result." >&2
