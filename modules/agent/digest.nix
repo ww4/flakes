@@ -23,6 +23,7 @@
 { config, lib, pkgs, ... }:
 let
   notifyPkg = import ../services/notify-pkg.nix { inherit pkgs; };
+  claude-run = import ./claude-run-pkg.nix { inherit pkgs; };
   notify = "${notifyPkg}/bin/gromit-notify";
 in
 {
@@ -53,7 +54,7 @@ in
     script = ''
       set -uo pipefail
       out=/var/lib/digest
-      md="$(timeout 15m claude -p "/catch-up" 2>/dev/null)" \
+      md="$(${claude-run}/bin/claude-run 15m ${pkgs.writeText "catch-up-prompt" "/catch-up"})" \
         || md="# Digest run failed
 
 The weekly digest run did not complete. Check \`journalctl -u claude-weekly-digest\`.
