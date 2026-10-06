@@ -128,11 +128,19 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/switchboard.nix      # dial 0: whisper -> intents / claude -p -> piper (FastAGI behind Asterisk)
     ./modules/services/media-gate.nix       # do finished downloads actually parse as media? (ffprobe allowlist, reports only)
     ./modules/agent/daybook.nix             # 09:00/20:00 claude -p bookends: plan the day / review + tomorrow
+    ./modules/agent/project-board.nix       # where multi-day projects stand -> digest.rosemaryacres.com/board/
   ];
 
   # The NixOS release the system was first installed from. Leave it pinned —
   # see `man configuration.nix`.
   system.stateVersion = "22.11";
+
+  # A status surface for work that runs longer than one session: one JSON file
+  # per project in the agent's home, rendered to a page Chris can open from his
+  # phone. Built after Clanker Therapy 2, where the lesson was to stand the
+  # dashboard up BEFORE the multi-day project rather than spend the week unable
+  # to say how far along it was. Defaults are the whole configuration.
+  services.projectBoard.enable = true;
 
   # Weekly refresh of the podcast transcript corpora. Only LIVE shows: ww4/
   # sh-archive is absent on purpose — Self-Hosted ended at "150: The Last One",

@@ -305,6 +305,10 @@ let
             description: Remote device management (server)
             href: https://mesh.rosemaryacres.com
             icon: meshcentral.png
+        - Project board:
+            description: Where the agent's multi-day work stands
+            href: https://digest.rosemaryacres.com/board/
+            icon: mdi-clipboard-text-clock
 
     - Monitoring:
         - Grafana:
