@@ -132,6 +132,13 @@ in
 
     systemd.services.project-board-render = {
       description = "Render the agent's project board";
+      # Renders once on boot and on the switch that first enables it. Without
+      # this the page does not exist until the hour ticks over, so the vhost
+      # serves a 404 from deploy until then -- which is exactly what happened on
+      # 2026-10-06: #399 deployed at 09:13 and /board/ 404'd, because the .path
+      # unit only fires on a CHANGE and the directory was already there.
+      # A status surface whose first impression is a 404 does not get trusted.
+      wantedBy = [ "multi-user.target" ];
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;
