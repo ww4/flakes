@@ -32,11 +32,17 @@
 # that only changes when something does.
 #
 # ── TWO THINGS TO KNOW OPERATIONALLY ────────────────────────────────────────
-# 1. ⚠️ The .path unit catches a project file being ADDED OR REMOVED, not
-#    edited. PathChanged on a directory watches the directory inode, and
-#    rewriting a file in place does not touch it. That is why the timer below
-#    exists and is not optional. The timer is also what keeps "quiet 3d" and
-#    "touched 5h ago" true: those move with the clock, not with the files.
+# 1. The .path unit fires on an ADD, a REMOVE *and* an in-place EDIT.
+#    ⚠️ This comment said the opposite until 2026-10-06, and that was wrong --
+#    asserted from "PathChanged on a directory watches the directory inode"
+#    without testing it. Measured: two in-place rewrites of an existing project
+#    file each triggered a render within the same second, with the directory's
+#    own mtime UNCHANGED both times. inotify on a directory reports events for
+#    the files in it, which is the whole point of watching a directory.
+#    So the timer is NOT the refresh mechanism. Its real job is the relative
+#    times -- "quiet 3d", "touched 5h ago" move with the clock, not with the
+#    files, and without it a board left alone would keep claiming "touched 1m
+#    ago" forever. That alone is worth the hourly tick.
 # 2. The projects live in /home/claude (the agent owns them; it is 0700, so
 #    nginx cannot read it) and the page is rendered into /var/lib/project-board
 #    (nginx can). That split is why the unit runs as the agent and writes
@@ -132,6 +138,13 @@ in
 
     systemd.services.project-board-render = {
       description = "Render the agent's project board";
+      # Renders once on boot and on the switch that first enables it. Without
+      # this the page does not exist until the hour ticks over, so the vhost
+      # serves a 404 from deploy until then -- which is exactly what happened on
+      # 2026-10-06: #399 deployed at 09:13 and /board/ 404'd, because the .path
+      # unit only fires on a CHANGE and the directory was already there.
+      # A status surface whose first impression is a 404 does not get trusted.
+      wantedBy = [ "multi-user.target" ];
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;
