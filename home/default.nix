@@ -11,6 +11,7 @@
     ./git.nix
     ./packages.nix
     ./vscode.nix
+    ./baloo.nix
     # Future phases:
     # ./element.nix
     # ./ssh.nix
