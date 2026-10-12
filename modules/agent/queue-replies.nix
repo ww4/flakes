@@ -36,6 +36,25 @@ let
   } (builtins.readFile ./queue-reply.py);
 in
 {
+  # ⚠️ GLOBAL nginx recommendedProxySettings OFF — this is an outage fix, not a
+  # preference. homelab-modules' nginx-access.nix sets it `lib.mkDefault true`,
+  # and the 2026-10-12 12:18 bump (#402) therefore turned it on for every vhost
+  # that had not asked for it. It injects a proxy_set_header include into each
+  # proxying location, and 18 vhosts here already set `Host` by hand — so nginx
+  # sent the header TWICE.
+  #
+  # A duplicate Host violates RFC 7230 and the upstream answers 400. MEASURED,
+  # not assumed, against four different upstreams:
+  #   uvicorn (homelab-mcp) 400 · ntfy (Go) 400 · Grafana 400 · Jellyfin 400
+  # The MCP connector was down from 12:25 and grafana, jellyfin, recipes,
+  # sonarr, radarr, prowlarr, qbittorrent, requests, music, books, prometheus,
+  # lidarr, lazylibrarian, abs and pinchflat were all broken the same way.
+  #
+  # Set here rather than per-vhost because it reverts a global default to the
+  # value this box ran on for months. Vhosts that opt in EXPLICITLY are
+  # unaffected and keep the include.
+  services.nginx.recommendedProxySettings = false;
+
   environment.systemPackages = [ queue-reply ];
 
   # ---------------------------------------------------------------- ntfy
@@ -133,54 +152,34 @@ in
     '';
   };
 
-  # ------------------------------------------------- the scoped listener
-  # NOT port 443. gromit's 443 is the shared nginx for every vhost and its
-  # allow-list admits the whole tailnet CGNAT range, so opening 443 to agent-vm
-  # would hand it the IP gate on every site here. This is the jump-host pattern
-  # already proven for homelab-mcp: one port, one peer, one path.
-  services.nginx.virtualHosts."${certDomain}-queue-replies" = {
-    serverName = certDomain;
-    # ⚠️ `onlySSL` IS REQUIRED, NOT DECORATION. `ssl = true` in a `listen`
-    # entry emits `listen ... ssl` but does NOT make the module write the
-    # `ssl_certificate` directives — those come from onlySSL/addSSL/forceSSL.
-    # Without it nginx fails to START with
-    #   no "ssl_certificate" is defined for the "listen ... ssl" directive
-    # which takes down EVERY vhost on the box, not just this one. That is
-    # exactly what happened on 2026-10-12 at 13:55: git, ntfy and notes all
-    # went with it, and comin could not even pull the fix because Forgejo is
-    # behind the nginx that was down.
-    listen = [{ addr = tailnetIp; port = replyPort; ssl = true; }];
-    onlySSL = true;
-    # Reuses the existing ntfy certificate so agent-vm connects BY NAME and
-    # validates normally — no self-signed trust to distribute.
-    useACMEHost = certDomain;
-    locations = {
-      # Exactly one path, and only GET. `=` is an exact match, so nothing else
-      # on the ntfy API is reachable through this port.
-      "= /${topic}/json" = {
-        proxyPass = "http://127.0.0.1:8090";
-        extraConfig = ''
-          limit_except GET { deny all; }
-          allow ${agentVmIp};
-          deny all;
-          # The stream is long-lived SSE-style; buffering would hold replies
-          # until a buffer filled, which presents as a channel that hangs.
-          proxy_buffering off;
-          proxy_read_timeout 1h;
-          proxy_set_header Host $host;
-          proxy_set_header X-Real-IP $remote_addr;
-        '';
-      };
-      # 404 everything else, as agreed.
-      "/" = {
-        extraConfig = ''
-          allow ${agentVmIp};
-          deny all;
-          return 404;
-        '';
-      };
-    };
-  };
-
-  networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ replyPort ];
+  # ------------------------------------------- the scoped listener: REMOVED
+  #
+  # ⚠️ THE LISTENER IS DELIBERATELY ABSENT. It was here, on tcp/8791, and it
+  # took nginx — and therefore ALL 75 vhosts — down on 2026-10-12 at 15:32:
+  #
+  #     bind() to 100.82.117.116:8791 failed (98: Address already in use)
+  #
+  # 8791 is the Yamaha YNC API wrapper's own port. nginx already PROXIES to
+  # 127.0.0.1:8791 for net-radio control, so adding a `listen` on it was a
+  # direct collision with a service that was there first. The whole design —
+  # agreed with agent-vm, reviewed, built and merged — named that port, and
+  # nobody ran `ss -ltn | grep 8791` once in three hours.
+  #
+  # Nothing is lost by leaving it out today: agent-vm has no tailnet grant yet,
+  # so the read path was never reachable. The PUBLISH half below works, because
+  # it posts to ntfy through the existing 443 vhost.
+  #
+  # TO RE-ADD IT, in this order:
+  #   1. pick a port and PROVE it is free, against BOTH lists:
+  #        ss -ltn                                   # what is bound
+  #        grep -oE 'proxy_pass http://127.0.0.1:[0-9]+' <nginx.conf>
+  #      A proxy TARGET is as taken as a listener. Taken on 2026-10-12:
+  #      8787 8789 8790 8791 8799 (and ~60 others — this box is dense).
+  #      8793-8798 were free at that time; re-check, do not trust this list.
+  #   2. set `onlySSL = true` alongside `ssl = true`, or nginx emits
+  #      `listen ... ssl` with no certificate and again refuses to start.
+  #   3. run the port-collision and duplicate-header checks before merging.
+  #   4. ⚠️ do NOT set `proxy_set_header Host` by hand: with
+  #      recommendedProxySettings on, the include sets it too and ntfy (Go)
+  #      answers 400 to a duplicate Host — measured, not assumed.
 }
