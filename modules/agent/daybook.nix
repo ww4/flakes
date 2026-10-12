@@ -337,6 +337,32 @@ let
         ${notesUrl}/Journal/Day/$(date +%F)" default "${ntfyTag}"
 
         # Commit this run's space changes (the autosave repo is the undo log).
+        # --- contract v1: publish the close status ------------------------
+        # Read back off the CLOSED line, so what we publish is what the queue
+        # actually records. No marker -> nothing published, and agent-vm keeps
+        # waiting rather than being told a wrong status.
+        if [ -n "$req" ] && [ -n "$rt" ]; then
+          line=$(grep -m1 -F "req:$req" "$queue" || true)
+          st=""
+          case "$line" in
+            *"#answered"*) st=answered ;;
+            *"#declined"*) st=declined ;;
+            *"#failed"*)   st=failed ;;
+          esac
+          if [ -n "$st" ]; then
+            note=$(printf '%s' "$line" | grep -oE 'answer-note: *[A-Za-z0-9 _./()-]{1,200}\.md' | head -1)
+            note=''${note#answer-note: }
+            queue-reply "$st" --req "$req" --reply-to "$rt" --note "$note" \
+              || echo "queue-consumer: $st publish failed for $req" >&2
+          else
+            echo "queue-consumer: $req has no #answered/#declined/#failed marker — published nothing" >&2
+          fi
+        fi
+
+        # Record the mtime WE leave behind, so the fire our write causes is
+        # recognised and skipped on the way back in.
+        stat -c %Y "$queue" > /var/lib/queue-reply/last-mtime 2>/dev/null || true
+
         cd ${spaceDir}
         if [ -d .git ]; then
           ${pkgs.git}/bin/git add -A
@@ -470,6 +496,28 @@ let
         fi
 
         # Commit this run's space changes (same undo-log pattern as the daybook).
+        # --- contract v1: publish the close status ------------------------
+        # Read back off the CLOSED line, so what we publish is what the queue
+        # actually records. No marker -> nothing published, and agent-vm keeps
+        # waiting rather than being told a wrong status.
+        if [ -n "$req" ] && [ -n "$rt" ]; then
+          line=$(grep -m1 -F "req:$req" "$queue" || true)
+          st=""
+          case "$line" in
+            *"#answered"*) st=answered ;;
+            *"#declined"*) st=declined ;;
+            *"#failed"*)   st=failed ;;
+          esac
+          if [ -n "$st" ]; then
+            note=$(printf '%s' "$line" | grep -oE 'answer-note: *[A-Za-z0-9 _./()-]{1,200}\.md' | head -1)
+            note=''${note#answer-note: }
+            queue-reply "$st" --req "$req" --reply-to "$rt" --note "$note" \
+              || echo "queue-consumer: $st publish failed for $req" >&2
+          else
+            echo "queue-consumer: $req has no #answered/#declined/#failed marker — published nothing" >&2
+          fi
+        fi
+
         cd ${spaceDir}
         if [ -d .git ]; then
           ${pkgs.git}/bin/git add -A
@@ -522,6 +570,19 @@ let
     If an item is not something you can finish in one unattended pass, leave it
     open, add one line saying what is blocking it, and do not half-do it.
 
+    If the item begins with a `reply-to:` / `req:` header block, the asking
+    agent is waiting on a machine-readable answer. When you close such an item,
+    the closed line MUST carry:
+      * exactly one of `#answered`, `#declined` or `#failed`, and
+      * `req:<the req value>` echoed VERBATIM, and
+      * `answer-note: <path>.md` naming a note the asker can read, for
+        `#answered`.
+    A human-readable answer belongs in that note, never in the queue line: the
+    status is published to the asking agent and typed into a live session, so
+    the line is parsed by a script and must stay machine-shaped. Omit the marker
+    and nothing is published — the asker keeps waiting, which is the failure
+    this exists to prevent.
+
     Finish with a single line starting `TLDR:` summarising what changed. If
     there was nothing open, you should not have been invoked — say
     `TLDR: nothing open` and stop.
@@ -557,6 +618,20 @@ let
         }
         has_open || exit 0
 
+        # ⚠️ DO NOT RE-FIRE ON OUR OWN WRITES. Closing an item writes the queue,
+        # which trips this unit's own PathModified watch. Before contract v1
+        # that was merely wasteful (has_open exited for nothing); now a pass
+        # publishes `accepted`, so a self-fire would republish it. agent-vm
+        # dedupes on (req,status) and would absorb it, but sending a duplicate
+        # it has to absorb is still a bug. `queue-reply` dedupes at the source
+        # too — this guard stops the pointless wake-up in the first place.
+        seen=/var/lib/queue-reply/last-mtime
+        now_mtime=$(stat -c %Y "$queue")
+        if [ -f "$seen" ] && [ "$(cat "$seen")" = "$now_mtime" ]; then
+          echo "queue-consumer: queue unchanged since our own write — nothing new"
+          exit 0
+        fi
+
         # Debounce: SilverBullet autosaves as Chris types, and a request filed
         # through the connector lands in more than one write. Wait for the file
         # to go quiet so a half-written item is not worked.
@@ -569,6 +644,20 @@ let
           [ "$m1" = "$m2" ] && break
         done
         has_open || exit 0
+
+        # --- contract v1: tell agent-vm we picked it up -------------------
+        # Parsed from the file by THIS SCRIPT, never by the model: a queue item
+        # is untrusted text, and agent-vm types what we publish into a live
+        # session. `queue-reply` dedupes on (req,status), so the re-fire caused
+        # by our own closing write cannot republish `accepted`.
+        hdr=$(grep -m1 -oE 'req: *av-[a-z][a-z0-9_-]{0,31}-[0-9]{14}' "$queue" || true)
+        req=''${hdr#req: }
+        rt=$(grep -m1 -oE 'reply-to: *agent-vm/[a-z][a-z0-9_-]{0,31}' "$queue" || true)
+        rt=''${rt#reply-to: }
+        if [ -n "$req" ] && [ -n "$rt" ]; then
+          queue-reply accepted --req "$req" --reply-to "$rt" \
+            || echo "queue-consumer: accepted publish failed for $req" >&2
+        fi
 
         set +o errexit
         out="$(${claude-run}/bin/claude-run 20m ${queuePrompt})"
@@ -591,6 +680,28 @@ let
           *) gromit-notify "Agent queue worked" "$tldr
         ${notesUrl}/System/Agent%20Queue" default "inbox_tray" ;;
         esac
+
+        # --- contract v1: publish the close status ------------------------
+        # Read back off the CLOSED line, so what we publish is what the queue
+        # actually records. No marker -> nothing published, and agent-vm keeps
+        # waiting rather than being told a wrong status.
+        if [ -n "$req" ] && [ -n "$rt" ]; then
+          line=$(grep -m1 -F "req:$req" "$queue" || true)
+          st=""
+          case "$line" in
+            *"#answered"*) st=answered ;;
+            *"#declined"*) st=declined ;;
+            *"#failed"*)   st=failed ;;
+          esac
+          if [ -n "$st" ]; then
+            note=$(printf '%s' "$line" | grep -oE 'answer-note: *[A-Za-z0-9 _./()-]{1,200}\.md' | head -1)
+            note=''${note#answer-note: }
+            queue-reply "$st" --req "$req" --reply-to "$rt" --note "$note" \
+              || echo "queue-consumer: $st publish failed for $req" >&2
+          else
+            echo "queue-consumer: $req has no #answered/#declined/#failed marker — published nothing" >&2
+          fi
+        fi
 
         cd ${spaceDir}
         if [ -d .git ]; then

@@ -128,6 +128,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/switchboard.nix      # dial 0: whisper -> intents / claude -p -> piper (FastAGI behind Asterisk)
     ./modules/services/media-gate.nix       # do finished downloads actually parse as media? (ffprobe allowlist, reports only)
     ./modules/agent/daybook.nix             # 09:00/20:00 claude -p bookends: plan the day / review + tomorrow
+    ./modules/agent/queue-replies.nix       # gromit's half of the agent-vm reply channel (contract v1)
     ./modules/agent/project-board.nix       # where multi-day projects stand -> digest.rosemaryacres.com/board/
   ];
 
