@@ -26,7 +26,11 @@
 
 let
   topic = "agent-queue-replies";
-  replyPort = 8791;          # scoped listener, agent-vm only
+  # Scoped listener, agent-vm only. NOT 8791: yamaha-ync-api already listens on
+  # 0.0.0.0:8791, which covers the tailnet address too, so nginx could not
+  # bind() here and the whole shared nginx crash-looped — every vhost on gromit
+  # went down with it. Check `ss -tln` before claiming a port on this box.
+  replyPort = 8792;
   agentVmIp = "100.124.87.61";
   tailnetIp = "100.82.117.116";
   certDomain = "ntfy.rosemaryacres.com";
