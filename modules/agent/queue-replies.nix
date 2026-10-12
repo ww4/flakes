@@ -140,7 +140,17 @@ in
   # already proven for homelab-mcp: one port, one peer, one path.
   services.nginx.virtualHosts."${certDomain}-queue-replies" = {
     serverName = certDomain;
+    # ⚠️ `onlySSL` IS REQUIRED, NOT DECORATION. `ssl = true` in a `listen`
+    # entry emits `listen ... ssl` but does NOT make the module write the
+    # `ssl_certificate` directives — those come from onlySSL/addSSL/forceSSL.
+    # Without it nginx fails to START with
+    #   no "ssl_certificate" is defined for the "listen ... ssl" directive
+    # which takes down EVERY vhost on the box, not just this one. That is
+    # exactly what happened on 2026-10-12 at 13:55: git, ntfy and notes all
+    # went with it, and comin could not even pull the fix because Forgejo is
+    # behind the nginx that was down.
     listen = [{ addr = tailnetIp; port = replyPort; ssl = true; }];
+    onlySSL = true;
     # Reuses the existing ntfy certificate so agent-vm connects BY NAME and
     # validates normally — no self-signed trust to distribute.
     useACMEHost = certDomain;
