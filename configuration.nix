@@ -60,6 +60,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/netradio             # Yamaha Net Radio: vTuner stand-in (YCast) + library stations (Icecast/Liquidsoap, on demand)
     hm.audiobookshelf
     hm.tandoor
+    ./modules/services/tandoor-inline-notes.nix  # gromit-only: ingredient notes inline, no comment bubble
     hm.pinchflat                            # mediaDir in homelab-values
     hm.metube                               # yt-dlp web GUI for one-off downloads; dir in homelab-values
     ./modules/services/bitcoind.nix
