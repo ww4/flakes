@@ -516,3 +516,22 @@ body { overflow: hidden; height: 100vh; }
   .grid { grid-template-columns: repeat(2, 1fr); gap: .5rem; }
   .bnow .mos { display: none; }
 }
+
+/* ---- two remotes behind one button ---------------------------------------
+   The receiver and the Roku each want a d-pad and a transport, and stacking
+   both is a long scroll on a phone. */
+.rtabs { display: flex; gap: .3rem; margin: 0 0 .7rem; }
+.rtabs button {
+  flex: 1; padding: .4rem .5rem; border-radius: .4rem; font-size: .85rem;
+  border: 1px solid var(--line-2); background: var(--panel); color: var(--muted);
+}
+.rtabs button.on { background: var(--panel-2); color: var(--fg); border-color: #55504a; }
+
+/* Typing on a d-pad is the worst part of any streaming box; ECP takes the
+   characters directly, so the remote offers a real field. */
+.rtype { display: flex; gap: .4rem; }
+.rtype input {
+  flex: 1; min-width: 0; padding: .4rem .55rem; font-size: .9rem;
+  border: 1px solid var(--line-2); border-radius: .4rem;
+  background: #171615; color: var(--fg);
+}

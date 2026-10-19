@@ -68,7 +68,12 @@ createApp({
       blocked: "",              // a mount the browser refused to start on its own; the play button takes it
       paused: false,            // paused by the OS transport: still tuned, and still holding the media session
       query: "", results: [], searchTimer: 0,
-      site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "", hasLocal: false, hasRoom: true, bedMount: "" },
+      site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "", hasLocal: false, hasRoom: true, hasRoku: false, rokuName: "Roku", bedMount: "" },
+      // The streaming box on the television. Navigation only: its sound leaves
+      // the TV by optical to the receiver, so the Roku's own volume keys emit
+      // CEC at a television that is not in that path (Chris, 2026-10-03).
+      roku: { name: "", app: "", power: "", awake: false, findRemote: false, error: "" },
+      rokuPoll: 0, rokuText: "", remoteTab: "room",
       receiver: { name: "", on: false, input: "", volume: 0, volume_max: 100, mute: false, error: "" },
       inputs: [], presets: [], menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
       // The receiver's Pandora stations. Walking its menu to list them takes a
@@ -234,6 +239,14 @@ createApp({
     openMount(m) { try { localStorage.setItem("radio.openMount", m); } catch (e) {} if (m) this.refresh(); },
     "receiver.volume"() { this.syncVolume(); },
     "receiver.input"() { if (this.view === "sources") this.loadMenu(); },
+    remote(open) {
+      if (!open) { clearInterval(this.rokuPoll); return; }
+      // Open on the Roku when it is the only thing there, so a household with
+      // no receiver does not get an empty receiver pane.
+      if (!this.site.hasRoom && this.site.hasRoku) this.remoteTab = "roku";
+      if (this.remoteTab === "roku") this.pollRoku();
+    },
+    remoteTab(t) { if (t === "roku") this.pollRoku(); else clearInterval(this.rokuPoll); },
     "speaker.volume"() { this.syncVolume(); },
   },
 
@@ -342,6 +355,38 @@ createApp({
       const s = this.openStationObj.mount ? this.openStationObj
               : this.stations.find(x => x.mount === this.site.localMount) || this.stations[0];
       if (s) return this.playTarget(s);
+    },
+    // ---- the Roku ---------------------------------------------------------
+    async pollRoku() {
+      const s = await getJSON("roku/status");
+      if (!s || s.error) {
+        this.roku = { ...this.roku, error: (s && s.error) || "unreachable" };
+      } else {
+        this.roku = { name: s.name || this.site.rokuName, app: (s.app && s.app.name) || "",
+                      power: s.power || "", awake: !!s.awake,
+                      findRemote: !!s.supports_find_remote, error: "" };
+      }
+      clearInterval(this.rokuPoll);
+      // Only while its tab is open. Nothing else on the page shows this, and a
+      // box asleep in another room is not worth a request every five seconds.
+      if (this.remote && this.remoteTab === "roku")
+        this.rokuPoll = setInterval(() => { if (this.remote && this.remoteTab === "roku") this.pollRoku(); }, 5000);
+    },
+    async rokuKey(key, action) {
+      const q = action && action !== "keypress" ? `?action=${action}` : "";
+      const r = await call("POST", `roku/key/${key}${q}`);
+      // 400 for a key it does not know, 403 for the power keys when they are
+      // disabled. Both are worth saying out loud — a button that quietly does
+      // nothing is the exact thing this is meant to avoid.
+      if (r && r.error) this.say(r.error);
+      else if (!action || action === "keypress") this.pollRoku();
+    },
+    async rokuSend() {
+      const text = this.rokuText.trim();
+      if (!text) return;
+      const r = await call("POST", "roku/type", { text });
+      this.rokuText = "";
+      this.say(r && r.error ? r.error : `sent ${(r && r.sent) || 0} character(s)`);
     },
     playOnReceiver(s) {
       if (s.kind === "preset")
