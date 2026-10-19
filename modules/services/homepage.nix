@@ -68,15 +68,23 @@ let
       # ordering, no persistence of any kind on a tile click (checked against
       # src/components/services/item.jsx, 2026-10-19) — so a "top apps" row
       # can only ever be a hand-kept list.
+      # One wide card: what is open, what today is about, something to read.
+      # Rendered by modules/services/briefing; full width, so columns: 1.
+      Briefing:
+        tab: Home
+        style: row
+        columns: 1
       Favorites:
         tab: Home
         style: row
         columns: 4
         useEqualHeights: true
+      # Four tiles, one row, now that Nextcloud and Tandoor have moved up to
+      # Favorites rather than appearing twice on the same tab.
       Household:
         tab: Home
         style: row
-        columns: 3
+        columns: 4
         useEqualHeights: true
 
       # ── Media ── watching on top, the acquisition machinery below it
@@ -420,6 +428,10 @@ let
       height: 240px;
     }
 
+    #embed-briefing iframe {
+      height: 190px;
+    }
+
     @media (max-width: 640px) {
       /* A 640px graph is most of a phone screen, and the strip's ten-day row
          wraps to two rows of five below this width. */
@@ -433,6 +445,11 @@ let
 
       #embed-wx-strip iframe {
         height: 340px;
+      }
+
+      /* The two panels stack below 640px. */
+      #embed-briefing iframe {
+        height: 300px;
       }
     }
 
@@ -509,6 +526,29 @@ let
   '';
 
   servicesYaml = pkgs.writeText "homepage-services.yaml" ''
+    # ── Briefing ─────────────────────────────────────────────────────────
+    # The first thing on the page: open sentinel conditions, today's daybook
+    # plan, and the newsdesk edition as a reading teaser. Rendered every five
+    # minutes by `briefing card` (modules/services/briefing) and served by
+    # nginx off this same vhost, so the iframe is same-origin.
+    #
+    # ⚠️ NO `allowScrolling: "no"` here, unlike the other embeds. Homepage sets
+    # `pointer-events: none` on the frame when that option is present, which
+    # would make every link on this card dead — and this card is entirely
+    # about being clicked.
+    - Briefing:
+        - Today:
+            description: What is open, what today is about, and something to read
+            href: https://notes.rosemaryacres.com
+            icon: mdi-script-text-outline
+            id: embed-briefing
+            widget:
+              type: iframe
+              name: Briefing
+              src: /briefing/card.html
+              classes: w-full
+              referrerPolicy: same-origin
+
     # ── Favorites ────────────────────────────────────────────────────────
     # The top-apps row, and the only group here chosen by use rather than by
     # theme. Hand-kept on purpose: Homepage records nothing when a tile is
@@ -722,27 +762,16 @@ let
     # came over from Media Mgmt — a book catalogue is not part of the
     # download pipeline.
     - Household:
-        - Nextcloud:
-            description: Files, calendar, notes
-            href: https://cloud.rosemaryacres.com
-            icon: nextcloud.png
-            widget:
-              type: nextcloud
-              url: https://cloud.rosemaryacres.com
-              username: "{{HOMEPAGE_VAR_NEXTCLOUD_USER}}"
-              password: "{{HOMEPAGE_VAR_NEXTCLOUD_PASS}}"
+        # ⚠️ Nextcloud and Tandoor are NOT here — they live in Favorites, which
+        # is on the same tab. They were in both at first, which put the only
+        # two widget-bearing cards on the Home tab side by side with their own
+        # duplicates. Anything promoted to Favorites must be removed from its
+        # themed group IF that group shares a tab with Favorites; the Media
+        # duplicates are fine precisely because Media sits on another tab.
         - SilverBullet:
             description: Notes, tasks & the daybook (scheduling assistant)
             href: https://notes.rosemaryacres.com
             icon: silverbullet.png
-        - Tandoor:
-            description: Recipes
-            href: https://recipes.rosemaryacres.com
-            icon: tandoor-recipes.png
-            widget:
-              type: tandoor
-              url: https://recipes.rosemaryacres.com
-              key: {{HOMEPAGE_VAR_TANDOOR_KEY}}
         - Vaultwarden:
             description: Password vault
             href: https://keys.rosemaryacres.com
@@ -1119,6 +1148,15 @@ in {
     # above, so this does NOT get proxied into the Homepage container. A
     # prefix location here would lose to nothing but is easy to get wrong —
     # the same trap as the MIME/regex ordering noted in nginx-config-verify.
+    locations."= /briefing/card.html" = {
+      alias = "/var/lib/briefing/public/card.html";
+      extraConfig = ''
+        # Regenerated every five minutes; a cached copy would show a resolved
+        # issue as still open.
+        add_header Cache-Control "no-cache, must-revalidate";
+      '';
+    };
+
     locations."= /wx/strip.html" = {
       alias = "/var/lib/wx/public/strip.html";
       extraConfig = ''
