@@ -32,6 +32,41 @@ let
   hostname = "rosemaryacres.com";
   port = 3000;
 
+  # ── Favicon ──────────────────────────────────────────────────────────────
+  # Setting `favicon:` in settings.yaml replaces ALL FIVE of Homepage's default
+  # icon links with exactly two — `icon` and `apple-touch-icon` — so one asset
+  # covers both the browser tab and an Android home-screen shortcut. (Read off
+  # upstream's src/pages/index.jsx, which branches on initialSettings.favicon.)
+  #
+  # ⚠️ WHY THIS IS A DRAWING AND NOT THE REAL GROMIT.
+  # Chris asked for the Aardman character, and on a tailnet-only dashboard
+  # that is his business. But THIS REPO IS PUBLIC ON GITHUB, so committing the
+  # artwork would republish someone else's copyrighted work. The split: the
+  # repo ships an original drawing, and `faviconPath` below points anywhere
+  # you like on the box — so the real still can live at
+  # /var/lib/homepage/favicon.png, outside git, and never leave the house.
+  #
+  # The drawing is primitives (two ellipses for ears, a rounded head, three
+  # punched holes), not a trace of anyone's character art.
+  faviconSvg = pkgs.writeText "homepage-favicon.svg" ''
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs><rect width="64" height="64" rx="14" fill="url(#g)"/><g fill="#0b1120"><path d="M17 20 C8 24 8 42 16 47 C21 50 24 44 23 36 Z"/><path d="M47 20 C56 24 56 42 48 47 C43 50 40 44 41 36 Z"/><path d="M32 13 C42 13 48 21 48 31 C48 42 41 51 32 51 C23 51 16 42 16 31 C16 21 22 13 32 13 Z"/></g><circle cx="26" cy="29" r="3" fill="url(#g)"/><circle cx="38" cy="29" r="3" fill="url(#g)"/><ellipse cx="32" cy="41" rx="6.2" ry="5" fill="url(#g)"/></svg>
+  '';
+
+  # Point this at any file on the box to use your own icon instead. Dropping
+  # /var/lib/homepage/favicon.png here is the supported way to put the real
+  # Gromit on the dashboard WITHOUT the image entering this public repo:
+  #
+  #     scp gromit.png gromit:/var/lib/homepage/favicon.png
+  #     faviconPath = "/var/lib/homepage/favicon.png";
+  #
+  # ⚠️ Keep the extension honest. nginx types the response from the REQUEST
+  # URI, and faviconUrl below is derived from this path's extension, so a PNG
+  # named .svg would be served as image/svg+xml and simply not render.
+  faviconPath = toString faviconSvg;
+  faviconUrl = "/favicon" + (let
+    m = builtins.match ".*(\\.[a-zA-Z0-9]+)$" faviconPath;
+  in if m == null then ".svg" else builtins.head m);
+
   # ── Layout ───────────────────────────────────────────────────────────────
   # Groups are assigned to TABS. Tab order follows the order groups appear in
   # this block, and the first one ("Home") is what opens on load. Home is a
@@ -56,6 +91,8 @@ let
     color: slate
     headerStyle: clean
     hideVersion: true
+    # Served by the nginx location below, on this same vhost.
+    favicon: ${faviconUrl}
     # Card translucency/blur is handled in customCss rather than with the
     # built-in `cardBlur:` knob, so one mechanism owns the glass effect
     # instead of two fighting over the same surface.
@@ -1199,6 +1236,18 @@ in {
     # above, so this does NOT get proxied into the Homepage container. A
     # prefix location here would lose to nothing but is easy to get wrong —
     # the same trap as the MIME/regex ordering noted in nginx-config-verify.
+    # The favicon, served off this same vhost so it works whether it lives in
+    # the nix store or in /var/lib/homepage. See faviconPath above.
+    locations."= ${faviconUrl}" = {
+      alias = faviconPath;
+      extraConfig = ''
+        # Browsers cache a favicon aggressively; an hour is long enough to
+        # avoid a request per tab and short enough that swapping the image
+        # shows up the same afternoon.
+        add_header Cache-Control "public, max-age=3600";
+      '';
+    };
+
     locations."= /briefing/projects.html" = {
       alias = "/var/lib/briefing/public/projects.html";
       extraConfig = ''
