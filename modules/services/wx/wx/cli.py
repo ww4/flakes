@@ -256,6 +256,17 @@ def layer2_state(con) -> str:
     return f"ok — {got} transcribed, {blocked} blocked"
 
 
+def cmd_retry(args) -> int:
+    """Requeue videos that gave up. See ryan.reset_failed for why it is manual."""
+    con = db.connect()
+    ids = ryan.reset_failed(con)
+    if not ids:
+        print("wx: nothing in 'failed' — nothing to retry")
+        return 0
+    print("wx: requeued %d video(s): %s" % (len(ids), ", ".join(ids)))
+    return 0
+
+
 def cmd_strip(args) -> int:
     """Render the dashboard's weather strip.
 
@@ -332,6 +343,7 @@ def main(argv=None) -> int:
     sub.add_parser("alerts", help="LAYER 1 — poll NWS and notify").set_defaults(fn=cmd_alerts)
     sub.add_parser("spc", help="refresh the SPC outlook picture").set_defaults(fn=cmd_spc)
     sub.add_parser("morning", help="flush what quiet hours held").set_defaults(fn=cmd_morning)
+    sub.add_parser("retry", help="requeue videos stuck in 'failed'").set_defaults(fn=cmd_retry)
     sub.add_parser("strip", help="render the dashboard weather strip").set_defaults(fn=cmd_strip)
     sub.add_parser("status", help="read-only summary").set_defaults(fn=cmd_status)
 
