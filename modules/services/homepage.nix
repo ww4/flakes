@@ -68,12 +68,6 @@ let
       # ordering, no persistence of any kind on a tile click (checked against
       # src/components/services/item.jsx, 2026-10-19) — so a "top apps" row
       # can only ever be a hand-kept list.
-      # One wide card: what is open, what today is about, something to read.
-      # Rendered by modules/services/briefing; full width, so columns: 1.
-      Briefing:
-        tab: Home
-        style: row
-        columns: 1
       Favorites:
         tab: Home
         style: row
@@ -86,6 +80,13 @@ let
         style: row
         columns: 4
         useEqualHeights: true
+      # Last on the tab, under Household: the tiles are what Chris came to the
+      # page for, and this is what he reads once he is already here.
+      # Full width, so columns: 1.
+      Briefing:
+        tab: Home
+        style: row
+        columns: 1
 
       # ── Media ── watching on top, the acquisition machinery below it
       # Media is deliberately DUPLICATED: its four tiles also appear in
@@ -428,8 +429,12 @@ let
       height: 240px;
     }
 
+    /* 215px, not the 190px this started at: the card measured 197px of
+       content and the overflowing 7px drew a scrollbar INSIDE the tile. The
+       card itself also sets overflow:hidden now, so this height only has to
+       be generous enough that nothing is actually clipped. */
     #embed-briefing iframe {
-      height: 190px;
+      height: 215px;
     }
 
     @media (max-width: 640px) {
@@ -527,10 +532,13 @@ let
 
   servicesYaml = pkgs.writeText "homepage-services.yaml" ''
     # ── Briefing ─────────────────────────────────────────────────────────
-    # The first thing on the page: open sentinel conditions, today's daybook
-    # plan, and the newsdesk edition as a reading teaser. Rendered every five
-    # minutes by `briefing card` (modules/services/briefing) and served by
-    # nginx off this same vhost, so the iframe is same-origin.
+    # The LAST group on the Home tab (see settings.layout — group order on a
+    # tab comes from the layout block, not from the order here): open sentinel
+    # conditions, today's daybook plan, and the newsdesk edition as a reading
+    # teaser. The tiles above are what the page is for; this is what you read
+    # once you are already on it. Rendered every five minutes by
+    # `briefing card` (modules/services/briefing) and served by nginx off this
+    # same vhost, so the iframe is same-origin.
     #
     # ⚠️ NO `allowScrolling: "no"` here, unlike the other embeds. Homepage sets
     # `pointer-events: none` on the frame when that option is present, which
