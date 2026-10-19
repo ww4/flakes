@@ -32,39 +32,384 @@ let
   hostname = "rosemaryacres.com";
   port = 3000;
 
+  # ── Layout ───────────────────────────────────────────────────────────────
+  # Groups are assigned to TABS. Tab order follows the order groups appear in
+  # this block, and the first one ("Home") is what opens on load. Home holds
+  # the two things actually opened daily — watching media, and the cloud/desk
+  # apps; everything else is one tap away. Quicklaunch (the search box) still
+  # finds services on *every* tab, so nothing is lost by moving it off Home.
+  #
+  # ⚠️ Every service group MUST be listed here. Homepage renders laid-out
+  # groups into #layout-groups and any group *missing* from this block into a
+  # separate #services container that comes AFTER all of them — so a forgotten
+  # group silently teleports to the bottom of the page. That is exactly how
+  # "Productivity" and "Gromit (live)" ended up stranded below Riverwatch
+  # before 2026-10-19. If you add a group to services.yaml, add it here too.
+  #
+  # ⚠️ A group with no `tab:` is shown on EVERY tab (upstream behaviour), so
+  # leaving one out does not hide it — it duplicates it.
   settingsYaml = pkgs.writeText "homepage-settings.yaml" ''
     title: Gromit
     theme: dark
-    color: gray
+    # slate (blue-tinted) rather than gray — the flat neutral grey is what
+    # made the page look washed out. The real colour comes from customCss.
+    color: slate
     headerStyle: clean
+    hideVersion: true
+    # Card translucency/blur is handled in customCss rather than with the
+    # built-in `cardBlur:` knob, so one mechanism owns the glass effect
+    # instead of two fighting over the same surface.
+
     layout:
+      # ── Home ── daily drivers
       Media:
+        tab: Home
+        style: row
+        columns: 4
+      Cloud & Desk:
+        tab: Home
         style: row
         columns: 3
+        useEqualHeights: true
+
+      # ── Media ── the acquisition side, which is noisy and rarely urgent
       Media Mgmt:
+        tab: Media
         style: row
         columns: 3
-      Cloud:
-        style: row
-        columns: 2
+        useEqualHeights: true
+
+      # ── Lab ── things that are interesting but not daily
       AI:
+        tab: Lab
         style: row
         columns: 2
       Bitcoin:
+        tab: Lab
         style: row
         columns: 2
       Infrastructure:
+        tab: Lab
         style: row
         columns: 2
-      Monitoring:
+        useEqualHeights: true
+
+      # ── System ── host health, dashboards, alerts
+      Gromit (live):
+        tab: System
         style: row
-        columns: 2
-      Riverwatch:
-        style: row
-        columns: 2
-      Recent Alerts:
+        columns: 5
+        useEqualHeights: true
+      Temperatures:
+        tab: System
         style: row
         columns: 1
+      Monitoring:
+        tab: System
+        style: row
+        columns: 3
+        useEqualHeights: true
+      Recent Alerts:
+        tab: System
+        style: row
+        columns: 1
+
+      # ── River ── the big Grafana embed wants the whole width
+      Riverwatch:
+        tab: River
+        style: row
+        columns: 1
+
+      # Bookmark groups (bookmarks.yaml) need a tab for the same reason
+      # service groups do — without one they are drawn on every tab.
+      Code:
+        tab: Lab
+      Admin:
+        tab: Lab
+  '';
+
+  # ── custom.css ───────────────────────────────────────────────────────────
+  # Homepage reads /app/config/custom.css and injects it after its own
+  # stylesheet. Everything below targets class names Homepage actually emits —
+  # they were read off the live DOM on 2026-10-19, not guessed:
+  #
+  #   #page_wrapper  #inner_wrapper (the scroll container, NOT the document)
+  #   #information-widgets  #widgets-wrap
+  #   ul#myTab[role=tablist] > li[role=presentation] > button[role=tab]
+  #   #layout-groups / #services  .services-group  h2.service-group-name
+  #     ul.services-list > li.service > .service-card
+  #       .service-title > .service-icon + .service-title-text > .service-name
+  #       .service-container > .service-block > div.font-thin / div.font-bold
+  #   #bookmarks  .bookmark-group  h2.bookmark-group-name  .bookmark-list
+  #
+  # ⚠️ Homepage styles cards with Tailwind utilities (dark:bg-white/5 and
+  # friends). A bare `.service-card { background: … }` loses to those, so the
+  # card rules are scoped under the #layout-groups / #services ids to win on
+  # specificity rather than by carpet-bombing with !important. Where a single
+  # Tailwind utility has to be beaten in place (margins on #information-widgets,
+  # text-xl on the group headings) !important is used deliberately and noted.
+  #
+  # ⚠️ The tablist carries `sm:flex`, i.e. it is NOT flex below 640px — the
+  # tabs stack into full-width rows and eat half a phone screen. The phone
+  # block at the bottom forces it back to a single scrollable row.
+  customCss = pkgs.writeText "homepage-custom.css" ''
+    /* ===================================================================
+       Gromit — rosemaryacres.com
+       Dark slate base with two soft colour blooms, frosted cards on top.
+       =================================================================== */
+
+    /* --- 1. Background ------------------------------------------------ */
+    /* The gradient is painted by a fixed pseudo-element so it stays put
+       while #inner_wrapper scrolls underneath it. Page content sits in a
+       .container with z-10, so z-index 0 here keeps it behind everything. */
+    html,
+    body {
+      background-color: #0b1120 !important;
+    }
+
+    #page_wrapper::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(55rem 38rem at 8% -10%, rgba(99, 102, 241, 0.30), transparent 62%),
+        radial-gradient(44rem 30rem at 92% 2%, rgba(13, 148, 136, 0.22), transparent 64%),
+        radial-gradient(62rem 44rem at 50% 114%, rgba(56, 89, 180, 0.20), transparent 66%),
+        linear-gradient(168deg, #0b1120 0%, #111c33 48%, #0b1120 100%);
+    }
+
+    /* --- 2. Header strip ---------------------------------------------- */
+    /* Tailwind puts m-5/sm:m-9 on this; !important to reclaim the spacing. */
+    #information-widgets {
+      margin: 1.1rem 1.5rem 0 !important;
+      padding: 0.55rem 0.95rem;
+      border-radius: 16px;
+      background: rgba(148, 163, 184, 0.06);
+      border: 1px solid rgba(226, 232, 240, 0.08);
+      box-shadow: 0 10px 30px -20px rgba(0, 0, 0, 0.9);
+      backdrop-filter: blur(16px) saturate(140%);
+      -webkit-backdrop-filter: blur(16px) saturate(140%);
+    }
+
+    #information-widgets input {
+      border-radius: 11px !important;
+    }
+
+    /* --- 3. Tab bar ---------------------------------------------------- */
+    #myTab {
+      display: flex !important;
+      gap: 0.25rem;
+      margin: 0.85rem 1.5rem 0.1rem;
+      padding: 0.3rem;
+      border-radius: 14px;
+      background: rgba(148, 163, 184, 0.06) !important;
+      border: 1px solid rgba(226, 232, 240, 0.08);
+      box-shadow: 0 10px 30px -20px rgba(0, 0, 0, 0.9);
+      backdrop-filter: blur(16px) saturate(140%);
+      -webkit-backdrop-filter: blur(16px) saturate(140%);
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    #myTab::-webkit-scrollbar {
+      display: none;
+    }
+
+    #myTab > li {
+      height: auto !important;
+    }
+
+    #myTab button[role="tab"] {
+      margin: 0 !important;
+      padding: 0.5rem 0.95rem;
+      border-radius: 10px !important;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      color: rgba(203, 213, 225, 0.6);
+      transition: color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    #myTab button[role="tab"]:hover {
+      color: #e2e8f0;
+    }
+
+    #myTab button[aria-selected="true"] {
+      background: linear-gradient(180deg, rgba(129, 140, 248, 0.32), rgba(99, 102, 241, 0.18)) !important;
+      color: #f1f5f9;
+      box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.14) inset,
+        0 6px 18px -9px rgba(99, 102, 241, 0.8);
+    }
+
+    /* --- 4. Group headings --------------------------------------------- */
+    /* Small caps + a rule out to the right edge, so the eye reads a section
+       break instead of another big title competing with the card names.
+       text-xl has to be overridden in place, hence !important here. */
+    h2.service-group-name,
+    h2.bookmark-group-name {
+      display: flex;
+      flex: 1 1 auto;
+      align-items: center;
+      gap: 0.55rem;
+      font-size: 0.74rem !important;
+      font-weight: 600 !important;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: rgba(203, 213, 225, 0.58) !important;
+    }
+
+    h2.service-group-name::before,
+    h2.bookmark-group-name::before {
+      content: "";
+      flex: none;
+      width: 0.28rem;
+      height: 0.95rem;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #818cf8, #22d3ee);
+    }
+
+    h2.service-group-name::after,
+    h2.bookmark-group-name::after {
+      content: "";
+      flex: 1 1 auto;
+      height: 1px;
+      background: linear-gradient(90deg, rgba(148, 163, 184, 0.3), transparent);
+    }
+
+    /* --- 5. Cards ------------------------------------------------------ */
+    #layout-groups .service-card,
+    #services .service-card,
+    #bookmarks li.bookmark > a {
+      border-radius: 14px !important;
+      border: 1px solid rgba(226, 232, 240, 0.09);
+      background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.075),
+        rgba(255, 255, 255, 0.035)
+      ) !important;
+      box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.07) inset,
+        0 10px 26px -16px rgba(0, 0, 0, 0.85) !important;
+      backdrop-filter: blur(14px) saturate(135%);
+      -webkit-backdrop-filter: blur(14px) saturate(135%);
+      transition:
+        transform 0.18s ease,
+        border-color 0.18s ease,
+        box-shadow 0.18s ease,
+        background 0.18s ease;
+    }
+
+    /* Lift on hover only where there is a real pointer — on a phone every
+       card would otherwise be stuck in its hover state after a tap. */
+    @media (hover: hover) {
+      #layout-groups .service-card:hover,
+      #services .service-card:hover,
+      #bookmarks li.bookmark > a:hover {
+        transform: translateY(-2px);
+        border-color: rgba(129, 140, 248, 0.45);
+        box-shadow:
+          0 1px 0 rgba(255, 255, 255, 0.1) inset,
+          0 18px 34px -16px rgba(0, 0, 0, 0.9),
+          0 0 0 1px rgba(129, 140, 248, 0.2) !important;
+      }
+    }
+
+    /* Service name a touch larger; the description is secondary. */
+    .service-name {
+      font-size: 0.86rem !important;
+      letter-spacing: 0.005em;
+    }
+
+    /* --- 6. Stat chips -------------------------------------------------- */
+    /* .service-block is the labelled stat tile. Widgets that render a list
+       instead (customapi display: list, e.g. Library radio) emit sibling
+       divs carrying Tailwind's rounded-sm, so they are matched by shape. */
+    #layout-groups .service-block,
+    #services .service-block,
+    #layout-groups .service-container div[class*="rounded-sm"],
+    #services .service-container div[class*="rounded-sm"] {
+      border-radius: 10px !important;
+      background: rgba(2, 6, 23, 0.4) !important;
+      border: 1px solid rgba(226, 232, 240, 0.055);
+    }
+
+    .service-block .font-thin {
+      font-size: 0.95rem !important;
+      font-weight: 500 !important;
+      color: #e2e8f0 !important;
+    }
+
+    .service-block .font-bold {
+      font-size: 0.6rem !important;
+      letter-spacing: 0.09em;
+      color: rgba(148, 163, 184, 0.78) !important;
+    }
+
+    /* --- 7. Phone ------------------------------------------------------- */
+    @media (max-width: 640px) {
+      /* Tighter gutters: on a 390px screen the default m-5 throws away
+         10% of the width. */
+      #information-widgets {
+        margin: 0.6rem 0.7rem 0 !important;
+        padding: 0.45rem 0.6rem;
+      }
+
+      #myTab {
+        margin: 0.6rem 0.7rem 0.1rem;
+        padding: 0.25rem;
+        /* Enough of tab 4 stays visible to show the row scrolls. */
+        justify-content: flex-start;
+      }
+
+      #myTab > li {
+        width: auto !important;
+      }
+
+      #myTab button[role="tab"] {
+        padding: 0.5rem 0.8rem;
+        font-size: 0.7rem;
+        letter-spacing: 0.1em;
+      }
+
+      #layout-groups,
+      #services,
+      #bookmarks {
+        margin: 0.5rem 0.7rem !important;
+      }
+
+      /* The resources widget stacks 3 rows of 2 and used to cost ~280px
+         before a single service came into view. */
+      #widgets-wrap {
+        gap: 0.1rem 0.4rem;
+      }
+
+      #information-widgets .text-xs {
+        font-size: 0.66rem;
+      }
+    }
+
+    /* --- 8. Motion ------------------------------------------------------ */
+    @media (prefers-reduced-motion: reduce) {
+      #layout-groups .service-card,
+      #services .service-card,
+      #bookmarks li.bookmark > a,
+      #myTab button[role="tab"] {
+        transition: none;
+      }
+
+      @media (hover: hover) {
+        #layout-groups .service-card:hover,
+        #services .service-card:hover,
+        #bookmarks li.bookmark > a:hover {
+          transform: none;
+        }
+      }
+    }
   '';
 
   servicesYaml = pkgs.writeText "homepage-services.yaml" ''
@@ -209,30 +554,6 @@ let
             href: https://metube.rosemaryacres.com
             icon: metube.png
             # Link-only: Homepage has no MeTube widget.
-        - Stacks:
-            description: Book catalog — scan at a sale, browse the shelves
-            href: https://books.rosemaryacres.com
-            icon: mdi-bookshelf
-            # Link-only: Homepage has no widget for this; it is ours.
-
-    - Productivity:
-        - Vaultwarden:
-            description: Password vault
-            href: https://keys.rosemaryacres.com
-            icon: vaultwarden.png
-        - Paperless:
-            description: OCR document archive
-            href: https://paperless.rosemaryacres.com
-            icon: paperless.png
-        - Uptime Kuma:
-            description: Status board
-            href: https://uptime.rosemaryacres.com
-            icon: uptime-kuma.png
-            widget:
-              type: uptimekuma
-              url: https://uptime.rosemaryacres.com
-              slug: default
-
     - AI:
         - Open WebUI:
             description: Local LLM chat + book RAG (Qwen 3B-GPU / 32B-CPU, on Wallace)
@@ -245,7 +566,14 @@ let
             icon: mdi-notebook-outline
             # Link-only: no Homepage widget for open-notebook.
 
-    - Cloud:
+    # Cloud & Desk — the second half of the Home tab. This absorbed the old
+    # "Productivity" group on 2026-10-19: a two-tile Productivity group sitting
+    # next to a three-tile Cloud group was a distinction without a difference,
+    # and Productivity was one of the two groups missing from settings.layout,
+    # so it rendered below everything else. Uptime Kuma went to Monitoring,
+    # where the other dashboards live, and Stacks came over from Media Mgmt —
+    # a book catalogue is a desk tool, not part of the download pipeline.
+    - Cloud & Desk:
         - Nextcloud:
             description: Files, calendar, notes
             href: https://cloud.rosemaryacres.com
@@ -267,6 +595,19 @@ let
               type: tandoor
               url: https://recipes.rosemaryacres.com
               key: {{HOMEPAGE_VAR_TANDOOR_KEY}}
+        - Vaultwarden:
+            description: Password vault
+            href: https://keys.rosemaryacres.com
+            icon: vaultwarden.png
+        - Paperless:
+            description: OCR document archive
+            href: https://paperless.rosemaryacres.com
+            icon: paperless.png
+        - Stacks:
+            description: Book catalog — scan at a sale, browse the shelves
+            href: https://books.rosemaryacres.com
+            icon: mdi-bookshelf
+            # Link-only: Homepage has no widget for this; it is ours.
 
     # Bitcoin / Lightning. mempool has a native Homepage widget (fee + block
     # stats, no key). Alby Hub has no widget, so it's an href tile. bitcoind and
@@ -325,6 +666,14 @@ let
               # from this container, and the Authelia-protected vhost 302s
               # them to a login page they cannot follow (2026-08 audit M3).
               url: http://host.docker.internal:9090
+        - Uptime Kuma:
+            description: Status board
+            href: https://uptime.rosemaryacres.com
+            icon: uptime-kuma.png
+            widget:
+              type: uptimekuma
+              url: https://uptime.rosemaryacres.com
+              slug: default
 
     - Gromit (live):
         # Widget polling goes to the host-gateway ports directly (the
@@ -381,7 +730,14 @@ let
               url: http://host.docker.internal:61208
               metric: info
               version: 4
-        - Temperatures:
+
+    # The temperature graph is a 360px-tall iframe. Left inside "Gromit (live)"
+    # it had to share a grid row with the five small metric cards, so it either
+    # squeezed into a fifth-width column or stretched that whole row to 360px.
+    # Its own full-width group keeps the metric row compact and the graph
+    # readable.
+    - Temperatures:
+        - Gromit temperatures:
             description: CPU / NVMe / ambient °C — warn & critical alerts armed
             href: https://grafana.rosemaryacres.com/d/gromit-temps
             icon: mdi-thermometer
@@ -519,6 +875,7 @@ in {
         "${servicesYaml}:/app/config/services.yaml:ro"
         "${bookmarksYaml}:/app/config/bookmarks.yaml:ro"
         "${widgetsYaml}:/app/config/widgets.yaml:ro"
+        "${customCss}:/app/config/custom.css:ro"
         "${dockerYaml}:/app/config/docker.yaml:ro"
         "${kubernetesYaml}:/app/config/kubernetes.yaml:ro"
         # Mounted so the resources widget can statfs() these — host paths
