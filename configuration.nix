@@ -51,6 +51,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/blueiris.nix          # CLI for customer Blue Iris NVRs (Craigmyle) over Tailscale
     ./modules/services/newsdesk              # personal RSS news digest (collect -> rank -> claude -p -> page)
     ./modules/services/wx                    # NWS alerts (fast) + Ryan Hall lead time (into the newsdesk)
+    ./modules/services/briefing              # the dashboard's briefing card (sentinel + daybook + newsdesk)
 
     # Services.
     hm.nginx-access                         # source-gate all vhosts to Tailscale + LAN — the real perimeter
@@ -220,6 +221,12 @@ let hm = homelab-modules.nixosModules; in
   # ⚠️ Needs secrets/wx-location.json (his home coordinates — PII) before
   # wx-alerts can do anything; wx-ryan works without it on a cached SPC picture.
   services.wx.enable = true;
+
+  # The Home tab's wide card. Read-only over three state dirs it does not
+  # own (sentinel, the SilverBullet space, newsdesk) and writes one HTML
+  # file that nginx serves on the dashboard vhost. Every source is
+  # optional — a missing one shrinks the card rather than breaking it.
+  services.briefing.enable = true;
 
   # The living-room Yamaha R-N301 (static 192.168.1.61 — it points at Blocky
   # for the vTuner stand-in; reserve it in the router for MAC 00:a0:de:c4:18:54).
