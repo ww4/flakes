@@ -452,9 +452,12 @@ let
         height: 340px;
       }
 
-      /* The two panels stack below 640px. */
+      /* The two panels stack below 640px, and the issue pills wrap: measured
+         natural height is 333px at 360-430px wide and 363px at 320px (three
+         rows of pills). 375px covers the worst case with headroom. The panels
+         carry flex:1, so a quiet day grows them rather than leaving a gap. */
       #embed-briefing iframe {
-        height: 300px;
+        height: 375px;
       }
     }
 
