@@ -89,13 +89,24 @@ let
         (a) a Chris-keyboard ask — write it clearly and don't repeatedly
             re-plan the same one day after day; if he hasn't done it, that's
             his call, not a signal to escalate it back onto your own plan;
-        (b) an agent-executable task — APPEND it to the shared `open-loops`
-            memory board so the next interactive session (which auto-loads
-            that board under Chris's direction) can evaluate and run it.
-            Location: /home/claude/.claude/projects/-home-claude-nixos-homelab-improvements/memory/open-loops.md
+        (b) an agent-executable task — file it on the **agent work queue**,
+            which has had a consumer since 2026-10-12: a path unit picks up
+            an unchecked `- [ ]` item within seconds and works it.
+            Location: ${spaceDir}/System/Agent Queue.md, under `## Open`.
             Spell it out: what to do, where, how to verify, which
             memory/PR/module to touch. Do NOT write it inline in the Journal
             as if you will run it; Chris directs the session, not you.
+
+      ⚠️ **DO NOT APPEND A DATED SECTION TO `open-loops`.** That instruction
+      used to send (b) there, and what it produced instead was a
+      `## 🌙/☀️/🌅 <date> (daybook)` run-log section per run — **57 of them,
+      1,713 lines, 28% of a 5,947-line task board** — duplicating the Journal
+      entry you are already writing. Nothing ever pruned them. Your run
+      narrative belongs in the Journal and nowhere else.
+      You may still READ `open-loops` for context, and you may EDIT an
+      existing section when its state genuinely changed: correcting a status
+      or striking a resolved item is maintenance. Adding a section dated today
+      is what is forbidden.
       In either case, do NOT put an action item on YOUR plan as though you
       will do it — you can't. When an item you previously wrote slips, do NOT
       roll it forward as "attempt N" / "SHIP Plan #N"; either surface it as
