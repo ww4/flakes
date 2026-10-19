@@ -56,6 +56,42 @@
 let
   cfg = config.services.projectBoard;
 
+  claude-run = import ./claude-run-pkg.nix { inherit pkgs; };
+
+  # The prompt starts from board-sync's findings, not from the 5,900-line board,
+  # so the model spends its tokens on judgement rather than on reading.
+  boardReconcilePrompt = pkgs.writeText "board-reconcile.md" ''
+    Reconcile the project board against the `open-loops` memory board, then stop.
+
+    `board-sync --apply` has already run and fixed every card STATUS it could
+    derive mechanically. Its report, including sections that look like projects
+    but have no card, is at /tmp/board-sync-report.txt. Read that first.
+
+    Your job is the part a regex cannot do:
+
+    1. **A `next` that is no longer true.** The common case is one naming PRs
+       that have since merged — check with `prs` before believing a card.
+       One card showed three merged PRs as a blocker on Chris for 14 days.
+    2. **Steps that disagree with reality.** A card with every step `done` and
+       status `active` is the shape that went unnoticed for 13 days.
+    3. **Cards with no section, and sections with no card.** A card with no
+       `loop` pointer is board-only and fine; say so and move on. For a
+       candidate section that is clearly a real project, create the card.
+    4. **Prune `open-loops`.** Move resolved sections below the
+       `## 🗄️ RESOLVED` fence. ⚠️ Only a section with NO `⏳` / `OPEN:` /
+       `OWED` / `still open` residue — archiving a mixed section hides live
+       work. Verify by line-count conservation, not by eye: that file was
+       corrupted once by an index-based slice that matched a backticked
+       mention in its own preamble.
+
+    ⚠️ Do not invent a `next` you cannot source from the section or a PR state.
+    A confident wrong value is worse than a stale one, because a stale one
+    still shows under the board's own quiet marker.
+
+    Change nothing outside `~/project-board/projects/` and the `open-loops`
+    memory file. Finish with one line starting `TLDR:`.
+  '';
+
   board = pkgs.writeShellApplication {
     name = "project-board";
     runtimeInputs = [ pkgs.python3 ];
@@ -159,6 +195,91 @@ in
 
     # Catches a project being added or removed. See the header: this does NOT
     # fire on an in-place edit, which is what the timer is for.
+    # ── keeping the board honest ──────────────────────────────────────────
+    # The board had 3 cards while `open-loops` had 139 open sections: it is a
+    # second place to write, and a second place always loses to the first. So
+    # the board is DERIVED from open-loops rather than maintained beside it.
+    #
+    # Two tiers, deliberately NOT three. A cheap-model triage tier was proposed
+    # to judge whether a diff is substantive; that question is answerable by
+    # grep, and a cheap model that wrongly answers "spurious, drop it" produces
+    # exactly nothing, which nothing notices. A guess does not belong where a
+    # grep works.
+
+    # Tier 1 — mechanical, no model, STATUS ONLY. Refuses to touch an unchanged
+    # file: the board has no `updated` field by design and uses MTIME, so
+    # rewriting every card each run would make every project look freshly worked.
+    systemd.services.board-sync = {
+      description = "Derive project-board card status from the open-loops board";
+      unitConfig.ConditionPathExists = "/home/claude/.local/bin/board-sync";
+      serviceConfig = {
+        Type = "oneshot";
+        User = "claude";
+      };
+      # Never fails the unit: a drifted card is a report, not an incident, and a
+      # red unit here would train Chris to ignore the board.
+      script = "/home/claude/.local/bin/board-sync --apply || true";
+    };
+
+    systemd.paths.board-sync = {
+      description = "Re-derive card status when the open-loops board changes";
+      wantedBy = [ "multi-user.target" ];
+      pathConfig = {
+        PathModified = "/home/claude/.claude/projects/-home-claude-nixos-homelab-improvements/memory/open-loops.md";
+        # An editing session writes that file many times a minute. 30 minutes of
+        # debounce: it costs no tokens either way, but the churn makes the file
+        # harder to read while it is still being edited.
+        TriggerLimitIntervalSec = "30min";
+        TriggerLimitBurst = 1;
+      };
+    };
+
+    # Tier 2 — the judgement pass. Weekly, no diff trigger, because none of it
+    # is urgent and all of it is judgement: status drift, a `next` naming merged
+    # PRs, cards with no section, and pruning resolved sections below the fence.
+    systemd.services.board-reconcile = {
+      description = "Weekly reconcile of the project board against open-loops";
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+      unitConfig.ConditionPathExists = "/home/claude/.local/bin/board-sync";
+      serviceConfig = {
+        Type = "oneshot";
+        User = "claude";
+        TimeoutStartSec = "25min";
+        Environment = [
+          "PATH=/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin:/usr/bin:/bin"
+          "CLAUDE_AUTONOMOUS=1"
+        ];
+      };
+      script = ''
+        set -uo pipefail
+        /home/claude/.local/bin/board-sync --candidates > /tmp/board-sync-report.txt 2>&1 || true
+        set +o errexit
+        out="$(${claude-run}/bin/claude-run 20m ${boardReconcilePrompt})"
+        rc=$?
+        set -o errexit
+        if [ "$rc" -eq 2 ]; then
+          echo "board-reconcile: SKIPPED — Claude login expired" >&2
+          exit 0
+        elif [ "$rc" -ne 0 ]; then
+          echo "board-reconcile: claude-run exited $rc — stderr above" >&2
+          exit 0
+        fi
+        printf '%s\n' "$out" | tail -40
+      '';
+    };
+
+    systemd.timers.board-reconcile = {
+      description = "Weekly board/open-loops reconcile";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = "Sun 05:30";
+        RandomizedDelaySec = "20min";
+        Persistent = true;
+        Unit = "board-reconcile.service";
+      };
+    };
+
     systemd.paths.project-board-render = {
       description = "Re-render the project board when a project is added or removed";
       wantedBy = [ "multi-user.target" ];
