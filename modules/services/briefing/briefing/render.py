@@ -21,7 +21,13 @@ from datetime import datetime
 
 CSS = """
 *{box-sizing:border-box}
-html,body{margin:0;background:transparent;color:#e2e8f0;
+/* ⚠️ overflow:hidden is not cosmetic. This page is an iframe inside a card;
+   when the content runs a few pixels past the frame the browser puts a
+   SCROLLBAR inside the card, which looks broken. Measured 2026-10-19: 197px
+   of content in a 190px frame did exactly that. The frame height in
+   homepage.nix carries the headroom; this makes a near-miss impossible to
+   see. */
+html,body{margin:0;height:100%;overflow:hidden;background:transparent;color:#e2e8f0;
   font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 a{color:inherit;text-decoration:none}
 /* container-type lets the breakpoint below measure THIS ELEMENT rather than
@@ -50,9 +56,11 @@ a{color:inherit;text-decoration:none}
 
 .cols{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;flex:1;min-height:0}
 .panel{background:rgba(2,6,23,.32);border:1px solid rgba(226,232,240,.06);
-  border-radius:11px;padding:.55rem .7rem;display:flex;flex-direction:column;gap:.3rem}
+  border-radius:11px;padding:.55rem .7rem;display:flex;flex-direction:column;gap:.3rem;
+  min-height:0;overflow:hidden}
 .kicker{font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:#94a3b8}
-.plan{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:.28rem}
+.plan{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:.28rem;
+  min-height:0;overflow:hidden}
 .plan li{font-size:.78rem;line-height:1.35;color:#cbd5e1;
   padding-left:.75rem;position:relative;
   overflow:hidden;text-overflow:ellipsis;display:-webkit-box;
