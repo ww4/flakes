@@ -58,6 +58,7 @@ let
     WX_USER_AGENT = cfg.userAgent;
     WX_ALERT_URL = cfg.alertUrl;
     WX_LOCATION_FILE = cfg.locationFile;
+    WX_PUBLIC_DIR = cfg.publicDir;
   };
 in
 {
@@ -87,6 +88,17 @@ in
         Markdown the newsdesk ingests as its `weather` lane. wx publishes
         nothing itself: Chris asked for weather trends to arrive in the news
         feed he already reads, not in a second daily brief.
+      '';
+    };
+
+    publicDir = lib.mkOption {
+      type = lib.types.str;
+      default = "/var/lib/wx/public";
+      description = ''
+        Where `wx strip` writes the rendered weather strip that the Homepage
+        dashboard iframes. Served read-only by nginx as an exact-match
+        location on the dashboard vhost (modules/services/homepage.nix), so
+        the iframe is same-origin and needs no second certificate.
       '';
     };
 
@@ -290,6 +302,50 @@ in
         OnCalendar = cfg.ryanSchedule;
         Persistent = true;
         RandomizedDelaySec = "6m";
+      };
+    };
+
+    # -------------------------------------------------- the dashboard strip
+    # Renders the Weather tab's card: current conditions from Open-Meteo, the
+    # latest still-relevant Ryan Hall read out of the extraction table, a
+    # derived one-line summary and a ten-day row. nginx serves the result; see
+    # modules/services/homepage.nix for the vhost location.
+    #
+    # ⚠️ This unit SUCCEEDS when the forecast is unreachable — it writes a page
+    # that says so. Failing instead would leave the previous render in place,
+    # and a stale forecast that looks current is the failure nobody notices.
+    # A non-zero exit here means "could not write the file", nothing else.
+    systemd.services.wx-strip = {
+      description = "wx — render the dashboard weather strip";
+      environment = commonEnv;
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.user;
+        StateDirectory = "wx";
+        TimeoutStartSec = "2min";
+        ProtectSystem = "strict";
+        ReadWritePaths = [ cfg.stateDir ];
+        NoNewPrivileges = true;
+        # World-readable: nginx runs as its own user and has to read the
+        # rendered page. Nothing private lands here — the location secret
+        # builds the API query and never reaches the output.
+        UMask = "0022";
+      };
+      script = "${bin} strip";
+    };
+
+    systemd.timers.wx-strip = {
+      description = "wx weather strip refresh";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        # Open-Meteo updates hourly; a quarter hour keeps the "updated HH:MM"
+        # stamp honest without hammering a free service that asks for no key.
+        OnCalendar = "*:0/15";
+        Persistent = true;
+        RandomizedDelaySec = "90s";
+        # So the card exists shortly after a deploy rather than 404ing until
+        # the next quarter hour.
+        OnBootSec = "2min";
       };
     };
 

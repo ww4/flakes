@@ -34,10 +34,10 @@ let
 
   # ── Layout ───────────────────────────────────────────────────────────────
   # Groups are assigned to TABS. Tab order follows the order groups appear in
-  # this block, and the first one ("Home") is what opens on load. Home holds
-  # the two things actually opened daily — watching media, and the cloud/desk
-  # apps; everything else is one tap away. Quicklaunch (the search box) still
-  # finds services on *every* tab, so nothing is lost by moving it off Home.
+  # this block, and the first one ("Home") is what opens on load. Home is a
+  # hand-picked Favorites row over the household apps; everything else is one
+  # tap away. Quicklaunch (the search box) still finds services on *every*
+  # tab, so nothing is lost by moving a group off Home.
   #
   # ⚠️ Every service group MUST be listed here. Homepage renders laid-out
   # groups into #layout-groups and any group *missing* from this block into a
@@ -61,18 +61,35 @@ let
     # instead of two fighting over the same surface.
 
     layout:
-      # ── Home ── daily drivers
-      Media:
+      # ── Home ── what actually gets opened
+      # Favorites is NOT a themed group: it is the four things Chris reaches
+      # for most, and it is expected to be edited by hand whenever that
+      # changes. Homepage tracks nothing — no click counter, no usage
+      # ordering, no persistence of any kind on a tile click (checked against
+      # src/components/services/item.jsx, 2026-10-19) — so a "top apps" row
+      # can only ever be a hand-kept list.
+      Favorites:
         tab: Home
         style: row
         columns: 4
-      Cloud & Desk:
+        useEqualHeights: true
+      Household:
         tab: Home
         style: row
         columns: 3
         useEqualHeights: true
 
-      # ── Media ── the acquisition side, which is noisy and rarely urgent
+      # ── Media ── watching on top, the acquisition machinery below it
+      # Media is deliberately DUPLICATED: its four tiles also appear in
+      # Favorites. Homepage has no "show this group on two tabs" option
+      # (a group with no `tab:` appears on ALL of them, which is worse), so
+      # the services.yaml entries are simply written twice. Each copy polls
+      # its own widget — negligible for services on this host, but worth
+      # knowing before duplicating anything that costs a real API call.
+      Media:
+        tab: Media
+        style: row
+        columns: 4
       Media Mgmt:
         tab: Media
         style: row
@@ -114,9 +131,15 @@ let
         style: row
         columns: 1
 
-      # ── River ── the big Grafana embed wants the whole width
+      # ── Weather ── the strip first, the river underneath it
+      # Both want the full width: the strip is a wide single card and the
+      # Riverwatch embed is a 640px Grafana panel.
+      Weather:
+        tab: Weather
+        style: row
+        columns: 1
       Riverwatch:
-        tab: River
+        tab: Weather
         style: row
         columns: 1
 
@@ -181,18 +204,22 @@ let
     }
 
     /* --- 2. Header strip ---------------------------------------------- */
-    /* Tailwind puts m-5/sm:m-9 on this; !important to reclaim the spacing. */
+    /* The banner is NOT a card. It was briefly given the same glass panel as
+       the tiles below it, which made it compete with them and boxed in the
+       one part of the page that should read as sitting directly on the
+       background. No panel, no border, no blur — just spacing.
+       Tailwind puts m-5/sm:m-9 on this; !important to reclaim it. */
     #information-widgets {
       margin: 1.1rem 1.5rem 0 !important;
-      padding: 0.55rem 0.95rem;
-      border-radius: 16px;
-      background: rgba(148, 163, 184, 0.06);
-      border: 1px solid rgba(226, 232, 240, 0.08);
-      box-shadow: 0 10px 30px -20px rgba(0, 0, 0, 0.9);
-      backdrop-filter: blur(16px) saturate(140%);
-      -webkit-backdrop-filter: blur(16px) saturate(140%);
+      padding: 0;
+      background: none;
+      border: 0;
+      box-shadow: none;
     }
 
+    /* The search field is the one element here that still needs an edge —
+       it is an input, and an input with no boundary is not obviously
+       typable. Kept deliberately quieter than a service card. */
     #information-widgets input {
       border-radius: 11px !important;
     }
@@ -369,13 +396,53 @@ let
       color: rgba(148, 163, 184, 0.78) !important;
     }
 
+    /* --- 6b. Embedded frames -------------------------------------------- */
+    /* ⚠️ Iframe heights live HERE, not in the widget's `classes`.
+       Homepage builds the iframe as `rounded-sm w-full ''${classes}` and
+       `classes` REPLACES its default height classes. Tailwind compiles
+       arbitrary values (h-[640px]) only when they appear in its own source
+       scan, and our YAML never does — so the class resolved to nothing and
+       every embed fell back to the browser's intrinsic 150px iframe height.
+       Measured live on 2026-10-19: the river graph had been drawing at 150px
+       instead of 640px, and the temperature panel at 150px instead of 360px.
+       Keying off the service `id` (which Homepage puts verbatim on the
+       <li class="service">) is the documented way to do this and cannot
+       silently evaporate the same way. */
+    #embed-river iframe {
+      height: 640px;
+    }
+
+    #embed-temps iframe {
+      height: 360px;
+    }
+
+    #embed-wx-strip iframe {
+      height: 240px;
+    }
+
+    @media (max-width: 640px) {
+      /* A 640px graph is most of a phone screen, and the strip's ten-day row
+         wraps to two rows of five below this width. */
+      #embed-river iframe {
+        height: 420px;
+      }
+
+      #embed-temps iframe {
+        height: 300px;
+      }
+
+      #embed-wx-strip iframe {
+        height: 340px;
+      }
+    }
+
     /* --- 7. Phone ------------------------------------------------------- */
     @media (max-width: 640px) {
       /* Tighter gutters: on a 390px screen the default m-5 throws away
          10% of the width. */
       #information-widgets {
         margin: 0.6rem 0.7rem 0 !important;
-        padding: 0.45rem 0.6rem;
+        padding: 0;
       }
 
       #myTab {
@@ -442,6 +509,56 @@ let
   '';
 
   servicesYaml = pkgs.writeText "homepage-services.yaml" ''
+    # ── Favorites ────────────────────────────────────────────────────────
+    # The top-apps row, and the only group here chosen by use rather than by
+    # theme. Hand-kept on purpose: Homepage records nothing when a tile is
+    # clicked, so there is no usage data to sort by and never will be without
+    # a backend it does not have.
+    #
+    # Every tile below is a DUPLICATE of its entry in a themed group further
+    # down — Tandoor and Nextcloud from Household, Jellyfin and Immich from
+    # Media. The themed groups stay complete; this is an additional way in,
+    # not a move. ⚠️ Edit a widget here and you must edit its twin too; a
+    # rotated API key breaks both copies, and a key fixed in only one place
+    # leaves a tile that looks fine on one tab and empty on another.
+    - Favorites:
+        - Tandoor:
+            description: Recipes
+            href: https://recipes.rosemaryacres.com
+            icon: tandoor-recipes.png
+            widget:
+              type: tandoor
+              url: https://recipes.rosemaryacres.com
+              key: {{HOMEPAGE_VAR_TANDOOR_KEY}}
+        - Nextcloud:
+            description: Files, calendar, notes
+            href: https://cloud.rosemaryacres.com
+            icon: nextcloud.png
+            widget:
+              type: nextcloud
+              url: https://cloud.rosemaryacres.com
+              username: "{{HOMEPAGE_VAR_NEXTCLOUD_USER}}"
+              password: "{{HOMEPAGE_VAR_NEXTCLOUD_PASS}}"
+        - Jellyfin:
+            description: Movies, TV, music
+            href: https://jellyfin.rosemaryacres.com
+            icon: jellyfin.png
+            widget:
+              type: jellyfin
+              url: https://jellyfin.rosemaryacres.com
+              key: {{HOMEPAGE_VAR_JELLYFIN_KEY}}
+              enableNowPlaying: true
+              enableBlocks: true
+        - Immich:
+            description: Photos & videos
+            href: https://photos.rosemaryacres.com
+            icon: immich.png
+            widget:
+              type: immich
+              url: https://photos.rosemaryacres.com
+              key: {{HOMEPAGE_VAR_IMMICH_KEY}}
+              version: 2
+
     - Media:
         - Library radio:
             description: The house radio, and the living-room receiver
@@ -595,14 +712,16 @@ let
             icon: mdi-notebook-outline
             # Link-only: no Homepage widget for open-notebook.
 
-    # Cloud & Desk — the second half of the Home tab. This absorbed the old
-    # "Productivity" group on 2026-10-19: a two-tile Productivity group sitting
-    # next to a three-tile Cloud group was a distinction without a difference,
-    # and Productivity was one of the two groups missing from settings.layout,
-    # so it rendered below everything else. Uptime Kuma went to Monitoring,
-    # where the other dashboards live, and Stacks came over from Media Mgmt —
-    # a book catalogue is a desk tool, not part of the download pipeline.
-    - Cloud & Desk:
+    # Household — the second half of the Home tab, and the merger of the old
+    # "Cloud" and "Productivity" groups. Those two were a distinction without
+    # a difference (three tiles and two), and Productivity was one of the two
+    # groups missing from settings.layout, so it rendered below everything
+    # else. Named for what is actually in it: recipes, documents, books,
+    # files, passwords and notes are the household's records, not work output.
+    # Uptime Kuma went to Monitoring with the other dashboards, and Stacks
+    # came over from Media Mgmt — a book catalogue is not part of the
+    # download pipeline.
+    - Household:
         - Nextcloud:
             description: Files, calendar, notes
             href: https://cloud.rosemaryacres.com
@@ -770,6 +889,9 @@ let
             description: CPU / NVMe / ambient °C — warn & critical alerts armed
             href: https://grafana.rosemaryacres.com/d/gromit-temps
             icon: mdi-thermometer
+            # `id` lands verbatim on the <li class="service">; customCss sizes
+            # the iframe by it. See the ⚠️ below about why not `classes`.
+            id: embed-temps
             widget:
               # Same embed pattern as the Riverwatch graph below: panel 1 of
               # the gromit-temps Grafana dashboard via d-solo. Anonymous Viewer
@@ -778,7 +900,35 @@ let
               type: iframe
               name: Temps
               src: https://grafana.rosemaryacres.com/d-solo/gromit-temps/_?orgId=1&panelId=1&theme=dark&from=now-24h&to=now&refresh=1m&kiosk
-              classes: h-[360px] w-full
+              # See the embed-river note below: no h-[Npx] here.
+              classes: w-full
+              referrerPolicy: same-origin
+              allowScrolling: "no"
+
+    # The weather strip: current conditions, the latest Ryan Hall read, a
+    # one-line summary and a ten-day row with icons. Rendered every 15 minutes
+    # by `wx strip` (modules/services/wx) into /var/lib/wx/public and served
+    # by nginx as an exact-match location on THIS vhost — same origin as the
+    # dashboard, so no second cert, no second DNS record, and no cross-origin
+    # restriction on the iframe.
+    #
+    # ⚠️ Homepage cannot build this card itself. Its openmeteo widget is
+    # current-conditions-only, customapi renders text rows with no icons, and
+    # nothing in Homepage can reach the wx database for the Ryan Hall line.
+    # Hence a rendered page behind an iframe, the same pattern as the
+    # Riverwatch and temperature embeds.
+    - Weather:
+        - Forecast:
+            description: Current conditions, the Ryan Hall read, and ten days
+            href: https://forecast.weather.gov/
+            icon: mdi-weather-partly-cloudy
+            id: embed-wx-strip
+            widget:
+              type: iframe
+              name: Weather strip
+              src: /wx/strip.html
+              # Height in customCss, keyed off `id` — see embed-river.
+              classes: w-full
               referrerPolicy: same-origin
               allowScrolling: "no"
 
@@ -787,6 +937,7 @@ let
             description: Stage at Lockport & Gratz with flood thresholds
             href: https://grafana.rosemaryacres.com/d/riverwatch
             icon: mdi-chart-line
+            id: embed-river
             widget:
               # Embeds panel 1 (Stage time series + flood-threshold reference
               # lines + NWPS 5-day forecast) from the Riverwatch Grafana
@@ -799,7 +950,14 @@ let
               # `to=now+5d` (URL-encoded) makes room for the NWPS forecast
               # overlay, which extends ~5 days into the future.
               src: https://grafana.rosemaryacres.com/d-solo/riverwatch/_?orgId=1&panelId=7&theme=dark&from=now-7d&to=now%2B5d&refresh=5m&kiosk
-              classes: h-[640px] w-full
+              # ⚠️ NO h-[Npx] HERE. `classes` REPLACES the widget's default
+              # height classes, and an arbitrary Tailwind value is only
+              # compiled if it appears in Homepage's own source — ours never
+              # is, so the class resolved to nothing and the iframe fell back
+              # to the browser's intrinsic 150px. Measured on the live page
+              # 2026-10-19: this graph had been rendering at 150px, not 640px.
+              # Height is set in customCss via the `id` above.
+              classes: w-full
               referrerPolicy: same-origin
               allowScrolling: "no"
         - Lockport (Lock 2):
@@ -950,6 +1108,24 @@ in {
     locations."/" = {
       proxyPass = "http://127.0.0.1:${toString port}";
       proxyWebsockets = true;
+    };
+
+    # The weather strip, rendered by `wx strip` (modules/services/wx) and
+    # iframed by the Weather tab. Served from this vhost rather than its own
+    # so the iframe is SAME-ORIGIN — no second certificate, no second DNS
+    # record, and no X-Frame-Options/CSP negotiation with ourselves.
+    #
+    # ⚠️ An exact-match (`= /path`) location beats the `/` prefix location
+    # above, so this does NOT get proxied into the Homepage container. A
+    # prefix location here would lose to nothing but is easy to get wrong —
+    # the same trap as the MIME/regex ordering noted in nginx-config-verify.
+    locations."= /wx/strip.html" = {
+      alias = "/var/lib/wx/public/strip.html";
+      extraConfig = ''
+        # Regenerated every 15 minutes; a stale cached copy would quietly
+        # show yesterday's forecast, which is worse than a slow load.
+        add_header Cache-Control "no-cache, must-revalidate";
+      '';
     };
   };
 
