@@ -209,6 +209,11 @@ let hm = homelab-modules.nixosModules; in
   #   wx-ryan     Ryan Hall's forecasts -> a `weather` lane in the newsdesk, plus
   #               an ad-hoc ntfy when he is AHEAD of the SPC outlook.
   #   wx-morning  07:05 release of anything quiet hours held, as one summary.
+  #   wx-strip    every 15 min, renders the dashboard's Weather tab card
+  #               (Open-Meteo + the latest still-live Ryan Hall read) into
+  #               /var/lib/wx/public, which nginx serves on the homepage
+  #               vhost. Succeeds even when Open-Meteo is down — it writes a
+  #               page that SAYS so rather than leaving a stale forecast up.
   #
   # Design: ww4/nixos-homelab-improvements docs/weather-watch-research.md.
   # ⚠️ Needs secrets/wx-location.json (his home coordinates — PII) before

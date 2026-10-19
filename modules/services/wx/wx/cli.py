@@ -20,7 +20,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import db, extract, notify, render, rules, ryan, spc
+from . import db, extract, notify, render, rules, ryan, spc, strip
 from .nws import fetch as nws_fetch
 from .nws import process as nws_process
 
@@ -33,6 +33,12 @@ def _ua() -> str:
 def _location() -> tuple[float, float]:
     path = os.environ.get("WX_LOCATION_FILE", "/run/secrets/wx-location")
     return db.load_location(path)
+
+
+def _public_dir() -> Path:
+    """Where the rendered weather strip lands. nginx serves this directory
+    read-only on the dashboard vhost; nothing else writes here."""
+    return Path(os.environ.get("WX_PUBLIC_DIR", str(db.state_dir() / "public")))
 
 
 def _corpus_dir() -> Path:
@@ -250,6 +256,42 @@ def layer2_state(con) -> str:
     return f"ok — {got} transcribed, {blocked} blocked"
 
 
+def cmd_strip(args) -> int:
+    """Render the dashboard's weather strip.
+
+    Exit 0 whenever a page was written, INCLUDING the "could not fetch" page —
+    the unit's job is to keep an honest card on screen, and an upstream outage
+    is not a failure of this unit. Non-zero is reserved for "could not write
+    the file at all", which is the one case a human has to fix.
+
+    ⚠️ Written to a temp file and renamed, not written in place. nginx can
+    serve this path at any moment; a partial write would be served as a
+    truncated page, and the rename is atomic within the directory.
+    """
+    try:
+        lat, lon = _location()
+    except Exception as exc:  # noqa: BLE001 - reported, never raised at a timer
+        # No coordinates means no forecast. Say so on the card rather than
+        # leaving whatever was there before.
+        print(f"wx: cannot read location: {exc}", file=sys.stderr)
+        page = strip.render_error("The location secret is not readable.",
+                                  now=datetime.now(timezone.utc))
+    else:
+        con = db.connect()
+        page = strip.build(con, lat, lon, user_agent=_ua())
+
+    out_dir = _public_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = out_dir / "strip.html"
+    tmp = target.with_suffix(".html.tmp")
+    tmp.write_text(page, encoding="utf-8")
+    # 0644: nginx runs as its own user and must be able to read this.
+    tmp.chmod(0o644)
+    tmp.replace(target)
+    print(f"wx: wrote {target} ({len(page)} bytes)")
+    return 0
+
+
 def cmd_status(args) -> int:
     con = db.connect()
     ready = layer1_ready()
@@ -290,6 +332,7 @@ def main(argv=None) -> int:
     sub.add_parser("alerts", help="LAYER 1 — poll NWS and notify").set_defaults(fn=cmd_alerts)
     sub.add_parser("spc", help="refresh the SPC outlook picture").set_defaults(fn=cmd_spc)
     sub.add_parser("morning", help="flush what quiet hours held").set_defaults(fn=cmd_morning)
+    sub.add_parser("strip", help="render the dashboard weather strip").set_defaults(fn=cmd_strip)
     sub.add_parser("status", help="read-only summary").set_defaults(fn=cmd_status)
 
     p = sub.add_parser("ryan", help="LAYER 2+3 — transcripts, extraction, trends")
