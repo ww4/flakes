@@ -158,6 +158,16 @@ let
         tab: Lab
       Admin:
         tab: Lab
+
+      # Genuinely LAST on the Lab tab — below the bookmark groups, not just
+      # below the service groups. Verified on the live page 2026-10-19:
+      # bookmark groups with a `tab:` render inside #layout-groups in layout
+      # order, alongside services, so "after Infrastructure" would still have
+      # put this above Code and Admin.
+      Projects:
+        tab: Lab
+        style: row
+        columns: 1
   '';
 
   # ── custom.css ───────────────────────────────────────────────────────────
@@ -437,6 +447,13 @@ let
       height: 215px;
     }
 
+    /* Four rows, every line single-line and ellipsised, so the card measures
+       280px at 1600px wide and 275px on a phone — the same at every width.
+       295px is that plus headroom. */
+    #embed-projects iframe {
+      height: 295px;
+    }
+
     @media (max-width: 640px) {
       /* A 640px graph is most of a phone screen, and the strip's ten-day row
          wraps to two rows of five below this width. */
@@ -534,6 +551,29 @@ let
   '';
 
   servicesYaml = pkgs.writeText "homepage-services.yaml" ''
+    # ── Projects ─────────────────────────────────────────────────────────
+    # The LAST group on the Lab tab. One row per project: percent complete
+    # from its done/total steps, and the `next` field — which the board writes
+    # as the thing that has to happen for the project to move, so a blocked
+    # project shows what it is blocked ON. Rendered every ten minutes by
+    # `briefing projects`.
+    #
+    # ⚠️ Same as Briefing: NO `allowScrolling: "no"`, because Homepage sets
+    # pointer-events:none on the frame when that is present and every row here
+    # is a link to the full board.
+    - Projects:
+        - Project board:
+            description: Where the agent's multi-day work stands
+            href: https://digest.rosemaryacres.com/board/
+            icon: mdi-clipboard-text-clock
+            id: embed-projects
+            widget:
+              type: iframe
+              name: Projects
+              src: /briefing/projects.html
+              classes: w-full
+              referrerPolicy: same-origin
+
     # ── Briefing ─────────────────────────────────────────────────────────
     # The LAST group on the Home tab (see settings.layout — group order on a
     # tab comes from the layout block, not from the order here): open sentinel
@@ -834,10 +874,10 @@ let
             description: Remote device management (server)
             href: https://mesh.rosemaryacres.com
             icon: meshcentral.png
-        - Project board:
-            description: Where the agent's multi-day work stands
-            href: https://digest.rosemaryacres.com/board/
-            icon: mdi-clipboard-text-clock
+        # The Project board link tile used to sit here. It is now the Projects
+        # card at the bottom of this same tab, which links to the same place
+        # and also says what each project is waiting on — a plain link beside
+        # it would be the duplication Favorites/Household just got cleaned of.
 
     - Monitoring:
         - Grafana:
@@ -1159,6 +1199,13 @@ in {
     # above, so this does NOT get proxied into the Homepage container. A
     # prefix location here would lose to nothing but is easy to get wrong —
     # the same trap as the MIME/regex ordering noted in nginx-config-verify.
+    locations."= /briefing/projects.html" = {
+      alias = "/var/lib/briefing/public/projects.html";
+      extraConfig = ''
+        add_header Cache-Control "no-cache, must-revalidate";
+      '';
+    };
+
     locations."= /briefing/card.html" = {
       alias = "/var/lib/briefing/public/card.html";
       extraConfig = ''
