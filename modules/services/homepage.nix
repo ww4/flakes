@@ -200,6 +200,10 @@ let
     /* --- 3. Tab bar ---------------------------------------------------- */
     #myTab {
       display: flex !important;
+      /* The tablist is a child of a `flex flex-col … min-h-screen` container,
+         so with the default flex-shrink the long service list squeezes it
+         down to a ~12px sliver. */
+      flex: none;
       gap: 0.25rem;
       margin: 0.85rem 1.5rem 0.1rem;
       padding: 0.3rem;
@@ -217,13 +221,25 @@ let
       display: none;
     }
 
+    /* Upstream gives each li `h-10 w-full` and the button `m-1`. Leave the
+       40px height alone — an earlier `height: auto` here collapsed the whole
+       bar to a 12px sliver — but drop w-full: five tabs sharing 1680px makes
+       each pill 350px wide, which reads as a stretched toolbar rather than a
+       tab bar. Content-width pills, left-aligned, on every screen size; the
+       bar itself still spans the width to line up with the header strip. */
     #myTab > li {
-      height: auto !important;
+      align-items: stretch;
+      flex: 0 0 auto;
+      width: auto !important;
     }
 
     #myTab button[role="tab"] {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
       margin: 0 !important;
-      padding: 0.5rem 0.95rem;
+      padding: 0 0.95rem;
       border-radius: 10px !important;
       font-size: 0.75rem;
       font-weight: 600;
@@ -260,7 +276,7 @@ let
       font-weight: 600 !important;
       letter-spacing: 0.16em;
       text-transform: uppercase;
-      color: rgba(203, 213, 225, 0.58) !important;
+      color: rgba(203, 213, 225, 0.68) !important;
     }
 
     h2.service-group-name::before,
@@ -278,7 +294,10 @@ let
       content: "";
       flex: 1 1 auto;
       height: 1px;
-      background: linear-gradient(90deg, rgba(148, 163, 184, 0.3), transparent);
+      /* Fixed-length fade: on a 1680px row a `to transparent` gradient is
+         already invisible 200px in, so the rule has to stop deliberately
+         rather than stretch with the container. */
+      background: linear-gradient(90deg, rgba(148, 163, 184, 0.4), rgba(148, 163, 184, 0) 260px);
     }
 
     /* --- 5. Cards ------------------------------------------------------ */
@@ -366,12 +385,8 @@ let
         justify-content: flex-start;
       }
 
-      #myTab > li {
-        width: auto !important;
-      }
-
       #myTab button[role="tab"] {
-        padding: 0.5rem 0.8rem;
+        padding: 0 0.8rem;
         font-size: 0.7rem;
         letter-spacing: 0.1em;
       }
@@ -382,14 +397,28 @@ let
         margin: 0.5rem 0.7rem !important;
       }
 
-      /* The resources widget stacks 3 rows of 2 and used to cost ~280px
-         before a single service came into view. */
       #widgets-wrap {
         gap: 0.1rem 0.4rem;
       }
 
       #information-widgets .text-xs {
         font-size: 0.66rem;
+      }
+
+      /* Five resources (cpu, mem, /, fusion, backup) at Homepage's default
+         117px each fit only two per row on a 390px phone, so the block costs
+         three rows / 122px before a single service card appears. Trimming the
+         icon gap (ml-3) and the 85px text column to ~104px per item fits
+         three per row, i.e. two rows. Measured on the live page 2026-10-19. */
+      #information-widgets .information-widget-resource {
+        margin-right: 0.35rem !important;
+        padding-top: 0.2rem !important;
+        padding-bottom: 0.2rem !important;
+      }
+
+      #information-widgets .information-widget-resource > div {
+        margin-left: 0.4rem !important;
+        min-width: 74px !important;
       }
     }
 
@@ -848,7 +877,9 @@ let
     - datetime:
         text_size: xl
         format:
-          dateStyle: long
+          # medium ("Oct 19, 2026") rather than long ("October 19, 2026") —
+          # the long form wraps the header on a phone for no added meaning.
+          dateStyle: medium
           timeStyle: short
           hour12: true
   '';
