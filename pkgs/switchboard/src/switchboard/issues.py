@@ -57,6 +57,50 @@ def _words(ident: str) -> str:
     return ident.replace("-", " ").replace("_", " ")
 
 
+def spoken_detail(raw: str, cid: str) -> str:
+    """A sentinel evidence line, reduced to something worth saying aloud.
+
+    Chris, 2026-10-19: *"Hearing cryptic readouts is confusing and
+    unnecessary."* He is right, and the phone is the worst place for it.
+    Sentinel evidence lines come in two shapes. Some are written for a human:
+
+        nginx is 'failed' (expected active) — EVERY vhost on the box is
+        unreachable
+
+    Others are a bare threshold expression, and they carry the check id twice
+    before it:
+
+        [swap-headroom] swap-headroom: 127.0.0.1:9100=7.9621
+
+    Spoken, that second one becomes "one twenty seven dot zero dot zero dot
+    one colon nine one zero zero equals seven point nine six two one", which
+    tells him nothing he could act on and buries the part that matters — that
+    swap headroom is the thing complaining.
+
+    So: strip both id prefixes, then only keep what is left if it reads like a
+    sentence. Otherwise say nothing and let the caller speak the check name
+    alone. Same rule as the dashboard's briefing card
+    (modules/services/briefing in ww4/flakes) — deliberately duplicated rather
+    than shared, because a ten-line heuristic is not worth coupling a phone
+    system to a web dashboard.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    if text.startswith(f"[{cid}]"):
+        text = text[len(cid) + 2:]
+    text = text.strip()
+    prefix = f"{cid}:"
+    if text.lower().startswith(prefix.lower()):
+        text = text[len(prefix):]
+    text = text.strip()
+    # A sentence has a space in it and some length. A token like
+    # "/=90.8903" has neither, and is not worth a second of phone time.
+    if len(text) < 12 or " " not in text:
+        return ""
+    return text
+
+
 # ---------------------------------------------------------------- readers
 
 async def alertmanager(settings: Settings) -> list[Issue]:
@@ -94,7 +138,7 @@ def sentinel_active(settings: Settings) -> list[Issue]:
         try:
             newest = max(settings.sentinel_incidents.glob(f"{cid}-*.txt"), key=lambda p: p.stat().st_mtime)
             first = newest.read_text(errors="replace").splitlines()[0]
-            headline = first[len(cid) + 2:].strip() if first.startswith(f"[{cid}]") else first
+            headline = spoken_detail(first, cid)
         except (ValueError, OSError, IndexError):
             pass
         out.append(Issue(sev, f"sentinel {_words(cid)}" + (f": {headline}" if headline else "")))
