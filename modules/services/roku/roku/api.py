@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
 from roku import discover
-from roku.ecp import ACTIONS, KEYS, POWER_KEYS, Roku, RokuError
+from roku.ecp import ACTIONS, KEYS, POWER_KEYS, Roku, RokuError, RokuLimited
 
 log = logging.getLogger("roku.api")
 
@@ -179,6 +179,14 @@ def make_handler(device: Device, allow_power: bool):
                     return self._json({"ok": True})
 
                 return self._fail(404, "no such endpoint")
+            except RokuLimited as e:
+                # Not a fault and not transient: a setting on the television
+                # that only a person standing near it can change. Flagged so a
+                # page can keep saying so rather than flashing one toast per
+                # press, and 409 because the request was fine — the device's
+                # state is what refused it.
+                log.warning("%s %s: limited mode", method, u.path)
+                return self._json({"error": str(e), "limited": True}, 409)
             except RokuError as e:
                 # The box is asleep, moved or gone. Say so plainly and make the
                 # next call look for it again.
