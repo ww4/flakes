@@ -212,13 +212,33 @@ in
     systemd.services.board-sync = {
       description = "Derive project-board card status from the open-loops board";
       unitConfig.ConditionPathExists = "/home/claude/.local/bin/board-sync";
+      # board-sync's shebang is #!/usr/bin/env python3; a bare oneshot has none
+      # of the systemPackages/profile PATH the interactive shell gets, so `env`
+      # couldn't find an interpreter and every run exited 127 before it ever
+      # reached board-sync's own code (silently, see below). `path` puts
+      # python3 on this unit's PATH the NixOS way.
+      path = [ pkgs.python3 ];
       serviceConfig = {
         Type = "oneshot";
         User = "claude";
       };
-      # Never fails the unit: a drifted card is a report, not an incident, and a
-      # red unit here would train Chris to ignore the board.
-      script = "/home/claude/.local/bin/board-sync --apply || true";
+      # A drifted card is a report, not an incident (board-sync exits 1 on
+      # "needs attention", by design — see the module docstring), and a red
+      # unit here would train Chris to ignore the board. But that is the ONLY
+      # thing worth swallowing: exit 127 means the interpreter itself never
+      # ran, which is a real incident wearing the report's clothes, and
+      # `|| true` was hiding it identically. Pass through anything that isn't
+      # the two known-benign codes.
+      script = ''
+        set +e
+        /home/claude/.local/bin/board-sync --apply
+        rc=$?
+        set -e
+        if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+          exit 0
+        fi
+        exit "$rc"
+      '';
     };
 
     systemd.paths.board-sync = {
@@ -226,11 +246,18 @@ in
       wantedBy = [ "multi-user.target" ];
       pathConfig = {
         PathModified = "/home/claude/.claude/projects/-home-claude-nixos-homelab-improvements/memory/open-loops.md";
-        # An editing session writes that file many times a minute. 30 minutes of
-        # debounce: it costs no tokens either way, but the churn makes the file
-        # harder to read while it is still being edited.
+        # An editing session writes that file many times a minute. The intent
+        # here was debounce, but TriggerLimitBurst=1 is systemd's anti-storm
+        # kill switch, not a debounce: the SECOND edit inside the interval
+        # permanently fails the whole path unit (not just one run), which is
+        # what happened on 2026-10-19 — the watcher went dead until a manual
+        # reset. board-sync is cheap, idempotent and reads but never writes
+        # this file (confirmed: no feedback-loop risk), so there's no real
+        # storm to guard against here. Raised well above anything a normal
+        # multi-edit session will hit, while still tripping on a genuine
+        # runaway.
         TriggerLimitIntervalSec = "30min";
-        TriggerLimitBurst = 1;
+        TriggerLimitBurst = 20;
       };
     };
 
