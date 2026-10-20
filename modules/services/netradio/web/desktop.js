@@ -65,6 +65,15 @@ createApp({
       view, qtab: "played", openMount, target, quality,
       stations: [], quick: [], counts: {}, up: {}, tiles: {}, histories: {}, nexts: {}, hearts: {},
       current: null, status: "", scanning: false, busy: "", toast: "", tick: 0,
+      // What is on a screen in the house. The radio can name its own track
+      // because it chose it; a streaming box cannot be asked — but Jellyfin is
+      // the server, so when the thing on the television came from the library
+      // it knows exactly (Chris, 2026-10-09).
+      watching: { playing: false },
+      // A poster that 404s renders the browser's broken-image glyph, which is
+      // worse than no picture at all — the same reason station covers carry
+      // `badArt`. Keyed on the item, so the next episode tries again.
+      badPoster: "",
       blocked: "",              // a mount the browser refused to start on its own; the play button takes it
       paused: false,            // paused by the OS transport: still tuned, and still holding the media session
       query: "", results: [], searchTimer: 0,
@@ -480,6 +489,25 @@ createApp({
     },
 
     // ---- the receiver ----------------------------------------------------
+    async pollWatching() {
+      // Rides the ten-second tick rather than a timer of its own. Answers
+      // {playing:false} when Jellyfin is not configured, so there is nothing
+      // to switch on and nothing to configure twice.
+      const w = await getJSON("admin/api/watching");
+      if (w) this.watching = w;
+    },
+    posterFailed() { this.badPoster = this.watching.art_id || ""; },
+    showPoster() { return !!this.watching.art_id && this.badPoster !== this.watching.art_id; },
+    watchProgress() {
+      const w = this.watching;
+      if (!w.playing || !w.duration) return 0;
+      return Math.max(0, Math.min(100, Math.round((w.position / w.duration) * 100)));
+    },
+    clock(secs) {
+      if (!secs && secs !== 0) return "";
+      const m = Math.floor(secs / 60), s2 = secs % 60;
+      return `${m}:${String(s2).padStart(2, "0")}`;
+    },
     async pollReceiver() {
       const st = await getJSON("receiver/status");
       this.receiverSeen = true;
@@ -648,7 +676,8 @@ createApp({
     this.applyHereVolume();
     this.setMediaHandlers();
     this.refresh().then(() => { this.refreshHeart(); this.mediaSession(); });
-    setInterval(() => { this.tick = Date.now(); this.refreshZones(); this.refresh().then(() => { this.refreshHeart(); this.mediaSession(); }); }, 10000);
+    this.pollWatching();
+    setInterval(() => { this.tick = Date.now(); this.pollWatching(); this.refreshZones(); this.refresh().then(() => { this.refreshHeart(); this.mediaSession(); }); }, 10000);
     if (this.target === "room") this.pollReceiver();
     if (this.target === "local") this.pollSpeaker();
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});

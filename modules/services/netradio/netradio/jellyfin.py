@@ -133,6 +133,81 @@ class Jellyfin:
         return None
 
     # -- writes
+    # Ticks are Jellyfin's unit everywhere: 10,000,000 to the second.
+    TICKS = 10_000_000
+
+    def now_playing(self) -> dict:
+        """What is on a screen somewhere, or {} when nothing is.
+
+        The radio can say what is playing because it CHOSE the track. A
+        streaming box cannot be asked the same question — a Roku will name the
+        app and nothing else — but Jellyfin is the server, so when the thing on
+        the television came from here, it knows exactly (Chris, 2026-10-09).
+
+        Two things the live data taught that guessing would not have:
+
+          * SEVERAL sessions can share a DeviceName. This server had three
+            "Roku Express 4K (3941X)" — two left over from a fortnight earlier
+            and one real. So the session cannot be chosen by device; it is the
+            one actually holding a NowPlayingItem, most recently active if more
+            than one does.
+          * A file can be SEVERAL episodes. `IndexNumberEnd` is set when it is,
+            and the Little Bear episode playing at the time was 40 through 42.
+            "S1E40" would have been wrong and would have looked right.
+        """
+        try:
+            sessions = self._req("GET", "/Sessions")
+        except Exception as e:
+            log.debug("jellyfin sessions: %s", e)
+            return {}
+        live = [s for s in (sessions or []) if s.get("NowPlayingItem")]
+        if not live:
+            return {}
+        live.sort(key=lambda s: s.get("LastActivityDate") or "", reverse=True)
+        return self._describe(live[0])
+
+    def _describe(self, session: dict) -> dict:
+        item = session.get("NowPlayingItem") or {}
+        play = session.get("PlayState") or {}
+        kind = (item.get("Type") or "").lower()
+
+        ep = ""
+        first, last = item.get("IndexNumber"), item.get("IndexNumberEnd")
+        if first is not None:
+            ep = f"{first}" if not last or last == first else f"{first}\u2013{last}"
+
+        series = item.get("SeriesName") or ""
+        title = item.get("Name") or ""
+        season = item.get("ParentIndexNumber")
+        if kind == "episode":
+            head = series or title
+            tag = (f"S{season}E{ep}" if season is not None and ep else ep)
+            sub = " \u00b7 ".join(x for x in (tag, title) if x)
+        else:
+            head = title
+            sub = str(item.get("ProductionYear") or "")
+
+        def secs(t):
+            return int(t) // self.TICKS if isinstance(t, (int, float)) else None
+
+        return {
+            "playing": True,
+            "kind": kind,
+            "head": head, "sub": sub,
+            "series": series, "title": title,
+            "season": season, "episode": ep,
+            "year": item.get("ProductionYear"),
+            "position": secs(play.get("PositionTicks")) or 0,
+            "duration": secs(item.get("RunTimeTicks")),
+            "paused": bool(play.get("IsPaused")),
+            # The SERIES poster where there is one: an episode's own image is
+            # usually a frame grab, which reads as a muddy rectangle at the
+            # size this is shown.
+            "art_id": item.get("SeriesId") or item.get("Id") or "",
+            "device": session.get("DeviceName") or "",
+            "client": session.get("Client") or "",
+        }
+
     def set_favourite(self, item_id: str, on: bool) -> bool:
         user = self.user()
         try:

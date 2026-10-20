@@ -56,6 +56,15 @@ NOT_AN_ARTIST = re.compile(r"\b(19|20)\d\d\b|various|unknown|compilation|soundtr
 MOUNT = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 
 
+# A Jellyfin item id: 32 hex characters. Checked before one is pasted into a
+# URL we then fetch, so a crafted value cannot steer the request somewhere else.
+ITEM_ID = re.compile(r"^[0-9a-f]{32}$")
+
+
+def is_item_id(value: str) -> bool:
+    return bool(value) and bool(ITEM_ID.match(value))
+
+
 def sidecar_names(path) -> tuple:
     """The picture filenames that would belong to this track, in preference
     order. Names only — whether any of them is there is the caller's business,

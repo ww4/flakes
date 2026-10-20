@@ -471,6 +471,27 @@ class RokuRemote(unittest.TestCase):
         self.assertIn("hasRoku", nix, "site.json never tells the page there is one")
 
 
+class WhatIsOnTheTelevision(unittest.TestCase):
+    """Chris: "when we're watching jellyfin we do have more visibility into
+    what's playing. Could we merge that in there" (2026-10-09). The Roku can
+    only ever name the app; Jellyfin is the server and knows the item."""
+
+    def test_the_page_asks_and_shows_it(self):
+        js = (WEB / "desktop.js").read_text()
+        html = (WEB / "desktop.html").read_text()
+        self.assertIn("admin/api/watching", js, "nothing asks what is playing")
+        self.assertIn('v-if="watching.playing"', html,
+                      "the panel renders whether or not anything is on")
+        self.assertIn("watching.art_id", html, "no poster")
+
+    def test_it_rides_the_existing_tick(self):
+        """A timer of its own would poll a media server every few seconds for a
+        panel most evenings will not show."""
+        js = (WEB / "desktop.js").read_text()
+        self.assertRegex(js, r"setInterval\(\(\) => \{[^}]*pollWatching\(\)",
+                         "pollWatching has its own timer instead of the 10 s tick")
+
+
 class TrackNotices(unittest.TestCase):
     """A notice when the track changes. Windows gives a web page no per-track
     toast of its own — the media session buys transport controls, not a notice

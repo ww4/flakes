@@ -16,6 +16,8 @@ dir; the scanner and the DJ read those.
   PUT    /api/schedule                   the whole list of slots
   POST   /api/apply                      rescan now (and restart Liquidsoap if mounts changed)
   GET    /api/pandora                    what the receiver played on Pandora: artists per station, in-library flags
+  GET    /api/watching                   what Jellyfin is playing on a screen in the house, if anything
+  GET    /api/watching/art?item=<id>     the poster for it, proxied (the page cannot hold the API key)
 """
 
 from __future__ import annotations
@@ -38,7 +40,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from netradio import feeds as feedrules
-from netradio.conventions import COVER_NAMES, is_mount, sidecar_names
+from netradio.conventions import COVER_NAMES, is_item_id, is_mount, sidecar_names
 from netradio import jellyfin
 from netradio import ratings
 from netradio import schedule as sched
@@ -485,6 +487,39 @@ class Admin:
         except (OSError, ValueError):
             return False
 
+    def watching(self) -> dict:
+        """What is playing on a screen in the house, from Jellyfin.
+
+        Gated on url+key only, NOT on `jellyfin_hearts`: that flag is about
+        permission to WRITE favourites into somebody's library, and asking what
+        is on the television writes nothing. Same gate the artwork below uses,
+        for the same reason.
+        """
+        if not (self.jellyfin_url and self.jellyfin_key):
+            return {"playing": False}
+        jf = jellyfin.Jellyfin(self.jellyfin_url, self.jellyfin_key, self.jellyfin_user)
+        try:
+            return jf.now_playing() or {"playing": False}
+        except Exception as e:
+            # A media server being down is not this page failing.
+            log.debug("watching: %s", e)
+            return {"playing": False}
+
+    def watching_art(self, item: str) -> tuple[bytes, str] | None:
+        """The poster for what is playing, proxied — the page cannot hold the
+        API key, so it asks us and we ask Jellyfin."""
+        if not (self.jellyfin_url and self.jellyfin_key and is_item_id(item)):
+            return None
+        try:
+            req = urllib.request.Request(
+                f"{self.jellyfin_url.rstrip('/')}/Items/{item}/Images/Primary?maxHeight=700",
+                headers={"X-Emby-Token": self.jellyfin_key})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return r.read(), r.headers.get("Content-Type") or "image/jpeg"
+        except Exception as e:
+            log.debug("no poster for %s: %s", item, e)
+            return None
+
     def artist_art(self, path: str) -> tuple[bytes, str] | None:
         """The artist's picture from Jellyfin, for a track whose album has no
         sleeve. The library is laid out .../Music/<Artist>/<Album>/<track>."""
@@ -723,6 +758,8 @@ def make_handler(admin: Admin):
                 with LOCK:
                     if parts == ["api", "state"] and method == "GET":
                         return self._reply(200, admin.state())
+                    if parts == ["api", "watching"] and method == "GET":
+                        return self._reply(200, admin.watching())
                     if parts == ["api", "options"] and method == "GET":
                         return self._reply(200, admin.options((q.get("station") or [""])[0]))
                     if parts == ["api", "feeds"] and method == "POST":
@@ -771,6 +808,20 @@ def make_handler(admin: Admin):
                         self.send_response(200)
                         self.send_header("Content-Type", mime)
                         self.send_header("Cache-Control", "public, max-age=86400")
+                        self.send_header("Content-Length", str(len(data)))
+                        self.end_headers()
+                        self.wfile.write(data)
+                        return
+                    if parts == ["api", "watching", "art"] and method == "GET":
+                        got = admin.watching_art(parse_qs(u.query).get("item", [""])[0])
+                        if not got:
+                            return self._reply(404, {"error": "no poster"})
+                        data, mime = got
+                        self.send_response(200)
+                        self.send_header("Content-Type", mime)
+                        # Short, not a day: the poster changes when the episode
+                        # does, and an episode is twenty minutes long.
+                        self.send_header("Cache-Control", "public, max-age=300")
                         self.send_header("Content-Length", str(len(data)))
                         self.end_headers()
                         self.wfile.write(data)
