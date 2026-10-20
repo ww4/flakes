@@ -82,6 +82,27 @@ in
       '';
     };
 
+    projectsDir = lib.mkOption {
+      type = lib.types.str;
+      default = "/home/claude/project-board/projects";
+      description = ''
+        The project board's source of truth — one <slug>.json per project,
+        written by the agent with ordinary file tools (see
+        modules/agent/project-board.nix, which is emphatic about why there is
+        no API). Read-only here.
+
+        ⚠️ This lives under the agent's 0700 home, which is exactly why this
+        unit runs as that user and writes its output somewhere nginx can
+        reach, rather than nginx reading the source directly.
+      '';
+    };
+
+    boardUrl = lib.mkOption {
+      type = lib.types.str;
+      default = "https://digest.rosemaryacres.com/board/";
+      description = "Where the project card's rows link to — the full board.";
+    };
+
     publishFile = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/newsdesk/last-publish.json";
@@ -144,6 +165,44 @@ in
         UMask = "0022";
       };
       script = "${bin} card";
+    };
+
+    # The Lab tab's project card. Separate unit from briefing-card because the
+    # sources are unrelated: this one reads only the board's JSON files, and a
+    # failure to read the SilverBullet space should not blank the projects.
+    systemd.services.briefing-projects = {
+      description = "briefing — render the project board card";
+      environment = {
+        BRIEFING_PROJECTS = cfg.projectsDir;
+        BRIEFING_BOARD_URL = cfg.boardUrl;
+        BRIEFING_PUBLIC_DIR = cfg.publicDir;
+      };
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.user;
+        StateDirectory = "briefing";
+        TimeoutStartSec = "2min";
+        ProtectSystem = "strict";
+        ReadWritePaths = [ cfg.stateDir ];
+        NoNewPrivileges = true;
+        UMask = "0022";
+      };
+      script = "${bin} projects";
+    };
+
+    systemd.timers.briefing-projects = {
+      description = "briefing project card refresh";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        # Project files change when the agent edits them, which is rarely and
+        # unpredictably; the board's own renderer watches them with a .path
+        # unit. Ten minutes is plenty for a glance card and keeps the
+        # percentages honest without a second inotify watch.
+        OnCalendar = "*:0/10";
+        Persistent = true;
+        RandomizedDelaySec = "30s";
+        OnBootSec = "2min";
+      };
     };
 
     systemd.timers.briefing-card = {

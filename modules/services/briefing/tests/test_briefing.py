@@ -314,6 +314,30 @@ class Render(unittest.TestCase):
         self.assertNotIn('<b>', page)
         self.assertIn("&quot;", page)
 
+    def test_plan_rows_and_teaser_cannot_be_shrunk(self):
+        """⚠️ Guards the fault that made the card unreadable on a phone.
+
+        The plan rows are flex items in a column with overflow:hidden. With
+        the default flex-shrink:1 they are squashed BELOW their own text
+        height when the panel runs short, and every row clips through the
+        middle of its letters. `flex:none` is what forbids that.
+
+        This asserts the declaration, not the rendering — a stylesheet is not
+        something unittest can lay out. It is here so the rule cannot be
+        deleted silently; the rendered proof is in the PR.
+        """
+        for selector in (".plan li{flex:none", ".read .tldr{flex:none",
+                         ".kicker{flex:none", ".read .go{flex:none"):
+            self.assertIn(selector, render.CSS,
+                          selector + " missing — rows can be squashed again")
+
+    def test_plan_rows_are_single_line(self):
+        """Two-line rows made the panel height unpredictable, which is what
+        made it possible to pick a frame height that did not fit."""
+        self.assertIn("white-space:nowrap", render.CSS)
+        self.assertNotIn("-webkit-line-clamp:2;-webkit-box-orient:vertical}\n.plan",
+                         render.CSS)
+
     def test_age_wording(self):
         self.assertEqual(render._age(0.2), "today")
         self.assertEqual(render._age(1.4), "1 day")

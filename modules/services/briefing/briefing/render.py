@@ -58,13 +58,22 @@ a{color:inherit;text-decoration:none}
 .panel{background:rgba(2,6,23,.32);border:1px solid rgba(226,232,240,.06);
   border-radius:11px;padding:.55rem .7rem;display:flex;flex-direction:column;gap:.3rem;
   min-height:0;overflow:hidden}
-.kicker{font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:#94a3b8}
+.kicker{flex:none;font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:#94a3b8}
+.read .go{flex:none}
 .plan{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:.28rem;
   min-height:0;overflow:hidden}
-.plan li{font-size:.78rem;line-height:1.35;color:#cbd5e1;
+/* ⚠️ flex:none is load-bearing. These are flex items in a column with
+   overflow:hidden, so with the default flex-shrink:1 they are SQUASHED BELOW
+   THEIR OWN TEXT HEIGHT when the panel runs short — every row then clips
+   through the middle of its letters and the list reads as overlapping
+   garbage. Seen on a phone 2026-10-19. The list may clip whole rows off the
+   bottom; it may never compress the rows it does draw.
+   One line each, ellipsised, for the same reason: a row that can be one or
+   two lines makes the panel's height unpredictable, and the full text is one
+   tap away on the page this links to. */
+.plan li{flex:none;font-size:.78rem;line-height:1.35;color:#cbd5e1;
   padding-left:.75rem;position:relative;
-  overflow:hidden;text-overflow:ellipsis;display:-webkit-box;
-  -webkit-line-clamp:2;-webkit-box-orient:vertical}
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .plan li::before{content:"";position:absolute;left:0;top:.5rem;
   width:.25rem;height:.25rem;border-radius:999px;background:rgba(129,140,248,.8)}
 
@@ -73,7 +82,7 @@ a{color:inherit;text-decoration:none}
 .read{justify-content:space-between;
   background:linear-gradient(135deg,rgba(129,140,248,.14),rgba(13,148,136,.10));
   border-color:rgba(129,140,248,.22);transition:border-color .18s ease,transform .18s ease}
-.read .tldr{font-size:.92rem;line-height:1.4;color:#f1f5f9;font-weight:500;
+.read .tldr{flex:none;font-size:.92rem;line-height:1.4;color:#f1f5f9;font-weight:500;
   overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
 .read .go{font-size:.7rem;color:#c7d2fe;display:flex;gap:.3rem;align-items:center}
 @media (hover:hover){

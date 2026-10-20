@@ -32,6 +32,41 @@ let
   hostname = "rosemaryacres.com";
   port = 3000;
 
+  # ── Favicon ──────────────────────────────────────────────────────────────
+  # Setting `favicon:` in settings.yaml replaces ALL FIVE of Homepage's default
+  # icon links with exactly two — `icon` and `apple-touch-icon` — so one asset
+  # covers both the browser tab and an Android home-screen shortcut. (Read off
+  # upstream's src/pages/index.jsx, which branches on initialSettings.favicon.)
+  #
+  # ⚠️ WHY THIS IS A DRAWING AND NOT THE REAL GROMIT.
+  # Chris asked for the Aardman character, and on a tailnet-only dashboard
+  # that is his business. But THIS REPO IS PUBLIC ON GITHUB, so committing the
+  # artwork would republish someone else's copyrighted work. The split: the
+  # repo ships an original drawing, and `faviconPath` below points anywhere
+  # you like on the box — so the real still can live at
+  # /var/lib/homepage/favicon.png, outside git, and never leave the house.
+  #
+  # The drawing is primitives (two ellipses for ears, a rounded head, three
+  # punched holes), not a trace of anyone's character art.
+  faviconSvg = pkgs.writeText "homepage-favicon.svg" ''
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs><rect width="64" height="64" rx="14" fill="url(#g)"/><g fill="#0b1120"><path d="M17 20 C8 24 8 42 16 47 C21 50 24 44 23 36 Z"/><path d="M47 20 C56 24 56 42 48 47 C43 50 40 44 41 36 Z"/><path d="M32 13 C42 13 48 21 48 31 C48 42 41 51 32 51 C23 51 16 42 16 31 C16 21 22 13 32 13 Z"/></g><circle cx="26" cy="29" r="3" fill="url(#g)"/><circle cx="38" cy="29" r="3" fill="url(#g)"/><ellipse cx="32" cy="41" rx="6.2" ry="5" fill="url(#g)"/></svg>
+  '';
+
+  # Point this at any file on the box to use your own icon instead. Dropping
+  # /var/lib/homepage/favicon.png here is the supported way to put the real
+  # Gromit on the dashboard WITHOUT the image entering this public repo:
+  #
+  #     scp gromit.png gromit:/var/lib/homepage/favicon.png
+  #     faviconPath = "/var/lib/homepage/favicon.png";
+  #
+  # ⚠️ Keep the extension honest. nginx types the response from the REQUEST
+  # URI, and faviconUrl below is derived from this path's extension, so a PNG
+  # named .svg would be served as image/svg+xml and simply not render.
+  faviconPath = toString faviconSvg;
+  faviconUrl = "/favicon" + (let
+    m = builtins.match ".*(\\.[a-zA-Z0-9]+)$" faviconPath;
+  in if m == null then ".svg" else builtins.head m);
+
   # ── Layout ───────────────────────────────────────────────────────────────
   # Groups are assigned to TABS. Tab order follows the order groups appear in
   # this block, and the first one ("Home") is what opens on load. Home is a
@@ -56,6 +91,8 @@ let
     color: slate
     headerStyle: clean
     hideVersion: true
+    # Served by the nginx location below, on this same vhost.
+    favicon: ${faviconUrl}
     # Card translucency/blur is handled in customCss rather than with the
     # built-in `cardBlur:` knob, so one mechanism owns the glass effect
     # instead of two fighting over the same surface.
@@ -158,6 +195,16 @@ let
         tab: Lab
       Admin:
         tab: Lab
+
+      # Genuinely LAST on the Lab tab — below the bookmark groups, not just
+      # below the service groups. Verified on the live page 2026-10-19:
+      # bookmark groups with a `tab:` render inside #layout-groups in layout
+      # order, alongside services, so "after Infrastructure" would still have
+      # put this above Code and Admin.
+      Projects:
+        tab: Lab
+        style: row
+        columns: 1
   '';
 
   # ── custom.css ───────────────────────────────────────────────────────────
@@ -437,6 +484,13 @@ let
       height: 215px;
     }
 
+    /* Four rows, every line single-line and ellipsised, so the card measures
+       280px at 1600px wide and 275px on a phone — the same at every width.
+       295px is that plus headroom. */
+    #embed-projects iframe {
+      height: 295px;
+    }
+
     @media (max-width: 640px) {
       /* A 640px graph is most of a phone screen, and the strip's ten-day row
          wraps to two rows of five below this width. */
@@ -452,9 +506,12 @@ let
         height: 340px;
       }
 
-      /* The two panels stack below 640px. */
+      /* The two panels stack below 640px, and the issue pills wrap: measured
+         natural height is 333px at 360-430px wide and 363px at 320px (three
+         rows of pills). 375px covers the worst case with headroom. The panels
+         carry flex:1, so a quiet day grows them rather than leaving a gap. */
       #embed-briefing iframe {
-        height: 300px;
+        height: 375px;
       }
     }
 
@@ -531,6 +588,29 @@ let
   '';
 
   servicesYaml = pkgs.writeText "homepage-services.yaml" ''
+    # ── Projects ─────────────────────────────────────────────────────────
+    # The LAST group on the Lab tab. One row per project: percent complete
+    # from its done/total steps, and the `next` field — which the board writes
+    # as the thing that has to happen for the project to move, so a blocked
+    # project shows what it is blocked ON. Rendered every ten minutes by
+    # `briefing projects`.
+    #
+    # ⚠️ Same as Briefing: NO `allowScrolling: "no"`, because Homepage sets
+    # pointer-events:none on the frame when that is present and every row here
+    # is a link to the full board.
+    - Projects:
+        - Project board:
+            description: Where the agent's multi-day work stands
+            href: https://digest.rosemaryacres.com/board/
+            icon: mdi-clipboard-text-clock
+            id: embed-projects
+            widget:
+              type: iframe
+              name: Projects
+              src: /briefing/projects.html
+              classes: w-full
+              referrerPolicy: same-origin
+
     # ── Briefing ─────────────────────────────────────────────────────────
     # The LAST group on the Home tab (see settings.layout — group order on a
     # tab comes from the layout block, not from the order here): open sentinel
@@ -831,10 +911,10 @@ let
             description: Remote device management (server)
             href: https://mesh.rosemaryacres.com
             icon: meshcentral.png
-        - Project board:
-            description: Where the agent's multi-day work stands
-            href: https://digest.rosemaryacres.com/board/
-            icon: mdi-clipboard-text-clock
+        # The Project board link tile used to sit here. It is now the Projects
+        # card at the bottom of this same tab, which links to the same place
+        # and also says what each project is waiting on — a plain link beside
+        # it would be the duplication Favorites/Household just got cleaned of.
 
     - Monitoring:
         - Grafana:
@@ -1156,6 +1236,25 @@ in {
     # above, so this does NOT get proxied into the Homepage container. A
     # prefix location here would lose to nothing but is easy to get wrong —
     # the same trap as the MIME/regex ordering noted in nginx-config-verify.
+    # The favicon, served off this same vhost so it works whether it lives in
+    # the nix store or in /var/lib/homepage. See faviconPath above.
+    locations."= ${faviconUrl}" = {
+      alias = faviconPath;
+      extraConfig = ''
+        # Browsers cache a favicon aggressively; an hour is long enough to
+        # avoid a request per tab and short enough that swapping the image
+        # shows up the same afternoon.
+        add_header Cache-Control "public, max-age=3600";
+      '';
+    };
+
+    locations."= /briefing/projects.html" = {
+      alias = "/var/lib/briefing/public/projects.html";
+      extraConfig = ''
+        add_header Cache-Control "no-cache, must-revalidate";
+      '';
+    };
+
     locations."= /briefing/card.html" = {
       alias = "/var/lib/briefing/public/card.html";
       extraConfig = ''
