@@ -348,32 +348,6 @@ let
         ${notesUrl}/Journal/Day/$(date +%F)" default "${ntfyTag}"
 
         # Commit this run's space changes (the autosave repo is the undo log).
-        # --- contract v1: publish the close status ------------------------
-        # Read back off the CLOSED line, so what we publish is what the queue
-        # actually records. No marker -> nothing published, and agent-vm keeps
-        # waiting rather than being told a wrong status.
-        if [ -n "$req" ] && [ -n "$rt" ]; then
-          line=$(grep -m1 -F "req:$req" "$queue" || true)
-          st=""
-          case "$line" in
-            *"#answered"*) st=answered ;;
-            *"#declined"*) st=declined ;;
-            *"#failed"*)   st=failed ;;
-          esac
-          if [ -n "$st" ]; then
-            note=$(printf '%s' "$line" | grep -oE 'answer-note: *[A-Za-z0-9 _./()-]{1,200}\.md' | head -1)
-            note=''${note#answer-note: }
-            queue-reply "$st" --req "$req" --reply-to "$rt" --note "$note" \
-              || echo "queue-consumer: $st publish failed for $req" >&2
-          else
-            echo "queue-consumer: $req has no #answered/#declined/#failed marker — published nothing" >&2
-          fi
-        fi
-
-        # Record the mtime WE leave behind, so the fire our write causes is
-        # recognised and skipped on the way back in.
-        stat -c %Y "$queue" > /var/lib/queue-reply/last-mtime 2>/dev/null || true
-
         cd ${spaceDir}
         if [ -d .git ]; then
           ${pkgs.git}/bin/git add -A
@@ -507,28 +481,6 @@ let
         fi
 
         # Commit this run's space changes (same undo-log pattern as the daybook).
-        # --- contract v1: publish the close status ------------------------
-        # Read back off the CLOSED line, so what we publish is what the queue
-        # actually records. No marker -> nothing published, and agent-vm keeps
-        # waiting rather than being told a wrong status.
-        if [ -n "$req" ] && [ -n "$rt" ]; then
-          line=$(grep -m1 -F "req:$req" "$queue" || true)
-          st=""
-          case "$line" in
-            *"#answered"*) st=answered ;;
-            *"#declined"*) st=declined ;;
-            *"#failed"*)   st=failed ;;
-          esac
-          if [ -n "$st" ]; then
-            note=$(printf '%s' "$line" | grep -oE 'answer-note: *[A-Za-z0-9 _./()-]{1,200}\.md' | head -1)
-            note=''${note#answer-note: }
-            queue-reply "$st" --req "$req" --reply-to "$rt" --note "$note" \
-              || echo "queue-consumer: $st publish failed for $req" >&2
-          else
-            echo "queue-consumer: $req has no #answered/#declined/#failed marker — published nothing" >&2
-          fi
-        fi
-
         cd ${spaceDir}
         if [ -d .git ]; then
           ${pkgs.git}/bin/git add -A
@@ -713,6 +665,10 @@ let
             echo "queue-consumer: $req has no #answered/#declined/#failed marker — published nothing" >&2
           fi
         fi
+
+        # Record the mtime WE leave behind, so the fire our write causes is
+        # recognised and skipped on the way back in (the "$seen" guard above).
+        stat -c %Y "$queue" > "$seen" 2>/dev/null || true
 
         cd ${spaceDir}
         if [ -d .git ]; then
