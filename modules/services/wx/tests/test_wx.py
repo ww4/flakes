@@ -555,3 +555,126 @@ class TestLocation(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+# ----------------------------------------------- the 2026-10-02 truncation bug
+
+# The EXACT stderr yt-dlp 2026.07.04 produced on 2026-10-19, captured from a
+# live run. 450 characters, with "429" at character 428 — past every
+# truncation this module applies.
+REAL_STDERR_429 = (
+    "WARNING: Your yt-dlp version (2026.07.04) is older than 90 days!\n"
+    "         It is strongly recommended to always use the latest version.\n"
+    "         Nixpkgs/NixOS likely already contain an updated version.\n"
+    "       To get it run nix-channel --update or nix flake update in your"
+    " config directory..\n"
+    "         To suppress this warning, add --no-update to your command/config.\n"
+    "ERROR: Unable to download video subtitles for 'en': HTTP Error 429:"
+    " Too Many Requests"
+)
+
+
+class TestSalientError(unittest.TestCase):
+    """⚠️ Regression guard for the fault that stranded four videos.
+
+    A version warning printed ahead of the real error pushed "429" out of the
+    stored message, so `record_failure` read a rate limit as a hard failure
+    and burned the attempt budget. The throttle signal must survive
+    truncation no matter what upstream prints first.
+    """
+
+    def test_the_real_stderr_puts_429_past_a_plain_truncation(self):
+        # The bug, demonstrated. If this ever stops being true the fix below
+        # is no longer load-bearing and this whole block can go.
+        self.assertGreater(len(REAL_STDERR_429), 300)
+        self.assertNotIn("429", REAL_STDERR_429[:300])
+
+    def test_salient_hoists_the_error_so_429_survives(self):
+        msg = ryan._salient(REAL_STDERR_429)[:300]
+        self.assertIn("429", msg)
+        self.assertTrue(msg.startswith("ERROR:"))
+
+    def test_record_failure_defers_the_real_429_instead_of_failing_it(self):
+        con = mkcon()
+        con.execute("INSERT INTO video (id, title, duration, first_seen, state)"
+                    " VALUES ('v1','t',600,?, 'pending')", (db.now(),))
+        con.commit()
+        message = "no captions for v1: " + ryan._salient(REAL_STDERR_429)[:300]
+        state = ryan.record_failure(con, "v1", message)
+        self.assertEqual(state, "deferred")
+
+    def test_the_old_message_would_have_failed_it(self):
+        """The counterfactual, so the regression cannot be reintroduced
+        quietly: the pre-fix message classifies as a hard failure."""
+        con = mkcon()
+        con.execute("INSERT INTO video (id, title, duration, first_seen, state)"
+                    " VALUES ('v1','t',600,?, 'pending')", (db.now(),))
+        con.execute("UPDATE video SET attempts = ? WHERE id = 'v1'",
+                    (ryan.MAX_ATTEMPTS - 1,))
+        con.commit()
+        old_style = "no captions for v1: " + REAL_STDERR_429.strip()[:300]
+        self.assertEqual(ryan.record_failure(con, "v1", old_style), "failed")
+
+    def test_fetch_transcript_raises_a_message_that_still_says_429(self):
+        """⚠️ THE ONE THAT GUARDS THE CALL SITE.
+
+        The other tests here exercise `_salient` and `record_failure`
+        directly, so they pass even if `fetch_transcript` goes back to
+        truncating raw stderr — which is the actual bug. This drives the real
+        function and asserts on the message it really raises.
+        """
+        class FakeProc:
+            returncode = 1
+            stderr = REAL_STDERR_429
+            stdout = ""
+
+        with mock.patch("subprocess.run", return_value=FakeProc()):
+            with self.assertRaises(RuntimeError) as caught:
+                ryan.fetch_transcript("v1", ytdlp="/nonexistent/yt-dlp")
+        message = str(caught.exception)
+        self.assertIn("429", message)
+        # And the whole point: the message must classify as a deferral.
+        con = mkcon()
+        con.execute("INSERT INTO video (id,title,duration,first_seen,state)"
+                    " VALUES ('v1','t',600,?, 'pending')", (db.now(),))
+        con.commit()
+        self.assertEqual(ryan.record_failure(con, "v1", message), "deferred")
+
+    def test_salient_keeps_context_after_the_error(self):
+        msg = ryan._salient(REAL_STDERR_429)
+        self.assertIn("WARNING", msg)
+
+    def test_salient_tolerates_empty_and_warning_only_stderr(self):
+        self.assertEqual(ryan._salient(""), "")
+        self.assertEqual(ryan._salient(None), "")
+        self.assertIn("WARNING", ryan._salient("WARNING: something benign"))
+
+
+class TestResetFailed(unittest.TestCase):
+    def test_requeues_only_failed_rows(self):
+        con = mkcon()
+        for vid, state in (("a", "failed"), ("b", "have"), ("c", "deferred")):
+            con.execute("INSERT INTO video (id,title,duration,first_seen,state,attempts)"
+                        " VALUES (?,?,600,?,?,6)", (vid, vid, db.now(), state))
+        con.commit()
+        self.assertEqual(ryan.reset_failed(con), ["a"])
+        rows = {r["id"]: r for r in con.execute("SELECT * FROM video").fetchall()}
+        self.assertEqual(rows["a"]["state"], "pending")
+        self.assertEqual(rows["a"]["attempts"], 0)
+        self.assertIsNone(rows["a"]["last_error"])
+        # Untouched.
+        self.assertEqual(rows["b"]["state"], "have")
+        self.assertEqual(rows["c"]["attempts"], 6)
+
+    def test_requeued_video_is_picked_up_again(self):
+        con = mkcon()
+        con.execute("INSERT INTO video (id,title,duration,first_seen,state,attempts)"
+                    " VALUES ('a','a',600,?, 'failed', 6)", (db.now(),))
+        con.commit()
+        self.assertEqual(ryan.pending_videos(con), [])
+        ryan.reset_failed(con)
+        self.assertEqual([r["id"] for r in ryan.pending_videos(con)], ["a"])
+
+    def test_nothing_failed_is_a_no_op(self):
+        self.assertEqual(ryan.reset_failed(mkcon()), [])
+
