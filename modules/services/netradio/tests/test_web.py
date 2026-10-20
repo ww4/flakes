@@ -471,6 +471,62 @@ class RokuRemote(unittest.TestCase):
         self.assertIn("hasRoku", nix, "site.json never tells the page there is one")
 
 
+def method_body(js: str, name: str) -> str:
+    """One method's source, sliced to the NEXT member at the same indent.
+
+    A fixed-size window is not a method body: a 900-character slice from
+    `rokuKey` ran past its end into `rokuSend` and found THAT method's `catch`,
+    so the guard below passed against the very bug it was written for
+    (2026-10-19). Same family as every other measurement that reported a pass
+    by looking at the wrong region.
+    """
+    start = js.index(f"async {name}(")
+    rest = js[start:]
+    nxt = re.search(r"\n    (?:async\s+)?[A-Za-z_$][\w$]*\s*\(", rest[1:])
+    return rest[: nxt.start() + 1] if nxt else rest
+
+
+class RemoteErrorsReachSomebody(unittest.TestCase):
+    """`call()` THROWS on a non-2xx; it does not return an error object.
+
+    The Roku remote was written the other way round — `const r = await call(…);
+    if (r && r.error) …` — so every failure became an unhandled rejection and
+    no message appeared anywhere. The box was refusing every key with a 403 in
+    Limited mode and the page showed nothing at all: "none of the buttons are
+    working in the remote" (Chris, 2026-10-19).
+    """
+
+    def test_every_call_that_can_fail_is_caught(self):
+        js = (WEB / "desktop.js").read_text()
+        for name in ("rokuKey", "rokuSend"):
+            body = method_body(js, name)
+            self.assertIn("catch", body,
+                          f"{name} lets a rejected call() go nowhere — the failure is silent")
+            self.assertIn("this.say(", body, f"{name} catches but tells nobody")
+
+    def test_the_page_does_not_test_a_returned_error_field(self):
+        """The tell for the old shape. `call` either returns the body or
+        throws, so `r.error` is a branch that can never be taken."""
+        js = (WEB / "desktop.js").read_text()
+        # Scoped to the methods in question: a bare search for "r.error" also
+        # matches inside `receiver.error` and `this.roku.error`, which are
+        # ordinary state and nothing to do with this.
+        for name in ("rokuKey", "rokuSend"):
+            body = method_body(js, name)
+            self.assertNotRegex(body, r"\br\s*&&\s*r\.error",
+                                f"{name} branches on a returned .error — call() throws "
+                                f"instead, so that branch can never be taken")
+
+    def test_limited_mode_is_shown_before_a_button_is_pressed(self):
+        """Nothing here can clear it: it is a setting on the television. Said
+        once, up front, rather than one toast per refused press."""
+        js = (WEB / "desktop.js").read_text()
+        html = (WEB / "desktop.html").read_text()
+        self.assertIn("limited: !!s.limited", js, "status carries it but the page drops it")
+        self.assertIn('v-if="roku.limited"', html, "nothing warns before the first press")
+        self.assertIn("Control by mobile apps", html, "the warning does not say where the setting is")
+
+
 class WhatIsOnTheTelevision(unittest.TestCase):
     """Chris: "when we're watching jellyfin we do have more visibility into
     what's playing. Could we merge that in there" (2026-10-09). The Roku can
@@ -480,9 +536,11 @@ class WhatIsOnTheTelevision(unittest.TestCase):
         js = (WEB / "desktop.js").read_text()
         html = (WEB / "desktop.html").read_text()
         self.assertIn("admin/api/watching", js, "nothing asks what is playing")
-        self.assertIn('v-if="watching.playing"', html,
-                      "the panel renders whether or not anything is on")
-        self.assertIn("watching.art_id", html, "no poster")
+        # It lives among the outputs, not beside the history: "it would make
+        # more sense than having it in recently played songs list" (2026-10-19)
+        self.assertIn("tvZone()", html, "the television is not in the device list")
+        self.assertIn('class="zone info"', html,
+                      "it renders as a selectable zone — a station cannot be sent to a television")
 
     def test_it_rides_the_existing_tick(self):
         """A timer of its own would poll a media server every few seconds for a

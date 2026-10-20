@@ -52,6 +52,29 @@ class RokuError(RuntimeError):
     """The device refused, or could not be reached."""
 
 
+class RokuLimited(RokuError):
+    """The device is in Limited mode and will not take control commands.
+
+    Roku's "Control by mobile apps" setting has a Limited position, and in it
+    the box answers 403 to everything that would DO something — every keypress,
+    /query/apps, /query/media-player — while still answering /query/device-info
+    and /query/active-app. So it looks reachable and healthy and ignores every
+    button, which is exactly how it presented: "none of the buttons are working
+    in the remote" against a service whose log was five lines of HTTP 403
+    (Chris, 2026-10-19).
+
+    Nothing on this side can clear it; it is a setting on the television. The
+    only useful thing to do is say so in those words.
+    """
+
+    WHERE = ("the Roku is in Limited mode, so it is refusing control. "
+             "On the device: Settings \u2192 System \u2192 Advanced system settings "
+             "\u2192 Control by mobile apps \u2192 Enabled.")
+
+    def __init__(self, what: str = ""):
+        super().__init__(f"{what + ': ' if what else ''}{self.WHERE}")
+
+
 class Roku:
     def __init__(self, host: str, port: int = PORT, timeout: float = 5.0):
         self.base = f"http://{host}:{port}"
@@ -66,6 +89,11 @@ class Roku:
                 body = r.read(2_000_000)
                 return (body, r.headers.get("Content-Type", "")) if raw else body
         except urllib.error.HTTPError as e:
+            # 403 from ECP means one thing in practice: Limited mode. Say that
+            # rather than the number — a bare "HTTP 403" in a toast tells a
+            # person nothing they can act on.
+            if e.code == 403:
+                raise RokuLimited(f"{method} {path}") from e
             raise RokuError(f"{method} {path}: HTTP {e.code}") from e
         except Exception as e:
             # Asleep, unplugged, or off the wifi. The caller decides whether
@@ -104,7 +132,25 @@ class Roku:
             "awake": d.get("power-mode", "") == "PowerOn",
             "app": app,
             "supports_find_remote": d.get("supports-find-remote") == "true",
+            "limited": self.limited(),
         }
+
+    def limited(self) -> bool:
+        """Whether the box is refusing control, asked WITHOUT pressing anything.
+
+        /query/apps is blocked by the same setting that blocks every keypress
+        and changes nothing by being called, so it answers the question a
+        remote actually has — will my buttons work — before a finger lands on
+        one. Pressing a key to find out would turn a diagnostic into an action
+        on somebody's television.
+        """
+        try:
+            self._req("GET", "/query/apps")
+            return False
+        except RokuLimited:
+            return True
+        except RokuError:
+            return False      # unreachable is a different problem, reported elsewhere
 
     def apps(self) -> list[dict]:
         root = self._xml(self._req("GET", "/query/apps"))

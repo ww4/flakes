@@ -70,10 +70,6 @@ createApp({
       // the server, so when the thing on the television came from the library
       // it knows exactly (Chris, 2026-10-09).
       watching: { playing: false },
-      // A poster that 404s renders the browser's broken-image glyph, which is
-      // worse than no picture at all — the same reason station covers carry
-      // `badArt`. Keyed on the item, so the next episode tries again.
-      badPoster: "",
       blocked: "",              // a mount the browser refused to start on its own; the play button takes it
       paused: false,            // paused by the OS transport: still tuned, and still holding the media session
       query: "", results: [], searchTimer: 0,
@@ -81,7 +77,7 @@ createApp({
       // The streaming box on the television. Navigation only: its sound leaves
       // the TV by optical to the receiver, so the Roku's own volume keys emit
       // CEC at a television that is not in that path (Chris, 2026-10-03).
-      roku: { name: "", app: "", power: "", awake: false, findRemote: false, error: "" },
+      roku: { name: "", app: "", power: "", awake: false, findRemote: false, limited: false, error: "" },
       rokuPoll: 0, rokuText: "", remoteTab: "room",
       receiver: { name: "", on: false, input: "", volume: 0, volume_max: 100, mute: false, error: "" },
       inputs: [], presets: [], menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
@@ -373,7 +369,7 @@ createApp({
       } else {
         this.roku = { name: s.name || this.site.rokuName, app: (s.app && s.app.name) || "",
                       power: s.power || "", awake: !!s.awake,
-                      findRemote: !!s.supports_find_remote, error: "" };
+                      findRemote: !!s.supports_find_remote, limited: !!s.limited, error: "" };
       }
       clearInterval(this.rokuPoll);
       // Only while its tab is open. Nothing else on the page shows this, and a
@@ -383,19 +379,31 @@ createApp({
     },
     async rokuKey(key, action) {
       const q = action && action !== "keypress" ? `?action=${action}` : "";
-      const r = await call("POST", `roku/key/${key}${q}`);
-      // 400 for a key it does not know, 403 for the power keys when they are
-      // disabled. Both are worth saying out loud — a button that quietly does
-      // nothing is the exact thing this is meant to avoid.
-      if (r && r.error) this.say(r.error);
-      else if (!action || action === "keypress") this.pollRoku();
+      // `call` THROWS on a non-2xx — it does not hand back an error object.
+      // Written the other way round (as this was), every failure became an
+      // unhandled rejection and NO message appeared: the Roku was refusing
+      // every key with a 403 and the page showed nothing whatever, which is
+      // how it arrived as "none of the buttons are working" (2026-10-19).
+      try {
+        await call("POST", `roku/key/${key}${q}`);
+        this.roku.limited = false;
+        if (!action || action === "keypress") this.pollRoku();
+      } catch (e) {
+        this.say(e.message);
+        if (/Limited mode/i.test(e.message)) this.roku.limited = true;
+      }
     },
     async rokuSend() {
       const text = this.rokuText.trim();
       if (!text) return;
-      const r = await call("POST", "roku/type", { text });
-      this.rokuText = "";
-      this.say(r && r.error ? r.error : `sent ${(r && r.sent) || 0} character(s)`);
+      try {
+        const r = await call("POST", "roku/type", { text });
+        this.rokuText = "";
+        this.say(`sent ${(r && r.sent) || 0} character(s)`);
+      } catch (e) {
+        this.say(e.message);
+        if (/Limited mode/i.test(e.message)) this.roku.limited = true;
+      }
     },
     playOnReceiver(s) {
       if (s.kind === "preset")
@@ -496,8 +504,19 @@ createApp({
       const w = await getJSON("admin/api/watching");
       if (w) this.watching = w;
     },
-    posterFailed() { this.badPoster = this.watching.art_id || ""; },
-    showPoster() { return !!this.watching.art_id && this.badPoster !== this.watching.art_id; },
+    // The television, as a row among the outputs. NOT a target: you cannot
+    // send a station to it, so it is a line of status rather than a button —
+    // clicking it would promise something that does not exist.
+    tvZone() {
+      const w = this.watching;
+      if (w.playing) {
+        const bits = [w.head, w.sub].filter(Boolean);
+        return { name: this.site.rokuName || "Television", sub: bits.join(" \u00b7 "), live: !w.paused };
+      }
+      if (this.site.hasRoku && this.roku.awake && this.roku.app)
+        return { name: this.roku.name || this.site.rokuName || "Television", sub: this.roku.app, live: true };
+      return null;
+    },
     watchProgress() {
       const w = this.watching;
       if (!w.playing || !w.duration) return 0;

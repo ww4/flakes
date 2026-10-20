@@ -37,6 +37,13 @@
         <span class="dot" :class="{live: z.live}"></span>
         <span class="txt"><span>{{ z.name }}</span><small>{{ z.sub }}</small></span>
       </button>
+      <!-- The television. A row, not a button: a station cannot be sent to
+           it, and something that looks selectable and is not is worse than
+           something plainly informational (Chris, 2026-10-19). -->
+      <div class="zone info" v-if="tvZone()">
+        <span class="dot" :class="{live: tvZone().live}"></span>
+        <span class="txt"><span>{{ tvZone().name }}</span><small>{{ tvZone().sub }}</small></span>
+      </div>
       <div class="railtools">
         <button v-if="site.hasRoom" @click="openRemote" :disabled="!site.hasRoom">Remote</button>
         <button v-if="site.hasRoom" @click="view = 'sources'; pollReceiver()"
@@ -244,24 +251,6 @@
 
     <p class="dj" v-if="viewNext.last_break">DJ: “{{ viewNext.last_break }}”</p>
 
-    <!-- What is on a screen in the house. Only when something actually is:
-         an empty "nothing playing" box every evening is clutter. -->
-    <template v-if="watching.playing">
-      <h6>On the television</h6>
-      <div class="telly">
-        <img v-if="showPoster()" :src="'admin/api/watching/art?item=' + watching.art_id" alt="" @error="posterFailed">
-        <div class="t">
-          <b>{{ watching.head }}</b>
-          <small>{{ watching.sub }}</small>
-          <small class="t-prog" v-if="watching.duration">
-            {{ clock(watching.position) }} / {{ clock(watching.duration) }}
-            <span v-if="watching.paused">· paused</span>
-          </small>
-          <span class="t-bar" v-if="watching.duration"><i :style="{ width: watchProgress() + '%' }"></i></span>
-        </div>
-      </div>
-    </template>
-
     <h6>Station</h6>
     <ol class="chain">
       <li v-for="(w, i) in stationFacts" :key="i"><b>{{ w.head }}</b><span>{{ w.sub }}</span></li>
@@ -411,6 +400,14 @@
 
       <!-- ===== the Roku ================================================== -->
       <template v-else>
+        <!-- Nothing here can clear this: it is a setting on the television.
+             Said up front rather than one toast per press, because every
+             button is refused while it is on (Chris, 2026-10-19). -->
+        <p class="r-limited" v-if="roku.limited">
+          This Roku is in <b>Limited mode</b> and is refusing every button.
+          On the device: Settings → System → Advanced system settings →
+          Control by mobile apps → <b>Enabled</b>.
+        </p>
         <div class="keys" style="margin-bottom:.5rem">
           <button class="key wide" @click="rokuKey('Home')">⌂ Home</button>
           <button class="key wide" @click="rokuKey('Back')">‹ Back</button>
