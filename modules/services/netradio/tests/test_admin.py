@@ -234,6 +234,44 @@ class Art(unittest.TestCase):
                 a.art("/nowhere.mp3")
 
 
+class Watching(unittest.TestCase):
+    """Asking Jellyfin what is on a screen in the house."""
+
+    def admin(self, **kw):
+        import tempfile
+        d = tempfile.mkdtemp()
+        (Path(d) / "config").mkdir(exist_ok=True)
+        return admin.Admin(config.Config(Path(d) / "config"), None, None, **kw)
+
+    def test_reading_does_not_require_permission_to_write_favourites(self):
+        """`jellyfin_hearts` gates WRITING into somebody's library. Asking what
+        is on the television writes nothing, so it must not be gated on it —
+        the artwork path already works this way for the same reason."""
+        a = self.admin(jellyfin_url="http://jf:8096", jellyfin_key="k", jellyfin_hearts=False)
+        with mock.patch.object(admin.jellyfin.Jellyfin, "now_playing",
+                               return_value={"playing": True, "head": "A Show"}):
+            self.assertEqual(a.watching()["head"], "A Show")
+
+    def test_no_jellyfin_configured_is_simply_nothing_playing(self):
+        self.assertEqual(self.admin().watching(), {"playing": False})
+
+    def test_a_server_that_throws_does_not_take_the_page_down(self):
+        a = self.admin(jellyfin_url="http://jf:8096", jellyfin_key="k")
+        with mock.patch.object(admin.jellyfin.Jellyfin, "now_playing", side_effect=OSError("boom")):
+            self.assertEqual(a.watching(), {"playing": False})
+
+    def test_the_poster_proxy_only_accepts_a_real_item_id(self):
+        """The id is pasted into a URL this process then fetches, so anything
+        that is not a Jellyfin id is refused before it gets there."""
+        from netradio.conventions import is_item_id
+        self.assertTrue(is_item_id("51910ca395bfc44fc7eb0c6a924bb38f"))
+        for bad in ("", "../../etc/passwd", "51910CA395BFC44FC7EB0C6A924BB38F",
+                    "51910ca395bfc44fc7eb0c6a924bb38", "x" * 32, "a/b"):
+            self.assertFalse(is_item_id(bad), bad)
+        a = self.admin(jellyfin_url="http://jf:8096", jellyfin_key="k")
+        self.assertIsNone(a.watching_art("../../secret"))
+
+
 class SidecarArt(unittest.TestCase):
     """A picture named after one track, beside it.
 

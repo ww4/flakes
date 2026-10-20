@@ -158,3 +158,76 @@ class KeyReading(unittest.TestCase):
 
     def test_a_missing_file_is_no_key_rather_than_a_crash(self):
         self.assertEqual(jellyfin.read_key(key_file=Path("/nonexistent")), "")
+
+
+class NowPlaying(unittest.TestCase):
+    """What is on a screen in the house.
+
+    The radio can name its own track because it CHOSE it. A streaming box
+    cannot be asked the same question — a Roku names the app and stops there —
+    but Jellyfin is the server, so when the thing on the television came from
+    the library it knows exactly (Chris, 2026-10-09).
+
+    The two cases below are the two the LIVE data corrected. Both would have
+    looked right if they had been guessed.
+    """
+
+    def jf(self):
+        return jellyfin.Jellyfin.__new__(jellyfin.Jellyfin)   # parsing only, no network
+
+    def test_a_file_that_is_several_episodes(self):
+        """`IndexNumberEnd` is set when one file holds a run of them — the
+        episode playing when this was written was 40 THROUGH 42, and "S1E40"
+        would have been wrong while looking perfectly plausible."""
+        out = self.jf()._describe({
+            "DeviceName": "Roku Express 4K  (3941X)", "Client": "Jellyfin Roku",
+            "PlayState": {"PositionTicks": 9900000000, "IsPaused": False},
+            "NowPlayingItem": {
+                "Type": "Episode", "Name": "Little Bear the Magician",
+                "SeriesName": "Little Bear", "SeriesId": "51910ca395bfc44fc7eb0c6a924bb38f",
+                "Id": "6ddf97574d97bd5e813be645bb325171",
+                "ParentIndexNumber": 1, "IndexNumber": 40, "IndexNumberEnd": 42,
+                "ProductionYear": 1996, "RunTimeTicks": 14491010000},
+        })
+        self.assertEqual(out["head"], "Little Bear")
+        self.assertEqual(out["episode"], "40\u201342")
+        self.assertEqual(out["sub"], "S1E40\u201342 \u00b7 Little Bear the Magician")
+        self.assertEqual((out["position"], out["duration"]), (990, 1449))
+        self.assertFalse(out["paused"])
+        # the SERIES poster, not the episode's own frame grab
+        self.assertEqual(out["art_id"], "51910ca395bfc44fc7eb0c6a924bb38f")
+
+    def test_a_single_episode_has_no_range(self):
+        out = self.jf()._describe({"NowPlayingItem": {
+            "Type": "Episode", "Name": "Pilot", "SeriesName": "A Show",
+            "ParentIndexNumber": 2, "IndexNumber": 7, "Id": "a" * 32}})
+        self.assertEqual(out["sub"], "S2E7 \u00b7 Pilot")
+
+    def test_a_film(self):
+        out = self.jf()._describe({"NowPlayingItem": {
+            "Type": "Movie", "Name": "The Thin Man", "ProductionYear": 1934, "Id": "b" * 32}})
+        self.assertEqual((out["head"], out["sub"]), ("The Thin Man", "1934"))
+
+    def test_the_session_is_the_one_PLAYING_not_the_one_named_right(self):
+        """Three sessions on this server shared the DeviceName "Roku Express
+        4K (3941X)" — two left over from a fortnight before, one real. Choosing
+        by device would have been a coin toss between them."""
+        jf = self.jf()
+        sessions = [
+            {"DeviceName": "Roku Express 4K", "LastActivityDate": "2026-10-04T02:53:17"},
+            {"DeviceName": "Roku Express 4K", "LastActivityDate": "2026-10-03T22:34:18"},
+            {"DeviceName": "Roku Express 4K", "LastActivityDate": "2026-10-20T03:33:09",
+             "NowPlayingItem": {"Type": "Movie", "Name": "The right one", "Id": "c" * 32}},
+        ]
+        with mock.patch.object(jellyfin.Jellyfin, "_req", return_value=sessions):
+            self.assertEqual(jf.now_playing()["head"], "The right one")
+
+    def test_nothing_playing_is_empty_not_an_error(self):
+        jf = self.jf()
+        with mock.patch.object(jellyfin.Jellyfin, "_req", return_value=[{"DeviceName": "idle"}]):
+            self.assertEqual(jf.now_playing(), {})
+
+    def test_a_media_server_that_is_down_is_not_this_page_failing(self):
+        jf = self.jf()
+        with mock.patch.object(jellyfin.Jellyfin, "_req", side_effect=OSError("refused")):
+            self.assertEqual(jf.now_playing(), {})

@@ -535,3 +535,21 @@ body { overflow: hidden; height: 100vh; }
   border: 1px solid var(--line-2); border-radius: .4rem;
   background: #171615; color: var(--fg);
 }
+
+/* ---- what is on the television -------------------------------------------
+   The radio can name its own track because it chose it. A streaming box
+   cannot be asked — but Jellyfin is the server, so when the thing on screen
+   came from the library it knows exactly (Chris, 2026-10-09). */
+.telly { display: flex; gap: .55rem; align-items: flex-start; margin-bottom: .9rem; }
+.telly img {
+  width: 54px; flex: none; border-radius: .3rem; background: var(--panel-2);
+  aspect-ratio: 2 / 3; object-fit: cover;
+}
+.telly .t { min-width: 0; display: flex; flex-direction: column; gap: .1rem; }
+.telly b { font-size: .84rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.telly small { color: var(--muted); font-size: .74rem; }
+.telly .t-prog { font-variant-numeric: tabular-nums; }
+.telly .t-bar {
+  margin-top: .22rem; height: 3px; border-radius: 2px; background: var(--line-2); overflow: hidden;
+}
+.telly .t-bar i { display: block; height: 100%; background: var(--accent); }
