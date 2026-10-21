@@ -44,6 +44,11 @@ class FakeDevice(api.Device):
                     return b"<active-app><app id='1' type='home'>Home</app></active-app>"
                 if path == "/query/apps":
                     return b"<apps><app id='12' type='appl' version='1'>Netflix</app></apps>"
+                if path == "/query/media-player":
+                    return (b"<player state='play' error='false'>"
+                            b"<plugin id='592369' name='Jellyfin' />"
+                            b"<position>135636 ms</position><duration>1447781 ms</duration>"
+                            b"<is_live blocked='false'>false</is_live></player>")
                 return b""
         return Stub()
 
@@ -82,6 +87,15 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(body["awake"])
         code, body = self.call("GET", "/apps")
         self.assertEqual([a["name"] for a in body["apps"]], ["Netflix"])
+
+    def test_the_player_is_its_own_endpoint(self):
+        """Separate from /status because it changes every second and the rest
+        of status does not — a remote polls this and leaves device-info alone."""
+        code, body = self.call("GET", "/player")
+        self.assertEqual(code, 200)
+        self.assertEqual((body["position"], body["duration"]), (135, 1447))
+        self.assertTrue(body["playing"])
+        self.assertEqual(body["app"], "Jellyfin")
 
     def test_a_key_is_pressed(self):
         code, body = self.call("POST", "/key/Home")

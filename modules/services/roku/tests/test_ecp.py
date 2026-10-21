@@ -144,6 +144,56 @@ class Launching(unittest.TestCase):
         self.assertEqual(r.sent[0][1], "/launch/tvinput.hdmi1")
 
 
+class Playing(unittest.TestCase):
+    """/query/media-player, which is the only thing on this network that knows
+    how far through a programme the television is for an app that is not ours."""
+
+    PLAYING = b"""<player state="play" error="false">
+      <plugin id="592369" name="Jellyfin" bandwidth="22779067 bps" />
+      <format audio="opus" video="vp9" container="mkv" />
+      <position>135636 ms</position>
+      <duration>1447781 ms</duration>
+      <is_live blocked="false">false</is_live>
+    </player>"""
+
+    IDLE = b"""<player state="close" error="false"><is_live>false</is_live></player>"""
+
+    LIVE = b"""<player state="play" error="false">
+      <plugin id="837" name="YouTube" />
+      <position>12000 ms</position><duration>0 ms</duration>
+      <is_live blocked="false">true</is_live>
+    </player>"""
+
+    def player(self, body):
+        class Box(Roku):
+            def _req(self, method, path, *, raw=False):
+                return body
+        return Box("10.0.0.5").player()
+
+    def test_the_times_lose_their_unit_and_become_seconds(self):
+        """ECP answers `135636 ms` — a number, a space and a unit, in a string.
+        Read as an int it is a ValueError, and read as milliseconds it is a
+        progress bar 1000x too far along."""
+        p = self.player(self.PLAYING)
+        self.assertEqual((p["position"], p["duration"]), (135, 1447))
+        self.assertEqual((p["state"], p["playing"]), ("play", True))
+        self.assertEqual(p["app"], "Jellyfin")
+        self.assertFalse(p["live"])
+
+    def test_an_idle_box_is_an_answer_not_an_error(self):
+        """Sitting on the Home screen there is no plugin element at all, and
+        reading `.get` off that None is the crash this guards."""
+        p = self.player(self.IDLE)
+        self.assertEqual(p["state"], "close")
+        self.assertFalse(p["playing"])
+        self.assertEqual((p["app"], p["duration"]), ("", 0))
+
+    def test_a_live_stream_says_so(self):
+        """A channel with no end still reports a duration, and drawing a bar
+        against it would show a position that means nothing."""
+        self.assertTrue(self.player(self.LIVE)["live"])
+
+
 class LimitedMode(unittest.TestCase):
     """Roku's "Control by mobile apps" has a Limited position, and in it the box
     answers 403 to everything that would DO something while still answering

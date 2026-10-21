@@ -171,6 +171,44 @@ class Roku:
         data, ctype = self._req("GET", f"/query/icon/{urllib.parse.quote(app_id)}", raw=True)
         return data, (ctype or "image/jpeg")
 
+    def player(self) -> dict:
+        """What the foreground app is doing with the clock.
+
+        The division of knowledge here is worth stating, because it decides
+        what a remote can show. The box knows the STATE, the POSITION and the
+        DURATION — for any app, Disney+ and Prime as readily as Jellyfin — and
+        knows none of the names: /query/media-player reports "Jellyfin", never
+        "Little Bear". A media server knows the names and nothing about the
+        box. Neither is a progress bar on its own; together they are a progress
+        bar with a title on it.
+
+        Times are seconds, to match everything upstream. ECP reports them as
+        `135636 ms`, which is a string with a unit in it.
+        """
+        root = self._xml(self._req("GET", "/query/media-player"))
+
+        def secs(tag: str) -> int:
+            raw = (root.findtext(tag) or "").replace("ms", "").strip()
+            try:
+                return int(raw) // 1000
+            except ValueError:
+                return 0
+
+        plugin = root.find("plugin")
+        return {
+            # play | pause | buffer | startup | close. "close" is an idle box
+            # sitting on its Home screen, which is an answer and not an error.
+            "state": root.get("state", ""),
+            "playing": root.get("state", "") == "play",
+            "app": plugin.get("name", "") if plugin is not None else "",
+            "app_id": plugin.get("id", "") if plugin is not None else "",
+            "position": secs("position"),
+            "duration": secs("duration"),
+            # A channel with no end has a duration, and it is meaningless. Said
+            # plainly so nothing draws a progress bar against a live stream.
+            "live": (root.findtext("is_live") or "").strip() == "true",
+        }
+
     # -- what it does ------------------------------------------------------
     def press(self, key: str, action: str = "keypress") -> None:
         """One button. `action` is keypress, keydown or keyup — the last two

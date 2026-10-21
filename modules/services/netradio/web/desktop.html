@@ -317,35 +317,107 @@
     </div>
   </div>
 
-  <!-- ===== the receiver remote ============================================= -->
+  <!-- ===== one remote for the room ========================================= -->
+  <!-- Two boxes, one thing a person is doing. The receiver owns the volume
+       (the television's optical out feeds it) and the Roku owns the picture,
+       so a remote that makes you switch panes to turn down the show you are
+       watching has the seam in the wrong place (Chris, 2026-10-21).
+
+       The pad sits left of the volume on purpose: that is where the rocker is
+       on every physical remote, and it puts both under a thumb each. -->
   <div class="remote-wrap" v-if="remote" @click.self="remote = false">
     <section class="remote">
       <header>
-        <strong v-if="remoteTab === 'roku'">{{ roku.name || site.rokuName }}</strong>
-        <strong v-else>{{ receiver.name || site.roomName }}</strong>
-        <small v-if="remoteTab === 'roku'">{{ roku.error || (roku.awake ? (roku.app || 'on') : (roku.power || 'asleep')) }}</small>
-        <small v-else>{{ receiver.on ? receiver.input : (receiver.error || 'standby') }}</small>
+        <strong>{{ site.roomName || 'Remote' }}</strong>
+        <small>{{ remoteSub() }}</small>
         <button class="x" @click="remote = false" aria-label="Close">✕</button>
       </header>
 
-      <!-- Two remotes behind one button. They each want a d-pad and a
-           transport, and showing both at once is a long scroll on a phone. -->
-      <div class="rtabs" v-if="site.hasRoom && site.hasRoku">
-        <button :class="{on: remoteTab === 'room'}" @click="remoteTab = 'room'">{{ receiver.name || site.roomName }}</button>
-        <button :class="{on: remoteTab === 'roku'}" @click="remoteTab = 'roku'">{{ roku.name || site.rokuName }}</button>
+      <!-- What is on the screen: the names from the library server, the clock
+           from the box itself. Neither knows both. -->
+      <div class="r-now" v-if="tvNow()">
+        <div class="r-now-t">
+          <strong>{{ tvNow().head }}</strong>
+          <small v-if="tvNow().sub">{{ tvNow().sub }}</small>
+          <small v-else-if="!tvNow().playing">paused</small>
+        </div>
+        <div class="r-bar" v-if="tvNow().dur" :title="clock(tvNow().pos) + ' of ' + clock(tvNow().dur)">
+          <div class="r-bar-f" :style="{ width: tvNow().pct + '%' }"></div>
+        </div>
+        <small class="r-clock" v-if="tvNow().dur">{{ clock(tvNow().pos) }} / {{ clock(tvNow().dur) }}</small>
       </div>
 
-      <template v-if="remoteTab !== 'roku'">
+      <!-- Nothing here can clear this: it is a setting on the television.
+           Said up front rather than one toast per press, because every
+           button is refused while it is on (Chris, 2026-10-19). -->
+      <p class="r-limited" v-if="roku.limited">
+        This Roku is in <b>Limited mode</b> and is refusing every button.
+        On the device: Settings → System → Advanced system settings →
+        Control by mobile apps → <b>Enabled</b>.
+      </p>
 
-      <div class="r-top">
-        <button class="key" :class="{on: receiver.on}" @click="power(!receiver.on)" title="Power">⏻</button>
-        <div class="r-vol">
-          <button class="key" @click="volumeStep(-2)" :disabled="!receiver.on">−</button>
-          <span class="lvl">{{ shownVolume() }}</span>
-          <button class="key" @click="volumeStep(2)" :disabled="!receiver.on">+</button>
-          <button class="key" :class="{on: receiver.mute}" @click="mute(!receiver.mute)" :disabled="!receiver.on">Mute</button>
+      <!-- the pad and the volume, side by side -->
+      <div class="r-pair">
+        <div class="r-pad" v-if="site.hasRoku">
+          <h6>{{ rokuLabel() }}</h6>
+          <div class="dpad">
+            <button class="key up" @click="rokuKey('Up')" aria-label="Up">▲</button>
+            <button class="key left" @click="rokuKey('Left')" aria-label="Left">◀</button>
+            <button class="key sel" @click="rokuKey('Select')">OK</button>
+            <button class="key right" @click="rokuKey('Right')" aria-label="Right">▶</button>
+            <button class="key down" @click="rokuKey('Down')" aria-label="Down">▼</button>
+          </div>
+        </div>
+        <div class="r-vcol" v-if="site.hasRoom">
+          <h6>{{ receiverLabel() }}</h6>
+          <div class="r-vstack">
+            <button class="key" @click="volumeStep(2)" :disabled="!receiver.on" aria-label="Louder">+</button>
+            <span class="lvl">{{ shownVolume() }}</span>
+            <button class="key" @click="volumeStep(-2)" :disabled="!receiver.on" aria-label="Quieter">−</button>
+            <button class="key" :class="{on: receiver.mute}" @click="mute(!receiver.mute)" :disabled="!receiver.on">Mute</button>
+            <button class="key" :class="{on: receiver.on}" @click="power(!receiver.on)" title="Receiver power" aria-label="Receiver power">⏻</button>
+          </div>
         </div>
       </div>
+
+      <!-- One strip, because getting out of a screen and moving through a
+           programme are the same gesture from a sofa. All of it the Roku's:
+           the receiver's own transport drives ITS sources, not the TV. -->
+      <div class="keys r-strip" v-if="site.hasRoku">
+        <button class="key" @click="rokuKey('Home')" title="Home">⌂</button>
+        <button class="key" @click="rokuKey('Back')" title="Back">‹</button>
+        <button class="key" @click="rokuKey('InstantReplay')" title="Instant replay">↺</button>
+        <button class="key" @click="rokuKey('Rev')" title="Rewind">⏪</button>
+        <button class="key" @click="rokuKey('Play')" title="Play / pause">⏯</button>
+        <button class="key" @click="rokuKey('Fwd')" title="Fast forward">⏩</button>
+        <button class="key" @click="rokuKey('Info')" title="Options">✱</button>
+      </div>
+
+      <!-- Straight to an app, the way the shortcut buttons on the physical
+           remote do it. The list and the icons are the box's own, so a channel
+           installed tomorrow appears here on its own. -->
+      <div class="r-apps" v-if="rokuApps.length">
+        <button v-for="a in rokuApps" :key="a.id" class="rapp"
+                @click="rokuLaunch(a)" :title="'Open ' + a.name">
+          <img :src="'roku/apps/' + a.id + '/icon'" :alt="a.name" loading="lazy">
+          <span>{{ a.name }}</span>
+        </button>
+      </div>
+
+      <!-- Typing on a d-pad is the worst part of any streaming box, and ECP
+           will take the characters directly. One request per character, so
+           the reply says how many actually landed. -->
+      <div class="rtype" v-if="site.hasRoku">
+        <input v-model="rokuText" placeholder="type into a search box…"
+               @keydown.enter="rokuSend" aria-label="Text to send to the Roku">
+        <button class="key" @click="rokuSend" :disabled="!rokuText.trim()">Send</button>
+      </div>
+
+      <!-- The receiver's own world. None of it is part of watching television,
+           so it is folded away rather than deleted — with no Roku to combine
+           it with it opens, because then it is the whole remote. -->
+      <details class="r-more" v-if="site.hasRoom" :open="rxOpen">
+      <summary>{{ receiverLabel() }}: inputs, tuner, its own menu</summary>
 
       <h6>Input</h6>
       <div class="keys">
@@ -396,62 +468,25 @@
       </div>
 
       <p class="r-note">No sleep timer, tone, dimmer, scenes or FM mono over the network — the receiver keeps those on the front panel.</p>
-      </template>
+      </details>
 
-      <!-- ===== the Roku ================================================== -->
-      <template v-else>
-        <!-- Nothing here can clear this: it is a setting on the television.
-             Said up front rather than one toast per press, because every
-             button is refused while it is on (Chris, 2026-10-19). -->
-        <p class="r-limited" v-if="roku.limited">
-          This Roku is in <b>Limited mode</b> and is refusing every button.
-          On the device: Settings → System → Advanced system settings →
-          Control by mobile apps → <b>Enabled</b>.
-        </p>
-        <div class="keys" style="margin-bottom:.5rem">
-          <button class="key wide" @click="rokuKey('Home')">⌂ Home</button>
-          <button class="key wide" @click="rokuKey('Back')">‹ Back</button>
-        </div>
+      <!-- Two deletions worth remembering, both because the hardware here is
+           not what the protocol assumes (Chris, 2026-10-21):
 
-        <h6>Navigate</h6>
-        <div class="dpad">
-          <button class="key up" @click="rokuKey('Up')">▲</button>
-          <button class="key left" @click="rokuKey('Left')">◀</button>
-          <button class="key sel" @click="rokuKey('Select')">OK</button>
-          <button class="key right" @click="rokuKey('Right')">▶</button>
-          <button class="key down" @click="rokuKey('Down')">▼</button>
-        </div>
+           FIND REMOTE made the paired Roku remote beep. There isn't one — the
+           physical remote in this house is an infrared knock-off the box has
+           never heard of, so the button could only ever have done nothing.
 
-        <h6>Transport</h6>
-        <div class="keys">
-          <button class="key" @click="rokuKey('InstantReplay')" title="Instant replay">↺</button>
-          <button class="key" @click="rokuKey('Rev')">⏪</button>
-          <button class="key" @click="rokuKey('Play')" title="Play / pause">⏯</button>
-          <button class="key" @click="rokuKey('Fwd')">⏩</button>
-          <button class="key" @click="rokuKey('Info')" title="Options">✱</button>
-        </div>
+           WAKE sent PowerOn. Home wakes it, Home is already here, and a second
+           button for the same job is a button to think about.
 
-        <!-- Typing on a d-pad is the worst part of any streaming box, and ECP
-             will take the characters directly. One request per character, so
-             the reply says how many actually landed. -->
-        <h6>Type into whatever is on screen</h6>
-        <div class="rtype">
-          <input v-model="rokuText" placeholder="a search box, a password…"
-                 @keydown.enter="rokuSend" aria-label="Text to send to the Roku">
-          <button class="key" @click="rokuSend" :disabled="!rokuText.trim()">Send</button>
-        </div>
-
-        <div class="keys" style="margin-top:.6rem">
-          <button class="key wide" v-if="roku.findRemote" @click="rokuKey('FindRemote')"
-                  title="Make the physical remote beep">Find the remote</button>
-          <button class="key wide" @click="rokuKey('PowerOn')" title="Wake it">Wake</button>
-        </div>
-
-        <p class="r-note">Volume is the receiver's: the television's optical out
-          feeds it, so the Roku's own volume keys talk to a television that is not
-          in that path. Power is refused unless <code>services.roku.allowPower</code>
-          is set.</p>
-      </template>
+           Volume is deliberately the receiver's, above: the television's
+           optical out feeds it, so the Roku's own volume keys emit CEC at a
+           television that is not in the audio path. -->
+      <p class="r-note" v-if="site.hasRoku && site.hasRoom">Volume and mute are the
+        {{ receiverLabel() }}&rsquo;s; everything else is the {{ rokuLabel() }}&rsquo;s.
+        There is no seek or subtitle button because the Roku&rsquo;s Jellyfin app
+        does not accept them — only its own keypresses.</p>
     </section>
   </div>
 
