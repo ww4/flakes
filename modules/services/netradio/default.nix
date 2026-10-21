@@ -401,6 +401,7 @@ let
     cp ${siteJson} $out/site.json
     cp ${./web}/index.html ${./web}/app.js ${./web}/remote.css ${./web}/radio.js ${./web}/tokens.css ${./web}/shared.js $out/   # radio.js: fetch helpers; shared.js: the options both pages mix in; tokens.css: the palette
     cp ${./web}/desktop.html ${./web}/desktop.js ${./web}/desktop.css $out/   # the wide-screen page (the remote redirects there)
+    cp ${./web}/remote-panel.html ${./web}/remote-panel.css $out/   # the remote: one component, both pages mount it
     cp ${./web}/manifest.webmanifest ${./web}/sw.js ${./web}/icon.svg ${./web}/icon-192.png ${./web}/icon-512.png $out/   # the PWA
     cp ${./web/admin}/index.html ${./web/admin}/admin.js ${./web/admin}/admin.css $out/admin/
     cp ${./web/admin}/panel.html $out/admin/   # the admin markup, fetched at runtime by whichever page mounts it
