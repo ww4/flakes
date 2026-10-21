@@ -62,10 +62,26 @@ let
   # ⚠️ Keep the extension honest. nginx types the response from the REQUEST
   # URI, and faviconUrl below is derived from this path's extension, so a PNG
   # named .svg would be served as image/svg+xml and simply not render.
-  faviconPath = toString faviconSvg;
-  faviconUrl = "/favicon" + (let
-    m = builtins.match ".*(\\.[a-zA-Z0-9]+)$" faviconPath;
-  in if m == null then ".svg" else builtins.head m);
+  # Where YOUR icon goes, if you want one. Drop a file here and it wins; leave
+  # the path empty and the drawing above is used.
+  #
+  #     sudo cp gromit.png /var/lib/homepage/favicon.png
+  #
+  # ⚠️ The nginx location for this sets `error_page 404 = <the drawing>`, so a
+  # path that does not exist yet falls back instead of leaving the tab with no
+  # icon at all. That is deliberate: it means this line and the file can land
+  # in either order, which matters because the flake is deployed by merge and
+  # the file is copied by hand.
+  faviconOverride = "/var/lib/homepage/favicon.png";
+
+  # nginx types a response from the REQUEST URI, not from the file it aliases,
+  # so the URL has to carry the real extension — a PNG served at /favicon.svg
+  # goes out as image/svg+xml and silently does not render.
+  extOf = path: let m = builtins.match ".*(\\.[a-zA-Z0-9]+)$" path;
+                in if m == null then ".svg" else builtins.head m;
+  faviconUrl = "/favicon" + extOf (if faviconOverride != "" then faviconOverride
+                                   else toString faviconSvg);
+  faviconFallbackUrl = "/favicon-builtin.svg";
 
   # ── Layout ───────────────────────────────────────────────────────────────
   # Groups are assigned to TABS. Tab order follows the order groups appear in
@@ -1237,13 +1253,26 @@ in {
     # prefix location here would lose to nothing but is easy to get wrong —
     # the same trap as the MIME/regex ordering noted in nginx-config-verify.
     # The favicon, served off this same vhost so it works whether it lives in
-    # the nix store or in /var/lib/homepage. See faviconPath above.
+    # the nix store or in /var/lib/homepage. See faviconOverride above.
     locations."= ${faviconUrl}" = {
-      alias = faviconPath;
+      alias = if faviconOverride != "" then faviconOverride else toString faviconSvg;
       extraConfig = ''
         # Browsers cache a favicon aggressively; an hour is long enough to
         # avoid a request per tab and short enough that swapping the image
         # shows up the same afternoon.
+        add_header Cache-Control "public, max-age=3600";
+      '' + lib.optionalString (faviconOverride != "") ''
+        # The override file is copied in by hand and may not be there yet.
+        # Fall back to the drawing rather than leaving the tab iconless.
+        error_page 404 = ${faviconFallbackUrl};
+      '';
+    };
+
+    # The committed drawing, always available — both as the fallback target
+    # above and as a thing you can open to check it rendered.
+    locations."= ${faviconFallbackUrl}" = {
+      alias = toString faviconSvg;
+      extraConfig = ''
         add_header Cache-Control "public, max-age=3600";
       '';
     };
