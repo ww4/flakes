@@ -4,8 +4,25 @@
 # NOTE: this nixpkgs has NO `services.fulcrum` module — only the `fulcrum`
 # package — so this is a hand-rolled systemd unit. Built on bitcoind running
 # with txindex=1 (see bitcoind.nix). First-time index build takes ~6–12 h on
-# top of an already-synced chain; subsequent startups are seconds. Final
-# on-disk index ~100 GB under /var/lib/fulcrum (nvme root has ~329 GB free).
+# top of an already-synced chain; subsequent startups are seconds.
+#
+# ⚠️ SIZE, measured — and the reason this no longer lives on root. This header
+# said "Final on-disk index ~100 GB under /var/lib/fulcrum (nvme root has
+# ~329 GB free)" from the day it was written until 2026-10-21. The real figure
+# was 183 GB on 10-12 and 184 GB on 10-21: 83% over, 41% of a 449 GB disk, and
+# nothing was watching it. On 2026-10-21 root reached 100% (382 MB free).
+# postgresql PANICked on ENOSPC in the checkpointer and hit its start limit,
+# taking paperless-task-queue with it; Fulcrum was killed mid-commit and
+# corrupted its own RocksDB past repair — "we cannot undo the inconsistent
+# state ... Please delete the datadir and resynch to bitcoind". The 6–12 h
+# reindex above stopped being a thing we were choosing and became a thing we
+# were handed.
+#
+# So the datadir is not on root any more. It is a bind mount onto the Mushkin
+# (see dataDir below), which makes the containment structural instead of
+# vigilant: a runaway index now fills a 917 GB disk that nothing else boots
+# from. The watching half is in sentinel.nix — the >90% condition had been
+# detected 10,965 consecutive times and reported exactly once.
 #
 # Scope: tcp (50001) only, which is what the mempool backend uses. The TLS
 # port for Sparrow-over-Tailscale (ssl 50002 + self-signed cert) is a later
@@ -21,7 +38,64 @@ let
   # 401'd silently. That exact fault ran for 17 days in August 2026 before
   # anyone noticed. Reading it from config means the path cannot drift again.
   bitcoindCookie = "${config.services.bitcoind.bitcoin.dataDir}/.cookie";
+  # ⚠️ The PATH is unchanged; the DISK underneath it is not. /var/lib/fulcrum is
+  # now a bind mount of /home/chris/fulcrum, which lives on sde1 — the Mushkin
+  # Reactor 1 TB SATA SSD (SMART health PASSED, Percentage Used Endurance
+  # Indicator 1, i.e. ~99% of its write budget unused), 917 GB with 616 GB free.
+  #
+  # Not /mnt/scratch: that is a WDC WD30EZRX, rotational, 5400 rpm. Fulcrum is a
+  # RocksDB index serving small random reads for every mempool.space page load
+  # and every Sparrow address sync — measured 24 h averages, nvme 122 read IOPS
+  # at 48 KB mean request vs sdd 39 IOPS at 133 KB: the first random, the second
+  # sequential. Not Wallace: it has a free 512 G NVMe, but Fulcrum needs
+  # bitcoind's cookie and RPC, so it would trade a local socket for a tailnet
+  # hop on every block.
+  #
+  # WHY A BIND, and not simply dataDir = "/home/chris/fulcrum": /home/chris is
+  # mode 0700 chris:users, so the fulcrum user (uid 972) cannot traverse it and
+  # would be refused before it ever opened the database. Path resolution starts
+  # at the mount point, so the bind sidesteps the 0700 without loosening
+  # permissions on a person's home directory. It also keeps this file's three
+  # coupled facts — the path, the mount, and RequiresMountsFor — in one place,
+  # which is the lesson of #214: that datadir move left five stale references in
+  # two other modules precisely because the path lived apart from its users.
+  #
+  # The bind SOURCE is state, not configuration. /home/chris/fulcrum must exist
+  # (0750 fulcrum:fulcrum) before this can mount, the same way /mnt/primary/D*
+  # expect their filesystems to exist. It is created once during the cutover; a
+  # systemd.tmpfiles rule would be ordered after local-fs.target and so would
+  # lose the race to the mount it is supposed to prepare.
+  #
+  # Not in restic, automatically: homelab.backup.paths is an allowlist naming
+  # specific /home/chris subdirectories and `fulcrum` is not one of them. A
+  # regenerable 184 GB index does not belong in a snapshot, and an allowlist
+  # means nobody has to remember that.
   dataDir = "/var/lib/fulcrum";
+  # ⚠️ fast-sync 4000 → 1000, and the number went DOWN on purpose. The reindex
+  # forced on 2026-10-21 is an initial build, so this option matters again for
+  # the first time since the module was written — and its documented downside is
+  # precisely the failure we just had.
+  #
+  # `fast-sync` is Fulcrum's older name for the UTXO cache: `fast-sync`,
+  # `utxo-cache` and `utxo_cache` are all present in the 1.12.0.1 binary, while
+  # the shipped example config documents only `utxo_cache`. The trade-off, from
+  # that config verbatim: "a sync that is less resilient to crashes mid-sync. If
+  # the process is killed mid-sync, the database may become corrupt and lose
+  # UTXO data. Use this feature only if you are 100% sure that won't happen
+  # during a sync."
+  #
+  # We are not 100% sure. Two things kill it mid-sync, and only one is fixed.
+  # ENOSPC is gone — the datadir now has 616 GB under it instead of 24. OOM is
+  # not: gromit has 30 G RAM with 13 G available and swap at 8.8 G of 8.8 G,
+  # i.e. no headroom left at all (sentinel's swap-headroom has been firing).
+  # Asking for a 4 GB cache in that state, held for 6–12 h, risks an OOM-kill
+  # whose penalty is starting the entire reindex over.
+  #
+  # 1000 keeps most of the benefit — the docs put the point where it "really
+  # pays off" at ~500 MB — for a quarter of the exposure. The option has no
+  # effect once the index is built, so this is a one-time cost either way, and
+  # raising it again is a one-line revert if the sync proves painfully slow.
+  #
   # Fulcrum reads a simple `key = value` config file.
   fulcrumConf = pkgs.writeText "fulcrum.conf" ''
     datadir = ${dataDir}
@@ -31,8 +105,9 @@ let
     # docker host gateway (172.17.0.1:50001); firewalled to tailscale0 + docker
     # bridges only (below) — never the LAN or the internet.
     tcp = 0.0.0.0:50001
-    # fast-sync trades RAM for speed during the initial index build.
-    fast-sync = 4000
+    # fast-sync trades RAM for speed during the initial index build. 1000, not
+    # 4000 — see the note above fulcrumConf for why the number went DOWN.
+    fast-sync = 1000
   '';
 in
 {
@@ -74,7 +149,38 @@ in
     # needs from a mount is bitcoind's cookie, which now lives on /mnt/scratch.
     # Gating on /mnt/fusion meant a media-pool problem could block the Electrum
     # server for no reason. Derived from config so it cannot drift again.
-    unitConfig.RequiresMountsFor = config.services.bitcoind.bitcoin.dataDir;
+    #
+    # ⚠️ dataDir IS NOW IN THIS LIST, AND THAT LINE IS THE WHOLE GUARD. sde1 is
+    # mounted `nofail` (modules/storage.nix — right for a home directory, so it
+    # does not block boot on different hardware). Without this, a missed mount
+    # means the bind does not exist, StateDirectory= cheerfully creates an empty
+    # /var/lib/fulcrum on ROOT, and Fulcrum starts a 6–12 h reindex that fills
+    # the disk we just moved it off. With it, systemd refuses to start the
+    # service until var-lib-fulcrum.mount is up: the loud failure instead of the
+    # quiet one. This is the hazard written up in
+    # docs/fulcrum-relocation-test-2026-10-12.md as "finding 2", nine days
+    # before the quiet version of it happened for an unrelated reason.
+    #
+    # DEMONSTRATED, not assumed, because it is fair to doubt: `nofail` makes
+    # fstab-generator attach the mount to local-fs.target with Wants= rather
+    # than Requires=, so does the service-side dependency survive it? Yes —
+    # there is already a live instance of this exact pattern on gromit.
+    # /mnt/scratch is `options = [ "nofail" ]` (modules/storage.nix) and
+    # bitcoind-bitcoin has RequiresMountsFor on a path beneath it:
+    #
+    #   $ systemctl show bitcoind-bitcoin -p Requires -p After --value \
+    #       | tr ' ' '\n' | grep mount
+    #   -.mount
+    #   mnt-scratch.mount      <- Requires=
+    #   mnt-scratch.mount      <- After=
+    #
+    # It lands in BOTH despite the nofail. So boot is not blocked when the disk
+    # is absent, and Fulcrum refuses to start instead of silently reindexing
+    # onto root — which is the whole point.
+    unitConfig.RequiresMountsFor = [
+      config.services.bitcoind.bitcoin.dataDir
+      dataDir
+    ];
     serviceConfig = {
       User = "fulcrum";
       Group = "fulcrum";
@@ -144,6 +250,27 @@ in
       Nice = 10;
       IOSchedulingClass = "idle";
     };
+  };
+
+  # The datadir's actual home. Deliberately HERE and not in modules/storage.nix:
+  # that file is for hardware — physical devices and the mergerfs pools built
+  # out of them, where its own comment says member mounts stay with disko. This
+  # is not a disk, it is one service's state redirected onto another disk, and
+  # it is meaningless apart from the dataDir and the RequiresMountsFor above.
+  # Splitting them is how #214 produced five stale paths in two other modules.
+  #
+  # `nofail` is correct and is NOT a loosening: it keeps a missing bind from
+  # blocking boot, while RequiresMountsFor above keeps Fulcrum from starting
+  # without it. Boot survives; the Electrum server stays down and says so.
+  #
+  # `depends` makes the ordering explicit rather than relying on systemd
+  # inferring it from the path prefix: this cannot mount until the filesystem
+  # holding its source is up.
+  fileSystems."/var/lib/fulcrum" = {
+    device = "/home/chris/fulcrum";
+    fsType = "none";
+    options = [ "bind" "nofail" ];
+    depends = [ "/home/chris" ];
   };
 
   # Tailscale + docker bridges only — never the LAN, never the internet.
