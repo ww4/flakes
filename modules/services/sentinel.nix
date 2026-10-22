@@ -661,7 +661,11 @@ EOF
     enabled = true;
     pollSec = 120;          # informational; the systemd timer drives the cadence
     debounce = 2;           # a condition must persist this many checks before it escalates
-    cooldownSec = 7200;     # don't re-escalate the same incident within 2 h
+    # ⚠️ This does NOT mean "re-escalate every 2 h". It is the floor between two
+    # SEPARATE edges of the same check; a condition that never clears never
+    # reaches it at all (see the `active` gate in the watcher). Per-check
+    # `reescalateSec` is the knob that actually re-notifies a standing problem.
+    cooldownSec = 7200;     # minimum gap between two escalations of one check
     maxPerHour = 6;         # global rate limits (cost + anti-storm guard)
     maxPerDay = 30;
     ntfyServer = "http://127.0.0.1:8090";
@@ -698,7 +702,32 @@ EOF
       # agent shouldn't auto-delete to free space).
       { id = "disk-space"; type = "metric"; severity = "warning"; agent = true; act = false;
         expr = "100 - (node_filesystem_avail_bytes{mountpoint=~\"/|/mnt/fusion|/mnt/backup/all\"} * 100 / node_filesystem_size_bytes{mountpoint=~\"/|/mnt/fusion|/mnt/backup/all\"})";
-        op = ">"; threshold = 90; }
+        op = ">"; threshold = 90; reescalateSec = 86400; }
+
+      # ⚠️ A SECOND BAND, because one threshold cannot say how urgent it is.
+      # `disk-space` fires at >90% and — being edge-triggered — says it once.
+      # 91% on a 449 G root is 40 G free and a this-month problem; 98% is 9 G
+      # free and tonight's. On 2026-10-21 root crossed from the first to the
+      # second over fifteen days and never produced a second word about it.
+      #
+      # Deliberately in FREE BYTES, not percent, and only for `/`. What breaks
+      # is ENOSPC, and ENOSPC arrives at an absolute number: 10 GB free kills
+      # postgres's checkpointer whether the disk is 449 G or 4 T. Percent is
+      # also the wrong unit for the pools — 97% of 28 TB is still 840 G free,
+      # which is nobody's emergency — so they stay on the percentage check.
+      #
+      # This is a separate check id, so it carries its OWN `active` flag:
+      # crossing 10 GB is a fresh edge and notifies even though `disk-space`
+      # has been standing (and silent) for days. That is the existing
+      # edge-trigger used correctly rather than fought.
+      #
+      # Verified against live Prometheus before shipping: the division keeps the
+      # mountpoint label, so `detail` reads `disk-critical: /=24.6886` —
+      #   node_filesystem_avail_bytes{mountpoint="/"} / 1e9
+      #   => {"mountpoint":"/", ...} value 24.688644096   (2026-10-21 20:19)
+      { id = "disk-critical"; type = "metric"; severity = "critical"; agent = true; act = false;
+        expr = "node_filesystem_avail_bytes{mountpoint=\"/\"} / 1e9";
+        op = "<"; threshold = 10; reescalateSec = 86400; }
 
       # Backup health — fires if any key backup unit's last run did not succeed.
       # (NOTE: catches FAILED runs; staleness/never-ran is a future refinement.)
@@ -1219,8 +1248,33 @@ EOF
                 continue
 
             st["consecutive"] = st.get("consecutive", 0) + 1
+            # ⚠️ THIS GATE IS WHY A CHRONIC PROBLEM GOES SILENT. `active` is set
+            # when we escalate and cleared ONLY in the `not fired` branch above,
+            # so for a condition that never clears this `continue` short-circuits
+            # every later detection — before the cooldownSec check below is ever
+            # reached. The watcher is therefore EDGE-TRIGGERED: one ntfy on the
+            # way in, one on the way out, and nothing in between however much
+            # worse it gets. Demonstrated on 2026-10-21, from state.json:
+            # `disk-space` = {"consecutive": 10965, "active": true,
+            # "last_escalated": <2026-10-06 11:36>} — root sat above 90% for
+            # FIFTEEN DAYS, was detected 10,965 consecutive times, and was
+            # reported exactly once, on day one, at 90.89%. It then filled to
+            # 100% (382 MB free) and took out postgresql, paperless and Fulcrum,
+            # whose RocksDB corrupted beyond repair. `claude-login` has the same
+            # shape (11,671 consecutive, one escalation). `swap-headroom` and
+            # `failed-units` re-notify only because they OSCILLATE, so each dip
+            # below threshold manufactures a fresh edge — the checks that behave
+            # are the ones whose problem keeps going away.
+            #
+            # Edge-triggered stays the DEFAULT (the polite-polling ethos: a
+            # condition nobody can clear tonight should not nag all night). But
+            # a check may now opt into a reminder with `reescalateSec`, and the
+            # two disk checks do, at 24 h. Unset = exactly today's behaviour,
+            # so the other seventeen checks are untouched.
             if st.get("active"):
-                continue
+                reesc = int(c.get("reescalateSec", 0))
+                if not reesc or (now - st.get("last_escalated", 0)) < reesc:
+                    continue
             if st["consecutive"] < int(c.get("minConsecutive", debounce)):
                 continue
             if now - st.get("last_escalated", 0) < int(c.get("cooldownSec", cooldown)):
