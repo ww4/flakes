@@ -160,6 +160,23 @@ in
     # quiet one. This is the hazard written up in
     # docs/fulcrum-relocation-test-2026-10-12.md as "finding 2", nine days
     # before the quiet version of it happened for an unrelated reason.
+    #
+    # DEMONSTRATED, not assumed, because it is fair to doubt: `nofail` makes
+    # fstab-generator attach the mount to local-fs.target with Wants= rather
+    # than Requires=, so does the service-side dependency survive it? Yes —
+    # there is already a live instance of this exact pattern on gromit.
+    # /mnt/scratch is `options = [ "nofail" ]` (modules/storage.nix) and
+    # bitcoind-bitcoin has RequiresMountsFor on a path beneath it:
+    #
+    #   $ systemctl show bitcoind-bitcoin -p Requires -p After --value \
+    #       | tr ' ' '\n' | grep mount
+    #   -.mount
+    #   mnt-scratch.mount      <- Requires=
+    #   mnt-scratch.mount      <- After=
+    #
+    # It lands in BOTH despite the nofail. So boot is not blocked when the disk
+    # is absent, and Fulcrum refuses to start instead of silently reindexing
+    # onto root — which is the whole point.
     unitConfig.RequiresMountsFor = [
       config.services.bitcoind.bitcoin.dataDir
       dataDir
