@@ -67,9 +67,9 @@
 
     # CURRENT nixos-26.05 — ONLY for php (CVE-2026-109618/109619; see
     # modules/php-security-pin.nix). Same release branch as the main pin above,
-    # just not eight months stale, so php 8.4.27 comes PREBUILT from
+    # just current rather than our Aug-14 rev, so php 8.4.27 comes PREBUILT from
     # cache.nixos.org with the security release's own oom_* regression tests
-    # passing. Rebuilding 8.4.27 against our Feb-era builder instead fails three
+    # passing. Rebuilding 8.4.27 against our own pinned deps instead fails three
     # of those tests. Imported as plain pkgs, no module eval.
     # Bump with `nix flake update nixpkgs-php`.
     nixpkgs-php.url = "github:nixos/nixpkgs/nixos-26.05";

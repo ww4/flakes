@@ -11,7 +11,7 @@
 # Exploit details leaked ahead of the patch and exploitation was reported the
 # same week.
 #
-# This box's nixpkgs pin is from 2026-02-23 and ships php 8.4.24.
+# This box's nixpkgs pin (nixos-26.05 at 02e0898, 2026-08-14) ships php 8.4.24.
 #
 # BLAST RADIUS ON GROMIT: one consumer. php-fpm has a single pool (nextcloud;
 # `/run/phpfpm/` holds only nextcloud.sock), serving cloud.rosemaryacres.com.
@@ -26,7 +26,7 @@
 #
 # WHY A SECOND NIXPKGS AND NOT A version/hash OVERRIDE OF OUR OWN php84.
 # The obvious move is `prev.php84.override { version = "8.4.27"; hash = …; }`,
-# reusing the Feb builder. That was tried first and it DOES evaluate correctly
+# reusing our own pinned builder. That was tried first and it DOES evaluate correctly
 # — php and all ~40 extensions rebuild from the 8.4.27 tarball — but the build
 # FAILS, and it fails in the worst possible place:
 #
@@ -40,14 +40,18 @@
 # request input (filter_input, filter_input_array, POST parsing); the three
 # filter_var ones passed. Upstream's own nixos-26.05 php-filter-8.4.27 is
 # SUBSTITUTABLE from cache.nixos.org, i.e. Hydra built it and those tests pass
-# there — so 8.4.27 is fine and our eight-month-old build environment is what
-# they trip over. Narrowing that down is not work worth doing to ship a security
-# patch, and silencing the CVE's own regression tests to make a CVE fix build is
-# the wrong trade at any price.
+# there — so 8.4.27 is fine and something about building it HERE is what
+# they trip over. The cause is NOT isolated: candidates are the two months of
+# dependency drift between our pin and the rev Hydra built, and the build host's
+# own memory conditions (these three tests assert they do NOT reach a hard
+# memory limit, which makes them sensitive to it). Narrowing it down is not work
+# worth doing to ship a security patch, and silencing the CVE's own regression
+# tests to make a CVE fix build is the wrong trade at any price.
 #
 # So: take php from the release branch that built it. `nixpkgs-php` tracks
-# nixos-26.05, the same release as our main pin, just current — the smallest
-# possible move that still gets an upstream-TESTED interpreter. It is a plain
+# nixos-26.05 — the same release as our main pin, two months further along
+# (Aug 14 -> Oct 21) — the smallest move that still gets an upstream-TESTED
+# interpreter. It is a plain
 # package import with no module eval (the pattern homelab.silverbullet already
 # uses for nixpkgs-silverbullet), so unstable's darwin eval problem that pins
 # this flake to 26.05 is not in play. Cost is a parallel php closure (~138 MiB
