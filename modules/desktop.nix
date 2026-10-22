@@ -1,4 +1,4 @@
-# Desktop environment: KDE Plasma on X11, printing, sound, Steam.
+# Desktop environment: KDE Plasma on X11, printing, sound.
 { config, lib, pkgs, ... }:
 
 {
@@ -105,27 +105,23 @@
     };
   };
 
-  # Steam. Security review 2026-06-04: the openFirewall flags opened the Steam
-  # ports on ALL interfaces (LAN + public IPv6). Disabled them and re-opened the
-  # same port set scoped to the LAN + Tailscale only.
-  programs.steam = {
-    enable = true;
-    remotePlay.openFirewall = false;       # Steam Remote Play (scoped below)
-    dedicatedServer.openFirewall = false;  # Source Dedicated Server (scoped below)
-  };
-  networking.firewall.interfaces =
-    let
-      steamTCP = [ 27015 27036 27040 ];
-      steamUDP = [ 27015 27036 ];
-      steamUDPRanges = [ { from = 27031; to = 27036; } ];  # Remote Play streaming
-      steam = {
-        allowedTCPPorts = steamTCP;
-        allowedUDPPorts = steamUDP;
-        allowedUDPPortRanges = steamUDPRanges;
-      };
-    in
-    {
-      enp3s0 = steam;      # LAN
-      tailscale0 = steam;  # Tailscale
-    };
+  # Steam is GONE, 2026-10-22, Chris's call during the storage reclaim — the
+  # 28 GB library under ~/.local/share/Steam was deleted, so leaving the client
+  # enabled would hold open a port set on the LAN and the tailnet for software
+  # with nothing to run. What was here:
+  #
+  #   programs.steam.enable = true, with remotePlay.openFirewall and
+  #   dedicatedServer.openFirewall BOTH false, plus a hand-scoped
+  #   networking.firewall.interfaces block opening tcp 27015/27036/27040,
+  #   udp 27015/27036 and udp 27031-27036 on enp3s0 (LAN) + tailscale0.
+  #
+  # ⚠️ The `openFirewall = false` pair and that hand-rolled block were the fix
+  # from the 2026-06-04 security review: the module's own openFirewall flags
+  # opened those ports on ALL interfaces, including public IPv6. If Steam ever
+  # comes back, it comes back WITH that scoping, not with openFirewall = true.
+  # That is the whole reason this comment exists rather than a clean deletion.
+  #
+  # Nothing else in the config referenced steam, steam-run, steamPackages or
+  # 32-bit graphics support (swept modules/, configuration.nix and home/), so
+  # this removal stands alone.
 }
