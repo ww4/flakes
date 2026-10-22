@@ -65,6 +65,15 @@
     # phone. Bump with `nix flake update nixpkgs-silverbullet`.
     nixpkgs-silverbullet.url = "github:nixos/nixpkgs/nixos-unstable";
 
+    # CURRENT nixos-26.05 — ONLY for php (CVE-2026-109618/109619; see
+    # modules/php-security-pin.nix). Same release branch as the main pin above,
+    # just not eight months stale, so php 8.4.27 comes PREBUILT from
+    # cache.nixos.org with the security release's own oom_* regression tests
+    # passing. Rebuilding 8.4.27 against our Feb-era builder instead fails three
+    # of those tests. Imported as plain pkgs, no module eval.
+    # Bump with `nix flake update nixpkgs-php`.
+    nixpkgs-php.url = "github:nixos/nixpkgs/nixos-26.05";
+
     # Pinned 25.05 nixpkgs — ONLY for the T480 fingerprint flake below. Its
     # python-validity daemon predates the nixpkgs Python "pyproject" change and
     # won't build against unstable's stricter Python builder. Building that one
@@ -82,7 +91,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-2505, nixpkgs-silverbullet, vscode-server, home-manager, comin, homelab-modules, agent-modules, sops-nix, disko, nixos-06cb-009a-fingerprint-sensor }:
+  outputs = { self, nixpkgs, nixpkgs-2505, nixpkgs-silverbullet, nixpkgs-php, vscode-server, home-manager, comin, homelab-modules, agent-modules, sops-nix, disko, nixos-06cb-009a-fingerprint-sensor }:
     let
       system = "x86_64-linux";
       lib = nixpkgs.lib;
@@ -93,8 +102,9 @@
         gromit = lib.nixosSystem {
           inherit system;
           # nixpkgs-silverbullet: consumed only by modules/services/silverbullet.nix.
+          # nixpkgs-php: consumed only by modules/php-security-pin.nix (CVE-2026-109618).
           # homelab-modules: the public library — configuration.nix imports from it.
-          specialArgs = { inherit nixpkgs-silverbullet homelab-modules; };
+          specialArgs = { inherit nixpkgs-silverbullet nixpkgs-php homelab-modules; };
           modules = [
             ./configuration.nix
             vscode-server.nixosModules.default

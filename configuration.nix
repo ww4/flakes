@@ -23,6 +23,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/users.nix
     hm.system
     ./modules/packages.nix
+    ./modules/php-security-pin.nix          # php forward to 8.4.27 (CVE-2026-109618/109619) — see the file
     ./modules/virtualisation.nix
     ./modules/home-manager.nix
     ./modules/sops.nix                       # encrypted secrets (sops-nix) — see ./.sops.yaml
