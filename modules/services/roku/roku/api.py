@@ -139,6 +139,8 @@ def make_handler(device: Device, allow_power: bool):
                     return self._json(device.roku().status())
                 if method == "GET" and parts == ["apps"]:
                     return self._json({"apps": device.roku().apps()})
+                if method == "GET" and parts == ["player"]:
+                    return self._json(device.roku().player())
                 if method == "GET" and len(parts) == 3 and parts[0] == "apps" and parts[2] == "icon":
                     data, ctype = device.roku().icon(parts[1])
                     return self._send(200, data, ctype)

@@ -47,7 +47,11 @@ createApp({
   // it is a view change, so nothing is navigated and the <audio> element —
   // and the stream in it — is untouched (Chris, 2026-09-29). The markup is
   // fetched the first time it is opened and not before.
-  components: { "admin-panel": adminPanel("admin/panel.html", "admin/") },
+  components: {
+    "admin-panel": adminPanel("admin/panel.html", "admin/"),
+    // the same remote the phone mounts, from the same file
+    "remote-panel": remotePanel("remote-panel.html"),
+  },
   data() {
     let quality = "", target = "here", view = "wall", openMount = "", hereVol = 100, bedVol = 35, bedOn = false, notify = false;
     try {
@@ -65,20 +69,10 @@ createApp({
       view, qtab: "played", openMount, target, quality,
       stations: [], quick: [], counts: {}, up: {}, tiles: {}, histories: {}, nexts: {}, hearts: {},
       current: null, status: "", scanning: false, busy: "", toast: "", tick: 0,
-      // What is on a screen in the house. The radio can name its own track
-      // because it chose it; a streaming box cannot be asked — but Jellyfin is
-      // the server, so when the thing on the television came from the library
-      // it knows exactly (Chris, 2026-10-09).
-      watching: { playing: false },
       blocked: "",              // a mount the browser refused to start on its own; the play button takes it
       paused: false,            // paused by the OS transport: still tuned, and still holding the media session
       query: "", results: [], searchTimer: 0,
       site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "", hasLocal: false, hasRoom: true, hasRoku: false, rokuName: "Roku", bedMount: "" },
-      // The streaming box on the television. Navigation only: its sound leaves
-      // the TV by optical to the receiver, so the Roku's own volume keys emit
-      // CEC at a television that is not in that path (Chris, 2026-10-03).
-      roku: { name: "", app: "", power: "", awake: false, findRemote: false, limited: false, error: "" },
-      rokuPoll: 0, rokuText: "", remoteTab: "room",
       receiver: { name: "", on: false, input: "", volume: 0, volume_max: 100, mute: false, error: "" },
       inputs: [], presets: [], menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
       // The receiver's Pandora stations. Walking its menu to list them takes a
@@ -127,12 +121,17 @@ createApp({
     zones() {
       const z = [{ id: "here", name: "This browser", live: !!this.current,
                    sub: this.current ? `playing ${this.currentStation.name}` : (this.status || "idle"), dead: false }];
+      // Named for the EQUIPMENT, with the room underneath. "Living room" is
+      // where it is, not what it is, and a list of places cannot tell you
+      // which box a button is about to talk to: "the Living Room device should
+      // be the name of the receiver, like the Roku Express 4K+ label"
+      // (Chris, 2026-10-21). The model comes from the receiver itself.
       if (this.site.hasRoom) z.push({
-        id: "room", name: this.receiver.name || this.site.roomName,
+        id: "room", name: this.receiverLabel(),
         live: this.receiverSeen && this.receiver.on && this.playbackState === "Play",
         sub: !this.receiverSeen ? "checking…"
            : this.receiver.error ? this.receiver.error
-           : this.receiver.on ? this.receiver.input : "standby",
+           : this.where(this.receiver.on ? this.receiver.input : "standby"),
         dead: this.receiver.error === "unreachable" });
       if (this.site.hasLocal) z.push({
         id: "local", name: this.site.localName, live: this.speakerSeen && !!this.speaker.playing,
@@ -244,14 +243,6 @@ createApp({
     openMount(m) { try { localStorage.setItem("radio.openMount", m); } catch (e) {} if (m) this.refresh(); },
     "receiver.volume"() { this.syncVolume(); },
     "receiver.input"() { if (this.view === "sources") this.loadMenu(); },
-    remote(open) {
-      if (!open) { clearInterval(this.rokuPoll); return; }
-      // Open on the Roku when it is the only thing there, so a household with
-      // no receiver does not get an empty receiver pane.
-      if (!this.site.hasRoom && this.site.hasRoku) this.remoteTab = "roku";
-      if (this.remoteTab === "roku") this.pollRoku();
-    },
-    remoteTab(t) { if (t === "roku") this.pollRoku(); else clearInterval(this.rokuPoll); },
     "speaker.volume"() { this.syncVolume(); },
   },
 
@@ -361,50 +352,6 @@ createApp({
               : this.stations.find(x => x.mount === this.site.localMount) || this.stations[0];
       if (s) return this.playTarget(s);
     },
-    // ---- the Roku ---------------------------------------------------------
-    async pollRoku() {
-      const s = await getJSON("roku/status");
-      if (!s || s.error) {
-        this.roku = { ...this.roku, error: (s && s.error) || "unreachable" };
-      } else {
-        this.roku = { name: s.name || this.site.rokuName, app: (s.app && s.app.name) || "",
-                      power: s.power || "", awake: !!s.awake,
-                      findRemote: !!s.supports_find_remote, limited: !!s.limited, error: "" };
-      }
-      clearInterval(this.rokuPoll);
-      // Only while its tab is open. Nothing else on the page shows this, and a
-      // box asleep in another room is not worth a request every five seconds.
-      if (this.remote && this.remoteTab === "roku")
-        this.rokuPoll = setInterval(() => { if (this.remote && this.remoteTab === "roku") this.pollRoku(); }, 5000);
-    },
-    async rokuKey(key, action) {
-      const q = action && action !== "keypress" ? `?action=${action}` : "";
-      // `call` THROWS on a non-2xx — it does not hand back an error object.
-      // Written the other way round (as this was), every failure became an
-      // unhandled rejection and NO message appeared: the Roku was refusing
-      // every key with a 403 and the page showed nothing whatever, which is
-      // how it arrived as "none of the buttons are working" (2026-10-19).
-      try {
-        await call("POST", `roku/key/${key}${q}`);
-        this.roku.limited = false;
-        if (!action || action === "keypress") this.pollRoku();
-      } catch (e) {
-        this.say(e.message);
-        if (/Limited mode/i.test(e.message)) this.roku.limited = true;
-      }
-    },
-    async rokuSend() {
-      const text = this.rokuText.trim();
-      if (!text) return;
-      try {
-        const r = await call("POST", "roku/type", { text });
-        this.rokuText = "";
-        this.say(`sent ${(r && r.sent) || 0} character(s)`);
-      } catch (e) {
-        this.say(e.message);
-        if (/Limited mode/i.test(e.message)) this.roku.limited = true;
-      }
-    },
     playOnReceiver(s) {
       if (s.kind === "preset")
         return this.receiverAction("tuning…", async () => {
@@ -497,13 +444,6 @@ createApp({
     },
 
     // ---- the receiver ----------------------------------------------------
-    async pollWatching() {
-      // Rides the ten-second tick rather than a timer of its own. Answers
-      // {playing:false} when Jellyfin is not configured, so there is nothing
-      // to switch on and nothing to configure twice.
-      const w = await getJSON("admin/api/watching");
-      if (w) this.watching = w;
-    },
     // The television, as a row among the outputs. NOT a target: you cannot
     // send a station to it, so it is a line of status rather than a button —
     // clicking it would promise something that does not exist.
@@ -511,21 +451,16 @@ createApp({
       const w = this.watching;
       if (w.playing) {
         const bits = [w.head, w.sub].filter(Boolean);
-        return { name: this.site.rokuName || "Television", sub: bits.join(" \u00b7 "), live: !w.paused };
+        return { name: this.rokuLabel() || "Television", sub: bits.join(" \u00b7 "), live: !w.paused };
       }
       if (this.site.hasRoku && this.roku.awake && this.roku.app)
-        return { name: this.roku.name || this.site.rokuName || "Television", sub: this.roku.app, live: true };
+        return { name: this.rokuLabel() || "Television", sub: this.roku.app, live: true };
       return null;
     },
     watchProgress() {
       const w = this.watching;
       if (!w.playing || !w.duration) return 0;
       return Math.max(0, Math.min(100, Math.round((w.position / w.duration) * 100)));
-    },
-    clock(secs) {
-      if (!secs && secs !== 0) return "";
-      const m = Math.floor(secs / 60), s2 = secs % 60;
-      return `${m}:${String(s2).padStart(2, "0")}`;
     },
     async pollReceiver() {
       const st = await getJSON("receiver/status");

@@ -10,6 +10,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="desktop.css">
+<link rel="stylesheet" href="remote-panel.css">
 <!-- the admin, mounted here as a view rather than navigated to, so the
      stream is never torn down. Its rules are scoped under .adminpanel. -->
 <link rel="stylesheet" href="admin/admin.css">
@@ -317,143 +318,12 @@
     </div>
   </div>
 
-  <!-- ===== the receiver remote ============================================= -->
-  <div class="remote-wrap" v-if="remote" @click.self="remote = false">
-    <section class="remote">
-      <header>
-        <strong v-if="remoteTab === 'roku'">{{ roku.name || site.rokuName }}</strong>
-        <strong v-else>{{ receiver.name || site.roomName }}</strong>
-        <small v-if="remoteTab === 'roku'">{{ roku.error || (roku.awake ? (roku.app || 'on') : (roku.power || 'asleep')) }}</small>
-        <small v-else>{{ receiver.on ? receiver.input : (receiver.error || 'standby') }}</small>
-        <button class="x" @click="remote = false" aria-label="Close">✕</button>
-      </header>
-
-      <!-- Two remotes behind one button. They each want a d-pad and a
-           transport, and showing both at once is a long scroll on a phone. -->
-      <div class="rtabs" v-if="site.hasRoom && site.hasRoku">
-        <button :class="{on: remoteTab === 'room'}" @click="remoteTab = 'room'">{{ receiver.name || site.roomName }}</button>
-        <button :class="{on: remoteTab === 'roku'}" @click="remoteTab = 'roku'">{{ roku.name || site.rokuName }}</button>
-      </div>
-
-      <template v-if="remoteTab !== 'roku'">
-
-      <div class="r-top">
-        <button class="key" :class="{on: receiver.on}" @click="power(!receiver.on)" title="Power">⏻</button>
-        <div class="r-vol">
-          <button class="key" @click="volumeStep(-2)" :disabled="!receiver.on">−</button>
-          <span class="lvl">{{ shownVolume() }}</span>
-          <button class="key" @click="volumeStep(2)" :disabled="!receiver.on">+</button>
-          <button class="key" :class="{on: receiver.mute}" @click="mute(!receiver.mute)" :disabled="!receiver.on">Mute</button>
-        </div>
-      </div>
-
-      <h6>Input</h6>
-      <div class="keys">
-        <button v-for="i in inputs" :key="i.param || i.name" class="key wide"
-                :class="{on: receiver.input === (i.param || i.name)}"
-                @click="selectInput(i.param || i.name)" :disabled="!receiver.on">{{ i.title || i.param || i.name }}</button>
-      </div>
-
-      <h6>Navigate</h6>
-      <div class="dpad">
-        <button class="key up" @click="cursor('Up')" :disabled="!receiver.on">▲</button>
-        <button class="key left" @click="cursor('Return')" :disabled="!receiver.on" title="Back">◀</button>
-        <button class="key sel" @click="cursor('Sel')" :disabled="!receiver.on">OK</button>
-        <button class="key right" @click="remotePage(true)" :disabled="!receiver.on" title="Page down">▶</button>
-        <button class="key down" @click="cursor('Down')" :disabled="!receiver.on">▼</button>
-      </div>
-      <div class="keys" style="margin-top:.5rem">
-        <button class="key" @click="cursor('Return to Home')" :disabled="!receiver.on" title="Home">⌂</button>
-        <button class="key" @click="remotePage(false)" :disabled="!receiver.on" title="Page up">⇞</button>
-        <button class="key" @click="remotePage(true)" :disabled="!receiver.on" title="Page down">⇟</button>
-      </div>
-
-      <h6>Transport</h6>
-      <div class="keys">
-        <button class="key" @click="playback('Skip Rev')" :disabled="!receiver.on">⏮</button>
-        <button class="key" @click="playback('Play')" :disabled="!receiver.on">▶</button>
-        <button class="key" @click="playback('Pause')" :disabled="!receiver.on">⏸</button>
-        <button class="key" @click="playback('Stop')" :disabled="!receiver.on">⏹</button>
-        <button class="key" @click="playback('Skip Fwd')" :disabled="!receiver.on">⏭</button>
-      </div>
-
-      <template v-if="receiver.input === 'Pandora'">
-        <h6>Pandora</h6>
-        <div class="keys">
-          <button class="key wide" @click="feedback(true)">👍 Thumb up</button>
-          <button class="key wide" @click="feedback(false)">👎 Thumb down</button>
-        </div>
-      </template>
-
-      <h6>Tuner</h6>
-      <div class="keys">
-        <button class="key" :class="{on: receiver.tuner && receiver.tuner.band === 'FM'}" @click="band('FM')" :disabled="!receiver.on">FM</button>
-        <button class="key" :class="{on: receiver.tuner && receiver.tuner.band === 'AM'}" @click="band('AM')" :disabled="!receiver.on">AM</button>
-        <button class="key" @click="tuneStep(-1)" :disabled="receiver.input !== 'TUNER'">−</button>
-        <button class="key" @click="tuneStep(1)" :disabled="receiver.input !== 'TUNER'">+</button>
-        <button class="key" @click="presetStep(false)" :disabled="receiver.input !== 'TUNER'" title="Preset down">P−</button>
-        <button class="key" @click="presetStep(true)" :disabled="receiver.input !== 'TUNER'" title="Preset up">P+</button>
-      </div>
-
-      <p class="r-note">No sleep timer, tone, dimmer, scenes or FM mono over the network — the receiver keeps those on the front panel.</p>
-      </template>
-
-      <!-- ===== the Roku ================================================== -->
-      <template v-else>
-        <!-- Nothing here can clear this: it is a setting on the television.
-             Said up front rather than one toast per press, because every
-             button is refused while it is on (Chris, 2026-10-19). -->
-        <p class="r-limited" v-if="roku.limited">
-          This Roku is in <b>Limited mode</b> and is refusing every button.
-          On the device: Settings → System → Advanced system settings →
-          Control by mobile apps → <b>Enabled</b>.
-        </p>
-        <div class="keys" style="margin-bottom:.5rem">
-          <button class="key wide" @click="rokuKey('Home')">⌂ Home</button>
-          <button class="key wide" @click="rokuKey('Back')">‹ Back</button>
-        </div>
-
-        <h6>Navigate</h6>
-        <div class="dpad">
-          <button class="key up" @click="rokuKey('Up')">▲</button>
-          <button class="key left" @click="rokuKey('Left')">◀</button>
-          <button class="key sel" @click="rokuKey('Select')">OK</button>
-          <button class="key right" @click="rokuKey('Right')">▶</button>
-          <button class="key down" @click="rokuKey('Down')">▼</button>
-        </div>
-
-        <h6>Transport</h6>
-        <div class="keys">
-          <button class="key" @click="rokuKey('InstantReplay')" title="Instant replay">↺</button>
-          <button class="key" @click="rokuKey('Rev')">⏪</button>
-          <button class="key" @click="rokuKey('Play')" title="Play / pause">⏯</button>
-          <button class="key" @click="rokuKey('Fwd')">⏩</button>
-          <button class="key" @click="rokuKey('Info')" title="Options">✱</button>
-        </div>
-
-        <!-- Typing on a d-pad is the worst part of any streaming box, and ECP
-             will take the characters directly. One request per character, so
-             the reply says how many actually landed. -->
-        <h6>Type into whatever is on screen</h6>
-        <div class="rtype">
-          <input v-model="rokuText" placeholder="a search box, a password…"
-                 @keydown.enter="rokuSend" aria-label="Text to send to the Roku">
-          <button class="key" @click="rokuSend" :disabled="!rokuText.trim()">Send</button>
-        </div>
-
-        <div class="keys" style="margin-top:.6rem">
-          <button class="key wide" v-if="roku.findRemote" @click="rokuKey('FindRemote')"
-                  title="Make the physical remote beep">Find the remote</button>
-          <button class="key wide" @click="rokuKey('PowerOn')" title="Wake it">Wake</button>
-        </div>
-
-        <p class="r-note">Volume is the receiver's: the television's optical out
-          feeds it, so the Roku's own volume keys talk to a television that is not
-          in that path. Power is refused unless <code>services.roku.allowPower</code>
-          is set.</p>
-      </template>
-    </section>
-  </div>
+  <!-- The remote is ONE component, mounted by this page and by the phone —
+       see web/remote-panel.html. It was two copies of the markup until the
+       phone turned out not to have the Roku half at all (Chris, 2026-10-21).
+       `:app="this"` hands it the page: the state and the methods live in
+       shared.js, where the receiver half already was. -->
+  <remote-panel v-if="remote" :app="this"></remote-panel>
 
   </div><!-- .app -->
 

@@ -349,39 +349,8 @@ body { overflow: hidden; height: 100vh; }
 .qual input { display: none; }
 .busy { font-size: .74rem; color: var(--accent); }
 
-/* ---- the remote (modal) -------------------------------------------------- */
-.remote-wrap {
-  position: fixed; inset: 0; z-index: 40; background: #0a0908c4;
-  display: grid; place-items: center; padding: 1.5rem;
-}
-.remote {
-  width: min(24rem, 92vw); max-height: 92vh; overflow-y: auto;
-  background: var(--panel); border: 1px solid var(--line); border-radius: .7rem;
-  padding: 1rem 1.1rem 1.3rem;
-}
-.remote header { display: flex; align-items: baseline; gap: .5rem; margin-bottom: .8rem; }
-.remote header small { color: var(--muted); font-size: .78rem; }
-.remote header .x { margin-left: auto; border: 0; background: transparent; color: var(--muted); }
-.remote h6 { margin: 1rem 0 .4rem; font-size: .66rem; letter-spacing: .12em;
-             text-transform: uppercase; color: var(--muted); font-weight: 600; }
-.keys { display: flex; flex-wrap: wrap; gap: .4rem; }
-.key {
-  min-width: 2.6rem; padding: .45rem .6rem; border: 1px solid var(--line);
-  border-radius: .4rem; background: var(--panel-2); font-size: .85rem;
-}
-.key:hover:not(:disabled) { border-color: #55504a; }
-.key:disabled { opacity: .4; cursor: not-allowed; }
-.key.on { border-color: var(--accent); color: var(--accent); }
-.key.wide { flex: 1 1 6rem; }
-.r-top { display: flex; align-items: center; gap: .6rem; }
-.r-vol { display: flex; align-items: center; gap: .4rem; margin-left: auto; }
-.r-vol .lvl { font-variant-numeric: tabular-nums; min-width: 2rem; text-align: center; }
-.dpad { display: grid; grid-template-columns: repeat(3, 2.6rem); grid-template-rows: repeat(3, 2.3rem);
-        gap: .35rem; justify-content: center; }
-.dpad .up { grid-area: 1 / 2; } .dpad .left { grid-area: 2 / 1; }
-.dpad .sel { grid-area: 2 / 2; } .dpad .right { grid-area: 2 / 3; }
-.dpad .down { grid-area: 3 / 2; }
-.r-note { color: var(--dim); font-size: .74rem; margin: 1rem 0 0; }
+/* The remote's styles live in remote-panel.css — one sheet for the one
+   component both pages mount. */
 
 .toast {
   position: fixed; left: 50%; bottom: calc(var(--bar) + 1rem); transform: translateX(-50%);
@@ -517,24 +486,6 @@ body { overflow: hidden; height: 100vh; }
   .bnow .mos { display: none; }
 }
 
-/* ---- two remotes behind one button ---------------------------------------
-   The receiver and the Roku each want a d-pad and a transport, and stacking
-   both is a long scroll on a phone. */
-.rtabs { display: flex; gap: .3rem; margin: 0 0 .7rem; }
-.rtabs button {
-  flex: 1; padding: .4rem .5rem; border-radius: .4rem; font-size: .85rem;
-  border: 1px solid var(--line-2); background: var(--panel); color: var(--muted);
-}
-.rtabs button.on { background: var(--panel-2); color: var(--fg); border-color: #55504a; }
-
-/* Typing on a d-pad is the worst part of any streaming box; ECP takes the
-   characters directly, so the remote offers a real field. */
-.rtype { display: flex; gap: .4rem; }
-.rtype input {
-  flex: 1; min-width: 0; padding: .4rem .55rem; font-size: .9rem;
-  border: 1px solid var(--line-2); border-radius: .4rem;
-  background: #171615; color: var(--fg);
-}
 
 
 /* The television among the outputs. Deliberately NOT a button: a station
@@ -544,10 +495,3 @@ body { overflow: hidden; height: 100vh; }
 .zone.info:hover { background: none; }
 .zone.info .txt small { white-space: normal; }
 
-/* A setting on the television that no amount of retrying here will change. */
-.r-limited {
-  margin: 0 0 .7rem; padding: .5rem .6rem; border-radius: .4rem;
-  background: #4a2a1216; border: 1px solid var(--warn); color: var(--warn);
-  font-size: .78rem; line-height: 1.45;
-}
-.r-limited b { color: var(--fg); font-weight: 600; }

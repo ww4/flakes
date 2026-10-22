@@ -429,6 +429,79 @@ class OnePageAtEveryWidth(unittest.TestCase):
                                 "resizing navigates, which drops the stream")
 
 
+class RemoteIsOnePanel(unittest.TestCase):
+    """The remote is ONE component, mounted by both pages.
+
+    It was two: a receiver-only sheet in index.html and a second copy in
+    desktop.html that had grown the Roku half. Nothing said they had to match,
+    so they did not — the phone had no Roku at all, which is the one place a
+    remote is actually used: "The phone should have the roku, obviously. What
+    am I sitting on the couch with" (Chris, 2026-10-21).
+
+    A third copy would have been the quick answer and the wrong one. These
+    guard the structural fix instead.
+    """
+
+    def test_both_pages_mount_it(self):
+        for page in PAGES:
+            html = (WEB / page).read_text()
+            self.assertIn("<remote-panel", html, f"{page} does not mount the remote")
+            self.assertIn(':app="this"', html, f"{page} mounts it without handing it the page")
+        for script in SCRIPTS:
+            js = (WEB / script).read_text()
+            self.assertIn('"remote-panel": remotePanel(', js,
+                          f"{script} never registers the component it mounts")
+
+    def test_neither_page_keeps_remote_markup_of_its_own(self):
+        """The failure this whole change is about: a second copy that nobody
+        remembers to update."""
+        for page in PAGES:
+            html = (WEB / page).read_text()
+            self.assertNotIn('class="remote-wrap"', html,
+                             f"{page} has grown its own remote again")
+            self.assertNotIn("rokuKey(", html, f"{page} drives the Roku outside the panel")
+
+    def test_the_styles_are_not_duplicated_back_into_the_page_sheets(self):
+        """Same failure, one layer down: the two copies of this sheet differed
+        only in how big a finger is, which is a viewport query, not a page."""
+        self.assertTrue((WEB / "remote-panel.css").exists(), "the shared sheet is gone")
+        for sheet in ("desktop.css", "remote.css"):
+            css = (WEB / sheet).read_text()
+            for rule in (".remote-wrap", ".dpad ", ".r-pair", ".rapp"):
+                self.assertNotIn(f"\n{rule}", css,
+                                 f"{sheet} styles {rule.strip()} again — it belongs to the panel")
+
+    def test_everything_the_panel_reaches_for_actually_exists(self):
+        """TemplateScope cannot see these: it only reads BARE identifiers, and
+        every call here goes through `app.`, which that check deliberately
+        skips. So a renamed method would be invisible to it and silent in the
+        browser — the exact failure mode TemplateScope exists to catch."""
+        html = (WEB / "remote-panel.html").read_text()
+        # strip comments: the markup explains deleted buttons by name
+        html = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+        used = set(re.findall(r"\bapp\.([A-Za-z_$][\w$]*)", html))
+        defined = set()
+        for script in ("shared.js", *SCRIPTS):
+            js = (WEB / script).read_text()
+            defined |= set(re.findall(r"^\s{2,8}(?:async\s+)?([A-Za-z_$][\w$]*)\s*[({:]", js, re.M))
+            # data keys share a line — `rokuPoll: 0, rokuText: "", rxOpen: false`
+            # — and a line-anchored pattern sees only the first of them.
+            defined |= set(re.findall(r"[\s,{]([A-Za-z_$][\w$]*)\s*:", js))
+        missing = used - defined
+        self.assertEqual(missing, set(),
+                         f"the remote calls {sorted(missing)}, which no page or shared.js defines")
+
+    def test_it_is_shipped(self):
+        """Fetched at runtime, so a missing file is a remote that never opens
+        and no build error anywhere."""
+        nix = (Path(os.environ["NETRADIO_NIX"]).read_text()
+               if os.environ.get("NETRADIO_NIX") else "")
+        if not nix:
+            self.skipTest("set NETRADIO_NIX")
+        for f in ("remote-panel.html", "remote-panel.css"):
+            self.assertIn(f, nix, f"{f} is never copied into the document root")
+
+
 class RokuRemote(unittest.TestCase):
     """A second remote in the same modal.
 
@@ -437,28 +510,125 @@ class RokuRemote(unittest.TestCase):
     """
 
     def test_the_page_can_drive_a_roku(self):
-        js = (WEB / "desktop.js").read_text()
-        html = (WEB / "desktop.html").read_text()
+        js = (WEB / "shared.js").read_text()
+        html = (WEB / "remote-panel.html").read_text()
         self.assertIn("rokuKey", js, "no way to press a Roku key")
         self.assertIn("roku/status", js, "the page never asks what the Roku is doing")
         self.assertIn("rokuSend", js, "no text entry — the worst part of any streaming box")
-        self.assertIn('@click="rokuKey(\'Home\')"', html, "no Home button")
-        self.assertIn('v-model="rokuText"', html, "no field to type into")
+        self.assertIn('@click="app.rokuKey(\'Home\')"', html, "no Home button")
+        self.assertIn('v-model="app.rokuText"', html, "no field to type into")
 
     def test_volume_is_never_sent_to_the_roku(self):
         """Its volume keys emit CEC/IR at the television, and the television is
         not in the audio path — the sound leaves it by optical to the receiver.
         A volume button here would look right and do nothing."""
-        js = (WEB / "desktop.js").read_text()
-        html = (WEB / "desktop.html").read_text()
+        js = (WEB / "shared.js").read_text()
+        html = (WEB / "remote-panel.html").read_text()
         for key in ("VolumeUp", "VolumeDown", "VolumeMute"):
-            self.assertNotIn(f"rokuKey('{key}')", html, f"{key} offered on the Roku remote")
+            self.assertNotIn(f"app.rokuKey('{key}')", html, f"{key} offered on the Roku remote")
             self.assertNotIn(f'roku/key/{key}', js, f"{key} sent to the Roku")
 
     def test_the_remote_is_hidden_when_there_is_no_roku(self):
-        html = (WEB / "desktop.html").read_text()
+        html = (WEB / "remote-panel.html").read_text()
         self.assertIn("site.hasRoku", html,
-                      "the Roku tab shows whether or not one is configured")
+                      "the Roku keys show whether or not one is configured")
+
+    def test_one_remote_rather_than_two_behind_tabs(self):
+        """The receiver owns the volume and the Roku owns the picture, so
+        turning down the show you are watching used to mean switching panes:
+        "maybe the real prize here would be a combined remote, that can control
+        the useful aspects of both" (Chris, 2026-10-21)."""
+        html = (WEB / "remote-panel.html").read_text()
+        js = (WEB / "shared.js").read_text()
+        self.assertNotIn("remoteTab", html, "the remote still splits into tabs")
+        self.assertNotIn("remoteTab", js, "the tab state outlived the tabs")
+        # The two halves have to be in one pane, not merely both present.
+        pair = html[html.index('class="r-pair"'):html.index('class="r-pair"') + 1600]
+        self.assertIn("app.rokuKey('Select')", pair, "the d-pad is not in the combined pane")
+        self.assertIn("app.volumeStep(", pair, "the volume is not beside the d-pad")
+
+    def test_the_buttons_this_hardware_cannot_use_are_gone(self):
+        """Both were dead ends on THIS equipment (Chris, 2026-10-21):
+
+        Find remote beeps a paired Roku remote, and the physical remote in this
+        house is an infrared knock-off the box has never heard of — "Find the
+        remote is useless to me". Wake sent PowerOn when Home already wakes it.
+        """
+        # Comments stripped first: the markup EXPLAINS why these are gone, and
+        # naming a key in that explanation is not shipping a button for it.
+        # The uncommented version of this failed on its own rationale.
+        html = re.sub(r"<!--.*?-->", "", (WEB / "remote-panel.html").read_text(), flags=re.S)
+        self.assertNotIn("FindRemote", html, "Find-the-remote is back, and still beeps nothing")
+        self.assertNotIn("PowerOn", html, "a Wake button is back; Home already does it")
+
+    def test_quick_launch_comes_from_the_box_not_from_this_file(self):
+        """Chris: "one for Jellyfin or Disney Plus etc that goes straight to the
+        app, like the real remote has". The box lists what is installed, so a
+        channel added tomorrow appears without anybody editing a page — and a
+        channel that was uninstalled does not offer a button that 404s."""
+        html = (WEB / "remote-panel.html").read_text()
+        js = (WEB / "shared.js").read_text()
+        self.assertIn("roku/apps", js, "nothing asks the box which apps it has")
+        self.assertIn('v-for="a in app.rokuApps"', html, "the app row is not built from the list")
+        self.assertIn("app.rokuLaunch(a)", html, "the app buttons launch nothing")
+        for hardcoded in ("592369", "291097", "Disney Plus"):
+            self.assertNotIn(hardcoded, html,
+                             f"{hardcoded!r} is written into the page instead of read from the box")
+
+    def test_opening_the_remote_before_site_json_lands_still_polls(self):
+        """`hasRoku` is false until site.json arrives; `hasRoom` defaults TRUE,
+        so the Remote button is on screen before the page knows there is a Roku
+        at all. Opening it in that window left the Roku half empty for good —
+        no apps, no model, a header reading "asleep" against a box that was
+        playing. Caught in a headless render on 2026-10-21, not by any test
+        here: the two tabs used to cover it, because changing tab polled again.
+        """
+        js = (WEB / "shared.js").read_text()
+        self.assertIn('"site.hasRoku"(', js,
+                      "nothing re-polls when the page learns there is a Roku")
+        # And the gate has to live in the methods, or the late call is the one
+        # that fires against a site with no Roku at all.
+        self.assertIn("if (!this.site.hasRoku) return;", method_body(js, "pollRoku"),
+                      "pollRoku asks a device the install does not have")
+
+    def test_a_launch_failure_is_caught_like_every_other_press(self):
+        """`call` throws; see RemoteErrorsReachSomebody for the bug this is."""
+        js = (WEB / "shared.js").read_text()
+        body = method_body(js, "rokuLaunch")
+        self.assertIn("catch", body, "a refused launch is an unhandled rejection")
+        self.assertIn("this.say(", body, "a refused launch says nothing to anybody")
+
+
+class DevicesAreNamedForWhatTheyAre(unittest.TestCase):
+    """Chris: "I want the labels to be explicit, the 'Living Room' device should
+    be the name of the receiver, like the Roku Express 4K+ label" (2026-10-21).
+
+    A room is where a box is, not what it is, and a list of places cannot tell
+    you which box a button is about to talk to. Both devices report a model
+    over their own API — the receiver answers "R-N301" — so the label is read
+    from the equipment rather than configured twice.
+    """
+
+    def test_the_label_is_the_model_with_the_configured_name_as_fallback(self):
+        js = (WEB / "shared.js").read_text()
+        for name, field in (("receiverLabel", "receiver.model"), ("rokuLabel", "roku.model")):
+            self.assertIn(f"{name}() {{", js, f"there is no {name}() to label anything with")
+            body = js[js.index(f"{name}() {{"):]
+            body = body[: body.index("\n")]
+            self.assertIn(field, body, f"{name} ignores the model the device reports")
+            self.assertIn("||", body, f"{name} has no fallback for a device that has not answered")
+
+    def test_the_model_survives_the_poll(self):
+        """Read off /status and kept. The poll REPLACES this object rather than
+        merging into it, so a field left out of the assignment is silently
+        blanked on the first refresh."""
+        js = (WEB / "shared.js").read_text()
+        body = method_body(js, "pollRoku")
+        self.assertIn("model: s.model", body, "the Roku's model is dropped on every poll")
+
+    def test_the_room_is_still_said_underneath(self):
+        js = (WEB / "desktop.js").read_text()
+        self.assertIn("this.where(", js, "the device list stopped saying which room it is in")
 
     def test_the_module_proxies_it_under_the_pages_own_vhost(self):
         """Loopback service, same access gate as the page — not a second port
@@ -480,6 +650,8 @@ def method_body(js: str, name: str) -> str:
     (2026-10-19). Same family as every other measurement that reported a pass
     by looking at the wrong region.
     """
+    if f"async {name}(" not in js:
+        raise AssertionError(f"there is no async {name}() in the script")
     start = js.index(f"async {name}(")
     rest = js[start:]
     nxt = re.search(r"\n    (?:async\s+)?[A-Za-z_$][\w$]*\s*\(", rest[1:])
@@ -497,7 +669,7 @@ class RemoteErrorsReachSomebody(unittest.TestCase):
     """
 
     def test_every_call_that_can_fail_is_caught(self):
-        js = (WEB / "desktop.js").read_text()
+        js = (WEB / "shared.js").read_text()
         for name in ("rokuKey", "rokuSend"):
             body = method_body(js, name)
             self.assertIn("catch", body,
@@ -507,7 +679,7 @@ class RemoteErrorsReachSomebody(unittest.TestCase):
     def test_the_page_does_not_test_a_returned_error_field(self):
         """The tell for the old shape. `call` either returns the body or
         throws, so `r.error` is a branch that can never be taken."""
-        js = (WEB / "desktop.js").read_text()
+        js = (WEB / "shared.js").read_text()
         # Scoped to the methods in question: a bare search for "r.error" also
         # matches inside `receiver.error` and `this.roku.error`, which are
         # ordinary state and nothing to do with this.
@@ -520,10 +692,10 @@ class RemoteErrorsReachSomebody(unittest.TestCase):
     def test_limited_mode_is_shown_before_a_button_is_pressed(self):
         """Nothing here can clear it: it is a setting on the television. Said
         once, up front, rather than one toast per refused press."""
-        js = (WEB / "desktop.js").read_text()
-        html = (WEB / "desktop.html").read_text()
+        js = (WEB / "shared.js").read_text()
+        html = (WEB / "remote-panel.html").read_text()
         self.assertIn("limited: !!s.limited", js, "status carries it but the page drops it")
-        self.assertIn('v-if="roku.limited"', html, "nothing warns before the first press")
+        self.assertIn('v-if="app.roku.limited"', html, "nothing warns before the first press")
         self.assertIn("Control by mobile apps", html, "the warning does not say where the setting is")
 
 
@@ -533,21 +705,49 @@ class WhatIsOnTheTelevision(unittest.TestCase):
     only ever name the app; Jellyfin is the server and knows the item."""
 
     def test_the_page_asks_and_shows_it(self):
-        js = (WEB / "desktop.js").read_text()
-        html = (WEB / "desktop.html").read_text()
+        js = (WEB / "shared.js").read_text()
+        desk = (WEB / "desktop.html").read_text()
         self.assertIn("admin/api/watching", js, "nothing asks what is playing")
         # It lives among the outputs, not beside the history: "it would make
         # more sense than having it in recently played songs list" (2026-10-19)
-        self.assertIn("tvZone()", html, "the television is not in the device list")
-        self.assertIn('class="zone info"', html,
+        self.assertIn("tvZone()", desk, "the television is not in the device list")
+        self.assertIn('class="zone info"', desk,
                       "it renders as a selectable zone — a station cannot be sent to a television")
 
-    def test_it_rides_the_existing_tick(self):
+    def test_the_names_and_the_clock_come_from_different_places(self):
+        """Two sources with complementary blind spots, verified live on
+        2026-10-21: the Roku's Jellyfin session reports
+        `SupportsRemoteControl: false` and `CanSeek: false` and no supported
+        commands, so Jellyfin can be ASKED nothing — but it still knows the
+        item is "Little Bear · S1E4–6 · Birthday Soup". /query/media-player
+        knows `position 135636 ms` of `duration 1447781 ms` and calls it
+        "Jellyfin". Neither is a progress bar with a title on it alone.
+
+        So the merge is the feature, and the clock must prefer the BOX:
+        Jellyfin's position is the last progress report a client sent and can
+        be ten seconds stale.
+        """
+        js = (WEB / "shared.js").read_text()
+        self.assertIn("roku/player", js, "nothing asks the box how far through it is")
+        body = js[js.index("tvNow() {"):]
+        body = body[: body.index("\n    },")]
+        self.assertIn("w.playing ? w.head", body, "the names are not taken from the media server")
+        self.assertIn("p.duration ? p.position", body,
+                      "the position does not prefer the box's own clock")
+        self.assertIn("p.live", body, "a live channel still gets a progress bar")
+
+    def test_it_rides_an_existing_poll_rather_than_a_timer_of_its_own(self):
         """A timer of its own would poll a media server every few seconds for a
-        panel most evenings will not show."""
-        js = (WEB / "desktop.js").read_text()
-        self.assertRegex(js, r"setInterval\(\(\) => \{[^}]*pollWatching\(\)",
-                         "pollWatching has its own timer instead of the 10 s tick")
+        panel most evenings will not show. The wide page takes it on the ten-
+        second tick, for the television's row in the device list; the phone has
+        no such row, so it comes along with the Roku poll while the remote is
+        open — otherwise the phone shows a progress bar with no title on it."""
+        desk = (WEB / "desktop.js").read_text()
+        shared = (WEB / "shared.js").read_text()
+        self.assertRegex(desk, r"setInterval\(\(\) => \{[^}]*pollWatching\(\)",
+                         "the wide page stopped taking it on the tick")
+        self.assertIn("this.pollWatching()", method_body(shared, "pollRoku"),
+                      "the phone never asks what is playing, so its remote has no title")
 
 
 class TrackNotices(unittest.TestCase):
