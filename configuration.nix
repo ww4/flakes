@@ -111,6 +111,7 @@ let hm = homelab-modules.nixosModules; in
     hm.unpackerr
     hm.lidarr
     hm.lazylibrarian
+    ./modules/services/calibre-web.nix      # ebook library + OPDS feed (the Kindle pulls from here over the LAN)
     ./modules/services/stacks.nix           # physical book catalog (sale scanner, flood losses)
     hm.aurral
     hm.forgejo                              # OIDC secret in homelab-values

@@ -884,6 +884,11 @@ let
             description: OCR document archive
             href: https://paperless.rosemaryacres.com
             icon: paperless.png
+        - Calibre-Web:
+            description: Ebook library — read in a browser, or OPDS to a reader
+            href: https://ebooks.rosemaryacres.com
+            icon: calibre-web.png
+            # Link-only: Homepage has no Calibre-Web widget.
         - Stacks:
             description: Book catalog — scan at a sale, browse the shelves
             href: https://books.rosemaryacres.com
