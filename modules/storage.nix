@@ -4,6 +4,14 @@
 { config, lib, pkgs, ... }:
 
 {
+  # Emergency headroom added by hand on 2026-10-23 (root disk / swap near-full
+  # incident, sentinel incident swap-headroom-1792792408) via `swapon
+  # /var/swapfile`. Persisted here so it survives a reboot instead of
+  # silently dropping back to just the 8.8G nvme0n1p3 partition.
+  swapDevices = [
+    { device = "/var/swapfile"; size = 8192; }
+  ];
+
   fileSystems = {
   # Physical drives
       # Reclaimed from /mnt/decom (3× Hitachi HUA723030 + 1× WD Green) on
