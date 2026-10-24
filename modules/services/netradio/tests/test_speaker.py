@@ -89,6 +89,15 @@ class VolumeCeilingAndWatchdog(unittest.TestCase):
     no longer reads what this service set, says so, and puts it back.
     """
 
+    def test_the_check_interval_bounds_how_long_the_room_is_loud(self):
+        """This number is not a sampling rate. The watchdog cannot prevent the
+        rise, only end it, so the interval IS the worst case a sleeping person
+        is exposed to. The third occurrence (10:47 p.m., 2026-10-22) was caught
+        and corrected in 120 ms — after sounding for up to ten seconds, which
+        at that hour was the entire harm."""
+        self.assertLessEqual(speaker.Mixer.WATCH_S, 3.0,
+                             "a rise can sound for this many seconds before anything stops it")
+
     def test_an_unexplained_rise_is_pulled_back_and_logged(self):
         m = FakeMixer(level=70)
         m.target = 70

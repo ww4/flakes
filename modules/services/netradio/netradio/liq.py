@@ -18,6 +18,22 @@ from netradio.config import Config
 HEADER = '''settings.log.stdout := true
 settings.log.file := false
 settings.log.level := 3
+# The server label, QUIETER than the rest. At level 3 it logs a pair of lines
+# for every connection — "New client unix socket" and "disconnected without
+# saying goodbye" — and the DJ opens one connection per station every 5 s. At
+# this library's station count that is about five a second, ~900,000 lines a
+# day, and it had eaten the journal: with `SystemMaxUse=1G` the box kept only
+# about a day and a half of history, so the evening a deploy restarted the
+# speakers was already vacuumed away by the time I went looking for it
+# (2026-10-24). Worse, the horizon MOVES while you read: the same query
+# returned 1,932 lines and then 0 fifteen minutes later, which reads exactly
+# like an event starting at that timestamp. It isn't one. It is the edge of
+# what is left.
+#
+# Level 2 keeps the server's warnings and errors and drops the arrival notice.
+# A short-lived connection per command is how this client works, so the
+# logging is the thing to fix, not the polling.
+settings.server.log.level := 2
 settings.server.socket := true
 settings.server.socket.path := {socket}
 settings.server.socket.permissions := 0o600

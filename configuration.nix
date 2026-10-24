@@ -407,6 +407,51 @@ let hm = homelab-modules.nixosModules; in
     };
   };
 
+  # --- who writes the sound card's mixer -------------------------------------
+  #
+  # Three times now the living-room level has been found at 100% with nothing
+  # that put it there: 2026-09-26, 03:14 on 2026-10-01 (which woke Chris), and
+  # 10:47 p.m. on 2026-10-22. The third one the speaker's own watchdog caught
+  # and logged — "mixer read 100% but this service set 0%" — so we know the
+  # WHEN exactly, and still not the WHO.
+  #
+  # Everything answerable from this side has been answered and it was all
+  # negative: netradio clamps every write to --max-volume, no other unit in
+  # this config calls amixer or alsactl, the `audio` group is empty, there was
+  # no restart, no deploy, no card reset in the kernel log, and asound.state
+  # has not been written since 2024. What is missing is not another theory —
+  # it is an instrument. ALSA records nothing about who set a control, and the
+  # writer is a fork-exec that is gone in milliseconds, so there is nothing
+  # left to look at by the time anything notices.
+  #
+  # This is the only thing that names it: the kernel records the pid, the
+  # command and the parent at the moment the control device is opened for
+  # writing, whether or not that process still exists. Read it with
+  #   sudo ausearch -k mixer -ts recent
+  #
+  # Cost and caveat, honestly: netradio's own watchdog reads the mixer through
+  # amixer, which opens the device read-write, so OUR polls land in this log
+  # too — at WATCH_S=2 that is about 43,000 records a day. They are the
+  # haystack, not the needle; filter them out by pid. The log is sized below
+  # to keep roughly a fortnight of that, which is long enough to span the gaps
+  # between occurrences so far (five days, three weeks). Narrowing the rule to
+  # `-F auid>=1000` would cut the noise to nothing, and would also miss the
+  # culprit entirely if it turns out to be a daemon — which is exactly what we
+  # cannot yet rule out. Completeness wins until there is one sighting.
+  security.auditd.enable = true;
+  security.audit = {
+    enable = true;
+    rules = [ "-w /dev/snd/controlC0 -p w -k mixer" ];
+  };
+  # Default is 8 MiB x 5, which at our own polling rate is about three days.
+  # 200 MiB spans a fortnight, which is longer than the gaps between the three
+  # occurrences so far (five days, then three weeks). Root has ~50 G free.
+  security.auditd.settings = {
+    max_log_file = 50;            # MiB per file
+    num_logs = 4;
+    max_log_file_action = "ROTATE";
+  };
+
   # Genre tags (beets lastgenre) and the DJ's similar-artist lookups. Read-only
   # use. Owner netradio; group users so the agent's catalogue jobs (as claude)
   # can read it too — a low-value key. Handed over via the secrets-inbox
