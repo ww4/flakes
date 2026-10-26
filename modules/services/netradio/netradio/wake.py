@@ -40,25 +40,54 @@ STREAM_PATH = re.compile(r"^/radio/([a-z0-9-]+)\.mp3$")
 
 
 class Liquidsoap:
-    """The Liquidsoap server over its unix socket. Replies end with an END line."""
+    """The Liquidsoap server over its unix socket. Replies end with an END line.
+
+    One connection, held open and reused for the process's lifetime, with every
+    command serialized through a lock rather than opened fresh per call. The one
+    `Liquidsoap` instance built in main() is shared by every StationDJ thread (26
+    stations as of 2026-10), each polling its queue every POLL=5s — a connect per
+    command was ~5 connects/sec of journald noise (2 lines each: liquidsoap logs
+    a plain close as "disconnected without saying goodbye") for no reason, since
+    the socket protocol is strictly request/reply and a kept-open connection
+    serves every caller just as correctly. Reconnects lazily on the next command
+    after any failure (liquidsoap restarting mid-deploy drops the socket)."""
 
     def __init__(self, path: Path, timeout: float = 5.0):
         self.path = path
         self.timeout = timeout
+        self._lock = threading.Lock()
+        self._sock: socket.socket | None = None
+
+    def _connect(self) -> socket.socket:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(self.timeout)
+        s.connect(str(self.path))
+        return s
 
     def command(self, cmd: str) -> str:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.settimeout(self.timeout)
-            s.connect(str(self.path))
-            s.sendall((cmd + "\n").encode())
-            buf = b""
-            while not re.search(rb"(^|\r?\n)END\r?\n", buf):
-                chunk = s.recv(4096)
-                if not chunk:
-                    break
-                buf += chunk
-        reply = buf.decode(errors="replace")
-        return re.sub(r"\r?\nEND\r?\n$", "", reply).strip()
+        with self._lock:
+            last_err: OSError | None = None
+            for _attempt in (1, 2):
+                if self._sock is None:
+                    self._sock = self._connect()
+                try:
+                    self._sock.sendall((cmd + "\n").encode())
+                    buf = b""
+                    while not re.search(rb"(^|\r?\n)END\r?\n", buf):
+                        chunk = self._sock.recv(4096)
+                        if not chunk:
+                            raise OSError("liquidsoap closed the connection")
+                        buf += chunk
+                    reply = buf.decode(errors="replace")
+                    return re.sub(r"\r?\nEND\r?\n$", "", reply).strip()
+                except OSError as e:
+                    last_err = e
+                    try:
+                        self._sock.close()
+                    except OSError:
+                        pass
+                    self._sock = None
+            raise last_err
 
 
 class Icecast:
