@@ -77,11 +77,27 @@ rec {
   };
 
   # The unprivileged half — the command surface driven day to day.
+  #
+  # ⚠️ DO NOT PUT `sudo` IN runtimeInputs. It was here until 2026-10-27 and it
+  # broke EVERY privileged subcommand on both hosts.
+  #
+  # writeShellApplication prepends runtimeInputs to PATH, so a `sudo` listed here
+  # SHADOWS /run/wrappers/bin/sudo — and the Nix store copy is not setuid:
+  #
+  #   store   /nix/store/…-sudo-1.9.17p2/bin/sudo   -r-xr-xr-x   exit 1
+  #   wrapper /run/wrappers/bin/sudo                -r-s--x--x   exit 0
+  #   "sudo: …/bin/sudo must be owned by uid 0 and have the setuid bit set"
+  #
+  # On NixOS the setuid wrapper is the ONLY sudo that can elevate, so netdiag.sh
+  # now calls it by absolute path and sudo is deliberately absent from this list.
+  # Measured, not assumed: inside netdiag every `priv` call failed while the same
+  # command from an interactive shell returned exit 0 — which is what made it look
+  # like a sudo-allowlist problem for two months.
   netdiag = pkgs.writeShellApplication {
     name = "netdiag";
     runtimeInputs = (with pkgs; [
       coreutils gnused gnugrep gawk findutils
-      iproute2 jq nmap curl avahi sudo net-snmp miniupnpc libnatpmp
+      iproute2 jq nmap curl avahi net-snmp miniupnpc libnatpmp
       ffmpeg python3
     ]) ++ [ wsdiscover legs ];
     text = ''
