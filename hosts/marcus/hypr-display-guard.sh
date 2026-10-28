@@ -123,9 +123,47 @@ edp_enabled() {
   printf '%s' "$out" | jq -e 'any(.[]; .name == "eDP-1")' >/dev/null 2>&1
 }
 
-# Non-zero if the keyword did not apply, so callers can actually tell.
+# Move a monitors.conf that disables eDP-1 out of the way. Needed before any
+# `reload`, because reload re-reads that file and would re-apply the disable.
+# Moves, never deletes.
+neutralise_conf() {
+  if [ -f "$CONF" ] && grep -qiE '^[[:space:]]*monitor[[:space:]]*=[[:space:]]*eDP-1[[:space:]]*,[[:space:]]*disable' "$CONF"; then
+    mv -- "$CONF" "$CONF.broken-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || return 1
+    : > "$CONF"
+    echo "hypr-display-guard: monitors.conf disabled eDP-1; moved it aside." >&2
+  fi
+  return 0
+}
+
+# ⚠️ GET eDP-1 BACK, AND VERIFY IT ACTUALLY CAME BACK.
+#
+# This used to be a single `keyword monitor` call whose result was never checked.
+# Measured on marcus 2026-10-27 with a 1 Hz sampler: after
+# `hyprctl keyword monitor "eDP-1,disable"`, the guard issued
+# `keyword monitor eDP-1,preferred,auto,1.25` roughly 25 times over 2m07s and the
+# output stayed `enabled=disabled dpms=Off bl_power=4 actual=0` the entire time.
+# Zero effect — not slow, INEFFECTIVE. Hyprland does not re-attach an output that
+# was explicitly disabled just because a new rule for it arrives.
+#
+# So: try the cheap thing, CHECK, then escalate to a full `reload`, which
+# re-evaluates every monitor rule from scratch. Order matters — neutralise the
+# config BEFORE reloading, or reload re-applies the very disable we are undoing.
 force_edp_on() {
-  "$HC" keyword monitor "$EDP" >/dev/null 2>&1
+  "$HC" keyword monitor "$EDP" >/dev/null 2>&1 || true
+  sleep 1
+  if edp_enabled; then return 0; fi
+
+  # The keyword did not take. Escalate.
+  neutralise_conf || true
+  "$HC" keyword monitor "$EDP" >/dev/null 2>&1 || true
+  "$HC" reload >/dev/null 2>&1 || true
+  sleep 2
+  if edp_enabled; then
+    echo "hypr-display-guard: keyword alone failed; recovered via reload." >&2
+    return 0
+  fi
+
+  return 1
 }
 
 complain_unreachable() {
@@ -243,9 +281,23 @@ case "${1---daemon}" in
     # change, which socket2 does not report. Cost is one hyprctl per 5 s, and
     # only when the invariant is already satisfied does it do nothing else.
     (
+      # Backoff matters now that enforce can escalate to `hyprctl reload`:
+      # without it, an unfixable state would trigger a reload every 5 s forever.
+      # (`reload` does not re-run exec-once, so it cannot spawn a second guard.)
+      fails=0
       while :; do
         sleep 5
-        enforce || true
+        if enforce; then
+          fails=0
+        else
+          fails=$((fails + 1))
+          if [ "$fails" -ge 3 ]; then
+            echo "hypr-display-guard: could not restore eDP-1 in 3 attempts;" >&2
+            echo "hypr-display-guard: backing off. Super+Shift+D forces a reset." >&2
+            sleep 60
+            fails=0
+          fi
+        fi
       done
     ) &
     SWEEP=$!
