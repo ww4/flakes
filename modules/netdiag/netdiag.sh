@@ -64,12 +64,72 @@ netdiag <subcommand> [args]
 EOF
 }
 
+# On NixOS the ONLY sudo that can elevate is the setuid wrapper. The copy in the
+# Nix store is -r-xr-xr-x and exits 1 with "must be owned by uid 0 and have the
+# setuid bit set", so we name the wrapper by absolute path rather than trusting
+# PATH. See the ⚠️ in packages.nix for the two months this cost.
+SUDO=/run/wrappers/bin/sudo
+
+# priv — run one netdiag-priv subcommand, and when it fails SAY WHY.
+#
+# ⚠️ This function used to be `sudo -n netdiag-priv "$@" 2>/dev/null ||` followed
+# by "was refused … the sudo allowlist entry is in modules/agent/sudo.nix". Both
+# halves were actively harmful:
+#   - `2>/dev/null` discarded the ONE line that identified the real fault.
+#   - EVERY non-zero exit was reported as a permissions refusal, so a usage error
+#     (exit 2), a missing tool, or a non-setuid sudo all pointed the reader at an
+#     allowlist file that was already correct.
+# `netdiag survey` therefore blanked five of its six sections behind a confident
+# wrong diagnosis — the exact "an empty result has two causes" failure the tool
+# exists to prevent, manufactured by the tool itself. Never reintroduce either.
+#
+# stdout stays clean: callers capture it with $(…) and <(…). Diagnostics go to
+# stderr only.
 priv() {
-  sudo -n netdiag-priv "$@" 2>/dev/null || {
-    echo "$PROG: 'sudo netdiag-priv $1' was refused." >&2
-    echo "$PROG: the sudo allowlist entry is in modules/agent/sudo.nix." >&2
-    return 1
-  }
+  # ${1-} not $1: this runs under `set -u` (writeShellApplication adds
+  # `set -euo pipefail`), so a bare $1 would abort on a no-arg call.
+  local sub=${1-} err rc=0
+
+  # Already root (netwatch's tiers run as root) — sudo is a pointless hop that
+  # can only add failure modes.
+  #
+  # Written as a full `if`, NOT `(( rc == 0 )) && return 0`: under `set -e` a
+  # failing AND-list is itself a failed command and would exit the script.
+  if (( EUID == 0 )); then
+    netdiag-priv "$@" || rc=$?
+    if (( rc == 0 )); then
+      return 0
+    fi
+    echo "$PROG: 'netdiag-priv $sub' failed (exit $rc), running as root." >&2
+    return "$rc"
+  fi
+
+  err=$(mktemp -t netdiag-priv-err.XXXXXX)
+  "$SUDO" -n netdiag-priv "$@" 2>"$err" || rc=$?
+  if (( rc == 0 )); then
+    rm -f "$err"
+    return 0
+  fi
+
+  {
+    echo "$PROG: 'netdiag-priv $sub' FAILED (exit $rc). The real error was:"
+    sed 's/^/    /' "$err"
+    # Only name a cause we can actually see in the error text.
+    if grep -q 'setuid' "$err"; then
+      echo "$PROG: that is a NON-SETUID sudo, so it can never elevate."
+      echo "$PROG: the only usable sudo on NixOS is $SUDO."
+      echo "$PROG: this is a packaging bug, NOT a permissions problem."
+    elif grep -qE 'not allowed|may not run|password is required|no tty' "$err"; then
+      echo "$PROG: sudo DENIED this command — that IS a permissions problem."
+      echo "$PROG: the allowlist entry is in modules/agent/sudo.nix."
+    elif (( rc == 2 )); then
+      echo "$PROG: exit 2 = netdiag-priv rejected the ARGUMENTS, not a privilege"
+      echo "$PROG: failure. Run 'netdiag-priv' with no arguments for its usage."
+    fi
+  } >&2
+
+  rm -f "$err"
+  return "$rc"
 }
 
 iface_default() { ip -j route show default 2>/dev/null | jq -r '.[0].dev // empty'; }

@@ -120,6 +120,19 @@ standard and these tools cannot see it).
 
 ## The things worth knowing
 
+**⚠️ If a privileged subcommand fails, read the error — it now tells you which
+of three things went wrong.** Until 2026-10-27 `priv()` swallowed stderr and
+reported every failure as `was refused … the sudo allowlist entry is in
+modules/agent/sudo.nix`. That sentence was wrong in the only case anyone ever
+hit: `sudo` was in netdiag's `runtimeInputs`, so the **non-setuid Nix store sudo
+shadowed `/run/wrappers/bin/sudo`** and could not elevate at all. The allowlist
+was correct the whole time. `netdiag survey` blanked five of its six sections
+behind that confident wrong diagnosis — on both hosts, until a real service call
+needed it. The tool now names a cause only when it can see one in the error
+text, and distinguishes **a non-setuid sudo** (packaging bug) from **sudo
+denying the command** (allowlist) from **exit 2** (bad arguments, not privilege).
+Adding `sudo` back to `runtimeInputs` reintroduces the whole thing.
+
 **`switchport` is the one that closes the old wound.** "Which switch port is
 this camera on" was unanswerable all afternoon at Craigmyle, because the switch
 holding the port history was the one the storm destroyed. The SNMP bridge
