@@ -18,11 +18,28 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
 API = "https://api.weather.gov/alerts/active"
+
+# ⚠️ api.weather.gov 500s on individual requests fairly regularly — the point
+# query answered 500, 200, 200 on three back-to-back probes during one such
+# patch on 2026-10-11. At one attempt per run that blip fails the unit, so
+# layer 1 silently skips a cycle and the sentinel pages about an outage that is
+# not ours; it did exactly that five times between 10-09 and 10-11.
+#
+# A retry here is NOT a way to keep the unit green. A SUSTAINED NWS outage must
+# still fail loudly, because layer 1 going dark during severe weather is the one
+# thing in this package worth waking him for. So this absorbs a single blip and
+# nothing more — if every attempt fails, the caller still returns 1.
+#
+# Budget: 3 attempts x 20 s timeout + 7 s of backoff = 67 s worst case, inside
+# both the unit's TimeoutStartSec=2min and the timer's 3-minute period.
+FETCH_ATTEMPTS = 3
+FETCH_BACKOFF = (2, 5)   # slept after attempt 1 and attempt 2 respectively
 
 # Pierces quiet hours. Physical danger only.
 CRITICAL_EVENTS = {
@@ -103,8 +120,20 @@ def fetch(lat: float, lon: float, *, user_agent: str, timeout: int = 20) -> list
         "User-Agent": user_agent,          # NWS requires a contactable UA
         "Accept": "application/geo+json",
     })
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
+    for attempt in range(1, FETCH_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            break
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+            # A 4xx is OUR fault and permanent — a rejected User-Agent or a
+            # malformed point. Retrying cannot fix it, so fail on the first one
+            # rather than spending the budget and hammering NWS for nothing.
+            status = getattr(exc, "code", None)
+            retryable = status is None or status >= 500
+            if not retryable or attempt == FETCH_ATTEMPTS:
+                raise
+            time.sleep(FETCH_BACKOFF[attempt - 1])
     return [f.get("properties") or {} for f in payload.get("features") or []]
 
 

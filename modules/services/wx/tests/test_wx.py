@@ -13,6 +13,7 @@ import os
 import sys
 import tempfile
 import unittest
+import urllib.error
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -551,6 +552,60 @@ class TestLocation(unittest.TestCase):
         with mock.patch.dict(os.environ,
                              {"WX_LOCATION_FILE": "/nonexistent/wx-location"}):
             self.assertFalse(cli.layer1_ready())
+
+
+class TestNwsFetchRetry(unittest.TestCase):
+    """api.weather.gov 500s on single requests; a sustained outage must NOT be
+    swallowed. These tests pin both halves of that — the only way to tell the
+    two apart without waiting for the next real NWS wobble."""
+
+    def _ok(self, features=()):
+        resp = mock.MagicMock()
+        resp.read.return_value = json.dumps({"features": list(features)}).encode()
+        resp.__enter__.return_value = resp
+        return resp
+
+    def _http(self, code):
+        return urllib.error.HTTPError(
+            "https://api.weather.gov/", code, "boom", {}, None)
+
+    def test_one_500_then_success_is_absorbed(self):
+        feature = {"properties": {"event": "Tornado Warning", "id": "x"}}
+        with mock.patch("wx.nws.time.sleep") as slept, \
+             mock.patch("wx.nws.urllib.request.urlopen",
+                        side_effect=[self._http(500), self._ok([feature])]):
+            out = nws.fetch(38.4, -84.8, user_agent="t")
+        self.assertEqual([a["event"] for a in out], ["Tornado Warning"])
+        slept.assert_called_once_with(nws.FETCH_BACKOFF[0])
+
+    def test_sustained_outage_still_raises(self):
+        # The unit MUST go red here. Layer 1 dark during severe weather is the
+        # one failure worth waking him for, so a quiet empty list is wrong.
+        with mock.patch("wx.nws.time.sleep"), \
+             mock.patch("wx.nws.urllib.request.urlopen",
+                        side_effect=[self._http(500)] * nws.FETCH_ATTEMPTS) as op:
+            with self.assertRaises(urllib.error.HTTPError):
+                nws.fetch(38.4, -84.8, user_agent="t")
+        self.assertEqual(op.call_count, nws.FETCH_ATTEMPTS)
+
+    def test_4xx_is_permanent_and_not_retried(self):
+        # A rejected User-Agent or a malformed point cannot be fixed by waiting,
+        # and retrying it just hammers NWS.
+        with mock.patch("wx.nws.time.sleep") as slept, \
+             mock.patch("wx.nws.urllib.request.urlopen",
+                        side_effect=self._http(403)) as op:
+            with self.assertRaises(urllib.error.HTTPError):
+                nws.fetch(38.4, -84.8, user_agent="t")
+        self.assertEqual(op.call_count, 1)
+        slept.assert_not_called()
+
+    def test_backoff_budget_fits_the_unit_timeout(self):
+        # TimeoutStartSec=2min in the unit, and the timer fires every 3 min. If
+        # the attempt budget ever outgrows that, the unit starts failing on
+        # TIMEOUT instead of on the upstream error and the cause goes invisible.
+        worst = nws.FETCH_ATTEMPTS * 20 + sum(nws.FETCH_BACKOFF)
+        self.assertLess(worst, 120)
+        self.assertEqual(len(nws.FETCH_BACKOFF), nws.FETCH_ATTEMPTS - 1)
 
 
 if __name__ == "__main__":  # pragma: no cover
