@@ -131,6 +131,26 @@ class Settings(BaseSettings):
     btc_sigma_k: float = 3.0                 # move must exceed this many sigmas of recent churn
     btc_min_move_pct: float = 1.2            # ...and the 24h mean must have shifted at least this %
     btc_min_hours: int = 8                   # need this many hourly buckets before firing (cold start)
+
+    # ── the STEP detector (added 2026-10-21) ──────────────────────────────
+    # The sigma/disp test above measures a 3-HOUR window, so a fast step is
+    # nearly invisible to it: on 2026-10-20 the price rose 2.20% in 42 minutes
+    # and held, and the closest that test ever came was z=2.34 against a bar of
+    # 3.0 one hour later. By +3h the window had slid past the step entirely and
+    # the 3h return was NEGATIVE. Replayed over 135 h of real history it would
+    # have fired zero times.
+    #
+    # Chris: "When we have a short duration spike like this, we should register
+    # that as an input to the decision... But don't immediately report until we
+    # see if the price stays up over the next period."
+    #
+    # So this arms a CANDIDATE and reports nothing. Confirmation happens later,
+    # and only if the move was retained — which is what keeps a blip quiet.
+    btc_step_pct: float = 1.5               # a move this big inside the window arms a candidate
+    btc_step_window_s: float = 75 * 60      # ...measured over at most this long
+    btc_step_confirm_s: float = 60 * 60     # wait this long before judging whether it held
+    btc_step_retain_frac: float = 0.6       # this much of the move must still be present to fire
+    btc_step_max_age_s: float = 6 * 3600    # abandon a candidate never confirmed by now
     btc_reexplain_after_s: float = 12 * 3600  # a standing move re-explained no more often than this
     btc_history_keep_s: float = 26 * 3600
     btc_sample_min_gap_s: float = 480       # record a sample at least this often even if price is flat

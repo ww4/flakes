@@ -10,10 +10,19 @@ new leg, not a plateau we've already explained.
 Flow (cli `btc-watch`, on switchboard-btcwatch.timer):
   1. sample the current price (mempool /api/v1/prices) -> append to
      <state>/btc-history.json, prune > history_keep_s.
-  2. detect(): over the trailing window, the sustained move from the window's
-     low (for an up-spike) or high (down) to now, requiring the move to have
-     been RETAINED (>= sustain_frac of it still present) so a reverted blip
-     doesn't count.
+  2. detect(): a regime-adaptive test over the trailing 3h — a >= sigma_k
+     outlier against 24h hourly volatility AND a >= min_move_pct mean shift.
+     ⚠️ An earlier design used a `sustain_frac` retention check; it was replaced
+     by the sigma/disp test and `sustain_frac` never existed in the code. The
+     line describing it survived here until 2026-10-21 and was simply false.
+  2b. detect_step(): the sigma/disp test measures over 3 HOURS, so a fast step
+     is nearly invisible to it — 2026-10-20's +2.20% in 42 minutes peaked at
+     z=2.34 against a 3.0 bar, and by +3h the window had slid past the step and
+     the 3h return was NEGATIVE. Replayed over 135h of real history the slow
+     test would have fired zero times. So a short, large move now ARMS A
+     CANDIDATE and reports nothing; it is confirmed one hour later only if the
+     move was retained. That is what keeps a reverted blip quiet, and it is the
+     retention idea the stale docstring above was reaching for.
   3. fire only if it's a new leg vs the last explained reference (a further
      threshold move in the same direction, a direction flip, or the prior
      explanation aged out) -> one claude -p call -> store as the "btc-move"
@@ -149,6 +158,134 @@ def detect(hist: list[tuple[float, float]], now_ts: float, *, window_h: int,
     return Move("down", abs(pct), now, then, now, window_h * 60)
 
 
+def detect_step(hist: list[tuple[float, float]], now_ts: float, *,
+                step_pct: float, window_s: float) -> Move | None:
+    """The largest retained move inside a SHORT trailing window.
+
+    Deliberately not statistical. The sigma/disp test is regime-adaptive and
+    that is right for a grind, but a fast step defeats it twice over: the step
+    sits in one or two hourly buckets, and the same large return inflates the
+    very sigma it is scored against. Here we just ask "did price move this much,
+    this fast" -- and because firing on that alone would be noisy, the answer
+    only ever arms a candidate (see step_tick).
+    """
+    window = [(t, p) for t, p in hist if t >= now_ts - window_s]
+    if len(window) < 3:
+        return None
+    now_p = window[-1][1]
+    lo_t, lo_p = min(window, key=lambda x: x[1])
+    hi_t, hi_p = max(window, key=lambda x: x[1])
+    # Only count a move whose extreme came BEFORE now, otherwise "now" is the
+    # extreme and there is no move yet, just a new high.
+    up = (now_p - lo_p) / lo_p * 100 if lo_p > 0 and lo_t < now_ts else 0.0
+    down = (hi_p - now_p) / hi_p * 100 if hi_p > 0 and hi_t < now_ts else 0.0
+    if up >= step_pct and up >= down:
+        return Move("up", round(up, 2), lo_p, now_p, now_p, (now_ts - lo_t) / 60)
+    if down >= step_pct:
+        return Move("down", round(down, 2), now_p, hi_p, now_p, (now_ts - hi_t) / 60)
+    return None
+
+
+def _candidate_path(settings: Settings) -> Path:
+    # NOT btc-pending-ntfy.json -- that one defers a notification through quiet
+    # hours. This defers the DECISION itself, which is a different thing.
+    return settings.state_dir / "btc-step-candidate.json"
+
+
+def _load_candidate(settings: Settings) -> dict | None:
+    try:
+        return json.loads(_candidate_path(settings).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _save_candidate(settings: Settings, cand: dict | None) -> None:
+    p = _candidate_path(settings)
+    if cand is None:
+        p.unlink(missing_ok=True)
+        return
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.part")
+    tmp.write_text(json.dumps(cand))
+    tmp.replace(p)
+
+
+def retained_frac(cand: dict, ref_price: float) -> float:
+    """How much of the armed move is still present.
+
+    Measured from the PRE-step price, not from the peak: a step from 81,331 to
+    83,119 sitting at 82,900 has retained (82,900-81,331)/(83,119-81,331) = 88%,
+    which is "it held". From the peak the same thing reads as a 12% retracement,
+    which is the wrong frame.
+    """
+    start, peak = float(cand["start_price"]), float(cand["peak_price"])
+    span = peak - start
+    if span == 0:
+        return 0.0
+    return (ref_price - start) / span if cand["direction"] == "up" else (start - ref_price) / (start - peak)
+
+
+def hold_price(hist: list[tuple[float, float]], armed_ts: float, now_ts: float) -> float | None:
+    """The price to judge retention against: the MEAN across the hold window.
+
+    ⚠️ NOT the spot price at the confirming tick. Replaying the real 2026-10-20
+    spike, the candidate armed at 10:16 and held cleanly for an hour -- 82,846 /
+    82,928 / 83,132 / 83,077 / 82,956 -- and then the single sample at 11:19,
+    the first past the confirm window, happened to be a dip to 82,322. On that
+    one reading retention was 55% against a 60% bar and the candidate was
+    DROPPED, discarding a move that had plainly held. The mean over the same
+    window is 82,876 = 86% retained.
+
+    "Did the price stay up over the next period" is a claim about a period, so
+    it has to be measured over one. A spot sample at an arbitrary instant is
+    the same class of error as judging a drive by one slow read.
+    """
+    window = [p for t, p in hist if armed_ts <= t <= now_ts]
+    if not window:
+        return None
+    return sum(window) / len(window)
+
+
+def step_tick(settings: Settings, hist: list[tuple[float, float]], now_ts: float,
+              price: float) -> tuple[Move | None, str | None]:
+    """Advance the candidate state machine. Returns (confirmed_move, status).
+
+    Never reports on the way in. A step arms; only retention fires.
+    """
+    cand = _load_candidate(settings)
+
+    if cand is not None:
+        if now_ts - float(cand["armed_ts"]) > settings.btc_step_max_age_s:
+            _save_candidate(settings, None)
+            return None, "candidate expired unconfirmed"
+        if now_ts - float(cand["armed_ts"]) < settings.btc_step_confirm_s:
+            return None, (f"candidate held ({cand['direction']} {cand['pct']}%, "
+                          f"{int((settings.btc_step_confirm_s - (now_ts - float(cand['armed_ts']))) / 60)}m to go)")
+        ref = hold_price(hist, float(cand["armed_ts"]), now_ts)
+        frac = retained_frac(cand, ref if ref is not None else price)
+        if frac < settings.btc_step_retain_frac:
+            _save_candidate(settings, None)
+            return None, f"candidate dropped — only {frac * 100:.0f}% retained"
+        _save_candidate(settings, None)
+        minutes = (now_ts - float(cand["start_ts"])) / 60
+        move = Move(cand["direction"], float(cand["pct"]),
+                    min(float(cand["start_price"]), price),
+                    max(float(cand["start_price"]), price), price, minutes)
+        return move, f"candidate CONFIRMED — {frac * 100:.0f}% retained"
+
+    step = detect_step(hist, now_ts, step_pct=settings.btc_step_pct,
+                       window_s=settings.btc_step_window_s)
+    if step is None:
+        return None, None
+    start_p = step.lo if step.direction == "up" else step.hi
+    _save_candidate(settings, {
+        "direction": step.direction, "pct": step.pct,
+        "start_price": start_p, "peak_price": price,
+        "start_ts": now_ts - step.minutes * 60, "armed_ts": now_ts,
+    })
+    return None, f"candidate ARMED — {step.direction} {step.pct}% in {int(step.minutes)}m, not reporting yet"
+
+
 def is_new_leg(move: Move, last: dict | None, *, threshold_pct: float, reexplain_after_s: float, now_ts: float) -> bool:
     """Should this move trigger a (costly) explanation? Keeps a plateau quiet."""
     if last is None:
@@ -259,13 +396,28 @@ async def run(settings: Settings, now_ts: float | None = None) -> dict:
 
     move = detect(hist, now_ts, window_h=settings.btc_window_h, sigma_k=settings.btc_sigma_k,
                   min_move_pct=settings.btc_min_move_pct, min_hours=settings.btc_min_hours)
+
+    # The step path runs only when the slow test is quiet, and it is allowed to
+    # produce a move ONLY by confirming a candidate armed on an earlier tick.
+    # Arming is deliberately invisible to the caller except as `step` status --
+    # that is the "register it, but don't report yet" Chris asked for.
+    step_status = None
     if move is None:
-        return {"ok": True, "price": price, "move": None}
+        move, step_status = step_tick(settings, hist, now_ts, price)
+        if step_status:
+            log.info("btc-watch: %s", step_status)
+
+    if move is None:
+        out = {"ok": True, "price": price, "move": None}
+        if step_status:
+            out["step"] = step_status
+        return out
 
     last = _load_move(settings)
     if not is_new_leg(move, last, threshold_pct=settings.btc_min_move_pct,
                       reexplain_after_s=settings.btc_reexplain_after_s, now_ts=now_ts):
-        return {"ok": True, "price": price, "move": f"{move.direction} {move.pct}%", "explained": "already"}
+        return {"ok": True, "price": price, "move": f"{move.direction} {move.pct}%",
+                "explained": "already", **({"step": step_status} if step_status else {})}
 
     log.info("btc-watch: %s %.1f%% (%s->%s over %dm) — explaining", move.direction, move.pct,
              _dollars(move.lo), _dollars(move.now), int(move.minutes))
@@ -277,7 +429,8 @@ async def run(settings: Settings, now_ts: float | None = None) -> dict:
     _store_move(settings, move, text, now_ts)
     write_feed(settings, move, text, now_ts)
     _notify(settings, move, text)
-    return {"ok": True, "price": price, "move": f"{move.direction} {move.pct}%", "explained": "new", "text": text[:120]}
+    return {"ok": True, "price": price, "move": f"{move.direction} {move.pct}%",
+            "explained": "new", "text": text[:120], **({"step": step_status} if step_status else {})}
 
 
 def _move_path(settings: Settings) -> Path:

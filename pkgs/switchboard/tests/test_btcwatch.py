@@ -227,3 +227,128 @@ def test_ensure_feed_writes_empty_feed_when_missing(tmp_path):
 def test_ensure_feed_noop_when_disabled(tmp_path):
     from pathlib import Path
     btcwatch.ensure_feed(Settings(state_dir=tmp_path, btc_feed_path=Path("")))  # must not raise
+
+
+# ── the step detector (2026-10-21) ─────────────────────────────────────────
+# Chris saw a visible step on the chart and no report. The sigma/disp test was
+# behaving correctly; it simply cannot see a 42-minute move measured over 3
+# hours. These cover the arm → hold → confirm/drop machine that replaced it.
+
+import json
+import pathlib
+
+
+def _settings(tmp_path, **kw):
+    s = Settings(state_dir=tmp_path, answers_dir=tmp_path, btc_feed_path=pathlib.Path(""))
+    for k, v in kw.items():
+        object.__setattr__(s, k, v) if getattr(type(s), "model_config", None) is None else setattr(s, k, v)
+    return s
+
+
+def minutely(now, prices, gap=600.0):
+    """prices oldest->newest, one every `gap` seconds ending at `now`."""
+    n = len(prices)
+    return [(now - (n - 1 - i) * gap, float(p)) for i, p in enumerate(prices)]
+
+
+def test_step_detects_a_fast_move_the_slow_test_misses():
+    now = 1_000_000.0
+    # +2.2% inside ~40 min, the real 2026-10-20 shape
+    hist = minutely(now, [81331, 81350, 81400, 82600, 83119], gap=600)
+    step = btcwatch.detect_step(hist, now, step_pct=1.5, window_s=75 * 60)
+    assert step and step.direction == "up" and step.pct > 2.0
+
+
+def test_step_ignores_a_slow_grind_of_the_same_size():
+    now = 1_000_000.0
+    # same +2.2%, but spread over 12 hours — not a step, must not arm
+    hist = [(now - (12 - i) * H, 81331 * (1 + 0.022 * i / 12)) for i in range(13)]
+    assert btcwatch.detect_step(hist, now, step_pct=1.5, window_s=75 * 60) is None
+
+
+def test_step_arms_a_candidate_and_reports_NOTHING(tmp_path):
+    s = _settings(tmp_path)
+    now = 1_000_000.0
+    hist = minutely(now, [81331, 81350, 81400, 82600, 83119])
+    move, status = btcwatch.step_tick(s, hist, now, 83119.0)
+    assert move is None, "arming must never report"
+    assert "ARMED" in status
+    assert btcwatch._load_candidate(s) is not None
+
+
+def test_step_confirms_only_after_the_move_is_retained(tmp_path):
+    s = _settings(tmp_path)
+    now = 1_000_000.0
+    hist = minutely(now, [81331, 81350, 81400, 82600, 83119])
+    btcwatch.step_tick(s, hist, now, 83119.0)
+
+    # too early: still holding, nothing reported
+    move, status = btcwatch.step_tick(s, hist, now + 1800, 83000.0)
+    assert move is None and "to go" in status
+
+    # an hour later, price held → confirm (the hold window must carry the samples)
+    hist = hist + [(now + k * 600, p) for k, p in
+                   enumerate([83000, 82900, 83050, 82980, 83010, 82950], start=1)]
+    move, status = btcwatch.step_tick(s, hist, now + 3700, 82950.0)
+    assert move is not None and move.direction == "up"
+    assert "CONFIRMED" in status
+    assert btcwatch._load_candidate(s) is None, "candidate must be consumed"
+
+
+def test_step_drops_a_blip_that_came_back(tmp_path):
+    s = _settings(tmp_path)
+    now = 1_000_000.0
+    hist = minutely(now, [81331, 81350, 81400, 82600, 83119])
+    btcwatch.step_tick(s, hist, now, 83119.0)
+    # The hold window has to contain the samples that came back down — retention
+    # is judged over the period, so the period has to be in the history.
+    hist = hist + [(now + k * 600, p) for k, p in
+                   enumerate([82400, 81900, 81600, 81500, 81480, 81500], start=1)]
+    move, status = btcwatch.step_tick(s, hist, now + 3700, 81500.0)   # gave it all back
+    assert move is None and "dropped" in status
+    assert btcwatch._load_candidate(s) is None
+
+
+def test_retained_frac_is_measured_from_the_pre_step_price(tmp_path):
+    # 81331 -> 83119, now 82900. From the START that is 88% retained ("it held").
+    # From the PEAK it would read as a 12% retracement, which is the wrong frame.
+    cand = {"direction": "up", "pct": 2.2, "start_price": 81331.0, "peak_price": 83119.0,
+            "start_ts": 0, "armed_ts": 0}
+    assert 0.85 < btcwatch.retained_frac(cand, 82900.0) < 0.90
+
+
+def test_the_real_2026_10_20_spike_would_have_been_reported(tmp_path):
+    """Replay of the actual history that prompted this. The slow test fired zero
+    times across 135 h; the step path must arm on the spike and confirm after."""
+    s = _settings(tmp_path)
+    raw = json.loads((pathlib.Path(__file__).parent / "btc-history-2026-10-20.json").read_text())
+    hist = [(float(t), float(p)) for t, p in raw]
+    armed = confirmed = None
+    for i, (t, p) in enumerate(hist):
+        move, status = btcwatch.step_tick(s, hist[:i + 1], t, p)
+        if status and "ARMED" in status and armed is None:
+            armed = t
+        if move is not None:
+            confirmed = (t, move)
+            break
+    assert armed is not None, "the real spike must arm a candidate"
+    assert confirmed is not None, "and must confirm once it held"
+    t, move = confirmed
+    assert move.direction == "up" and move.pct >= 1.5
+    assert 0 < t - armed <= 2 * 3600, "confirmation should land within a couple of hours"
+
+
+def test_the_slow_detector_really_does_miss_the_real_spike():
+    """The claim that motivated the step detector, asserted against real data.
+
+    A synthetic series cannot carry this: hand-made history has a near-zero
+    sigma, so the slow test fires on almost anything and "it stays quiet" would
+    be a property of the fixture. Replayed over the real 2026-10-20 history it
+    fires zero times — which is why a second detector was needed rather than a
+    looser threshold on this one.
+    """
+    raw = json.loads((pathlib.Path(__file__).parent / "btc-history-2026-10-20.json").read_text())
+    hist = [(float(t), float(p)) for t, p in raw]
+    fired = [t for i, (t, _p) in enumerate(hist)
+             if D(hist[:i + 1], t) is not None]
+    assert fired == [], f"slow detector unexpectedly fired at {fired}"
