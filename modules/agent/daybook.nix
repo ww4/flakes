@@ -582,16 +582,49 @@ let
         has_open || exit 0
 
         # ⚠️ DO NOT RE-FIRE ON OUR OWN WRITES. Closing an item writes the queue,
-        # which trips this unit's own PathModified watch. Before contract v1
-        # that was merely wasteful (has_open exited for nothing); now a pass
-        # publishes `accepted`, so a self-fire would republish it. agent-vm
-        # dedupes on (req,status) and would absorb it, but sending a duplicate
-        # it has to absorb is still a bug. `queue-reply` dedupes at the source
-        # too — this guard stops the pointless wake-up in the first place.
-        seen=/var/lib/queue-reply/last-mtime
-        now_mtime=$(stat -c %Y "$queue")
-        if [ -f "$seen" ] && [ "$(cat "$seen")" = "$now_mtime" ]; then
-          echo "queue-consumer: queue unchanged since our own write — nothing new"
+        # which trips this unit's own PathModified watch, and a pass publishes
+        # `accepted`, so a self-fire would republish it.
+        #
+        # 🔴 THIS GUARD DEADLOCKED THE QUEUE ON 2026-10-28, and the mechanism is
+        # subtler than it first looks. The stamp is only written on a SUCCESSFUL
+        # pass — `rc != 0` exits above it — so this was not a failed run leaving
+        # bad state. It was a pass that ran the model fine and, correctly, left
+        # items open: the prompt itself says "if an item is not something you can
+        # finish in one unattended pass, leave it open". It then recorded the
+        # queue's unchanged mtime as "the mtime we leave behind", and from that
+        # moment the file never changed again, so every later run matched and
+        # skipped. 136 "nothing new" lines in 24 h while two requests sat open
+        # for four and a half hours — each exiting 0, so `systemctl --failed`
+        # stayed empty and nothing surfaced. Chris found it by asking.
+        #
+        # So the flaw is not "stale state"; it is that **a legitimately-open item
+        # suppresses its own retry forever**. Two changes:
+        #
+        # 1. Key on the CONTENT of the open set rather than the mtime. The real
+        #    question is "has the work changed", and mtime is only a proxy for it
+        #    — one that a third-party write, or a bare `touch`, answers wrongly
+        #    in both directions. A hash of the `- [ ]` lines answers it directly.
+        # 2. Bound the guard in TIME. This is the part that actually fixes the
+        #    deadlock: a guard able to suppress work indefinitely will eventually
+        #    suppress it wrongly, and a hash alone has exactly the same failure
+        #    as the mtime did.
+        seen=/var/lib/queue-reply/last-open-set
+        open_set_hash() {
+          grep -E '^- \[ \]' "$queue" | sha256sum | cut -d' ' -f1
+        }
+        want=$(open_set_hash)
+
+        # Matches the hourly backstop timer. A stuck item is then retried once
+        # an hour instead of never — the blocking condition it is waiting on
+        # (a dependency, a file, Chris) can clear without the queue changing.
+        # The cost of being wrong here is one redundant model call per hour;
+        # the cost of the old behaviour was a silent four-and-a-half-hour stall.
+        # `queue-reply` and agent-vm both dedupe on (req,status), so a repeated
+        # publish is absorbed.
+        stale_after=3600
+        if [ -f "$seen" ] && [ "$(cat "$seen")" = "$want" ] \
+           && [ $(( $(date +%s) - $(stat -c %Y "$seen") )) -lt "$stale_after" ]; then
+          echo "queue-consumer: open set unchanged since our last pass — nothing new"
           exit 0
         fi
 
@@ -666,9 +699,17 @@ let
           fi
         fi
 
-        # Record the mtime WE leave behind, so the fire our write causes is
+        # Record the open set WE leave behind, so the fire our write causes is
         # recognised and skipped on the way back in (the "$seen" guard above).
-        stat -c %Y "$queue" > "$seen" 2>/dev/null || true
+        # ⚠️ Only on a pass that ran the model to completion. That is already
+        # guaranteed here (`rc != 0` exits above), so this is belt-and-braces
+        # against a future edit moving the early exits — not the 2026-10-28 bug,
+        # which was a SUCCESSFUL pass stamping a legitimately-unchanged queue.
+        if [ "''${rc:-1}" -eq 0 ]; then
+          open_set_hash > "$seen" 2>/dev/null || true
+        else
+          echo "queue-consumer: pass did not complete (rc=''${rc:-?}) — leaving the guard unstamped so this retries" >&2
+        fi
 
         cd ${spaceDir}
         if [ -d .git ]; then
