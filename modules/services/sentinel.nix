@@ -371,6 +371,50 @@ EOF
     '';
   };
 
+  # mempool-api's RBF cache dump (disk-cache.ts, upstream) is a single
+  # unchunked `JSON.stringify` of every tracked RBF tree — unlike the regular
+  # mempool/blocks cache, which the SAME file deliberately splits into 25
+  # chunks to avoid exactly this. Past ~512 MB, V8 refuses to stringify it,
+  # the backend's own try/catch logs a warning and gives up, and the file
+  # simply stops moving. That ran undetected for a month (2026-09-26 ->
+  # 2026-10-26, frozen at 485 MB) before anyone noticed — there was no check
+  # on this file, only on the permissions bug that preceded it (#337). This
+  # cannot be fixed from our side (no MEMPOOL_RBF_* setting exists in either
+  # the pinned digest or the current mempool/backend:latest — checked by
+  # pulling both images' start.sh/mempool-config.json, byte-identical; the
+  # unchunked JSON.stringify is unchanged on upstream's current main branch
+  # too), so this is a tripwire, not a cure: catch the next freeze in hours,
+  # not a month.
+  rbfCacheCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-mempool-rbfcache";
+    runtimeInputs = [ pkgs.coreutils ];
+    text = ''
+      f=/var/lib/mempool/cache/rbfcache.json
+      # Absent is normal early (first dump needs Fulcrum caught up) — not an incident.
+      [ -e "$f" ] || exit 1
+
+      age=$(( $(date +%s) - $(stat -c %Y "$f") ))
+      size=$(stat -c %s "$f")
+
+      # Written every ~6 blocks (~60 min on average). 6h is several multiples
+      # of that, so this only fires on a real stall, not ordinary block-time
+      # variance.
+      if [ "$age" -gt 21600 ]; then
+        echo "mempool rbfcache.json stale: last write $((age / 60)) min ago — the dump may be failing silently (V8 string-length ceiling, or something else; check docker logs mempool-api for 'Error writing rbf data')"
+        exit 0
+      fi
+
+      # Early warning well under the ~512 MB ceiling that froze it at 485 MB
+      # last time, so there's room to look before it seizes again.
+      if [ "$size" -gt 400000000 ]; then
+        echo "mempool rbfcache.json is $((size / 1000000)) MB and still being written — approaching the ~512 MB V8 ceiling that froze it on 2026-09-26"
+        exit 0
+      fi
+
+      exit 1
+    '';
+  };
+
   # forum.driveonwood.com — the one production service in Chris's world that
   # nothing watched. Two questions, both previously answerable only by hand:
   # is it behind upstream, and did last night's backup finish.
@@ -810,6 +854,10 @@ EOF
       # scoped sudo, but it should say what it found before touching anything.
       { id = "api-content"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "${apiCheck}/bin/sentinel-check-apis"; timeout = 60; }
+
+      # mempool-api's RBF cache dump freezing silently (see rbfCacheCheck above).
+      { id = "mempool-rbfcache"; type = "command"; severity = "warning"; agent = true; act = false;
+        cmd = "${rbfCacheCheck}/bin/sentinel-check-mempool-rbfcache"; timeout = 15; }
 
       # Is the front door open at all (see vhostCheck above). Distinct from
       # api-content, which watches ONE backend's freshness behind nginx and was
