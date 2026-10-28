@@ -107,6 +107,42 @@ let
       export ETHSWITCH_SEED=${ethSeedFile}
     '' + builtins.readFile ./ethswitch.sh;
   };
+  # The monitor defaults, defined ONCE here and consumed by both the declarative
+  # `monitor` list below and hypr-display-guard. They were duplicated as a literal
+  # in the script; a change-completeness trap waiting to happen.
+  edpDefault = "eDP-1,preferred,auto,1.25";   # T480 panel: 1080p/14" is tiny at 1x
+  extDefault = ",preferred,auto,1";           # any never-configured external
+
+  # Display guard. Enforces ONE invariant, continuously:
+  #
+  #   no external output connected  =>  eDP-1 is enabled, whatever any file says
+  #
+  # nwg-displays (Super+Shift+M) persists monitor rules to
+  # ~/.config/hypr/monitors.conf, which hyprland.conf sources LAST and which
+  # therefore beats the declarative defaults — including `monitor=eDP-1,disable`.
+  # On 2026-10-27 that blacked out the laptop with nothing plugged into HDMI and
+  # there was no way back from the console; it cost a working day. Chris's rule:
+  # "There's no case in which I want that to be true. I don't care if there's a
+  # setting somewhere, we should ignore it."
+  #
+  # Runs as a daemon from exec-once (event-driven off Hyprland's socket2, so it
+  # catches dock, undock AND nwg-displays' Apply), plus Super+Shift+D for an
+  # unconditional reset that works with nothing on screen. Post-mortem and the
+  # gaps of the earlier startup-only version are in the script header.
+  #
+  # hyprctl comes from ${pkgs.hyprland} by absolute path, matching `cheatsheet`
+  # above — that package is already in this closure, so this adds nothing, and
+  # an absolute path beats depending on the session's PATH.
+  hyprDisplayGuard = pkgs.writeShellApplication {
+    name = "hypr-display-guard";
+    runtimeInputs = with pkgs; [ coreutils jq libnotify socat ];
+    text = ''
+      export HYPRCTL=${pkgs.hyprland}/bin/hyprctl
+      export HYPR_EDP_DEFAULT='${edpDefault}'
+      export HYPR_EXT_DEFAULT='${extDefault}'
+    '' + builtins.readFile ./hypr-display-guard.sh;
+  };
+
   # Single-instance popup launcher for the Waybar IP click (replaces nmtui-toggle;
   # nmtui is now an option *inside* ethswitch).
   ethswitchToggle = pkgs.writeShellScriptBin "ethswitch-toggle" ''
@@ -179,6 +215,7 @@ in
     grim slurp swappy  # screenshots
     cliphist         # clipboard history
     nwg-displays     # monitor arrangement/resolution GUI (Super+Shift+M, or "Displays" in wofi)
+    hyprDisplayGuard # undo for the above when it blacks out the panel (Super+Shift+D)
     wl-clipboard     # wl-copy / wl-paste
     udiskie          # USB auto-mount daemon (run with --no-tray)
     upower           # detailed battery readout (the Waybar battery click target)
@@ -237,10 +274,9 @@ in
       # configured — arrangement/resolution/scale are set interactively with
       # nwg-displays (Super+Shift+M), whose saved rules live in
       # ~/.config/hypr/monitors.conf and OVERRIDE these (sourced last, below).
-      monitor = [
-        "eDP-1,preferred,auto,1.25"   # T480 panel: 1080p/14" is tiny at 1x
-        ",preferred,auto,1"           # any never-configured external: native res, no scaling
-      ];
+      # Values come from edpDefault / extDefault in the let block above, which
+      # hypr-display-guard also consumes — one definition, no drift.
+      monitor = [ edpDefault extDefault ];
 
       "$mod" = "SUPER";
       "$terminal" = "kitty";
@@ -252,6 +288,10 @@ in
       # — services.hypridle (below) runs it as a systemd user service bound to
       # graphical-session.target; listing it here too would start a second daemon.
       exec-once = [
+        # FIRST: if this session came up with zero enabled outputs, nothing below
+        # can be seen and no keybind can be found. Self-heals only that state —
+        # a session with a working display is left untouched. See the script.
+        "${hyprDisplayGuard}/bin/hypr-display-guard --daemon"
         "waybar"
         "mako"
         "swaybg -m fill -i ${wallpaper}"
@@ -397,6 +437,14 @@ in
 
         # Display settings GUI (arrange/resolution/scale for docked monitors)
         "$mod SHIFT, M, exec, nwg-displays"
+
+        # ...and the undo for it. Super+Shift+D moves monitors.conf aside and
+        # re-enables eDP-1 live. Deliberately adjacent to Super+Shift+M, because
+        # Super+Shift+M is what breaks the display and this is how you get it
+        # back. ⚠️ It must be usable with NOTHING visible on screen — that is the
+        # whole point — so it is a plain keybind with no menu, no confirmation
+        # and no prompt. Do not add one.
+        "$mod SHIFT, D, exec, ${hyprDisplayGuard}/bin/hypr-display-guard --reset"
       ];
 
       # Repeatable binds (held keys): volume + brightness
@@ -427,6 +475,25 @@ in
     # into these files. extraConfig lands at the END of hyprland.conf, so rules
     # saved there override the declarative `monitor` defaults above. Hyprland
     # watches sourced files too — hitting Apply in the GUI takes effect live.
+    #
+    # ⚠️ THAT OVERRIDE CAN BLACK OUT THE MACHINE, AND IT IS PERSISTENT.
+    # Because these are sourced LAST, a saved rule beats the defaults above —
+    # including `monitor=eDP-1,disable`. On 2026-10-21 nwg-displays wrote:
+    #
+    #     monitor=eDP-1,disable
+    #     monitor=HDMI-A-2,1360x768@60.02,1536x0,1.0
+    #
+    # correct while docked. Six days later Hyprland was started with nothing on
+    # HDMI: eDP-1 off, HDMI-A-2 absent, ZERO enabled outputs. Hyprland was
+    # fine — it started, logged nothing, took input, ran five minutes — and drew
+    # to nowhere. Plasma was unaffected (it never reads this file), which is
+    # what made it look like hardware and sent the first diagnosis to the BIOS.
+    #
+    # Do NOT move these `source` lines above the defaults to "fix" it — that
+    # would make the defaults always win and render nwg-displays useless. The
+    # override is wanted; what was missing was a way back. That is
+    # `hypr-display-guard`: exec-once self-heals a zero-monitor session, and
+    # Super+Shift+D resets on demand without needing to see anything.
     extraConfig = ''
       source = ~/.config/hypr/monitors.conf
       source = ~/.config/hypr/workspaces.conf
