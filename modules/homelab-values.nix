@@ -48,8 +48,10 @@
     owner = "chris";
     group = "users";
     # puid/pgid defaults (1000/100) match chris:users.
-    # incomplete/ on the WD Green tier-3 scratch disk to spare fusion IO.
-    scratchDir = "/mnt/scratch/qbittorrent-incomplete";
+    # incomplete/ stays off the fusion pool to spare its IO. It lived on the WD
+    # Green tier-3 scratch disk until that disk left for Wallace carrying the
+    # bitcoind datadir; it now sits on sde1 via the bind below.
+    scratchDir = "/var/lib/qbittorrent-incomplete";
     vpnProvider = "airvpn";   # switched from Mullvad 2026-07-27 (account expired; AirVPN adds static port forwarding)
     vpnEnvFile = config.sops.secrets."gluetun-wg".path;
     # Tier-2 "keepers" promotion targets (add as second root folders in the UIs).
@@ -61,6 +63,42 @@
     # its secrets.yml from it — nothing is copied out of a UI any more.
     apiKeyEnvFile = config.sops.secrets."arr-api".path;   # declared in agent/arr-api-secret.nix
   };
+
+  # The incomplete dir's actual home. Kept HERE, beside the scratchDir that
+  # names it, for the reason #214 taught: a path that lives apart from its
+  # users grows stale copies of itself. Same shape as the Fulcrum bind in
+  # services/fulcrum.nix, and for the same two reasons.
+  #
+  # WHY sde1, not the root SSD: root is 449 G with ~218 G free and already hit
+  # 100% once (2026-10-21, Fulcrum). sde1 — the Mushkin Reactor 1 TB, the
+  # "munchkin drive" — frees to ~690 G once Fulcrum's 191 G index leaves with
+  # the chain, and it is an SSD, which in-flight torrent writes want.
+  #
+  # WHY A BIND, and not scratchDir = "/home/chris/qbittorrent-incomplete":
+  # /home/chris is 0700 chris:users. The container runs as 1000:100, but docker
+  # resolves the bind source as root at mount time and qbit-seed-guard's
+  # host-path checks run as root too — a direct path would make both depend on
+  # traversing a person's home directory. The bind sidesteps 0700 without
+  # loosening it.
+  #
+  # The bind SOURCE is state, not configuration: /home/chris/qbittorrent-
+  # incomplete must exist (0775 chris:users) before this can mount. It is
+  # created once during the cutover; a systemd.tmpfiles rule is ordered after
+  # local-fs.target and would lose the race to the mount it prepares.
+  fileSystems."/var/lib/qbittorrent-incomplete" = {
+    device = "/home/chris/qbittorrent-incomplete";
+    fsType = "none";
+    options = [ "bind" "nofail" ];
+    depends = [ "/home/chris" ];
+  };
+
+  # `nofail` above keeps a missing bind from blocking boot — but without this
+  # gate qBittorrent would start anyway and write in-flight torrents into the
+  # bare mountpoint ON ROOT, which is how the root disk reached 100% in
+  # October. RequiresMountsFor is the same guard fulcrum.nix pairs with its
+  # own nofail bind: boot survives, the downloader stays down and says so.
+  systemd.services.docker-qbittorrent.unitConfig.RequiresMountsFor =
+    "/var/lib/qbittorrent-incomplete";
   homelab.recyclarr.configFile = ./services/recyclarr-config.yml;
 
   # ── mirror-drift watch (forge redundancy, 2026-09-08) ─────────────────────

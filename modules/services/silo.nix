@@ -118,7 +118,7 @@ in
 
     transcodeDir = lib.mkOption {
       type = lib.types.path;
-      default = "/mnt/scratch/silo-transcode";
+      default = "/var/lib/silo-transcode";
       description = ''
         Scratch for in-flight transcodes. Deliberately NOT under dataDir: this
         is high-churn write traffic and does not belong on the root SSD or in

@@ -64,7 +64,7 @@ let
   # Longest prefix FIRST — `/scratch/incomplete` must be tested before any
   # shorter mount that could also match.
   mounts = [
-    { container = "/scratch/incomplete"; host = "/mnt/scratch/qbittorrent-incomplete"; }
+    { container = "/scratch/incomplete"; host = "/var/lib/qbittorrent-incomplete"; }
     { container = "/data";               host = "/mnt/fusion/arr"; }
   ];
 
