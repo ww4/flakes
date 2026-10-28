@@ -181,6 +181,50 @@ radarr:
 
     delete_old_custom_formats: true
 
+    # ⚠️ LANGUAGE GUARD — the movie half of the Sonarr block above.
+    #
+    # Added 2026-10-28, and it should have been added at the same time as the
+    # Sonarr one on 09-27. That change fixed a French grab on Strange New Worlds
+    # and stopped at television; Radarr was left with **no language custom
+    # format at all** — not scored zero, absent — so until now a French or
+    # Polish movie release was exactly as eligible as an English one. Found
+    # while about to re-acquire Titanic through Radarr, with a FRENCH release
+    # sitting in the very search results.
+    #
+    # ⚠️ The trash_id is NOT the same as Sonarr's: TRaSH keeps a separate
+    # definition per app (sonarr ae575f95…, radarr d6e9318c…). Copying the
+    # Sonarr id here would silently match nothing.
+    #
+    # ⚠️ And unlike Sonarr, where the WEB-1080p trash profile already carries
+    # this CF, Radarr's `HD Bluray + WEB` profile does NOT — its nine
+    # formatItems are tiers and repacks only. So every profile must be listed
+    # here, that one included.
+    #
+    # -10000 is TRaSH's own default score for this format. The CF keys on the
+    # MOVIE's original language, so a genuinely foreign-language film still
+    # works, and it only fires when the original language is absent — a
+    # dual-audio release keeps a score of 0 and stays eligible.
+    custom_formats:
+      - trash_ids:
+          - d6e9318c875905d6cfb5bee961afcea9  # Language: Not Original
+        assign_scores_to:
+          - name: Any
+            score: -10000
+          - name: SD
+            score: -10000
+          - name: HD-720p
+            score: -10000
+          - name: HD-1080p
+            score: -10000
+          - name: Ultra-HD
+            score: -10000
+          - name: "HD - 720p/1080p"
+            score: -10000
+          - name: "HD Bluray + WEB"
+            score: -10000
+          - name: Retro Animation
+            score: -10000
+
     # Inlined for the same reason as Sonarr above (includes registry is empty).
     # Same anime-floor reasoning as Sonarr above; animated FILMS hit the
     # identical wall (radarr movie floors: Bluray-1080p 50.8, WEB-1080p 12.5
