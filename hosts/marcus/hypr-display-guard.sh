@@ -25,12 +25,34 @@
 # was fine because Plasma never reads that file — which is exactly what made it
 # look like a hardware fault and sent the first diagnosis to the BIOS.
 #
-# ⚠️ AN EARLIER VERSION OF THIS SCRIPT ONLY CHECKED AT SESSION START, AND ONLY
-# FOR ZERO MONITORS. That was not enough, and the gaps are worth naming so they
-# do not come back: unplugging a dock mid-session left the panel dark with the
-# guard already exited; running nwg-displays while undocked blacked it out
-# instantly; and even in the caught case there was a six-second dark window.
-# Enforcing an invariant on every monitor event closes all three.
+# ⚠️ THIS SCRIPT HAS BEEN WRONG THREE TIMES. Every draft looked right and every
+# one was caught by actually running it. Do not re-introduce any of them:
+#
+#  1. STARTUP-ONLY, ZERO-MONITORS-ONLY. Unplugging a dock mid-session left the
+#     panel dark with the guard already exited; running nwg-displays while
+#     undocked blacked it out instantly; and even when it fired there was a
+#     six-second dark window. Fixed by enforcing an invariant continuously.
+#
+#  2. "CANNOT TELL" REPORTED AS SUCCESS. enabled_count() returned 0 when hyprctl
+#     FAILED, so run outside a session the guard saw zero monitors, tried to fix
+#     them, had every call fail into `|| true`, and exited 0 — and --daemon would
+#     have looped forever enforcing nothing. See hypr_reachable() below.
+#
+#  3. THE SAFETY NET WAS UNREACHABLE. The periodic sweep sat AFTER the socket2
+#     read loop. socat holds that connection open for the life of the session, so
+#     the read loop never exited and the sweep NEVER STARTED. Proven on marcus
+#     2026-10-27: eDP-1 was disabled by hand, socket2 emitted nothing for the
+#     `keyword monitor` change, and the display stayed dark indefinitely with the
+#     guard running and structurally unable to help. The sweep now runs in
+#     PARALLEL. ⚠️ socket2 does NOT report `keyword monitor` changes, so the
+#     sweep — not the event loop — is what catches that case.
+#
+# Regression-tested with a stubbed hyprctl and a socket2 that accepts and holds:
+# the sweep fires across the whole window instead of exactly once.
+#
+# ✅ And one thing verified rather than assumed: re-enabling the connector
+# through hyprctl DOES re-power the backlight (bl_power 4 -> 0,
+# actual_brightness 0 -> 1515 on marcus), so this needs no privilege.
 #
 # MODES
 #   --daemon   exec-once. Enforce now, then on every monitor/config event.
@@ -207,13 +229,33 @@ case "${1---daemon}" in
 
     enforce || true   # a single enforce failure must not kill the daemon
 
-    # Event-driven from here: socket2 emits monitoradded / monitorremoved on
-    # dock and undock, and configreloaded when nwg-displays hits Apply — so all
-    # three ways into the bad state are covered with no polling.
+    # ⚠️ THE PERIODIC SWEEP RUNS IN PARALLEL, AND THIS IS LOAD-BEARING.
+    #
+    # It used to sit AFTER the socket2 read loop. socat holds that connection
+    # open for the life of the session, so the read loop never exited and the
+    # sweep NEVER STARTED. Proven on marcus 2026-10-27: eDP-1 was disabled by
+    # hand, socket2 emitted nothing for a `keyword monitor` change, the read loop
+    # blocked, and the display stayed dark indefinitely with the guard running
+    # and structurally unable to help. A safety net reachable only when the
+    # primary mechanism stops is not a safety net.
+    #
+    # 5 s, not 30: this is now the mechanism that actually catches a `keyword`
+    # change, which socket2 does not report. Cost is one hyprctl per 5 s, and
+    # only when the invariant is already satisfied does it do nothing else.
+    (
+      while :; do
+        sleep 5
+        enforce || true
+      done
+    ) &
+    SWEEP=$!
+    # shellcheck disable=SC2064
+    trap "kill $SWEEP 2>/dev/null || true" EXIT INT TERM
+
+    # Event-driven as well, because it reacts instantly to dock/undock where the
+    # sweep would take up to 5 s. ⚠️ NOT sufficient on its own — see above.
     SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/hypr/${HYPRLAND_INSTANCE_SIGNATURE:-}/.socket2.sock"
     if [ -S "$SOCK" ]; then
-      # `|| true` so a dropped socket ends the read loop instead of killing the
-      # guard; the backstop loop below then takes over.
       while IFS= read -r line; do
         case "$line" in
           monitoradded*|monitorremoved*|configreloaded*)
@@ -225,12 +267,10 @@ case "${1---daemon}" in
       done < <(socat -U - "UNIX-CONNECT:$SOCK" 2>/dev/null || true)
     fi
 
-    # Backstop. Reached if socket2 was unavailable or went away. 30 s is slow on
-    # purpose — it is a safety net, not the mechanism, and this runs on battery.
-    while :; do
-      sleep 30
-      enforce || true
-    done
+    # If socket2 was unavailable or dropped, the sweep above is still running,
+    # so just wait on it rather than starting a second loop.
+    wait "$SWEEP" 2>/dev/null || true
+
     ;;
 
   *)
