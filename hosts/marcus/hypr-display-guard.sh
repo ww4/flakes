@@ -37,6 +37,13 @@
 #   --enforce  One-shot enforcement.
 #   --reset    Move monitors.conf aside and restore defaults. The manual escape
 #              hatch on Super+Shift+D — must work with nothing on screen.
+#
+# EXIT CODES — "I cannot tell" is NOT success, and that distinction is the whole
+# reason these exist (see the hypr_reachable comment below):
+#   0  invariant holds: acted, or it was already fine
+#   2  bad usage
+#   3  CANNOT TELL — Hyprland unreachable (run it inside a session, not over SSH)
+#   4  reachable, but the compositor REJECTED the monitor keyword
 
 CONF="$HOME/.config/hypr/monitors.conf"
 # Injected by hyprland.nix so there is exactly ONE definition of the defaults;
@@ -64,9 +71,23 @@ externals_connected() {
   return 1
 }
 
-# Count of monitors Hyprland currently has ENABLED. Tolerant by design: this
-# runs under `set -euo pipefail`, and a not-yet-ready hyprctl or a jq parse
-# error must read as 0 rather than abort the guard.
+# ⚠️ CAN WE TALK TO HYPRLAND AT ALL? Asked separately from "how many monitors
+# are enabled", and the reason is a bug this script was caught with in testing:
+#
+# enabled_count() returned 0 when hyprctl FAILED, conflating "no monitors" with
+# "cannot ask". Run outside a Hyprland session (over SSH), `--enforce` therefore
+# saw zero monitors, tried to fix it, had every hyprctl call fail into `|| true`,
+# and **exited 0**. It reported success having done nothing — and `--daemon`
+# would have looped every 30 s forever, enforcing nothing, saying nothing. That
+# is precisely the no-op-looks-like-success failure this guard exists to
+# prevent, reproduced inside the guard. Keep the two questions separate.
+hypr_reachable() {
+  "$HC" -j monitors >/dev/null 2>&1
+}
+
+# Count of ENABLED monitors. Only meaningful once hypr_reachable; callers check
+# that first. A jq parse failure still reads as 0 — that is a real empty answer
+# from a reachable compositor, not an unknown.
 enabled_count() {
   local out
   out=$("$HC" -j monitors 2>/dev/null) || { echo 0; return 0; }
@@ -80,12 +101,28 @@ edp_enabled() {
   printf '%s' "$out" | jq -e 'any(.[]; .name == "eDP-1")' >/dev/null 2>&1
 }
 
+# Non-zero if the keyword did not apply, so callers can actually tell.
 force_edp_on() {
-  "$HC" keyword monitor "$EDP" >/dev/null 2>&1 || true
+  "$HC" keyword monitor "$EDP" >/dev/null 2>&1
+}
+
+complain_unreachable() {
+  echo "hypr-display-guard: cannot reach Hyprland via $HC" >&2
+  echo "hypr-display-guard: HYPRLAND_INSTANCE_SIGNATURE is probably unset — run this" >&2
+  echo "hypr-display-guard: INSIDE a Hyprland session, not over SSH or from a bare TTY." >&2
 }
 
 # The invariant, applied once.
+#
+# Exit: 0 = invariant holds (acted or already fine), 3 = COULD NOT TELL, because
+# Hyprland is unreachable. 3 is never silent — "I don't know" must not look like
+# "all good".
 enforce() {
+  if ! hypr_reachable; then
+    complain_unreachable
+    return 3
+  fi
+
   if externals_connected; then
     # An external is available, so the user's saved layout is legitimate —
     # including disabling the panel. Only intervene if the result is NO usable
@@ -104,21 +141,39 @@ enforce() {
   # so it is on. This deliberately OVERRIDES monitors.conf rather than editing
   # it — the saved docked layout is preserved and comes back when docked.
   if ! edp_enabled; then
-    force_edp_on
-    notify-send "Panel re-enabled" \
-      "No external display is connected, so eDP-1 was forced on." 2>/dev/null || true
+    if force_edp_on; then
+      notify-send "Panel re-enabled" \
+        "No external display is connected, so eDP-1 was forced on." 2>/dev/null || true
+    else
+      # Reachable compositor that refused the keyword. Different from exit 3 and
+      # genuinely unexpected, so it must not pass silently either.
+      echo "hypr-display-guard: eDP-1 is off, no external is connected, and" >&2
+      echo "hypr-display-guard: '$HC keyword monitor $EDP' was REJECTED." >&2
+      return 4
+    fi
   fi
+  return 0
 }
 
 case "${1---daemon}" in
   --reset)
-    # Unconditional, for the keybind. Move aside, never delete — the layout is
-    # recoverable from the timestamped file.
+    # Unconditional, for the keybind. The FILE work happens regardless of
+    # whether hyprctl answers — clearing a bad monitors.conf is worth doing even
+    # from a TTY, because the next login will then come up sane. Move aside,
+    # never delete; the layout stays recoverable from the timestamped file.
     if [ -s "$CONF" ]; then
       mv -- "$CONF" "$CONF.broken-$(date +%Y%m%d-%H%M%S)"
     fi
     : > "$CONF"
-    force_edp_on
+    echo "hypr-display-guard: monitors.conf cleared (previous saved alongside)." >&2
+
+    # The LIVE part needs a reachable compositor. Say so rather than pretending.
+    if ! hypr_reachable; then
+      complain_unreachable
+      echo "hypr-display-guard: the file is fixed; log in again to pick it up." >&2
+      exit 3
+    fi
+    force_edp_on || true
     "$HC" keyword monitor "$CATCHALL" >/dev/null 2>&1 || true
     "$HC" reload >/dev/null 2>&1 || true
     notify-send -u critical "Display reset" \
@@ -126,18 +181,31 @@ case "${1---daemon}" in
     ;;
 
   --enforce)
+    # Propagate 3 so a caller/script can tell "unknown" from "fine".
     enforce
     ;;
 
   --daemon)
-    # Hyprland may still be bringing outputs up; enforce once it answers.
-    for _ in 1 2 3 4 5 6; do
+    # Hyprland may still be starting. Wait for it to ANSWER (not for monitors to
+    # appear — zero monitors is the very state we must act on).
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
       # Full `if`, NOT `[ ] && break`: under set -e a failing AND-list is itself
       # a failed command and would kill the guard on the first iteration.
-      if [ "$(enabled_count)" -gt 0 ]; then break; fi
+      if hypr_reachable; then break; fi
       sleep 1
     done
-    enforce
+
+    # ⚠️ Refuse to run blind. A daemon that cannot reach the compositor can never
+    # enforce anything, and looping quietly forever is worse than exiting: it
+    # looks like protection that is not there. Exit non-zero so it lands in the
+    # session log instead.
+    if ! hypr_reachable; then
+      complain_unreachable
+      echo "hypr-display-guard: refusing to run as a daemon with no compositor." >&2
+      exit 3
+    fi
+
+    enforce || true   # a single enforce failure must not kill the daemon
 
     # Event-driven from here: socket2 emits monitoradded / monitorremoved on
     # dock and undock, and configreloaded when nwg-displays hits Apply — so all
@@ -151,7 +219,7 @@ case "${1---daemon}" in
           monitoradded*|monitorremoved*|configreloaded*)
             # Debounce: our own keyword call can wake this again.
             sleep 1
-            enforce
+            enforce || true
             ;;
         esac
       done < <(socat -U - "UNIX-CONNECT:$SOCK" 2>/dev/null || true)
@@ -161,7 +229,7 @@ case "${1---daemon}" in
     # purpose — it is a safety net, not the mechanism, and this runs on battery.
     while :; do
       sleep 30
-      enforce
+      enforce || true
     done
     ;;
 
