@@ -2,6 +2,7 @@ import json
 import logging
 import sys
 import tempfile
+import time
 import threading
 import unittest
 import urllib.error
@@ -641,3 +642,96 @@ class FadeShape(unittest.TestCase):
         m.calls.clear()
         m._ramp(35, 60, 0)
         self.assertEqual(m.level, 60, "no time to fade is not permission to skip the change")
+
+
+class MuteReleasesTheMount(unittest.TestCase):
+    """A muted speaker must not hold the on-demand encoder open.
+
+    The encoders only run while something is listening (see Player.wake). This
+    service was that listener around the clock, so a box sitting muted still
+    paid for a continuous MP3 encode — 9.7% of one core measured on gromit on
+    2026-10-28, feeding a jack ramped to -64 dB.
+
+    Real Player, real handler, real HTTP; only the ffmpeg binary is a stub, so
+    the wiring under test is the shipped wiring.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        fake = Path(self.tmp.name) / "player"
+        fake.write_text(f"#!{sys.executable}\nimport time; time.sleep(30)\n")
+        fake.chmod(0o755)
+        self.fake = str(fake)
+        self.mixer = FakeMixer()
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.player.stop()
+        self.tmp.cleanup()
+
+    def serve(self, disconnect=True):
+        self.player = speaker.Player("http://127.0.0.1:8020", self.fake)
+        self.srv = ThreadingHTTPServer(
+            ("127.0.0.1", 0), speaker.make_handler(self.player, self.mixer, disconnect))
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.srv.server_address[1]}"
+
+    def call(self, method, path, body=None):
+        req = urllib.request.Request(self.url + path, method=method,
+                                     data=json.dumps(body or {}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.load(r)
+
+    def test_mute_drops_the_connection_and_unmute_brings_it_back(self):
+        self.serve()
+        self.call("POST", "/play", {"mount": "rainymood"})
+        self.assertTrue(self.player.alive(), "precondition: playing")
+
+        self.call("POST", "/mute", {"on": True})
+        self.assertFalse(self.player.alive(), "mute must release the mount")
+        self.assertTrue(self.player.suspended)
+        self.assertEqual(self.player.mount, "rainymood",
+                         "the station stays SELECTED — only the connection goes")
+
+        self.call("POST", "/mute", {"on": False})
+        self.assertTrue(self.player.alive(), "unmute must reconnect")
+        self.assertFalse(self.player.suspended)
+        self.assertEqual(self.player.mount, "rainymood")
+
+    def test_the_watchdog_does_not_undo_a_deliberate_suspend(self):
+        """watch() restarts a player that died. A suspend is not a death — and
+        without the `suspended` guard it would reconnect within five seconds
+        of every mute, so the encoder would never actually stop."""
+        self.serve()
+        self.call("POST", "/play", {"mount": "rainymood"})
+        self.call("POST", "/mute", {"on": True})
+
+        stop = threading.Event()
+        t = threading.Thread(target=self.player.watch, args=(stop, 0.01), daemon=True)
+        t.start()
+        time.sleep(0.2)          # ~20 watchdog passes
+        stop.set(); t.join(timeout=2)
+
+        self.assertFalse(self.player.alive(), "the watchdog reconnected a muted speaker")
+        self.assertTrue(self.player.suspended)
+
+    def test_hold_stream_while_muted_keeps_the_old_behaviour(self):
+        self.serve(disconnect=False)
+        self.call("POST", "/play", {"mount": "rainymood"})
+        self.call("POST", "/mute", {"on": True})
+        self.assertTrue(self.player.alive(),
+                        "with the opt-out set, a mute must not touch the stream")
+        self.assertFalse(self.player.suspended)
+
+    def test_selecting_a_station_while_suspended_records_it_without_connecting(self):
+        """--start-muted suspends before the default mount is chosen, so a box
+        that boots silent never wakes an encoder at all."""
+        self.serve()
+        self.player.suspend()
+        self.player.play("rainymood")
+        self.assertFalse(self.player.alive(), "a suspended player must not dial out")
+        self.assertEqual(self.player.mount, "rainymood", "but it must remember the choice")
+
+        self.player.resume()
+        self.assertTrue(self.player.alive(), "resume connects to what was recorded")

@@ -289,6 +289,10 @@ class Player:
         self.proc: subprocess.Popen | None = None
         self.error = ""
         self.lock = threading.RLock()
+        # Suspended = a mount is still SELECTED but we are deliberately not
+        # connected to it. Distinct from mount="" (nothing chosen) and from a
+        # dead proc (a crash, which watch() repairs). See suspend().
+        self.suspended = False
 
     def url(self, mount: str) -> str:
         return f"{self.base}/{mount}.mp3"
@@ -342,6 +346,13 @@ class Player:
 
     def play(self, mount: str, wake_wait: float = 25.0) -> None:
         with self.lock:
+            # Selecting a station while suspended records the choice without
+            # connecting — otherwise --start-muted would dial the encoder up
+            # at boot purely to feed a jack that is at -64 dB.
+            if self.suspended:
+                log.info("selected %s (suspended — not connecting)", mount)
+                self.mount, self.error = mount, ""
+                return
             self.stop()
             self.wake(mount, wake_wait)
             cmd = self.command(mount)
@@ -367,13 +378,46 @@ class Player:
     def alive(self) -> bool:
         return bool(self.proc and self.proc.poll() is None)
 
+    def suspend(self) -> None:
+        """Drop the Icecast connection but keep the station selected.
+
+        WHY: the encoders are on-demand (see wake()) — Liquidsoap only runs a
+        station's output while something is listening. This service was that
+        listener 24/7, so a box sitting muted still cost a continuous MP3
+        encode: measured 9.7% of one core on gromit on 2026-10-28, with the
+        only listener being this process feeding a jack ramped to -64 dB.
+
+        Keeps self.mount, so /state still reports what is selected and resume()
+        knows where to go back to.
+        """
+        with self.lock:
+            if self.suspended:
+                return
+            selected = self.mount
+            self.suspended = True
+            self.stop()                 # clears self.mount — that is its job
+            self.mount = selected       # ...but a suspend keeps the SELECTION
+            log.info("suspended (muted) — released %s", selected or "(no mount)")
+
+    def resume(self, wake_wait: float = 25.0) -> None:
+        """Reconnect to the selected station after a suspend."""
+        with self.lock:
+            if not self.suspended:
+                return
+            self.suspended = False
+            if self.mount:
+                self.play(self.mount, wake_wait=wake_wait)
+
     def watch(self, stop: threading.Event, every: float = 5.0) -> None:
         """Restart a player that died while a mount is selected — a station
         that goes quiet for a moment (a deploy restarting Liquidsoap) must
         not end the night's rain."""
         while not stop.wait(every):
             with self.lock:
-                if self.mount and not self.alive():
+                # `suspended` is the discriminator between "died" and "we hung
+                # up on purpose". Without it this thread would reconnect within
+                # five seconds of every mute and the encoder would never stop.
+                if self.mount and not self.suspended and not self.alive():
                     err = ""
                     if self.proc and self.proc.stderr:
                         try:
@@ -388,7 +432,7 @@ class Player:
                     self.play(mount)
 
 
-def make_handler(player: Player, mixer: Mixer):
+def make_handler(player: Player, mixer: Mixer, disconnect_when_muted: bool = True):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -447,7 +491,20 @@ def make_handler(player: Player, mixer: Mixer):
                     else:
                         return self._reply(400, {"error": "level or step required"})
                 elif path == "/mute":
-                    mixer.mute(bool(body.get("on")))
+                    on = bool(body.get("on"))
+                    if on:
+                        # Ramp to silence FIRST, then hang up: killing ffmpeg
+                        # under a live level truncates the stream into the DAC.
+                        mixer.mute(True)
+                        if disconnect_when_muted:
+                            player.suspend()
+                    else:
+                        # Reconnect FIRST, then fade up — the fade-in covers
+                        # the wake + connect instead of the listener hearing
+                        # silence and then a sudden start.
+                        if disconnect_when_muted:
+                            player.resume()
+                        mixer.mute(False)
                 else:
                     return self._reply(404, {"error": "not found"})
             except Exception as e:
@@ -476,7 +533,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fade-in-ms", type=int, default=300, help="how long an unmute takes to come back")
     ap.add_argument("--fade-out-ms", type=int, default=120, help="how long a mute, or a volume change, takes")
     ap.add_argument("--start-muted", action="store_true",
-                    help="come up silent — the stream runs, the jack is quiet until unmuted")
+                    help="come up silent — the jack is quiet until unmuted")
+    ap.add_argument("--hold-stream-while-muted", action="store_true",
+                    help="stay connected to Icecast while muted (the pre-2026-10-28 behaviour). "
+                         "By default a mute releases the mount so the on-demand encoder can stop; "
+                         "holding it costs a continuous MP3 encode — 9.7%% of a core, measured — "
+                         "to feed a jack at -64 dB. Set this if unmute latency matters more.")
     ap.add_argument("--ffmpeg", default=shutil.which("ffmpeg") or "ffmpeg")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
@@ -497,6 +559,11 @@ def main(argv: list[str] | None = None) -> int:
         mixer.mute(True)          # after the level, so the level is ready when it is unmuted
         log.info("starting muted")
     player = Player(args.icecast, args.ffmpeg, args.device, args.wake)
+    disconnect_when_muted = not args.hold_stream_while_muted
+    if args.start_muted and disconnect_when_muted:
+        # Suspend BEFORE the default mount is chosen below, so a box that boots
+        # muted records the station without ever waking its encoder.
+        player.suspend()
     stop = threading.Event()
     threading.Thread(target=player.watch, args=(stop,), daemon=True).start()
     threading.Thread(target=mixer.watch, args=(stop,), daemon=True).start()
@@ -507,7 +574,7 @@ def main(argv: list[str] | None = None) -> int:
         # here, so wait properly rather than thrash on 404s.
         player.play(args.default_mount, wake_wait=120.0)
 
-    srv = ThreadingHTTPServer((args.listen, args.port), make_handler(player, mixer))
+    srv = ThreadingHTTPServer((args.listen, args.port), make_handler(player, mixer, disconnect_when_muted))
     # Serve on a THREAD and wait here. The obvious shape — serve_forever() in
     # the main thread with a SIGTERM handler that calls srv.shutdown() —
     # deadlocks: Python runs signal handlers on the main thread, so shutdown()

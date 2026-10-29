@@ -687,7 +687,28 @@ in
       startMuted = lib.mkOption {
         type = lib.types.bool;
         default = true;
-        description = "Come up silent: the stream runs and the jack stays quiet until something unmutes it.";
+        description = "Come up silent: the jack stays quiet until something unmutes it.";
+      };
+
+      holdStreamWhileMuted = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Stay connected to Icecast while muted, instead of releasing the
+          mount. This was the behaviour before 2026-10-28 and it is rarely
+          what you want.
+
+          The encoders are on demand — Liquidsoap only runs a station's output
+          while somebody is listening — so a speaker that holds its connection
+          open while silent keeps one MP3 encode running forever. On gromit
+          that measured **9.7% of one core, continuously**, with the sole
+          listener being this service feeding a jack ramped to -64 dB.
+
+          Releasing it costs reconnect time on unmute: the wake call plus
+          ffmpeg starting and buffering. The unmute fade covers most of that,
+          since the player reconnects before the level comes up. Set this to
+          true if the remaining delay matters more than the core.
+        '';
       };
     };
 
@@ -1508,6 +1529,7 @@ in
       ] ++ lib.optional (speakerDefaultMount != "") "--default-mount ${speakerDefaultMount}"
         ++ [ "--start-volume ${toString speakerStartVolume}" ]
         ++ lib.optional cfg.speaker.startMuted "--start-muted"
+        ++ lib.optional cfg.speaker.holdStreamWhileMuted "--hold-stream-while-muted"
         ++ [ "--ffmpeg ${pkgs.ffmpeg}/bin/ffmpeg" ]);
       Environment = [ "PATH=${lib.makeBinPath [ pkgs.alsa-utils pkgs.ffmpeg ]}" ];
       PrivateDevices = false;         # it needs /dev/snd
