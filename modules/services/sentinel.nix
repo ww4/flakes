@@ -818,6 +818,50 @@ EOF
         expr = "gromit_drive_reallocated_sectors + gromit_drive_pending_sectors + gromit_drive_offline_uncorrectable";
         op = ">"; threshold = 0; }
 
+      # A POOL MEMBER IS DOWN. Deliberately NOT a new detector — pool-autoremount
+      # already finds this, tries to remount it, and exports the gauge this reads
+      # (`pool_member_healthy{pool,member}`, 1 = mounted and answering real I/O).
+      # This exists purely for the RE-NOTIFICATION that pool-autoremount lacks:
+      # its escalation is `if [ "$n" -eq 4 ]`, which fires once at the fourth
+      # consecutive failed recovery and then never again.
+      #
+      # 2026-10-29 showed why that is not enough. After the 23:37 reboot, fusion
+      # D1 and D3 did not come back. pool-autoremount noticed within minutes,
+      # notified once at failure 4, and by 08:33 was at **177 consecutive failed
+      # recoveries** having said nothing further for nine hours. Chris found it by
+      # eye, not by alert, and the pool sat degraded with ~7 TB invisible and the
+      # weekly mirror gated off the whole time.
+      #
+      # So the one thing added here is `reescalateSec` — the knob documented above
+      # as "what actually re-notifies a standing problem", and the same fix the
+      # disk-space check needed for the identical reason. Daily, because a missing
+      # drive needs hands and a 2-minute reminder would just train him to mute it.
+      #
+      # ⚠️ Note what the sibling drive checks CANNOT do here: `gromit_drive_smart_ok`
+      # and the bad-sector counters are per-drive series, so a drive that is ABSENT
+      # exports nothing and no threshold can be breached — the series count fell
+      # from 6 to 4 and stayed quiet. `pool_member_healthy` is keyed on the MOUNT,
+      # which is always present in the gauge, so 0 is observable where an absent
+      # series is not. And `disk-space` gets quieter, not louder: losing D1 and D3
+      # took /mnt/fusion from 71% to 69% full.
+      #
+      # act = false: pool-autoremount owns the remount attempt, and a physically
+      # absent disk is not something any action here could clear. agent = true is
+      # worth it — the diagnosis can read `journalctl -k` and distinguish a masked
+      # AHCI port (`ata3: DUMMY`, firmware) from a link-down (cable/drive), which
+      # is the first question asked on a site visit.
+      # ⚠️ The label_join is LOAD-BEARING — do not simplify it to a bare
+      # `pool_member_healthy`. check_metric names a firing series with the first
+      # of mountpoint / device / instance / __name__ that exists, and this gauge
+      # carries only `pool` and `member`. A bare expr therefore fires correctly
+      # and then reports `127.0.0.1:9100=0, 127.0.0.1:9100=0` — an alert that
+      # tells you a drive is down but not WHICH, which is the only fact the
+      # message needed to carry. Joining pool+member into `device` renders
+      # `fusion/D1, fusion/D3`. Verified against live Prometheus.
+      { id = "pool-member-down"; type = "metric"; severity = "warning"; agent = true; act = false;
+        expr = "label_join(pool_member_healthy, \"device\", \"/\", \"pool\", \"member\")";
+        op = "<"; threshold = 1; reescalateSec = 86400; }
+
       # Container-level silent failures (error-spam + dead HTTP backends) —
       # see containerCheck above for the two proven incident modes. Diagnose
       # only (act = false); 60s timeout covers the per-container journal scans.
