@@ -151,6 +151,26 @@ class Settings(BaseSettings):
     btc_step_confirm_s: float = 60 * 60     # wait this long before judging whether it held
     btc_step_retain_frac: float = 0.6       # this much of the move must still be present to fire
     btc_step_max_age_s: float = 6 * 3600    # abandon a candidate never confirmed by now
+
+    # ── price sourcing (added 2026-10-30) ─────────────────────────────────
+    # The price came only from the LOCAL mempool backend, and on 2026-10-28
+    # 23:42 it stopped: bitcoind's disk left for Wallace, the stack came down,
+    # and the watcher ran blind for 42 h while reporting success every tick.
+    #
+    # ⚠️ The coupling bought nothing. A Bitcoin node has no price in it --
+    # mempool's /api/v1/prices is itself an aggregation of exchange data. So
+    # going local took the SAME external number and added a hop through a
+    # heavyweight service that can be in pieces on a workbench.
+    #
+    # Local stays primary so the normal case sends no external traffic
+    # (polite-polling). Fallbacks are public, keyless, and agreed to within
+    # 0.09% of each other and of mempool when all four were checked.
+    btc_price_fallback: bool = True
+    btc_source_switch_tolerance_pct: float = 0.5   # see sample_price: a venue
+    # change is itself a small step, and the step detector's whole job is to
+    # notice steps. A sample that both changes source AND jumps more than this
+    # is dropped rather than recorded as a move.
+    btc_stale_after_s: float = 3600         # warn ONCE when no good sample this long
     btc_reexplain_after_s: float = 12 * 3600  # a standing move re-explained no more often than this
     btc_history_keep_s: float = 26 * 3600
     btc_sample_min_gap_s: float = 480       # record a sample at least this often even if price is flat
