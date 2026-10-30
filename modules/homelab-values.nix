@@ -450,7 +450,33 @@
   # force-enabled even with nothing plugged in) so a CRTC/output exists; Plasma
   # then draws a desktop that XGetImage (the MeshAgent KVM) can capture.
   # Confirmed at runtime via /sys/class/drm/card1-HDMI-A-1/status=on.
-  boot.kernelParams = [ "video=HDMI-A-1:1920x1080e" ];
+  # ── USB storage: force the Seagate Expansion Desk off UAS ──────────────────
+  # `u` = IGNORE_UAS: the uas driver skips this device and usb-storage (BOT)
+  # takes it instead. Slower per-command, but BOT does not fall over here.
+  #
+  # fusion/D1 is a Seagate Expansion Desk (0bc2:3322, 7.3 TB) and under `uas`
+  # it never finishes coming up. Measured 2026-10-30 after a reseat: the device
+  # enumerates and its partition table reads, but every probe of the
+  # filesystem superblock aborts —
+  #
+  #   sd 11:0:0:0: [sdj] tag#25 data cmplt err -75 uas-tag 6 inflight: CMD
+  #   sd 11:0:0:0: [sdj] CDB: Read(16) … 00 00 00 2d …   (sectors 45-47)
+  #   scsi host11: uas_eh_device_reset_handler start
+  #
+  # 11 abort/reset events in 3 minutes, err -75 = EOVERFLOW, and the reads that
+  # die are the low sectors blkid needs. So no UUID node appears, and
+  # pool-autoremount correctly reports the device "still absent" while the disk
+  # is plainly enumerated. NOT a failing drive: there is not one medium error
+  # or unrecovered read error in the log — the aborts are all transport-layer.
+  #
+  # Scope is exactly one device. The other five USB disks (the backup pool and
+  # fusion/D2) are WD Elements 1058:25a3, which already bind usb-storage
+  # because their bridges never advertise UAS, so this changes nothing for
+  # them. 0bc2:3322 appears in the widely-circulated IGNORE_UAS lists.
+  boot.kernelParams = [
+    "video=HDMI-A-1:1920x1080e"
+    "usb-storage.quirks=0bc2:3322:u"
+  ];
 
   # ── sops declarations for library modules ──────────────────────────────────
   # Cloudflare DNS-01 token for ACME (was 0644 plaintext once — closing that
