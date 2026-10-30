@@ -76,16 +76,91 @@ def save_history(settings: Settings, hist: list[tuple[float, float]]) -> None:
     tmp.replace(p)
 
 
-async def sample_price(settings: Settings) -> tuple[float, float]:
-    """(feed_timestamp, usd) from the local mempool backend."""
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{settings.mempool_url}/api/v1/prices")
-        resp.raise_for_status()
-        d = resp.json()
-        return float(d["time"]), float(d["USD"])
-    except (httpx.HTTPError, ValueError, KeyError) as exc:
-        raise SourceError(f"mempool prices: {exc}") from exc
+# Ordered: local first so the normal case sends no external traffic, then two
+# public keyless venues. Each entry is (name, url, parser). Checked 2026-10-30:
+# mempool, Kraken, Bitstamp, Coinbase and CoinGecko all agreed within 0.09%.
+def _p_kraken(d):    return float(d["result"]["XXBTZUSD"]["c"][0])
+def _p_bitstamp(d):  return float(d["last"])
+
+_FALLBACKS = [
+    ("kraken",   "https://api.kraken.com/0/public/Ticker?pair=XBTUSD", _p_kraken),
+    ("bitstamp", "https://www.bitstamp.net/api/v2/ticker/btcusd/",      _p_bitstamp),
+]
+
+# A price outside this band of the last known one is refused outright. A
+# malformed or stale response must not be able to inject a move into the
+# detector; BTC does not move 25% between two ten-minute samples, and if it
+# ever does, one skipped sample is the cheap failure.
+SANITY_BAND_PCT = 25.0
+
+
+def price_is_sane(price: float, last_price: float | None) -> bool:
+    """Refuse a price that is absurdly far from the last known one."""
+    if price <= 0:
+        return False
+    if not last_price:
+        return True
+    return abs(price - last_price) / last_price * 100 <= SANITY_BAND_PCT
+
+
+def drop_for_source_switch(prev_source: str | None, source: str,
+                           last_price: float | None, price: float,
+                           tolerance_pct: float) -> bool:
+    """Should this sample be discarded because the VENUE changed under it?
+
+    The venues agree to about 0.1% at any instant, so a failover normally
+    costs nothing. But the step detector exists to notice a sudden change of
+    exactly that shape, and a switch landing mid-window would manufacture one.
+    Dropping costs a single ten-minute sample; the next same-source reading
+    re-establishes the comparison. Only a switch that ALSO jumps is dropped,
+    so a flapping source cannot starve the history.
+    """
+    if not prev_source or source == prev_source or not last_price:
+        return False
+    return abs(price - last_price) / last_price * 100 > tolerance_pct
+
+
+async def sample_price(settings: Settings, last_price: float | None = None
+                       ) -> tuple[float, float, str]:
+    """(feed_timestamp, usd, source_name).
+
+    ⚠️ A Bitcoin node has NO price in it. mempool's /api/v1/prices is itself an
+    aggregation of exchange data, so the local call was never the more
+    trustworthy number -- just the same external one behind an extra hop. On
+    2026-10-28 that hop went away with bitcoind's disk and this ran blind for
+    42 h. Local stays first because it costs nobody anything; it is no longer
+    load-bearing.
+    """
+    attempts: list[tuple[str, str, object]] = [
+        ("mempool", f"{settings.mempool_url}/api/v1/prices",
+         lambda d: float(d["USD"]))
+    ]
+    if settings.btc_price_fallback:
+        attempts += _FALLBACKS
+
+    errors = []
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        for name, url, parse in attempts:
+            try:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                d = resp.json()
+                price = float(parse(d))
+                ts = float(d.get("time") or time.time()) if name == "mempool" else time.time()
+            except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
+                errors.append(f"{name}: {exc}")
+                continue
+            if price <= 0:
+                errors.append(f"{name}: non-positive price {price}")
+                continue
+            if not price_is_sane(price, last_price):
+                errors.append(f"{name}: {price:.0f} is >{SANITY_BAND_PCT:.0f}% from the last "
+                              f"sample {last_price:.0f} — refusing it")
+                continue
+            if name != "mempool":
+                log.warning("btc-watch: primary price source unavailable, using %s", name)
+            return ts, price, name
+    raise SourceError("no price source answered — " + "; ".join(errors))
 
 
 # ---------------------------------------------------------------- detection
@@ -184,6 +259,52 @@ def detect_step(hist: list[tuple[float, float]], now_ts: float, *,
     if down >= step_pct:
         return Move("down", round(down, 2), now_p, hi_p, now_p, (now_ts - hi_t) / 60)
     return None
+
+
+def _source_path(settings: Settings) -> Path:
+    return settings.state_dir / "btc-last-source.txt"
+
+
+def _load_source(settings: Settings) -> str | None:
+    try:
+        return _source_path(settings).read_text().strip() or None
+    except OSError:
+        return None
+
+
+def _save_source(settings: Settings, name: str) -> None:
+    p = _source_path(settings)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(name)
+
+
+def _stale_path(settings: Settings) -> Path:
+    return settings.state_dir / "btc-stale-warned"
+
+
+def _note_stale(settings: Settings, hist, now_ts: float) -> str | None:
+    """Surface a dead feed ONCE. Returns the message if it warned."""
+    last_good = hist[-1][0] if hist else None
+    if last_good is None or now_ts - last_good < settings.btc_stale_after_s:
+        return None
+    if _stale_path(settings).exists():
+        return None                       # already said so; do not nag
+    age_h = (now_ts - last_good) / 3600
+    msg = (f"No bitcoin price for {age_h:.1f} h — every source refused. "
+           f"The spike watcher is blind until one answers.")
+    _stale_path(settings).parent.mkdir(parents=True, exist_ok=True)
+    _stale_path(settings).write_text(str(int(now_ts)))
+    log.error("btc-watch: %s", msg)
+    try:
+        _post_ntfy(settings, "Bitcoin price feed is down", msg)
+    except Exception as exc:                      # never let the warning fail the run
+        log.warning("btc-watch: stale notify failed: %s", exc)
+    return msg
+
+
+def _clear_stale(settings: Settings) -> None:
+    """A good sample re-arms the warning, so the NEXT outage is reported too."""
+    _stale_path(settings).unlink(missing_ok=True)
 
 
 def _candidate_path(settings: Settings) -> Path:
@@ -383,11 +504,36 @@ async def run(settings: Settings, now_ts: float | None = None) -> dict:
     flush_pending(settings)      # release anything deferred overnight, now that it's morning
     ensure_feed(settings)        # a valid (possibly empty) feed exists before newsdesk ever polls it
     hist = load_history(settings)
+    last_price = hist[-1][1] if hist else None
     try:
-        _feed_ts, price = await sample_price(settings)
+        _feed_ts, price, source = await sample_price(settings, last_price)
     except SourceError as exc:
         log.warning("btc-watch: %s", exc)
-        return {"ok": False, "error": str(exc)}
+        # ⚠️ A monitor that cannot see its subject must not report success.
+        # Every failed run used to return quietly, so when the price feed died
+        # with bitcoind's disk on 2026-10-28 this ran blind for 42 h and
+        # `systemctl --failed` stayed empty. Warn ONCE per outage: the system
+        # cannot clear this itself (someone has to fix the source), so alerting
+        # every ten minutes would just train Chris to ignore it.
+        stale = _note_stale(settings, hist, now_ts)
+        return {"ok": False, "error": str(exc), **({"stale": stale} if stale else {})}
+    _clear_stale(settings)
+
+    # ⚠️ A SOURCE CHANGE IS ITSELF A SMALL STEP. The venues agree to about 0.1%
+    # at any instant, but the step detector exists to notice steps -- so a
+    # failover that lands mid-window can manufacture a move that never
+    # happened. Drop a sample that BOTH changes source and jumps: the next
+    # same-source sample re-establishes the comparison 10 minutes later.
+    prev_source = _load_source(settings)
+    _save_source(settings, source)
+    if drop_for_source_switch(prev_source, source, last_price, price,
+                              settings.btc_source_switch_tolerance_pct):
+        log.info("btc-watch: source %s->%s with a %.2f%% jump — sample dropped "
+                 "so the switch is not read as a move", prev_source, source,
+                 abs(price - last_price) / last_price * 100)
+        return {"ok": True, "price": price, "source": source, "move": None,
+                "dropped": "source-switch discontinuity"}
+
     # de-dupe identical feed samples (the backend only refreshes every few min)
     if not hist or abs(hist[-1][1] - price) > 0.001 or now_ts - hist[-1][0] >= settings.btc_sample_min_gap_s:
         hist.append((now_ts, price))
@@ -408,7 +554,7 @@ async def run(settings: Settings, now_ts: float | None = None) -> dict:
             log.info("btc-watch: %s", step_status)
 
     if move is None:
-        out = {"ok": True, "price": price, "move": None}
+        out = {"ok": True, "price": price, "source": source, "move": None}
         if step_status:
             out["step"] = step_status
         return out

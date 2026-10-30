@@ -352,3 +352,74 @@ def test_the_slow_detector_really_does_miss_the_real_spike():
     fired = [t for i, (t, _p) in enumerate(hist)
              if D(hist[:i + 1], t) is not None]
     assert fired == [], f"slow detector unexpectedly fired at {fired}"
+
+
+# ── price sourcing (2026-10-30) ────────────────────────────────────────────
+# The price came only from the local mempool backend. On 2026-10-28 23:42 that
+# stopped — bitcoind's disk left for Wallace — and the watcher ran blind for
+# 42 h while every tick reported success. A Bitcoin node has no price in it, so
+# the coupling bought nothing; these cover the fallback and the two guards it
+# needs.
+
+
+def test_parsers_match_the_real_response_shapes():
+    # captured from the live endpoints 2026-10-30, all four agreed within 0.09%
+    assert btcwatch._p_kraken(
+        {"error": [], "result": {"XXBTZUSD": {"c": ["76716.40000", "0.001"]}}}) == 76716.4
+    assert btcwatch._p_bitstamp({"last": "76712.00"}) == 76712.0
+
+
+def test_sanity_band_refuses_an_absurd_price():
+    assert btcwatch.price_is_sane(76700.0, 76650.0)
+    assert btcwatch.price_is_sane(76700.0, None)      # nothing to compare against
+    assert not btcwatch.price_is_sane(0.0, 76650.0)
+    assert not btcwatch.price_is_sane(7.67, 76650.0)  # a parser grabbing the wrong field
+    assert not btcwatch.price_is_sane(766500.0, 76650.0)
+
+
+def test_source_switch_with_a_jump_is_dropped():
+    # the failure this prevents: a venue change read as a 1.5% step
+    assert btcwatch.drop_for_source_switch("mempool", "kraken", 76000.0, 77200.0, 0.5)
+
+
+def test_source_switch_within_tolerance_is_kept():
+    # venues really do agree this closely; dropping here would waste samples
+    assert not btcwatch.drop_for_source_switch("mempool", "kraken", 76700.0, 76650.0, 0.5)
+
+
+def test_same_source_is_never_dropped_however_big_the_move():
+    # a real 5% move must survive — this is the whole point of the monitor
+    assert not btcwatch.drop_for_source_switch("kraken", "kraken", 76000.0, 79800.0, 0.5)
+
+
+def test_first_sample_after_a_cold_start_is_never_dropped():
+    assert not btcwatch.drop_for_source_switch(None, "mempool", None, 76700.0, 0.5)
+
+
+def test_stale_feed_warns_once_then_stays_quiet(tmp_path, monkeypatch):
+    s = _settings(tmp_path)
+    posted = []
+    monkeypatch.setattr(btcwatch, "_post_ntfy",
+                        lambda st, title, text: posted.append(title) or True)
+    now = 1_000_000.0
+    hist = [(now - 5 * 3600, 76000.0)]            # last good sample 5 h ago
+
+    first = btcwatch._note_stale(s, hist, now)
+    assert first and "blind" in first
+    assert posted == ["Bitcoin price feed is down"]
+
+    again = btcwatch._note_stale(s, hist, now + 600)
+    assert again is None, "a dead feed must not nag every ten minutes"
+    assert len(posted) == 1
+
+    # a good sample re-arms it, so the NEXT outage is reported too
+    btcwatch._clear_stale(s)
+    assert btcwatch._note_stale(s, hist, now + 1200) is not None
+    assert len(posted) == 2
+
+
+def test_a_brief_gap_is_not_called_stale(tmp_path, monkeypatch):
+    s = _settings(tmp_path)
+    monkeypatch.setattr(btcwatch, "_post_ntfy", lambda *a, **k: True)
+    now = 1_000_000.0
+    assert btcwatch._note_stale(s, [(now - 600, 76000.0)], now) is None
