@@ -10,6 +10,12 @@
     openssh.authorizedKeys.keys = [
       # Chris's personal workstation key (same key declared on wallace).
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFbsMI9lXpM1bi2fR2Ew1DnubEMGcdl3MuFNbqyyn0xI chris@saenzmail.net"
+      # Chris's phone (JuiceSSH), ed25519. Declared here rather than left in
+      # ~/.ssh/authorized_keys, where its RSA predecessor still sits: a key in
+      # a home directory is invisible to this repo, survives no rebuild of the
+      # host, and is exactly why wallace never got the phone key at all.
+      # SHA256:HWXZhl5fbIDEXZvmoy8ihWzvEGoQAz8hWFMSchsFUb4
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILF2EQv1KPMtUNRokROqzzM7BsrlByKfo+o5l4D3jdHg JuiceSSH"
     ];
     packages = with pkgs; [
       firefox

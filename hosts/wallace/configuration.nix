@@ -56,6 +56,13 @@
       # account was broken rather than the key missing.
       # SHA256:4lC4gWWK5bpLuIDhNcw8rTOXo3FJYz+d61NUMUTJ3gk (2048-bit RSA)
       "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDuzIfiW4Kg+PzvwLc3dHrTtfCGJ8SBG1h0+9ZOL7mstRwPNQZdPwFDLXeVcX9bqroHQdd1bABERBuR6K6MvnQYQRG+/qIj7wqBr0dqNH55Gd1A8UonMyc+60njo9pvGy/yuMYCKGYBFsX20guDgeQyHt52Dv7IruiRr0EdJ1iMYEusL8bHLbjXPHCKQ4QH245YBK15DFxXSedsYpYnsy1k1xoCAkPQVWsxKqNwABrP8DmtO0MuhtBhx/6Rn8EvwW9YVXQgTcQ6gdQvmodb09NaXhCMPykJOTeCVZ4GvNaWGFEBt0zUScZVx6k9k732/3mcu/a22ubRoHh7jZOA013H chris@bub"
+      # Same phone, ed25519 — generated 2026-10-30 to retire the RSA key above.
+      # SHA256:HWXZhl5fbIDEXZvmoy8ihWzvEGoQAz8hWFMSchsFUb4
+      # Both are listed deliberately: dropping the RSA in the same change that
+      # introduces its replacement would risk locking the phone out of a host
+      # it cannot currently reach at all. Remove the RSA once this one is
+      # confirmed working on both hosts.
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILF2EQv1KPMtUNRokROqzzM7BsrlByKfo+o5l4D3jdHg JuiceSSH"
       # (claude-gromit-tmp-dadpc-recon removed 2026-08-17 — the temporary key
       # from the Rick-WALLACE data recovery, on the standing revoke list.)
     ];
