@@ -127,6 +127,7 @@
             ./hosts/wallace/disko.nix
             ./hosts/wallace/hardware-configuration.nix
             ./hosts/wallace/configuration.nix
+            ./hosts/wallace/bitcoin.nix # bitcoind chain (moved disk) + Fulcrum index (NVMe)
             ./modules/agent/comin.nix   # GitOps applier — builds nixosConfigurations.wallace
           ];
         };

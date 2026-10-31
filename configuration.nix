@@ -65,9 +65,24 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/tandoor-frontend.nix  # gromit-only: inline ingredient notes + recipe auto-refresh
     hm.pinchflat                            # mediaDir in homelab-values
     hm.metube                               # yt-dlp web GUI for one-off downloads; dir in homelab-values
-    ./modules/services/bitcoind.nix
-    ./modules/services/fulcrum.nix          # Electrum server (mempool.space backend + Sparrow); indexes the chain
-    ./modules/services/mempool.nix          # mempool.space explorer (mariadb+backend+frontend via docker)
+    # bitcoind + fulcrum MOVED TO WALLACE 2026-10 (hosts/wallace/bitcoin.nix):
+    # the scratch disk carrying the chain was physically relocated, and the
+    # 191 GB Fulcrum index copied to wallace's NVMe. gromit is a 4-core box at
+    # load15 p50 3.91 with its RAM maxed; this stack was the one large thing
+    # with no dependency on the media pool. mempool.nix stays here until its
+    # docker->podman port (the container backend is host-wide, so it cannot
+    # follow piecemeal).
+    #
+    # mempool.nix is dropped here TOO, and that is forced rather than chosen:
+    # it reads `config.services.bitcoind.bitcoin.dataDir` for the rotating
+    # cookie, so gromit does not even EVALUATE with mempool present and
+    # bitcoind gone. mempool-cookie-sync also reads that cookie off the LOCAL
+    # filesystem, so splitting the two hosts would mean shipping a rotating
+    # credential over the wire — a worse answer than a gap.
+    #
+    # ⚠️ So mempool.space is DOWN from this merge until the podman port lands.
+    # Accepted deliberately: Chris, 2026-10-28, "they're just for my
+    # reference" — this stack is not load-bearing and downtime costs nothing.
     ./modules/services/gyb.nix
     hm.immich                               # media dir + wallace ML offload in homelab-values
     ./modules/services/open-webui-proxy.nix  # TLS front door for wallace's Open WebUI (local-LLM chat)

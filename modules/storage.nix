@@ -72,11 +72,13 @@
         options = [ "nofail" ];
       };
 
-      "/mnt/scratch" = {     # sdc WD Green — was /mnt/decom/D4; tier-3 scratch
-        device = "/dev/disk/by-label/scratch";
-        fsType = "xfs";
-        options = [ "nofail" ];
-      };
+      # /mnt/scratch REMOVED 2026-10: the WD Green (WD-WMC4N1297328, sharpie
+      # "D4", formerly /mnt/decom/D4) was physically moved to wallace carrying
+      # bitcoind's chain. Its other tenants were relocated first in flakes
+      # #443 — qBittorrent's incomplete dir to a bind on sde1, and silo's
+      # dormant transcodeDir default. gromit now has no tier-3 scratch tier;
+      # if one is wanted again, SATA0 is free (and currently masked at POST
+      # precisely because nothing is attached to it).
 
       "/mnt/backup/D1" = { # was mergerD6
         device = "/dev/disk/by-uuid/c9e23776-811b-4dec-9fc5-3e55454a21f0";

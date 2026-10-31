@@ -82,6 +82,14 @@ in
         # Covers podman-immich-ml, podman-kokoro, podman-open-webui.
         { command = "${sw}/systemctl restart podman-*"; options = nopw; }
 
+        # Fulcrum's credential re-stage, moved here with the service (was in
+        # modules/agent/sudo.nix). Restart-only, one exact unit name. It is a
+        # stateless re-stager — it re-reads bitcoind's rotating .cookie and
+        # re-probes until it authenticates — so a restart can only refresh a
+        # credential, never destroy data. Deliberately NOT bitcoind itself:
+        # restarting the node risks a multi-hour reindex.
+        { command = "${sw}/systemctl restart fulcrum";   options = nopw; }
+
         # --- Read-only container + firewall diagnostics --------------------
         # (sudoers gotcha, learned on gromit: "cmd *" does NOT match a bare
         # "cmd" — both must be listed.)

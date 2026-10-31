@@ -111,12 +111,17 @@ let
   '';
 in
 {
+  # ⚠️ uid/gid PINNED, same reason as bitcoind.nix: the 191 GB index was copied
+  # byte-for-byte to another host and carries numeric ownership 972:965. An
+  # unpinned system user gets a different id there and Fulcrum cannot read its
+  # own RocksDB — recovery is a 6-12 h reindex.
   users.users.fulcrum = {
     isSystemUser = true;
+    uid = 972;
     group = "fulcrum";
     home = dataDir;
   };
-  users.groups.fulcrum = { };
+  users.groups.fulcrum.gid = 965;
 
   systemd.services.fulcrum = {
     description = "Fulcrum Electrum server";
@@ -266,11 +271,17 @@ in
   # `depends` makes the ordering explicit rather than relying on systemd
   # inferring it from the path prefix: this cannot mount until the filesystem
   # holding its source is up.
+  # `mkDefault` on the two host-specific values only. The path, the mount and
+  # RequiresMountsFor still live together in this file — that is the #214
+  # lesson above and it is unchanged. What varies between hosts is solely
+  # WHERE the bytes sit: gromit kept them on sde1 under /home/chris; wallace
+  # has them on its Intel NVMe. A host overrides those two and inherits every
+  # guard (nofail here, RequiresMountsFor on dataDir above) without copying it.
   fileSystems."/var/lib/fulcrum" = {
-    device = "/home/chris/fulcrum";
+    device = lib.mkDefault "/home/chris/fulcrum";
     fsType = "none";
     options = [ "bind" "nofail" ];
-    depends = [ "/home/chris" ];
+    depends = lib.mkDefault [ "/home/chris" ];
   };
 
   # Tailscale + docker bridges only — never the LAN, never the internet.

@@ -24,12 +24,24 @@
   # ExecStartPre and mempool-cookie-sync) both read it as root and are
   # unaffected. For manual bitcoin-cli use:
   #   sudo -u bitcoind bitcoin-cli -datadir=/mnt/scratch/bitcoind ...
-  users.users.bitcoind = {
-    isSystemUser = true;
-    group = "bitcoind";
-    home = "/mnt/scratch/bitcoind";
-  };
-  users.groups.bitcoind = { };
+  # ⚠️ uid/gid are PINNED. The datadir is 2026-10 on a disk that physically
+  # moved from gromit to wallace, and its ~960 GB carries numeric ownership
+  # 964:959 — whatever gromit allocated. NixOS hands system users ids from a
+  # descending pool, so a second host would pick different numbers and bitcoind
+  # would be unable to read its own chainstate. The failure arrives as
+  # permission errors that never name the cause, on a service whose recovery is
+  # an 18-30 h reindex. Pinning makes the data portable by construction.
+  # ⚠️ PIN ON NIXPKGS' ATTRIBUTE KEY, NOT A SECOND DECLARATION.
+  # services.bitcoind declares its user as `users.users."bitcoind-<instance>"`
+  # with `name = cfg.user`, so a `users.users.bitcoind = {...}` here does NOT
+  # merge with it — it creates a SECOND entry for the same username. gromit has
+  # carried that harmless duplicate for months because both were unpinned and
+  # one allocation satisfied both. Pinning only ours would have left two
+  # entries disagreeing about the uid, with the outcome down to the order
+  # update-users-groups.pl happens to process them in. Setting it on nixpkgs'
+  # own key keeps exactly one declaration.
+  users.users."bitcoind-bitcoin".uid = 964;
+  users.groups.bitcoind.gid = 959;
 
   # One-time ownership handoff, ordered before the daemon: flipping the unit
   # user without this leaves bitcoind unable to read its own chainstate and

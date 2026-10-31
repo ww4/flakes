@@ -53,7 +53,10 @@ in
         # can only ever refresh a credential, never destroy data or leave
         # something down. Deliberately NOT bitcoind itself — restarting the
         # node risks a multi-hour reindex (see the 2026-06-11 incident).
-        { command = "${sw}/systemctl restart fulcrum";              options = nopw; }
+        # (`restart fulcrum` moved to hosts/wallace/agent-access.nix with the
+        # service itself — a rule for a unit this host no longer has is dead
+        # weight that reads like a capability. mempool-cookie-sync stays until
+        # mempool follows in the podman port.)
         { command = "${sw}/systemctl restart mempool-cookie-sync";  options = nopw; }
 
         # Hardlink completed downloads into the Jellyfin library. Needs root only
