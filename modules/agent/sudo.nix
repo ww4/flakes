@@ -69,6 +69,11 @@ in
         # what the router hands clients as DNS. A fixed-purpose wrapper, NOT raw
         # nmap. Provided by services/blocky.nix.
         { command = "${sw}/dhcp-probe";                             options = nopw; }
+        # Read-only: journalctl + cat + `iptables -L`. Lets the agent read the
+        # Kindle segment's observation pass (what the AP asked for, what got
+        # dropped) without Chris having to relay terminal output.
+        { command = "${sw}/kindle-watch";                           options = nopw; }
+        { command = "${sw}/kindle-watch *";                         options = nopw; }
 
         # --- Read-only container + firewall diagnostics (added 2026-07-06) ---
         # Evidence-driven (Chris asked the agent to request capabilities rather

@@ -125,6 +125,16 @@ in
         path = "/metrics";
       };
 
+      # Query logging to the journal, so `kindle-watch` can show what the
+      # isolated segment ASKED FOR, per client IP. This is the half that names
+      # a controller hostname like unifi.broadlinc.com; the kernel's
+      # kindle-fw-drop lines are the half that catches a hardcoded IP.
+      # Verified on a live blocky 0.29: a blocked query logs as
+      #   queryLog: ... client_ip=… question_name=unifi.broadlinc.com.
+      #   response_reason=BLOCKED (ALLOWLIST ONLY) response_type=BLOCKED
+      # console = stdout = journald, so no extra log file to rotate.
+      queryLog.type = "console";
+
       log.level = "info";
     };
   };
