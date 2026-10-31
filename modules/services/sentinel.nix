@@ -1049,14 +1049,14 @@ EOF
         lines = r.stdout.splitlines() if (r and r.stdout) else []
         units = [ln.split()[0] for ln in lines if ln.split()]
         units = [u for u in units if u not in exclude and not _acme_false_alarm(u)]
-        return (len(units) > 0, "failed: " + ", ".join(units))
+        return (len(units) > 0, "failed: " + ", ".join(units), units)
 
 
     def check_comin(c):
         try:
             text = http_get("http://127.0.0.1:4243/metrics")
         except Exception:
-            return (False, "")
+            return (False, "", [])
         bad = []
         for line in text.splitlines():
             if line.startswith("comin_last_") and "_failed" in line:
@@ -1066,7 +1066,8 @@ EOF
                     continue
                 if val >= 1:
                     bad.append(line.split("{")[0].split()[0])
-        return (len(bad) > 0, "comin: " + ", ".join(sorted(set(bad))))
+        targets = sorted(set(bad))
+        return (len(bad) > 0, "comin: " + ", ".join(targets), targets)
 
 
     def check_metric(c):
@@ -1076,8 +1077,9 @@ EOF
         try:
             data = json.loads(http_get(url))
         except Exception:
-            return (False, "")
+            return (False, "", [])
         hits = []
+        targets = []
         for s in data.get("data", {}).get("result", []):
             try:
                 v = float(s["value"][1])
@@ -1087,17 +1089,21 @@ EOF
             if ok:
                 m = s.get("metric", {})
                 tag = m.get("mountpoint") or m.get("device") or m.get("instance") or m.get("__name__") or ""
+                # Keep the live value OUT of the target key — it's the thing
+                # (mountpoint/device/instance) that must dedup stably across
+                # runs, not the noisy number that changes every poll.
                 hits.append(("%s=%g" % (tag, v)).strip("="))
-        return (len(hits) > 0, "%s: %s" % (c["id"], ", ".join(hits)))
+                targets.append(tag or c["id"])
+        return (len(hits) > 0, "%s: %s" % (c["id"], ", ".join(hits)), targets)
 
 
     def check_command(c):
         r = sh(c["cmd"], timeout=int(c.get("timeout", 15)))
         if r is None:
-            return (False, "")
+            return (False, "", [])
         fired = (r.returncode == int(c.get("fireOnExit", 0)))
         out = (r.stdout or r.stderr or "").strip().splitlines()
-        return (fired, (out[0][:200] if out else c.get("message", c["id"])) if fired else "")
+        return (fired, (out[0][:200] if out else c.get("message", c["id"])) if fired else "", [c["id"]] if fired else [])
 
 
     def check_marker(c):
@@ -1107,8 +1113,8 @@ EOF
                     os.remove(c["path"])
                 except OSError:
                     pass
-            return (True, c.get("message", "synthetic test trigger"))
-        return (False, "")
+            return (True, c.get("message", "synthetic test trigger"), [c["id"]])
+        return (False, "", [])
 
 
     DISPATCH = {
@@ -1325,57 +1331,85 @@ EOF
             if fn is None:
                 continue
             cid = c["id"]
-            st = cstate.setdefault(cid, {"consecutive": 0, "active": False, "last_escalated": 0})
+            # Debounce/cooldown/reescalate/action-dedup is tracked per TARGET
+            # (e.g. per failing unit), not per check id. A check like
+            # failed-units can fire for several independent units in one run;
+            # without this, acting on (or escalating) unit A mutes acting on
+            # unit B for a day even though B never got looked at. Checks with
+            # no natural sub-target (command/marker) just use the check id
+            # itself as their one target, so behaviour there is unchanged.
+            tstates = cstate.setdefault(cid, {}).setdefault("targets", {})
             try:
-                fired, detail = fn(c)
+                fired, detail, targets = fn(c)
             except Exception as e:
                 print("check %s errored: %r" % (cid, e), file=sys.stderr)
                 continue
+            targets = targets or [cid]
 
             if not fired:
-                if st.get("active"):
-                    st["active"] = False
-                    ntfy(cfg, "Sentinel resolved: %s" % cid, "%s cleared." % cid, 2, "white_check_mark")
-                st["consecutive"] = 0
+                for tgt, tst in list(tstates.items()):
+                    if tst.get("active"):
+                        tst["active"] = False
+                        ntfy(cfg, "Sentinel resolved: %s" % cid, "%s cleared." % tgt, 2, "white_check_mark")
+                    tst["consecutive"] = 0
                 continue
 
-            st["consecutive"] = st.get("consecutive", 0) + 1
+            # A target that dropped out of this run's fired set has resolved
+            # individually even though the check as a whole is still firing
+            # for OTHER targets — clear just that target, not the whole check.
+            for tgt, tst in list(tstates.items()):
+                if tgt not in targets and tst.get("active"):
+                    tst["active"] = False
+                    ntfy(cfg, "Sentinel resolved: %s" % cid, "%s cleared." % tgt, 2, "white_check_mark")
+                    tst["consecutive"] = 0
+
             # ⚠️ THIS GATE IS WHY A CHRONIC PROBLEM GOES SILENT. `active` is set
-            # when we escalate and cleared ONLY in the `not fired` branch above,
-            # so for a condition that never clears this `continue` short-circuits
-            # every later detection — before the cooldownSec check below is ever
-            # reached. The watcher is therefore EDGE-TRIGGERED: one ntfy on the
-            # way in, one on the way out, and nothing in between however much
-            # worse it gets. Demonstrated on 2026-10-21, from state.json:
-            # `disk-space` = {"consecutive": 10965, "active": true,
-            # "last_escalated": <2026-10-06 11:36>} — root sat above 90% for
-            # FIFTEEN DAYS, was detected 10,965 consecutive times, and was
-            # reported exactly once, on day one, at 90.89%. It then filled to
-            # 100% (382 MB free) and took out postgresql, paperless and Fulcrum,
-            # whose RocksDB corrupted beyond repair. `claude-login` has the same
-            # shape (11,671 consecutive, one escalation). `swap-headroom` and
-            # `failed-units` re-notify only because they OSCILLATE, so each dip
-            # below threshold manufactures a fresh edge — the checks that behave
-            # are the ones whose problem keeps going away.
+            # when we escalate and cleared ONLY above, so for a target that
+            # never clears this `continue` short-circuits every later
+            # detection of THAT target — before the cooldownSec check below is
+            # ever reached. The watcher is therefore EDGE-TRIGGERED per
+            # target: one ntfy on the way in, one on the way out, and nothing
+            # in between however much worse it gets. Demonstrated on
+            # 2026-10-21, from state.json: `disk-space` = {"consecutive":
+            # 10965, "active": true, "last_escalated": <2026-10-06 11:36>} —
+            # root sat above 90% for FIFTEEN DAYS, was detected 10,965
+            # consecutive times, and was reported exactly once, on day one, at
+            # 90.89%. It then filled to 100% (382 MB free) and took out
+            # postgresql, paperless and Fulcrum, whose RocksDB corrupted
+            # beyond repair. `claude-login` has the same shape (11,671
+            # consecutive, one escalation). `swap-headroom` and `failed-units`
+            # re-notify only because they OSCILLATE, so each dip below
+            # threshold manufactures a fresh edge — the checks that behave are
+            # the ones whose problem keeps going away.
             #
             # Edge-triggered stays the DEFAULT (the polite-polling ethos: a
-            # condition nobody can clear tonight should not nag all night). But
-            # a check may now opt into a reminder with `reescalateSec`, and the
-            # two disk checks do, at 24 h. Unset = exactly today's behaviour,
-            # so the other seventeen checks are untouched.
-            if st.get("active"):
-                reesc = int(c.get("reescalateSec", 0))
-                if not reesc or (now - st.get("last_escalated", 0)) < reesc:
+            # condition nobody can clear tonight should not nag all night).
+            # But a check may opt into a reminder with `reescalateSec`, and
+            # the two disk checks do, at 24 h. Unset = exactly today's
+            # behaviour, so the other checks are untouched.
+            new_targets = []
+            for tgt in targets:
+                tst = tstates.setdefault(tgt, {"consecutive": 0, "active": False, "last_escalated": 0, "last_action": 0})
+                tst["consecutive"] = tst.get("consecutive", 0) + 1
+                if tst.get("active"):
+                    reesc = int(c.get("reescalateSec", 0))
+                    if not reesc or (now - tst.get("last_escalated", 0)) < reesc:
+                        continue
+                if tst["consecutive"] < int(c.get("minConsecutive", debounce)):
                     continue
-            if st["consecutive"] < int(c.get("minConsecutive", debounce)):
-                continue
-            if now - st.get("last_escalated", 0) < int(c.get("cooldownSec", cooldown)):
+                if now - tst.get("last_escalated", 0) < int(c.get("cooldownSec", cooldown)):
+                    continue
+                new_targets.append(tgt)
+
+            if not new_targets:
                 continue
             if esc_hour >= max_hour or esc_day >= max_day:
                 print("rate-limited, skipping %s" % cid, file=sys.stderr)
                 continue
 
-            # ── ESCALATE ──
+            # ── ESCALATE ── (one incident per run; detail still covers every
+            # currently-fired target for context, but the gates above and the
+            # action-cooldown below are evaluated per newly-eligible target)
             evidence = gather_evidence(c, detail)
             ts = int(now)
             path = os.path.join(INCIDENT_DIR, "%s-%d.txt" % (cid, ts))
@@ -1396,7 +1430,10 @@ EOF
             #    one bounded action when permitted; otherwise it diagnoses only.
             report = ""
             if cfg.get("agentEnabled", True) and c.get("agent", False):
-                recently_acted = (now - st.get("last_action", 0)) < act_cooldown
+                # recently_acted/act_permitted only consider the targets that
+                # actually triggered THIS escalation — a target acted on
+                # yesterday no longer mutes a different target acted on today.
+                recently_acted = all((now - tstates[t].get("last_action", 0)) < act_cooldown for t in new_targets)
                 act_permitted = (cfg.get("actEnabled", True) and c.get("act", False)
                                  and acts_today < max_actions and not recently_acted)
                 diag = run_agent(cid, c, detail, path, cfg, act_permitted, recently_acted)
@@ -1410,7 +1447,8 @@ EOF
                     first = (diag.splitlines() or [""])[0].strip().upper()
                     acted = first.startswith("ACTION:") and "NONE" not in first
                     if acted:
-                        st["last_action"] = now
+                        for t in new_targets:
+                            tstates[t]["last_action"] = now
                         state["actions"].append(now)
                         acts_today += 1
                     ntfy(cfg, "Sentinel: %s (%s)" % (cid, "acted" if acted else "diagnosed"),
@@ -1419,8 +1457,9 @@ EOF
                     ntfy(cfg, "Sentinel: %s (agent unavailable)" % cid,
                          "claude -p produced no output or timed out; evidence at %s" % path, 3, "warning")
             append_space_log(cid, ts, c.get("severity", "warning"), detail, report)
-            st["active"] = True
-            st["last_escalated"] = now
+            for t in new_targets:
+                tstates[t]["active"] = True
+                tstates[t]["last_escalated"] = now
             state["escalations"].append(now)
             esc_hour += 1
             esc_day += 1
