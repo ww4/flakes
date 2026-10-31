@@ -701,6 +701,70 @@ EOF
     '';
   };
 
+  # enp3s0 does not hold a link speed — it renegotiates at every link event and
+  # has landed on 100 Mb as often as on gigabit. Reads /sys directly, so it is
+  # instant and does not depend on Prometheus being up.
+  nicSpeedCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-nic-speed";
+    text = ''
+      # exit 0 = FIRE, exit 1 = all clear (sentinel's command-check convention).
+      dev=enp3s0
+      alt=enp6s0u1
+      # Overridable ONLY so both branches can be exercised against a fixture
+      # tree. The fire path is the one that matters and a gigabit link cannot
+      # demonstrate it, so without this the check could only ever be tested in
+      # the state where it does nothing.
+      net="''${SENTINEL_NET_SYSFS:-/sys/class/net}"
+
+      if [ ! -e "$net/$dev/speed" ]; then
+        echo "nic-link-speed: $dev has no speed attribute. The LAN interface was renamed or is absent."
+        exit 0
+      fi
+
+      carrier=$(cat "$net/$dev/carrier" 2>/dev/null || echo 0)
+      speed=$(cat "$net/$dev/speed" 2>/dev/null || echo "")
+
+      # A DOWN link is deliberately NOT this check's business. It reports speed
+      # -1, which would read as "degraded" and mask the real fault, and with the
+      # LAN down nothing could deliver the notification anyway.
+      [ "$carrier" = "1" ] || exit 1
+
+      # Carrier up but no usable number: mid-negotiation, or the attribute went
+      # unreadable. Reported as itself rather than folded into the degraded
+      # path, which would announce "negotiated -1Mb" — a nonsense alert. The
+      # 2-check debounce absorbs a transient.
+      case "$speed" in
+        ""|*[!0-9]*)
+          echo "nic-link-speed: $dev has carrier but its speed reads '$speed', not a number. Cannot determine link speed."
+          exit 0
+          ;;
+      esac
+
+      [ "$speed" -lt 1000 ] || exit 1
+
+      echo "nic-link-speed: $dev negotiated ''${speed}Mb, not 1000. Every LAN transfer off gromit is capped near 11 MiB/s. Test cable-vs-port NOW, while it is degraded (see evidence)."
+      echo
+      echo "The negotiated speed is already a Prometheus series, so this needs no"
+      echo "inferring from average throughput:"
+      echo '  node_network_speed_bytes{device="enp3s0"} * 8 / 1e6'
+      echo
+      echo "Cable vs port. Run this WHILE it is degraded, which is now:"
+      echo "  1. Move the LAN cable from the onboard port to the ASIX USB adapter ($alt)."
+      echo "  2. cat /sys/class/net/$alt/speed"
+      echo "       1000 -> cable and in-wall run are fine; the ONBOARD r8169 port is bad."
+      echo "       100  -> the port is fine; it is the CABLE or the in-wall run."
+      echo "  networking.nix already mirrors $dev onto $alt, so ssh, Jellyfin-direct"
+      echo "  and LAN DNS keep working on it."
+      echo
+      if [ -e "$net/$alt/carrier" ] && [ "$(cat "$net/$alt/carrier" 2>/dev/null || echo 0)" = "1" ]; then
+        echo "  NOTE: $alt already has link, at $(cat "$net/$alt/speed" 2>/dev/null)Mb."
+      else
+        echo "  ($alt has no link right now, so the cable has not been moved yet.)"
+      fi
+      exit 0   # fire
+    '';
+  };
+
   sentinelConfig = {
     enabled = true;
     pollSec = 120;          # informational; the systemd timer drives the cadence
@@ -902,6 +966,30 @@ EOF
       # mempool-api's RBF cache dump freezing silently (see rbfCacheCheck above).
       { id = "mempool-rbfcache"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "${rbfCacheCheck}/bin/sentinel-check-mempool-rbfcache"; timeout = 15; }
+
+      # The LAN link renegotiating down to 100 Mb (see nicSpeedCheck above).
+      # From node_network_speed_bytes over 2026-08-01..10-31: SIX transitions,
+      # and 44.8 of those 90 days spent at 100 Mb — including one unbroken
+      # 40-day run from 09-20 18:50 to the 10-30 19:40 reboot. Nothing detected
+      # any of it. Chris found it by hand on 10-28 while sizing the Wallace copy,
+      # and the flake comments until now recorded it as "stuck since 08-25",
+      # which the series disproves: it returned to gigabit on its own on 08-27,
+      # 08-28, 09-05 and 10-30.
+      #
+      # This REPLACES the weekly `nic-cable-test` daily-reminder, deleted in this
+      # change. That reminder fired every Saturday regardless of the link state,
+      # so it kept asking for a cable-vs-port test at moments when the link was
+      # at gigabit and the test could prove nothing — which is what happened on
+      # 10-31. An intermittent fault has to be measured while it is present, and
+      # only a condition-triggered check can say "now".
+      #
+      # reescalateSec = 604800: a 40-day degraded run is exactly the chronic
+      # shape the `active` gate silences, and a week matches the cadence the
+      # deleted reminder had. agent = false because the fix is physical — there
+      # is nothing to diagnose and nothing the agent can do. severity = warning,
+      # never critical: a degraded LAN link is not worth waking Chris for.
+      { id = "nic-link-speed"; type = "command"; severity = "warning"; agent = false; act = false;
+        cmd = "${nicSpeedCheck}/bin/sentinel-check-nic-speed"; reescalateSec = 604800; }
 
       # Is the front door open at all (see vhostCheck above). Distinct from
       # api-content, which watches ONE backend's freshness behind nginx and was
