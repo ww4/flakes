@@ -14,6 +14,10 @@
 # one machine that could fix the problem was the one nobody could reach.
 { config, lib, pkgs, ... }:
 
+let
+  sw = "/run/current-system/sw/bin";
+  nopw = [ "NOPASSWD" ];
+in
 {
   users.users.claude = {
     isNormalUser = true;
@@ -34,22 +38,73 @@
     ];
   };
 
-  # ONE privileged capability, matching the house rules in modules/agent/sudo.nix:
-  # exact commands, no wildcards on dangerous verbs.
+  # Privileged capabilities, following the house rules in modules/agent/sudo.nix:
+  # exact commands, no wildcards on dangerous verbs, purpose wrappers over raw
+  # tools, and nothing that applies configuration (comin owns that).
   #
-  #   `efibootmgr`         bare — read the current entries and order
-  #   `efibootmgr -o *`    REORDER only
+  # PARITY WITH GROMIT (Chris, 2026-10-30): "I don't want to treat Wallace any
+  # differently than gromit. You should have equivalent permissions on both at
+  # all times." Until now this file granted exactly one command, so every
+  # routine question on wallace — is that unit failed, why did that container
+  # restart, what does the firewall look like — had to go through Chris. The
+  # set below is gromit's list, minus the rules whose services do not exist
+  # here, plus the podman equivalents of its docker rules.
   #
-  # Notably absent: `-b`/`-B` (delete an entry) and `-c` (create one). Reordering
-  # is fully reversible and cannot orphan the Windows entry; deletion is not, and
-  # a mistake there is a machine that boots nothing.
+  # ⚠️ Equivalent does NOT mean broader. Deliberately still absent, exactly as
+  # on gromit: mount/umount, rsync, rm, dd, mkfs, nixos-rebuild, user/secret
+  # changes, and `podman inspect`/`exec` (inspect prints container env, which
+  # carries secrets; exec is arbitrary execution as root).
   security.sudo.extraRules = [
     {
       users = [ "claude" ];
       commands = [
+        # --- EFI boot order (the original rule; wallace-specific) ----------
+        #   `efibootmgr`       bare — read the current entries and order
+        #   `efibootmgr -o *`  REORDER only
+        # Absent: `-b`/`-B` (delete) and `-c` (create). Reordering is fully
+        # reversible and cannot orphan the Windows entry; deletion is not, and
+        # a mistake there is a machine that boots nothing.
         { command = "${pkgs.efibootmgr}/bin/efibootmgr";      options = [ "NOPASSWD" ]; }
         { command = "${pkgs.efibootmgr}/bin/efibootmgr -o *"; options = [ "NOPASSWD" ]; }
+
+        # --- Read-only inspection of service-owned state ------------------
+        { command = "${sw}/systemctl status *";    options = nopw; }
+        { command = "${sw}/systemctl is-active *"; options = nopw; }
+        { command = "${sw}/systemctl is-failed *"; options = nopw; }
+
+        # --- Routine, reversible ops ---------------------------------------
+        { command = "${sw}/systemctl reset-failed *"; options = nopw; }
+
+        # Containerised services as a class — wallace's analogue of gromit's
+        # `systemctl restart docker-*`. Restart-only (no stop/start: a restart
+        # cannot leave something down), prefix-fixed so it cannot reach a
+        # non-container unit, and every one is supervised and reversible.
+        # Covers podman-immich-ml, podman-kokoro, podman-open-webui.
+        { command = "${sw}/systemctl restart podman-*"; options = nopw; }
+
+        # --- Read-only container + firewall diagnostics --------------------
+        # (sudoers gotcha, learned on gromit: "cmd *" does NOT match a bare
+        # "cmd" — both must be listed.)
+        { command = "${sw}/podman ps";       options = nopw; }
+        { command = "${sw}/podman ps *";     options = nopw; }
+        { command = "${sw}/podman logs *";   options = nopw; }
+        { command = "${sw}/iptables-save";   options = nopw; }
+
+        # NOT YET: smart-dump. The wrapper the agent is allowed to run on
+        # gromit lives in homelab-modules and expects that library's
+        # `homelab.*` option tree, which wallace does not import — adding it
+        # pulls the whole option namespace in and fails to evaluate
+        # (`attribute 'homelab' missing`). Worth doing separately: wallace is
+        # taking the bitcoind chain on a WD30EZRX with 34,888 power-on hours
+        # and 317,995 load cycles, past the WD Green design rating, so drive
+        # health needs to be visible here. Until then SMART on wallace is
+        # Chris-only.
       ];
     }
   ];
+
+  # Audit: keep a record of what the agent ran as root — same as gromit.
+  security.sudo.extraConfig = ''
+    Defaults:claude log_output, logfile="/var/log/sudo-claude.log", !syslog
+  '';
 }
