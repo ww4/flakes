@@ -64,8 +64,18 @@
     # and (see blocky.nix) LAN DNS are all silently closed on it -- the failure
     # would present as "the network works but half the house is broken".
     # Harmless while unplugged: an interface with no link accepts nothing.
-    # Added 2026-08-25, when enp3s0 fell back to 100Mbps/Full and stayed there
-    # across a cable swap, making a NIC-vs-cable swap a live possibility.
+    # Added 2026-08-25, when enp3s0 fell back to 100Mbps/Full, making a
+    # NIC-vs-cable swap a live possibility.
+    #
+    # ⚠️ Corrected 2026-10-31: this said the link "stayed there across a cable
+    # swap". It did not. node_network_speed_bytes (node_exporter exports
+    # /sys/class/net/*/speed, so the history was already on disk) shows enp3s0
+    # bouncing between 100 Mb and 1 Gb SIX times between 08-01 and 10-31, back
+    # at gigabit on its own on 08-27, 08-28, 09-05 and 10-30, and spending 44.8
+    # of those 90 days at 100 Mb. It is intermittent, not stuck, so a single
+    # reading on either NIC cannot tell port from cable — which is why the
+    # cable-vs-port test now rides on sentinel's `nic-link-speed` check and
+    # fires while the link is actually degraded.
     interfaces."enp6s0u1".allowedTCPPorts = [ 22 8096 ];
   };
 

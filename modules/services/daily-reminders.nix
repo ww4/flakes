@@ -64,29 +64,6 @@ let
       tags = "floppy_disk,key";
     }
     {
-      name = "nic-cable-test";
-      title = "Test: is it the cable or the motherboard port?";
-      message = ''
-        gromit's enp3s0 has been stuck at 100Mbps/Full since 2026-08-25 and a new cable did not fix it.
-        Move that same cable to the ASIX USB adapter (enp6s0u1) and read the speed:
-          cat /sys/class/net/enp6s0u1/speed
-        1000 -> cable and wall run are fine, the ONBOARD PORT is bad.
-        100  -> the port is fine, it is the CABLE or the in-wall run.
-        Firewall already mirrors enp3s0 onto enp6s0u1, so SSH, LAN DNS and Jellyfin-direct keep working on it.
-        DELETE THIS REMINDER once the answer is known.'';
-      url = "https://glances.rosemaryacres.com";
-      # ⚠️ ONE-SHOT BY INTENT, unlike every other entry here. The others guard
-      # recurring habits; this guards a single diagnostic that is blocked on a
-      # physical event (the box reaching its permanent home), which no calendar
-      # can express. Weekly rather than daily so it stays a nudge and not a nag,
-      # Saturday morning because that is when there is time to move a machine.
-      # It carries its own instructions so it is actionable without going back
-      # through the diagnosis, and it says to delete itself — if this is still
-      # firing in a month, the reminder is the thing that failed, not Chris.
-      calendar = "Sat *-*-* 10:00:00";
-      tags = "electric_plug,mag";
-    }
-    {
       name = "d6-cable-swap";
       title = "Swap the D6 USB cable (new one arrived Friday)";
       message = ''
@@ -108,10 +85,13 @@ let
 
         DELETE THIS REMINDER once the cable is swapped and the counts are clean.'';
       url = "https://glances.rosemaryacres.com";
-      # ⚠️ ONE-SHOT BY INTENT, same as nic-cable-test above. Chris ordered the
+      # ⚠️ ONE-SHOT BY INTENT, unlike every other entry here: the others guard
+      # recurring habits, this guards a single physical job. Chris ordered the
       # cable 2026-08-26 for Friday delivery and asked to be reminded Saturday.
-      # 10:05 rather than 10:00 so it does not land in the same instant as the
-      # NIC test and get read as one notification — they are separate jobs.
+      # The 10:05 (not 10:00) used to be about not colliding with the
+      # nic-cable-test reminder, which has since been deleted in favour of
+      # sentinel's condition-triggered `nic-link-speed` check; the odd minute is
+      # kept only because there is no reason to move a working reminder.
       #
       # It carries the whole procedure because the parts that are easy to get
       # wrong are not the swap itself: the tape says "backup" on a pool drive,
@@ -137,8 +117,9 @@ let
   #     the timer's NextElapseUSecRealtime -> empty, i.e. it would NEVER fire
   #
   # That is exactly what happened to reminder-nic-cable-test (added 2026-08-25,
-  # flakes #189): it sat there for a week looking installed and could never have
-  # fired. A reminder that cannot fire is worse than no reminder, because it is
+  # flakes #189; the reminder itself is gone now — superseded by sentinel's
+  # `nic-link-speed` check): it sat there for a week looking installed and could
+  # never have fired. A reminder that cannot fire is worse than no reminder, because it is
   # being relied on. Single-line reminders were unaffected, which is why nothing
   # showed up until a multi-line one was added.
   #
