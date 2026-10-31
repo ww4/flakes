@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -194,6 +195,110 @@ def _parse_ts(value) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+# The exact string the extraction prompt is told to return when a video has
+# nothing in it for this area. Matched loosely (case/punctuation) because it
+# is model output, not an enum.
+NOT_LOCAL = "nothing for northern kentucky"
+
+# Hard ceiling on what the card will print, whatever the model sends. The card
+# is a fixed-height tile; a field documented as "one sentence, max 180 chars"
+# is a request, not a guarantee.
+LOCAL_MAX = 200
+
+
+def is_not_local(text: str) -> bool:
+    cleaned = re.sub(r"[^a-z ]+", "", (text or "").strip().lower()).strip()
+    return cleaned == NOT_LOCAL
+
+
+def local_line(row) -> str:
+    """The one sentence the card shows: northern Kentucky, or nothing.
+
+    ⚠️ This used to print `summary`, which is the WHOLE video — the West, the
+    Plains, and recaps of weather that already happened elsewhere. On
+    2026-10-30 that was 1,496 characters on a card with room for about two
+    lines: it pushed the ten-day forecast 290px below the bottom of the frame
+    on a phone, and `overflow:hidden` meant there was not even a scrollbar to
+    reveal it. Roughly a fifth of that text was about Kentucky.
+
+    Prefers the extraction's `local` field. Rows written before that field
+    existed fall back to picking the Kentucky-bearing sentences out of
+    `summary` — worse than the model's answer, but far better than all of it.
+    """
+    try:
+        text = (row["local"] or "").strip()
+    except (IndexError, KeyError):
+        text = ""                      # column predates this row's database
+    if not text:
+        text = _kentucky_sentences((row["summary"] or "").strip())
+    if not text:
+        return ""
+    if len(text) > LOCAL_MAX:
+        cut = text[:LOCAL_MAX].rsplit(" ", 1)[0].rstrip(" ,;:—-")
+        text = cut + "…"
+    return text
+
+
+def _has_term(text: str) -> bool:
+    low = text.lower()
+    return any(term in low for term in geo.STRONG_TERMS)
+
+
+def _kentucky_sentences(summary: str) -> str:
+    """Fallback: the part of `summary` that actually names this area.
+
+    Uses the same term list the geofence runs on, so "what counts as here" has
+    one definition in this module and not two. Returns "" rather than guessing
+    when nothing names anywhere near Kentucky — the caller renders that as
+    "nothing for this area", which is a true statement.
+
+    ⚠️ Narrows to CLAUSES when a matching sentence is too long for the card.
+    Ryan's forecasts run national-to-local inside one sentence:
+
+        "…bringing rain to Texas, Oklahoma and Kansas around Halloween,
+         spreading Sunday into the Mid-South and Ohio Valley including
+         Louisville, and reaching the East Coast Monday."
+
+    That sentence is 310 characters and the only local clause is in the
+    middle, so sentence-level selection plus a tail trim cut off the one part
+    worth reading and left Kansas. Caught by a test, not by inspection.
+    """
+    if not summary:
+        return ""
+    sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", summary) if x.strip()]
+    hits = [x for x in sentences if _has_term(x)]
+    if not hits:
+        return ""
+
+    joined = " ".join(hits[:2])
+    if len(joined) <= LOCAL_MAX:
+        return joined
+
+    # Too long: keep only the clauses that carry a local term.
+    clauses = []
+    for sentence in hits:
+        for clause in re.split(r"\s*[;,]\s+", sentence):
+            clause = clause.strip(" ,;")
+            if clause and _has_term(clause):
+                clauses.append(clause)
+    narrowed = "; ".join(clauses[:2])
+    return narrowed or joined
+
+
+def local_hazards(local: str, hazards: list[str], limit: int = 3) -> list[str]:
+    """Only the hazards the LOCAL line actually supports.
+
+    ⚠️ `hazards` is what the whole video claimed, and on a national video those
+    belong to somebody else. The read that prompted this change carried
+    "cold · flash flood · heat" beside a line about the Ohio Valley — the
+    flash flood was in Colorado and the heat was out west. Chips are a claim
+    about this house, so a hazard has to appear in the local sentence to be
+    shown. Nothing is better than three wrong ones.
+    """
+    low = (local or "").lower()
+    return [h for h in hazards if str(h).lower() in low][:limit]
+
+
 def _read_dict(row) -> dict:
     def _list(raw):
         try:
@@ -204,6 +309,7 @@ def _read_dict(row) -> dict:
 
     return {
         "summary": (row["summary"] or "").strip(),
+        "local": local_line(row),
         "hazards": _list(row["hazards"]),
         "confidence": (row["confidence"] or "").strip(),
         "window_start": row["window_start"],
@@ -280,15 +386,28 @@ _CSS = """
 html,body{margin:0;background:transparent;color:#e2e8f0;
   font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 .strip{padding:.5rem .7rem;display:flex;flex-direction:column;gap:.55rem}
+.now,.say,.ten,.stamp{flex:none}
 .now{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap}
 .now .temp{font-size:1.9rem;font-weight:600;line-height:1}
 .now .cond{font-size:.85rem;color:#cbd5e1}
 .now .i{color:#cbd5e1;display:flex;align-items:center}
 .now .meta{margin-left:auto;font-size:.75rem;color:#94a3b8;
   display:flex;gap:.8rem;flex-wrap:wrap}
+/* ⚠️ The read block is CLAMPED, and that is the point of it.
+   Until 2026-10-30 this was an unbounded free-text block in a fixed-height
+   tile: a 1,496-character summary made it 497px tall on a 390px phone and
+   pushed the ten-day forecast 290px below the bottom of the frame, with
+   html{overflow:hidden} ensuring there was no scrollbar to find it with.
+   `max-height` + `flex:none` means the card's other rows cannot be evicted by
+   anything the model writes, however long. The content fix (a Kentucky-only
+   `local` field) is upstream in the extraction; this is the backstop for the
+   day something writes a paragraph anyway. */
 .read{display:flex;gap:.5rem;align-items:baseline;flex-wrap:wrap;
-  font-size:.78rem;line-height:1.45;
+  flex:none;font-size:.78rem;line-height:1.45;
+  max-height:2.9rem;overflow:hidden;
   border-left:2px solid rgba(129,140,248,.6);padding-left:.6rem}
+.read .line{overflow:hidden;display:-webkit-box;
+  -webkit-line-clamp:2;-webkit-box-orient:vertical}
 .read .who{font-weight:600;color:#c7d2fe;white-space:nowrap}
 .read .tag{font-size:.62rem;letter-spacing:.09em;text-transform:uppercase;
   color:#94a3b8;border:1px solid rgba(226,232,240,.16);
@@ -309,6 +428,11 @@ html,body{margin:0;background:transparent;color:#e2e8f0;
 /* The ten-day grid cannot hold ten readable columns on a 390px phone, so it
    becomes five by two rather than ten unreadable slivers. */
 @media (max-width:640px){
+  /* The "Ryan Hall" label and its chips wrap onto their own row below 640px,
+     so a 2-row clamp leaves the sentence exactly ONE line and the end of it
+     disappears — "…and Ohio Valley" with "including Louisville" cut off.
+     Three rows: one for the label, two for the line. */
+  .read{max-height:4.3rem}
   .ten{grid-template-columns:repeat(5,minmax(0,1fr))}
   .now .temp{font-size:1.6rem}
   .now .meta{margin-left:0;width:100%}
@@ -392,13 +516,23 @@ def _read_html(read: dict | None) -> str:
         return ('<div class="read"><span class="who">Ryan Hall</span>'
                 '<span class="quiet">no current read for this area</span></div>')
 
+    local = read["local"]
+
+    # Nothing here for us. Say that, and say nothing else — in particular drop
+    # the hazard chips, because `hazards` is what the VIDEO claimed and on a
+    # national video those are somebody else's. "flash flood" next to "nothing
+    # for northern Kentucky" would be a contradiction on the same line.
+    if not local or is_not_local(local):
+        return ('<div class="read"><span class="who">Ryan Hall</span>'
+                '<span class="quiet">nothing for this area in his latest'
+                '</span></div>')
+
     bits = [f'<span class="who">Ryan Hall</span>']
     if read["confidence"]:
         bits.append(f'<span class="tag">{html.escape(read["confidence"])}</span>')
-    for hazard in read["hazards"][:3]:
+    for hazard in local_hazards(local, read["hazards"]):
         bits.append(f'<span class="tag">{html.escape(hazard)}</span>')
-    summary = read["summary"] or "a setup worth watching"
-    bits.append(f'<span>{html.escape(summary)}</span>')
+    bits.append(f'<span class="line">{html.escape(local)}</span>')
     return '<div class="read">' + "".join(bits) + "</div>"
 
 

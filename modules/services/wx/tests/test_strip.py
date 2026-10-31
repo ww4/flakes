@@ -44,13 +44,14 @@ def mkcon():
 
 def add_extraction(con, video_id, *, created, fence=2, window_end=None,
                    summary="A line of storms Thursday afternoon.",
+                   local="Storms reach Kentucky Thursday afternoon.",
                    hazards=("hail", "wind"), confidence="moderate"):
     con.execute(
         "INSERT INTO extraction (video_id, created_at, fence_score, window_end, "
-        "summary, hazards, confidence) VALUES (?,?,?,?,?,?,?)",
+        "summary, local, hazards, confidence) VALUES (?,?,?,?,?,?,?,?)",
         (video_id, created.isoformat(), fence,
          window_end.isoformat() if window_end else None,
-         summary, json.dumps(list(hazards)), confidence))
+         summary, local, json.dumps(list(hazards)), confidence))
     con.commit()
 
 
@@ -134,12 +135,28 @@ class Render(unittest.TestCase):
         self.assertIn("Ryan Hall", page)
 
     def test_read_fields_are_html_escaped(self):
+        """The card now prints the KENTUCKY line rather than the whole summary,
+        so the fixture has to carry a local term — otherwise the text is
+        dropped for being about somewhere else and the escaping is never
+        exercised. A test that passes because nothing was rendered is not a
+        test of escaping."""
         con = mkcon()
+        # local="" forces the summary FALLBACK path, which is the one under
+        # test here; the dedicated test below covers the `local` field itself.
         add_extraction(con, "v1", created=NOW, window_end=NOW + timedelta(days=1),
-                       summary='<script>alert("x")</script>')
+                       local="",
+                       summary='Kentucky rain <script>alert("x")</script>')
         page = strip.render(sample(), strip.latest_read(con, now=NOW), now=NOW)
         self.assertNotIn("<script>", page)
         self.assertIn("&lt;script&gt;", page)
+
+    def test_escaping_also_covers_the_local_field(self):
+        con = mkcon()
+        add_extraction(con, "v1", created=NOW, window_end=NOW + timedelta(days=1),
+                       summary="harmless", local='<img src=x onerror="alert(1)">')
+        page = strip.render(sample(), strip.latest_read(con, now=NOW), now=NOW)
+        self.assertNotIn("<img", page)
+        self.assertIn("&lt;img", page)
 
     def test_ten_columns_are_rendered(self):
         page = strip.render(sample(10), None, now=NOW)
@@ -262,3 +279,176 @@ class Fetch(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ------------------------------------------- the 2026-10-30 overflow incident
+
+# The summary that was LIVE on the card when Chris reported the fault, copied
+# off https://rosemaryacres.com/wx/strip.html. 1,496 characters on a tile with
+# room for two lines. Kept verbatim because the whole point is its length and
+# the ratio of Colorado to Kentucky in it.
+REAL_LONG_SUMMARY = (
+    "Ryan says an omega block has the West stormy and the central and eastern "
+    "US stuck under a ridge with record warmth and drought, and that the block "
+    "holds for another four or five days. The immediate hazard is in "
+    "southwestern Colorado, where tropical moisture from the remnants of "
+    "Pacific Hurricane Trudy is driving 4 to 5 inches of rain in the mountains "
+    "through Friday on top of existing snowpack, with the flood risk at level "
+    "3 of 4 and close to 4; he calls out flash flooding in canyons. He recaps "
+    "Wednesday's severe weather out west (Arizona's first tornado watch since "
+    "2010, 12 tornado warnings, golf ball hail and 72 mph gusts near Flagstaff, "
+    "record rain at Oxnard and Palmdale) as events that already happened. "
+    "Looking ahead, a Pacific storm merging with a dropping Canadian jet early "
+    "next week should finally shove the block east and break the ridge down, "
+    "bringing rain to Texas, Oklahoma and Kansas around Halloween, spreading "
+    "Sunday into the Mid-South and Ohio Valley including Louisville, and "
+    "reaching the East Coast Monday. He flags likely strong thunderstorms in "
+    "Texas and Oklahoma as the next severe weather event but says it is too "
+    "early to judge their strength, and notes models disagree on timing with "
+    "the European slower and the American faster — he leans faster. Behind it, "
+    "highs in the 70s and 80s drop to the 50s and 60s in the first few days of "
+    "November, with a wetter pattern for the Midwest and Southeast in the first "
+    "week of November."
+)
+
+
+def row_with(**over):
+    """A sqlite3.Row-alike. dict is enough — strip.py only subscripts."""
+    base = {"summary": "", "local": "", "hazards": "[]", "regions": "[]",
+            "confidence": "hedged", "window_start": None, "window_end": None,
+            "video_id": "v1"}
+    base.update(over)
+    return base
+
+
+class LocalLine(unittest.TestCase):
+    def test_the_real_summary_is_far_too_long_for_the_card(self):
+        """The bug, stated as a measurement so it cannot quietly return."""
+        self.assertGreater(len(REAL_LONG_SUMMARY), 1400)
+
+    def test_local_field_is_preferred_over_the_summary(self):
+        line = strip.local_line(row_with(
+            summary=REAL_LONG_SUMMARY,
+            local="Rain arrives Sunday across the Ohio Valley, then highs drop "
+                  "into the 50s and 60s early next week."))
+        self.assertTrue(line.startswith("Rain arrives Sunday"))
+        self.assertNotIn("Colorado", line)
+        self.assertNotIn("Flagstaff", line)
+
+    def test_fallback_keeps_only_the_kentucky_sentences(self):
+        """Rows written before `local` existed still must not print Arizona."""
+        line = strip.local_line(row_with(summary=REAL_LONG_SUMMARY))
+        self.assertIn("Ohio Valley", line)
+        for elsewhere in ("Colorado", "Flagstaff", "Oxnard", "Trudy",
+                          "Arizona", "tornado watch"):
+            self.assertNotIn(elsewhere, line)
+
+    def test_every_output_is_bounded(self):
+        for row in (row_with(summary=REAL_LONG_SUMMARY),
+                    row_with(local=REAL_LONG_SUMMARY),
+                    row_with(local="x" * 900)):
+            self.assertLessEqual(len(strip.local_line(row)), strip.LOCAL_MAX + 1)
+
+    def test_truncation_breaks_on_a_word_and_marks_itself(self):
+        line = strip.local_line(row_with(local="word " * 200))
+        self.assertTrue(line.endswith("…"))
+        self.assertNotIn("wo…", line)
+
+    def test_a_summary_about_nowhere_near_here_yields_nothing(self):
+        """⚠️ Returning "" is the point: the caller renders "nothing for this
+        area", which is true. Printing the first sentence regardless would put
+        Colorado's flood risk on the card as though it were his forecast."""
+        self.assertEqual(strip.local_line(row_with(
+            summary="A Pacific storm is soaking the Oregon coast. "
+                    "Flood risk is level 3 of 4 near Medford.")), "")
+
+    def test_missing_column_does_not_raise(self):
+        """A database that predates the migration has no `local` key at all."""
+        row = {"summary": REAL_LONG_SUMMARY}
+        self.assertIn("Ohio Valley", strip.local_line(row))
+
+
+class NotLocal(unittest.TestCase):
+    def test_the_sentinel_is_recognised_loosely(self):
+        for text in ("nothing for northern Kentucky",
+                     "Nothing for northern Kentucky.",
+                     "  nothing for northern kentucky  "):
+            self.assertTrue(strip.is_not_local(text), text)
+
+    def test_a_real_forecast_is_not_the_sentinel(self):
+        self.assertFalse(strip.is_not_local(
+            "Rain reaches northern Kentucky Sunday."))
+
+    def test_nothing_local_drops_the_hazard_chips(self):
+        """⚠️ `hazards` is what the VIDEO claimed. On a national video those
+        belong to Colorado, and "flash flood" beside "nothing for this area"
+        is a contradiction on one line."""
+        page = strip.render(sample(), {
+            "summary": REAL_LONG_SUMMARY, "local": "nothing for northern Kentucky",
+            "hazards": ["flash flood", "heat"], "confidence": "hedged",
+            "window_start": None, "window_end": None, "video_id": "v"},
+            now=NOW)
+        self.assertIn("nothing for this area", page)
+        self.assertNotIn("flash flood", page)
+
+    def test_a_local_read_keeps_its_chips(self):
+        page = strip.render(sample(), {
+            "summary": "", "local": "Rain Sunday across the Ohio Valley.",
+            "hazards": ["rain"], "confidence": "hedged",
+            "window_start": None, "window_end": None, "video_id": "v"},
+            now=NOW)
+        self.assertIn("rain", page)
+        self.assertIn("Ohio Valley", page)
+
+
+class LocalHazards(unittest.TestCase):
+    def test_a_hazard_the_local_line_does_not_mention_is_dropped(self):
+        """⚠️ The live case: the video's hazards were cold/flash flood/heat —
+        Colorado's flood and the West's heat — printed beside an Ohio Valley
+        line as if they were forecast for this house."""
+        kept = strip.local_hazards(
+            "spreading Sunday into the Mid-South and Ohio Valley including Louisville",
+            ["cold", "flash flood", "heat"])
+        self.assertEqual(kept, [])
+
+    def test_a_hazard_the_local_line_names_is_kept(self):
+        self.assertEqual(
+            strip.local_hazards("Tornado risk reaches Kentucky Thursday.",
+                                ["tornado", "flash flood"]),
+            ["tornado"])
+
+    def test_capped(self):
+        line = "rain hail wind tornado cold in Kentucky"
+        self.assertEqual(
+            len(strip.local_hazards(line, ["rain", "hail", "wind", "tornado", "cold"])),
+            3)
+
+    def test_the_card_drops_them_end_to_end(self):
+        page = strip.render(sample(), {
+            "summary": "", "local": "Rain spreads into the Ohio Valley Sunday.",
+            "hazards": ["flash flood", "heat"], "confidence": "hedged",
+            "window_start": None, "window_end": None, "video_id": "v"}, now=NOW)
+        self.assertNotIn("flash flood", page)
+        self.assertNotIn(">heat<", page)
+        self.assertIn("Ohio Valley", page)
+
+
+class ReadBlockIsClamped(unittest.TestCase):
+    def test_the_card_still_contains_the_ten_day_row(self):
+        """The structural guarantee: whatever the read block holds, the rest of
+        the card is still THERE. Height is CSS and unittest cannot lay it out,
+        so this asserts the markup and the clamp declarations; the measured
+        proof is in the PR."""
+        page = strip.render(sample(), {
+            "summary": REAL_LONG_SUMMARY, "local": REAL_LONG_SUMMARY,
+            "hazards": [], "confidence": "", "window_start": None,
+            "window_end": None, "video_id": "v"}, now=NOW)
+        self.assertIn('<div class="ten">', page)
+        self.assertEqual(page.count('<div class="d">'), 10)
+
+    def test_clamp_declarations_are_present(self):
+        for rule in ("max-height:2.9rem", "-webkit-line-clamp:2",
+                     ".now,.say,.ten,.stamp{flex:none}"):
+            self.assertIn(rule, strip.CSS if hasattr(strip, "CSS") else strip._CSS,
+                          rule + " missing — the forecast can be evicted again")
+

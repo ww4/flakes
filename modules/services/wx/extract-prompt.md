@@ -22,6 +22,7 @@ you know about the weather.
   "confidence": "confident | hedged | speculative",
   "escalation": "up | flat | down | new",
   "summary": "3-6 sentences. What he said, in plain words. No hype.",
+  "local": "ONE sentence, max 180 characters, about NORTHERN KENTUCKY ONLY — or the exact string: nothing for northern Kentucky",
   "quotes": ["1-3 short verbatim passages that carry the actual forecast"]
 }
 ```
@@ -41,6 +42,26 @@ all. **Do not infer place names from your own knowledge of where a storm would
 go.** If he named nothing, return an empty list. An honest empty list is far
 more useful here than a guess, because a wrong region silently either fires an
 alert about someone else's weather or hides one about his.
+
+**`local`** is the one field written for a glance rather than for the rules
+engine — it is what a dashboard card shows, with no room for anything else.
+
+`summary` is the whole video and must stay that way; a lot of Ryan's airtime is
+the West, the Plains, and recaps of weather that has already happened
+elsewhere. `local` is the opposite: **only what reaches northern Kentucky, and
+when.** Name the day if he named it.
+
+⚠️ **"Nothing for here" is a correct and common answer.** Many videos genuinely
+do not concern northern Kentucky at all. In that case return exactly
+`nothing for northern Kentucky` and nothing else — do NOT reach for the
+nearest-sounding regional mention to fill the field. A card that says the
+quiet part plainly is worth far more than one that reprints Colorado's flood
+risk as though it were his forecast.
+
+Treat a mention as local if he names Kentucky, the Ohio Valley, the Tri-State,
+Louisville, Lexington, Cincinnati, or the I-71/I-75 corridor — or if he draws
+the Mid-South/Midwest in a way that explicitly includes this area. A storm in
+Texas that *might* move east later is not local until he says it gets here.
 
 **`window`** — the dates he says the weather arrives, not the upload date. If he
 gives no dates, use null for both.

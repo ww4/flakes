@@ -518,8 +518,13 @@ let
         height: 300px;
       }
 
+      /* 420px, not 340. The read block is clamped now, so the card's height
+         is finally deterministic: measured 406px natural at both 390px and
+         320px wide (the ten-day grid becomes 5x2 below 640px, which is most
+         of it). 340px clipped the bottom of that grid and the timestamp, and
+         html{overflow:hidden} meant there was no scrollbar to reveal them. */
       #embed-wx-strip iframe {
-        height: 340px;
+        height: 420px;
       }
 
       /* The two panels stack below 640px, and the issue pills wrap: measured
