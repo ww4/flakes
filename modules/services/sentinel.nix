@@ -31,14 +31,41 @@ let
   # made, so this costs nothing and cannot itself be the thing that fails.
   # A revoked-but-unexpired token is NOT caught here; that shows up as a failed
   # unit instead, and `claude-auth` tells the two apart.
+  #
+  # ⚠️ EXIT-CODE POLARITY — this check shipped INVERTED and was fixed 2026-10-31.
+  # A `command` check fires when the command exits with `fireOnExit`, which
+  # defaults to 0, so for sentinel **exit 0 means "there is a problem"**. Every
+  # other command check obeys that: backupCheck prints and exits 0, and the
+  # `oom` check is a bare grep, which exits 0 on a match. This one exited 0 when
+  # the login was HEALTHY and 1 once the token was nearly dead.
+  #
+  # The result was not a missing alert but a wrong one in both directions:
+  #   healthy  -> exit 0 -> fires  -> escalates once, then latches active=True
+  #   expiring -> exit 1 -> "not fired" -> the watcher's resolve path sends
+  #                                        "Sentinel resolved: claude-login cleared."
+  # So the notification owed to Chris when his login actually died was a green
+  # resolved tick, and the one real escalation it ever sent was for a healthy
+  # token. Confirmed live before this fix: refresh token healthy with 26.6 days
+  # left, the check exited 0 with empty stdout, and state.json carried
+  # claude-login active=True since 2026-10-28 15:38 — latched, so the `active`
+  # gate below would have suppressed every later detection anyway.
+  #
+  # The ⚠️ note on that `active` gate cites claude-login as an example of a
+  # chronic condition going quiet (11,671 consecutive, one escalation). The
+  # edge-trigger problem is real, but it is NOT why this check was stuck: it was
+  # firing on the healthy state, which never clears. Fixing the gate would not
+  # have fixed this. No `reescalateSec` is added here — an expiring token is a
+  # genuine edge (it happens once per login cycle) and the existing 7-day lead
+  # is the reminder.
   claudeLoginCheck = pkgs.writeShellApplication {
     name = "sentinel-check-claude-login";
     runtimeInputs = [ pkgs.python3 ];
     text = ''
+      # exit 0 = FIRE (sentinel's command-check convention), exit 1 = all clear.
       cred=/home/claude/.claude/.credentials.json
       if [ ! -r "$cred" ]; then
         echo "claude login: no readable credentials at $cred — every scheduled claude -p run will fail. Run 'claude' interactively on gromit."
-        exit 1
+        exit 0
       fi
       # Epoch MILLISECONDS. Read as seconds this dates to 1970 and cries wolf
       # permanently, which is worse than having no check.
@@ -46,11 +73,18 @@ let
 import json, sys, time
 d = json.load(open(sys.argv[1]))["claudeAiOauth"]
 days = (d["refreshTokenExpiresAt"] / 1000 - time.time()) / 86400
+when = time.strftime("%Y-%m-%d %H:%M", time.localtime(d["refreshTokenExpiresAt"] / 1000))
+if days <= 0:
+    # Already gone. "expires in -5.0 days" is a confusing thing to read at 7am,
+    # and this is the case that matters most: every claude -p unit is ALREADY
+    # soft-failing (exits 0, prints the auth error to stdout) — see
+    # modules/agent/claude-run-pkg.nix.
+    print("claude login: refresh token EXPIRED %.1f days ago (%s). Every scheduled claude -p unit is already failing silently. Run 'claude' interactively on gromit." % (-days, when))
+    sys.exit(0)   # fire
 if days <= 7:
-    print("claude login: refresh token expires in %.1f days (%s). Run 'claude' interactively on gromit to re-auth; every scheduled claude -p unit stops when it lapses." % (
-        days, time.strftime("%Y-%m-%d %H:%M", time.localtime(d["refreshTokenExpiresAt"] / 1000))))
-    sys.exit(1)
-sys.exit(0)
+    print("claude login: refresh token expires in %.1f days (%s). Run 'claude' interactively on gromit to re-auth; every scheduled claude -p unit stops when it lapses." % (days, when))
+    sys.exit(0)   # fire
+sys.exit(1)       # healthy
 EOF
     '';
   };
