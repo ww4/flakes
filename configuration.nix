@@ -112,6 +112,7 @@ let hm = homelab-modules.nixosModules; in
     hm.lidarr
     hm.lazylibrarian
     ./modules/services/calibre-web.nix      # ebook library + OPDS feed (the Kindle pulls from here over the LAN)
+    ./modules/kindle-segment.nix            # fail-closed isolated segment on enp6s0u1 — gromit is the gateway, forwarding is deny-by-default
     ./modules/services/stacks.nix           # physical book catalog (sale scanner, flood losses)
     hm.aurral
     hm.forgejo                              # OIDC secret in homelab-values
