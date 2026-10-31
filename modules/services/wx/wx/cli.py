@@ -256,6 +256,58 @@ def layer2_state(con) -> str:
     return f"ok — {got} transcribed, {blocked} blocked"
 
 
+def cmd_relocal(args) -> int:
+    """Backfill the `local` line on extractions written before it existed.
+
+    Re-runs the extraction prompt against the transcript ALREADY IN THE
+    DATABASE — no listing call, no caption fetch, so it cannot trip the 429
+    that kept layer 2 down for sixteen days in October. It rewrites the whole
+    extraction row for each video it touches, which is the honest thing: the
+    prompt has changed, so the other fields are re-derived from the same
+    prompt rather than left as a mix of two versions.
+
+    Default is the newest extraction only — that is the one on the dashboard.
+    `--all` does every row still missing a local line.
+    """
+    con = db.connect()
+    rows = con.execute(
+        "SELECT e.video_id, v.title, v.duration, v.transcript FROM extraction e"
+        " JOIN video v ON v.id = e.video_id"
+        " WHERE (e.local IS NULL OR TRIM(e.local) = '')"
+        "   AND v.transcript IS NOT NULL AND TRIM(v.transcript) != ''"
+        " ORDER BY e.created_at DESC").fetchall()
+    if not rows:
+        print("wx: every extraction already has a local line")
+        return 0
+    if not args.all:
+        rows = rows[:1]
+
+    prompt_base = _prompt_path().read_text(encoding="utf-8")
+    done = failed = 0
+    for row in rows:
+        vid = row["video_id"]
+        video = {"id": vid, "title": row["title"], "duration": row["duration"],
+                 "published": None}
+        prompt = extract.build_prompt(prompt_base, video, row["transcript"],
+                                      extract.previous_extractions(con))
+        try:
+            raw = extract.run_claude(prompt, claude=args.claude,
+                                     timeout=args.extract_timeout)
+            fields = extract.normalise(extract.parse_response(raw))
+        except Exception as exc:                  # noqa: BLE001
+            print(f"wx: re-extraction failed for {vid}: {str(exc)[:200]}",
+                  file=sys.stderr)
+            failed += 1
+            continue
+        extract.store(con, vid, fields, raw)
+        done += 1
+        print(f"wx: {vid} local = {fields['local'] or '(empty)'}")
+
+    print(f"wx: backfilled {done}, failed {failed}")
+    # Non-zero only if nothing at all succeeded while something was tried.
+    return 1 if done == 0 and failed else 0
+
+
 def cmd_retry(args) -> int:
     """Requeue videos that gave up. See ryan.reset_failed for why it is manual."""
     con = db.connect()
@@ -343,6 +395,13 @@ def main(argv=None) -> int:
     sub.add_parser("alerts", help="LAYER 1 — poll NWS and notify").set_defaults(fn=cmd_alerts)
     sub.add_parser("spc", help="refresh the SPC outlook picture").set_defaults(fn=cmd_spc)
     sub.add_parser("morning", help="flush what quiet hours held").set_defaults(fn=cmd_morning)
+    rl = sub.add_parser("relocal",
+                        help="backfill the Kentucky line on old extractions")
+    rl.add_argument("--all", action="store_true",
+                    help="every row missing one, not just the newest")
+    rl.add_argument("--claude", default="claude")
+    rl.add_argument("--extract-timeout", type=int, default=600)
+    rl.set_defaults(fn=cmd_relocal)
     sub.add_parser("retry", help="requeue videos stuck in 'failed'").set_defaults(fn=cmd_retry)
     sub.add_parser("strip", help="render the dashboard weather strip").set_defaults(fn=cmd_strip)
     sub.add_parser("status", help="read-only summary").set_defaults(fn=cmd_status)

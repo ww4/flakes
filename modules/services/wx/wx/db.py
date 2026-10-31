@@ -66,6 +66,13 @@ CREATE TABLE IF NOT EXISTS extraction (
     escalation   TEXT,
     fence_score  INTEGER NOT NULL DEFAULT 0,
     summary      TEXT,
+    -- The one field written for a glance: northern Kentucky only, or the
+    -- string "nothing for northern Kentucky". `summary` stays the whole
+    -- video, because the switchboard and the newsdesk both want all of it.
+    -- ⚠️ Added after the table existed, so it is ALSO in MIGRATIONS below —
+    -- CREATE TABLE IF NOT EXISTS does nothing to a database that already has
+    -- the table, and this column would silently never appear on gromit.
+    local        TEXT,
     quotes       TEXT NOT NULL DEFAULT '[]',
     raw          TEXT
 );
@@ -124,12 +131,42 @@ def state_dir() -> Path:
     return Path(os.environ.get("WX_STATE", "/var/lib/wx"))
 
 
+# Columns added after a table first shipped. `CREATE TABLE IF NOT EXISTS` is a
+# no-op on an existing database, so every column added later has to be applied
+# here as well — otherwise it exists on a fresh install and nowhere else, and
+# the only symptom is a field that is always empty on the machine that matters.
+MIGRATIONS = [
+    ("extraction", "local", "TEXT"),
+]
+
+
+def _apply_migrations(con: sqlite3.Connection) -> list[str]:
+    """Add any missing column from MIGRATIONS. Returns what it added.
+
+    Idempotent by inspection rather than by catching an error: `PRAGMA
+    table_info` is the authority on what the live table actually has, and
+    swallowing "duplicate column name" would also swallow a real failure.
+    """
+    added = []
+    for table, column, decl in MIGRATIONS:
+        cols = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
+        if not cols:
+            continue          # table not created yet; SCHEMA will include it
+        if column not in cols:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            added.append(f"{table}.{column}")
+    if added:
+        con.commit()
+    return added
+
+
 def connect(path: str | Path | None = None) -> sqlite3.Connection:
     p = Path(path) if path else state_dir() / "wx.db"
     p.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(p)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
+    _apply_migrations(con)
     con.commit()
     return con
 

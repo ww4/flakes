@@ -94,6 +94,7 @@ def normalise(data: dict) -> dict:
         "confidence": confidence,
         "escalation": escalation,
         "summary": str(data.get("summary") or "").strip(),
+        "local": str(data.get("local") or "").strip(),
         "quotes": [str(q).strip() for q in (data.get("quotes") or []) if str(q).strip()],
         "fence_score": fence_score(regions),
     }
@@ -118,16 +119,17 @@ def store(con: sqlite3.Connection, video_id: str, fields: dict, raw: str) -> Non
     con.execute(
         "INSERT INTO extraction (video_id, created_at, system_id, hazards, regions,"
         " window_start, window_end, confidence, escalation, fence_score, summary,"
-        " quotes, raw) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        " local, quotes, raw) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         " ON CONFLICT(video_id) DO UPDATE SET"
         " created_at=excluded.created_at, system_id=excluded.system_id,"
         " hazards=excluded.hazards, regions=excluded.regions,"
         " window_start=excluded.window_start, window_end=excluded.window_end,"
         " confidence=excluded.confidence, escalation=excluded.escalation,"
         " fence_score=excluded.fence_score, summary=excluded.summary,"
-        " quotes=excluded.quotes, raw=excluded.raw",
+        " local=excluded.local, quotes=excluded.quotes, raw=excluded.raw",
         (video_id, now(), fields["system_id"], json.dumps(fields["hazards"]),
          json.dumps(fields["regions"]), fields["window_start"], fields["window_end"],
          fields["confidence"], fields["escalation"], fields["fence_score"],
-         fields["summary"], json.dumps(fields["quotes"]), raw[:20000]))
+         fields["summary"], fields["local"], json.dumps(fields["quotes"]),
+         raw[:20000]))
     con.commit()
