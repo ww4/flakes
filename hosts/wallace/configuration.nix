@@ -47,6 +47,15 @@
     openssh.authorizedKeys.keys = [
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFbsMI9lXpM1bi2fR2Ew1DnubEMGcdl3MuFNbqyyn0xI chris@saenzmail.net"   # Chris's personal workstation key (same key declared on gromit)
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII72tYB6OdaFY3kAOYk7A/AEa9hrbckKe6gCoeM1SRhB chris@mcp-server-claude-20260515"
+      # Chris's phone (JuiceSSH). Already trusted on gromit and has been for
+      # months; it was simply never added here, so every phone attempt fell
+      # through publickey to keyboard-interactive and PAM refused it —
+      # `PAM: Authentication failure for chris from 100.87.80.96`, with no
+      # `Failed publickey` line because sshd at LogLevel INFO does not log a
+      # key offer it declines. That absence is what made it look like the
+      # account was broken rather than the key missing.
+      # SHA256:4lC4gWWK5bpLuIDhNcw8rTOXo3FJYz+d61NUMUTJ3gk (2048-bit RSA)
+      "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDuzIfiW4Kg+PzvwLc3dHrTtfCGJ8SBG1h0+9ZOL7mstRwPNQZdPwFDLXeVcX9bqroHQdd1bABERBuR6K6MvnQYQRG+/qIj7wqBr0dqNH55Gd1A8UonMyc+60njo9pvGy/yuMYCKGYBFsX20guDgeQyHt52Dv7IruiRr0EdJ1iMYEusL8bHLbjXPHCKQ4QH245YBK15DFxXSedsYpYnsy1k1xoCAkPQVWsxKqNwABrP8DmtO0MuhtBhx/6Rn8EvwW9YVXQgTcQ6gdQvmodb09NaXhCMPykJOTeCVZ4GvNaWGFEBt0zUScZVx6k9k732/3mcu/a22ubRoHh7jZOA013H chris@bub"
       # (claude-gromit-tmp-dadpc-recon removed 2026-08-17 — the temporary key
       # from the Rick-WALLACE data recovery, on the standing revoke list.)
     ];
