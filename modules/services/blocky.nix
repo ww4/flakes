@@ -38,6 +38,10 @@ let
   # Where *.rosemaryacres.com resolves for LAN clients (nginx reverse proxy).
   proxyIP = "192.168.1.65";
 
+  # The isolated Kindle segment (see ../kindle-segment.nix). Kept in sync with
+  # the subnet defined there.
+  kindleSegment = "192.168.50.0/24";
+
   # Upstreams for everything that ISN'T a local override.
   upstreams = [ "1.1.1.1" "9.9.9.9" ];
 
@@ -78,10 +82,58 @@ in
         prefetching = true;
       };
 
+      # ── The Kindle segment: allowlist-only (see ../kindle-segment.nix) ──────
+      # Layer 2 of a fail-closed pair. The firewall is the real enforcement —
+      # this is here so that a DNS answer alone can never hand that segment a
+      # route to anywhere unintended.
+      #
+      # Deny-by-default via a /.*/ regex denylist, then ONE permitted name. If
+      # the allowlist entry is ever wrong, nothing resolves on that segment at
+      # all — including the jailbreak host — which is the correct direction to
+      # fail when the device behind it has one shot.
+      #
+      # Verified behaviourally on blocky 0.29.0 rather than assumed, because
+      # "valid config" is not "does what I think". A live instance with this
+      # exact shape answered sanctuary.skyvincent.com → 78.24.205.144 while
+      # returning 0.0.0.0 for google.com, amazon.com, softwareupdates.amazon.com,
+      # updates.amazon.com and prod.ota-cloudfront.net. CIDR client matching was
+      # confirmed the same way (a 127.0.0.0/8 group applied to a 127.0.0.1
+      # client), which is what lets ONE blocky serve the house normally and this
+      # segment restrictively.
+      #
+      # `default: []` is load-bearing: every other client on the LAN keeps
+      # completely unfiltered resolution. No house-wide blocking.
+      blocking = {
+        denylists.everything = [
+          ''
+            /.*/
+          ''
+        ];
+        allowlists.kindle-permitted = [
+          ''
+            sanctuary.skyvincent.com
+          ''
+        ];
+        clientGroupsBlock = {
+          default = [ ];
+          "${kindleSegment}" = [ "everything" "kindle-permitted" ];
+        };
+        blockType = "zeroIp";
+      };
       prometheus = {
         enable = true;
         path = "/metrics";
       };
+
+      # Query logging to the journal, so `kindle-watch` can show what the
+      # isolated segment ASKED FOR, per client IP. This is the half that names
+      # a controller hostname like unifi.broadlinc.com; the kernel's
+      # kindle-fw-drop lines are the half that catches a hardcoded IP.
+      # Verified on a live blocky 0.29: a blocked query logs as
+      #   queryLog: ... client_ip=… question_name=unifi.broadlinc.com.
+      #   response_reason=BLOCKED (ALLOWLIST ONLY) response_type=BLOCKED
+      # console = stdout = journald, so no extra log file to rotate.
+      queryLog.type = "console";
 
       log.level = "info";
     };
