@@ -109,9 +109,27 @@ in
             /.*/
           ''
         ];
+        # Resolve-but-do-not-route, on purpose (2026-11-01). The AP asked for
+        # unifi.broadlinc.com four times and got 0.0.0.0, so it never sent an
+        # inform packet — which means we still do not know which PORT it uses.
+        # tcp/8080 is the UniFi convention, but convention is precisely what
+        # this segment exists to not rely on. Letting the name resolve while
+        # the firewall stays shut makes the AP dial for real; the
+        # kindle-fw-drop log then names the ports, and only then do the
+        # pinholes get written.
+        #
+        # Safe to resolve: the firewall is the enforcement layer and its
+        # pinholes are scoped per SOURCE address, so this grants the Kindle
+        # nothing — it cannot reach that host whatever DNS says.
+        #
+        # (The comment lives out here rather than inside the '' string because
+        # entries in that string are written verbatim into blocky's list file,
+        # and whether its parser honours a leading # is not something worth
+        # assuming.)
         allowlists.kindle-permitted = [
           ''
             sanctuary.skyvincent.com
+            unifi.broadlinc.com
           ''
         ];
         clientGroupsBlock = {
