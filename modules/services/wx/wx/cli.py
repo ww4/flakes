@@ -186,6 +186,21 @@ def cmd_ryan(args) -> int:
                 click=f"https://www.youtube.com/watch?v={vid}")
             print(f"wx: trend push -> {state}")
 
+    # Self-healing backfill: ONE extraction per run that still has no `local`
+    # line. The dashboard card shows that line and nothing else, so a row
+    # without one is a card that cannot say anything useful — and leaving that
+    # to a command somebody has to remember is how it stays broken. Bounded to
+    # one because this runs three times a day and a stampede of `claude -p`
+    # calls is a worse failure than a card that catches up by tomorrow.
+    try:
+        filled, _ = _backfill_local(con, prompt_base, claude=args.claude,
+                                    timeout=args.extract_timeout, limit=1)
+        if filled:
+            print(f"wx: backfilled the local line on {filled} older extraction")
+    except Exception as exc:                      # noqa: BLE001
+        # Never fail the run for this — the day's actual work is already done.
+        print(f"wx: local backfill skipped: {str(exc)[:160]}", file=sys.stderr)
+
     db.set_meta(con, "last_ryan_run", db.now())
     db.set_meta(con, "last_ryan_result", f"{len(wanted)}/{got}/{blocked}")
     if got:
@@ -256,6 +271,41 @@ def layer2_state(con) -> str:
     return f"ok — {got} transcribed, {blocked} blocked"
 
 
+def _backfill_local(con, prompt_base, *, claude: str, timeout: int,
+                    limit: int) -> tuple[int, int]:
+    """Re-derive extractions that have no `local` line. Returns (done, failed).
+
+    Re-runs the prompt against the transcript ALREADY IN THE DATABASE — no
+    listing call and no caption fetch, so it cannot trip the 429 that kept
+    layer 2 down for sixteen days in October.
+    """
+    rows = con.execute(
+        "SELECT e.video_id, v.title, v.duration, v.transcript FROM extraction e"
+        " JOIN video v ON v.id = e.video_id"
+        " WHERE (e.local IS NULL OR TRIM(e.local) = '')"
+        "   AND v.transcript IS NOT NULL AND TRIM(v.transcript) != ''"
+        " ORDER BY e.created_at DESC").fetchall()[:limit]
+    done = failed = 0
+    for row in rows:
+        vid = row["video_id"]
+        video = {"id": vid, "title": row["title"], "duration": row["duration"],
+                 "published": None}
+        prompt = extract.build_prompt(prompt_base, video, row["transcript"],
+                                      extract.previous_extractions(con))
+        try:
+            raw = extract.run_claude(prompt, claude=claude, timeout=timeout)
+            fields = extract.normalise(extract.parse_response(raw))
+        except Exception as exc:                  # noqa: BLE001
+            print(f"wx: re-extraction failed for {vid}: {str(exc)[:200]}",
+                  file=sys.stderr)
+            failed += 1
+            continue
+        extract.store(con, vid, fields, raw)
+        done += 1
+        print(f"wx: {vid} local = {fields['local'] or '(empty)'}")
+    return done, failed
+
+
 def cmd_relocal(args) -> int:
     """Backfill the `local` line on extractions written before it existed.
 
@@ -270,39 +320,13 @@ def cmd_relocal(args) -> int:
     `--all` does every row still missing a local line.
     """
     con = db.connect()
-    rows = con.execute(
-        "SELECT e.video_id, v.title, v.duration, v.transcript FROM extraction e"
-        " JOIN video v ON v.id = e.video_id"
-        " WHERE (e.local IS NULL OR TRIM(e.local) = '')"
-        "   AND v.transcript IS NOT NULL AND TRIM(v.transcript) != ''"
-        " ORDER BY e.created_at DESC").fetchall()
-    if not rows:
+    done, failed = _backfill_local(
+        con, _prompt_path().read_text(encoding="utf-8"),
+        claude=args.claude, timeout=args.extract_timeout,
+        limit=10_000 if args.all else 1)
+    if not done and not failed:
         print("wx: every extraction already has a local line")
         return 0
-    if not args.all:
-        rows = rows[:1]
-
-    prompt_base = _prompt_path().read_text(encoding="utf-8")
-    done = failed = 0
-    for row in rows:
-        vid = row["video_id"]
-        video = {"id": vid, "title": row["title"], "duration": row["duration"],
-                 "published": None}
-        prompt = extract.build_prompt(prompt_base, video, row["transcript"],
-                                      extract.previous_extractions(con))
-        try:
-            raw = extract.run_claude(prompt, claude=args.claude,
-                                     timeout=args.extract_timeout)
-            fields = extract.normalise(extract.parse_response(raw))
-        except Exception as exc:                  # noqa: BLE001
-            print(f"wx: re-extraction failed for {vid}: {str(exc)[:200]}",
-                  file=sys.stderr)
-            failed += 1
-            continue
-        extract.store(con, vid, fields, raw)
-        done += 1
-        print(f"wx: {vid} local = {fields['local'] or '(empty)'}")
-
     print(f"wx: backfilled {done}, failed {failed}")
     # Non-zero only if nothing at all succeeded while something was tried.
     return 1 if done == 0 and failed else 0
