@@ -111,6 +111,11 @@ let
   apMAC = "68:d7:9a:d6:bd:10";
   apIP = "192.168.50.11";
 
+  # unifi.broadlinc.com, resolved 2026-11-01 — identical from 1.1.1.1 and
+  # 8.8.8.8. Pinned as an address like the Sanctuary host: if the controller
+  # ever moves, the AP loses it, which is the safe direction.
+  controllerIP = "137.184.194.91";
+
   uplink = "enp3s0";
   houseNet = "192.168.1.0/24";
 
@@ -125,16 +130,32 @@ let
     { src = kindleIP; dst = "78.24.205.144"; proto = "tcp"; port = 80;
       what = "sanctuary.skyvincent.com — the jailbreak"; }
 
-    # AP → UniFi controller: DELIBERATELY EMPTY. Chris's guess is
-    # unifi.broadlinc.com, and that guess is probably right — but the whole
-    # reason this segment exists is that guessing is how the device gets lost.
-    # Run step 1, read `kindle-watch`, add exactly what it asked for.
+    # ── AP → UniFi controller ────────────────────────────────────────────────
+    # The observation pass on 2026-11-01 found the AP reaches its controller
+    # TWO different ways, which is why both logs were needed:
     #
-    # For reference when reading those logs, a UniFi AP typically wants tcp/8080
-    # (inform), udp/3478 (STUN) and sometimes tcp/6789 (throughput test) — but
-    # add them because the log showed them, not because this comment lists them.
-    # The controller name also has to go in blocky's allowlist
-    # (services/blocky.nix) or it will not resolve.
+    #   * by NAME for inform — `unifi.broadlinc.com` asked for 4×, answered
+    #     0.0.0.0, so no packet was ever sent. DNS log only.
+    #   * by HARDCODED IP for syslog — 44 packets to 137.184.194.91 udp/5514,
+    #     which never appears in DNS at all. Packet log only.
+    #
+    # Either log alone would have produced an incomplete allowlist.
+    #
+    # The inform PORT is 8080 on Chris's word — he runs this controller, so
+    # that is first-hand rather than the convention being assumed. The drop log
+    # stays the check: if 8080 is not the whole story, it will say so.
+    { src = apIP; dst = controllerIP; proto = "tcp"; port = 8080;
+      what = "unifi.broadlinc.com — inform/adoption"; }
+    { src = apIP; dst = controllerIP; proto = "udp"; port = 5514;
+      what = "same host — remote syslog (observed, 44 pkts)"; }
+
+    # NOT allowed, on purpose: {0,1,2,3}.ubnt.pool.ntp.org. Pool records rotate
+    # across many addresses, so an IP pinhole for them would be fragile and
+    # broad. A UniFi AP runs fine with drifting time, and inform on 8080 is
+    # plain HTTP so there is no certificate clock-skew problem. If AP
+    # timestamps matter later, the clean fix is to map those names to the
+    # gateway in blocky's customDNS and serve NTP locally — zero egress —
+    # rather than open a pinhole per pool address.
   ];
 
   mkPinhole = p:
