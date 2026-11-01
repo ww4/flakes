@@ -149,6 +149,14 @@ let
     { src = apIP; dst = controllerIP; proto = "udp"; port = 5514;
       what = "same host — remote syslog (observed, 44 pkts)"; }
 
+    # STUN. Appeared only AFTER the controller became resolvable — it was not
+    # in the first observation pass at all, because the AP had nothing to STUN
+    # against yet. 9 packets dropped to the same host; everything else the AP
+    # sends is now accepted. Added because the log showed it, which is the
+    # whole point of the note above.
+    { src = apIP; dst = controllerIP; proto = "udp"; port = 3478;
+      what = "same host — STUN (observed after inform came up)"; }
+
     # NOT allowed, on purpose: {0,1,2,3}.ubnt.pool.ntp.org. Pool records rotate
     # across many addresses, so an IP pinhole for them would be fragile and
     # broad. A UniFi AP runs fine with drifting time, and inform on 8080 is
