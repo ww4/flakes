@@ -102,10 +102,13 @@ let
   kindleMAC = "34:af:b3:27:e8:7a";
   kindleIP = "192.168.50.10";
 
-  # The UniFi AP. Left null on purpose: step 1 is to plug it in with no pinholes
-  # at all and WATCH, which is also how its MAC is learned. Set it from the
-  # lease file, then add its pinholes below.
-  apMAC = null;
+  # The UniFi AP, learned from its DHCP DISCOVERs on 2026-11-01 — it is the only
+  # client on this wire. Reserved so it is never confused with the Kindle. Its
+  # PINHOLES are still deliberately empty: knowing its MAC is not knowing what
+  # it needs, and that is still the observation pass's job.
+  # (was: left null on purpose — step 1 is to plug it in with no pinholes
+  #  at all and WATCH, which is also how its MAC is learned.)
+  apMAC = "68:d7:9a:d6:bd:10";
   apIP = "192.168.50.11";
 
   uplink = "enp3s0";
@@ -148,6 +151,33 @@ let
   watch = pkgs.writeShellScriptBin "kindle-watch" ''
     set -uo pipefail
     since="''${1:--30 min}"
+    echo "=== SEGMENT HEALTH ==="
+    # This block exists because of 2026-11-01: every counter below read zero and
+    # every service read active while the segment was structurally dead. Zero
+    # counters mean "nothing happened" OR "nothing CAN happen" — these four
+    # checks tell the two apart.
+    addr=$(${pkgs.iproute2}/bin/ip -4 -o addr show ${iface} 2>/dev/null | ${pkgs.gawk}/bin/awk '{print $4}' | tr '\n' ' ')
+    if echo "$addr" | ${pkgs.gnugrep}/bin/grep -q '${gateway}/'; then
+      echo "  [ ok ] ${iface} has ${gateway} — kea can select its subnet"
+    else
+      echo "  [FAIL] ${iface} address is '$addr', expected ${gateway}/${toString prefixLength}"
+      echo "         kea cannot match its subnet and will answer NOTHING, silently."
+      echo "         check: systemctl status network-addresses-${iface}.service"
+    fi
+    case "$addr" in
+      *192.168.1.*) echo "  [WARN] a HOUSE-LAN address is present — is this wire really isolated?" ;;
+    esac
+    for u in kea-dhcp4-server blocky; do
+      printf "  [%s] %s\n" "$(${pkgs.systemd}/bin/systemctl is-active $u >/dev/null 2>&1 && echo ' ok ' || echo FAIL)" "$u"
+    done
+    if ${pkgs.iptables}/bin/iptables -L kindle-fwd -n >/dev/null 2>&1; then
+      echo "  [ ok ] kindle-fwd chain present"
+    elif [ "$(id -u)" -ne 0 ]; then
+      echo "  [ -- ] kindle-fwd chain: needs root to check"
+    else
+      echo "  [FAIL] kindle-fwd chain MISSING — nothing is being filtered"
+    fi
+    echo
     echo "=== DNS: what the segment ASKED FOR (since $since) ==="
     echo "    (names only show here; a hardcoded IP never appears in DNS)"
     ${pkgs.systemd}/bin/journalctl -u blocky --since "$since" --no-pager -o cat \
@@ -194,6 +224,36 @@ in
   boot.kernel.sysctl = {
     "net.ipv6.conf.${iface}.disable_ipv6" = 1;
     "net.ipv6.conf.${iface}.accept_ra" = 0;
+  };
+
+  # ⚠️ THE UNIT THAT NEVER RAN (first deploy, 2026-11-01).
+  # NixOS generates network-addresses-<if>.service with WantedBy pointing ONLY
+  # at the interface's .device unit. enp6s0u1 was ALREADY up when this module
+  # first deployed, so no udev event ever fired, the unit sat inactive(dead),
+  # and the interface kept a stale DHCP address from before the switch port was
+  # moved to the isolated VLAN. Nothing complained.
+  #
+  # The damage was entirely silent: with no 192.168.50.x address on the
+  # interface kea could not select its configured subnet, so it logged
+  # "listening on interface enp6s0u1", accepted every DHCP query the AP sent,
+  # and answered NONE of them. A healthy-looking service that was structurally
+  # incapable of its job — the AP broadcast DISCOVERs into nothing for ten
+  # minutes. Safe, but by accident rather than by design, which is why
+  # kindle-watch now leads with a health block instead of raw counters.
+  systemd.services."network-addresses-${iface}" = {
+    wantedBy = [ "multi-user.target" ];
+    # NetworkManager is unmanaged for this interface by now, so a stale address
+    # left over from the house-LAN era is never cleaned up by anything. Flush
+    # before assigning, or the old address just sits alongside the new one.
+    preStart = "${pkgs.iproute2}/bin/ip addr flush dev ${iface} || true";
+  };
+
+  # Ordering, so kea cannot repeat the trick of starting subnet-less. `wants`
+  # rather than `requires`: the address unit is BindsTo= its .device, so a hard
+  # requirement would stop kea on a cable pull and never bring it back.
+  systemd.services.kea-dhcp4-server = {
+    after = [ "network-addresses-${iface}.service" ];
+    wants = [ "network-addresses-${iface}.service" ];
   };
 
   services.kea.dhcp4 = {
