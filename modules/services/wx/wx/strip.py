@@ -234,8 +234,11 @@ def local_line(row) -> str:
     if not text:
         return ""
     if len(text) > LOCAL_MAX:
-        cut = text[:LOCAL_MAX].rsplit(" ", 1)[0].rstrip(" ,;:—-")
-        text = cut + "…"
+        # ⚠️ Do NOT trim to fit. These sentences run national-to-local, so the
+        # tail is usually the part about here — a trim keeps Kansas and drops
+        # Louisville. An over-long line is clamped VISUALLY by the CSS, which
+        # loses nothing from the record and nothing from a tooltip.
+        return text
     return text
 
 
@@ -245,44 +248,39 @@ def _has_term(text: str) -> bool:
 
 
 def _kentucky_sentences(summary: str) -> str:
-    """Fallback: the part of `summary` that actually names this area.
+    """Fallback for rows written before `local` existed: WHOLE sentences of
+    `summary` that name this area, or nothing at all.
 
-    Uses the same term list the geofence runs on, so "what counts as here" has
-    one definition in this module and not two. Returns "" rather than guessing
-    when nothing names anywhere near Kentucky — the caller renders that as
-    "nothing for this area", which is a true statement.
+    ⚠️ IT MUST NOT CUT SENTENCES UP. The first version of this narrowed to
+    clauses when a sentence was too long, and produced:
 
-    ⚠️ Narrows to CLAUSES when a matching sentence is too long for the card.
-    Ryan's forecasts run national-to-local inside one sentence:
+        "spreading Sunday into the Mid-South and Ohio Valley including
+         Louisville"
 
-        "…bringing rain to Texas, Oklahoma and Kansas around Halloween,
-         spreading Sunday into the Mid-South and Ohio Valley including
-         Louisville, and reaching the East Coast Monday."
+    — which Chris correctly called meaningless, because "spreading" is a
+    participial phrase and its subject (rain) lived in the clause immediately
+    before it, the one discarded for not mentioning Kentucky. Trimming the
+    tail instead is no better: these sentences run national-to-local, so the
+    end is usually the part about here.
 
-    That sentence is 310 characters and the only local clause is in the
-    middle, so sentence-level selection plus a tail trim cut off the one part
-    worth reading and left Kansas. Caught by a test, not by inspection.
+    There is no reliable way to carve a self-contained sentence out of
+    arbitrary prose with string operations, so this does not try. A sentence
+    is used only if it fits whole. Otherwise the caller says there is no local
+    read yet — which is true, and `wx relocal` (and the next `wx ryan` run)
+    will fill it in with a line written for the purpose.
     """
     if not summary:
         return ""
     sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", summary) if x.strip()]
-    hits = [x for x in sentences if _has_term(x)]
-    if not hits:
-        return ""
-
-    joined = " ".join(hits[:2])
-    if len(joined) <= LOCAL_MAX:
-        return joined
-
-    # Too long: keep only the clauses that carry a local term.
-    clauses = []
-    for sentence in hits:
-        for clause in re.split(r"\s*[;,]\s+", sentence):
-            clause = clause.strip(" ,;")
-            if clause and _has_term(clause):
-                clauses.append(clause)
-    narrowed = "; ".join(clauses[:2])
-    return narrowed or joined
+    kept = []
+    for sentence in sentences:
+        if not _has_term(sentence):
+            continue
+        candidate = " ".join(kept + [sentence])
+        if len(candidate) > LOCAL_MAX:
+            break
+        kept.append(sentence)
+    return " ".join(kept)
 
 
 def local_hazards(local: str, hazards: list[str], limit: int = 3) -> list[str]:
@@ -432,7 +430,8 @@ html,body{margin:0;background:transparent;color:#e2e8f0;
      so a 2-row clamp leaves the sentence exactly ONE line and the end of it
      disappears — "…and Ohio Valley" with "including Louisville" cut off.
      Three rows: one for the label, two for the line. */
-  .read{max-height:4.3rem}
+  .read{max-height:5.5rem}
+  .read .line{-webkit-line-clamp:3}
   .ten{grid-template-columns:repeat(5,minmax(0,1fr))}
   .now .temp{font-size:1.6rem}
   .now .meta{margin-left:0;width:100%}

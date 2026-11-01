@@ -335,24 +335,43 @@ class LocalLine(unittest.TestCase):
         self.assertNotIn("Colorado", line)
         self.assertNotIn("Flagstaff", line)
 
-    def test_fallback_keeps_only_the_kentucky_sentences(self):
-        """Rows written before `local` existed still must not print Arizona."""
+    def test_the_fallback_never_emits_a_subjectless_fragment(self):
+        """⚠️ THE 2026-10-31 REGRESSION, and the reason the fallback is dumb.
+
+        An earlier version narrowed to CLAUSES when a sentence was too long
+        and produced "spreading Sunday into the Mid-South and Ohio Valley
+        including Louisville" — with no indication of what was spreading,
+        because the subject (rain) was in the clause immediately before, the
+        one dropped for not naming Kentucky. Chris: "Without any indication of
+        what is spreading."
+
+        The sentence carrying the Ohio Valley in this summary is 310
+        characters, so the honest answer is to show nothing and let the
+        purpose-written `local` line arrive.
+        """
         line = strip.local_line(row_with(summary=REAL_LONG_SUMMARY))
-        self.assertIn("Ohio Valley", line)
+        self.assertFalse(line.startswith("spreading"), line)
+        self.assertEqual(line, "")
+
+    def test_a_short_local_sentence_is_used_whole(self):
+        line = strip.local_line(row_with(
+            summary="A storm soaks Oregon. Rain reaches the Ohio Valley "
+                    "Sunday. The East Coast gets it Monday."))
+        self.assertEqual(line, "Rain reaches the Ohio Valley Sunday.")
+
+    def test_the_fallback_never_prints_someone_elses_weather(self):
+        line = strip.local_line(row_with(summary=REAL_LONG_SUMMARY))
         for elsewhere in ("Colorado", "Flagstaff", "Oxnard", "Trudy",
-                          "Arizona", "tornado watch"):
+                          "Arizona", "Kansas"):
             self.assertNotIn(elsewhere, line)
 
-    def test_every_output_is_bounded(self):
-        for row in (row_with(summary=REAL_LONG_SUMMARY),
-                    row_with(local=REAL_LONG_SUMMARY),
-                    row_with(local="x" * 900)):
-            self.assertLessEqual(len(strip.local_line(row)), strip.LOCAL_MAX + 1)
-
-    def test_truncation_breaks_on_a_word_and_marks_itself(self):
-        line = strip.local_line(row_with(local="word " * 200))
-        self.assertTrue(line.endswith("…"))
-        self.assertNotIn("wo…", line)
+    def test_the_fallback_output_is_bounded(self):
+        """The FALLBACK is bounded by construction — it only ever adds whole
+        sentences while they fit. The `local` field is not truncated at all;
+        the CSS clamp is what keeps the card's height honest."""
+        self.assertLessEqual(
+            len(strip.local_line(row_with(summary=REAL_LONG_SUMMARY))),
+            strip.LOCAL_MAX)
 
     def test_a_summary_about_nowhere_near_here_yields_nothing(self):
         """⚠️ Returning "" is the point: the caller renders "nothing for this
@@ -364,8 +383,21 @@ class LocalLine(unittest.TestCase):
 
     def test_missing_column_does_not_raise(self):
         """A database that predates the migration has no `local` key at all."""
-        row = {"summary": REAL_LONG_SUMMARY}
-        self.assertIn("Ohio Valley", strip.local_line(row))
+        self.assertEqual(strip.local_line({"summary": REAL_LONG_SUMMARY}), "")
+        self.assertEqual(
+            strip.local_line({"summary": "Rain reaches Kentucky Sunday."}),
+            "Rain reaches Kentucky Sunday.")
+
+    def test_a_long_local_line_is_kept_whole_not_trimmed(self):
+        """⚠️ Trimming to fit is the same bug in a different hat: these
+        sentences run national-to-local, so the tail is the part about here.
+        Over-length is clamped by CSS, which loses nothing from the text."""
+        long_local = ("Rain reaches the Ohio Valley Sunday and lingers into "
+                      "Monday before cooler air arrives behind it midweek, "
+                      "with highs settling into the 50s and 60s for northern "
+                      "Kentucky through the end of the week ahead.")
+        self.assertGreater(len(long_local), strip.LOCAL_MAX)
+        self.assertEqual(strip.local_line(row_with(local=long_local)), long_local)
 
 
 class NotLocal(unittest.TestCase):

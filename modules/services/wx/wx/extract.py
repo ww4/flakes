@@ -12,6 +12,7 @@ is no escalation signal at all, only a series of unrelated opinions.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -108,8 +109,25 @@ def previous_extractions(con: sqlite3.Connection, limit: int = 4) -> list[dict]:
 
 
 def run_claude(prompt: str, *, claude: str = "claude", timeout: int = 600) -> str:
+    """One `claude -p` call, with the autonomous flag set HERE rather than
+    only in the unit.
+
+    ⚠️ Without `CLAUDE_AUTONOMOUS=1` the agent's Stop reflection hook runs at
+    the end of the headless call and its output lands on stdout INSTEAD of the
+    JSON. Observed 2026-10-31 running `wx relocal` by hand:
+
+        no JSON object in model output: 'False positive — this session was a
+        single automated transcript-extraction run with no steering...'
+
+    The wx-ryan unit has always set it, so production never saw this; a human
+    running `wx relocal` or `wx ryan` from a shell would, and the failure
+    looks like the model refusing rather than like a missing environment
+    variable. Setting it on the subprocess makes the hand path and the unit
+    path the same path.
+    """
+    env = dict(os.environ, CLAUDE_AUTONOMOUS="1")
     proc = subprocess.run([claude, "-p", prompt], capture_output=True,
-                          text=True, timeout=timeout, check=False)
+                          text=True, timeout=timeout, check=False, env=env)
     if proc.returncode != 0:
         raise RuntimeError(f"claude -p failed: {proc.stderr.strip()[:300]}")
     return proc.stdout
