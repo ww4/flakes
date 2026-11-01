@@ -105,6 +105,7 @@ let hm = homelab-modules.nixosModules; in
     hm.arr                                  # Prowlarr + Sonarr + Radarr + Jellyseerr + Gluetun + qBittorrent
     hm.qbit-vpn-watchdog                    # self-heal the gluetun-IP-change qBit netns wedge (no more manual restarts)
     ./modules/services/qbit-seed-guard.nix  # recover missingFiles torrents after a pool outage + watch tracker H&R rules
+    ./modules/services/user-unit-metrics.nix  # herdr CPU/mem into the textfile collector — see its header
     ./modules/services/mam-seedbox.nix      # INERT (enable=false): registers the AirVPN exit IP with MAM's dynamic-seedbox API on change
     hm.recyclarr
     ./modules/services/arr-settings.nix     # declarative Sonarr/Radarr/Prowlarr app settings (recyclarr owns profiles/CFs)
