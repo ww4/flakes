@@ -54,11 +54,25 @@
 #   4. Only then connect the Kindle.
 #
 # ── After the jailbreak ───────────────────────────────────────────────────────
-# Repoint the Kindle's pinhole at gromit's own 192.168.1.65:443 and it lives
-# here permanently: Calibre-Web over OPDS and NOTHING else, no internet at all,
-# so it can never OTA again. That retires the risk outright rather than
-# maintaining a denylist against it — and gives the isolated untrusted-device
-# network that was wanted anyway.
+# ⚠️ CORRECTION (2026-11-01). Three PR descriptions said "repoint the Kindle's
+# pinhole at 192.168.1.65:443 and it lives here permanently". That would have
+# been SILENTLY DROPPED: rule 2 of this chain drops the whole segment →
+# 192.168.1.0/24, and 443 is not open on this interface either. Verified
+# against the live ruleset rather than re-read from the plan.
+#
+# What actually works, when that step comes:
+#   * add an ACCEPT for 192.168.50.10 → 192.168.1.65 tcp/443 placed BEFORE the
+#     house-LAN DROP (ordering is the whole trick). Everything else toward the
+#     house stays blocked.
+#   * add ebooks.rosemaryacres.com to the segment's blocky allowlist.
+# That keeps the existing hostname, the Let's Encrypt cert and the customDNS
+# split-horizon all working unchanged — no segment-local vhost, no second cert.
+#
+# Do NOT instead map ebooks.rosemaryacres.com to 192.168.50.1: that mapping is
+# global, so every house client would be handed an address it has no route to.
+#
+# The end state is still the same — Calibre-Web over OPDS and no internet at
+# all, so the device can never OTA again.
 #
 # ⚠️ COST: enp6s0u1 is the designated standby LAN NIC (networking.nix mirrors
 # enp3s0's rules onto it so a failed onboard port is a cable move). Using it
@@ -123,12 +137,32 @@ let
   # Every entry is scoped to a SOURCE address, so one device's permitted flow can
   # never become another's. Anything not listed is dropped and logged.
   pinholes = [
-    # sanctuary.skyvincent.com — one A record, identical from 1.1.1.1 / 9.9.9.9 /
-    # 8.8.8.8, no CNAME, TTL 1799: a single-homed host rather than a CDN, so
-    # pinning the address is sound. If it moves, the failure is "no internet",
-    # which is the safe direction; re-resolve and update here.
+    # ── THE KINDLE ──────────────────────────────────────────────────────────
+    # The chosen jailbreak is now SPIDERCAT, not Sanctuary (changed 2026-11-01).
+    # Sanctuary's server went dark — 78.24.205.144 answers :22 but neither :80
+    # nor :443, and the skyvincent.com apex has no A record at all. SpiderCat
+    # (released 01/09/26) covers firmware 5.16.3–5.19.5 against this PW4's
+    # 5.18.1, its host kindlemodding.org is up, its payload is an .azw3 that
+    # can be SIDELOADED OVER USB, and it blocks OTA updates itself once done.
+    # The payload is staged at /mnt/fusion/books/spidercat/ with its sha256, so
+    # the Kindle never needs to reach kindlemodding.org at all.
+    #
+    # ⚠️ SpiderCat still requires Wi-Fi for the duration — the payload is local
+    # but the exploit uses the network, and the documentation does not say what
+    # it contacts. So NO pinhole is written for it here: start closed, run it,
+    # and read `kindle-watch`. The drop log names the destination, exactly as it
+    # did for the AP. A blocked attempt is retryable; the OTA path stays shut
+    # the whole time by both the firewall default-DROP and the DNS allowlist.
+    #
+    # ⚠️ If what it reaches for turns out to be an AMAZON host, stop and think
+    # before opening it — that is the one direction this segment exists to keep
+    # closed, and the fill-the-storage trick (OTA needs ~90 MB free) becomes
+    # load-bearing rather than optional.
+    #
+    # Kept below as a FALLBACK only: the Sanctuary pinhole. Harmless while that
+    # host is dark, and ready if it returns.
     { src = kindleIP; dst = "78.24.205.144"; proto = "tcp"; port = 80;
-      what = "sanctuary.skyvincent.com — the jailbreak"; }
+      what = "sanctuary.skyvincent.com — FALLBACK, server down since 2026-11-01"; }
 
     # ── AP → UniFi controller ────────────────────────────────────────────────
     # The observation pass on 2026-11-01 found the AP reaches its controller
