@@ -811,6 +811,55 @@ EOF
     '';
   };
 
+  # The REVERSE watcher. Everything else here watches gromit from gromit, which
+  # cannot cover gromit falling off the network — that is what the lock3 VPS
+  # aggregator is for. This is the other half of the loop: gromit checking that
+  # the external watcher is still there, so a dead aggregator cannot look like
+  # "no news is good news".
+  #
+  # ⚠️ Checks the PUBLIC endpoint deliberately, not the tailnet one. The tailnet
+  # path and the public path fail independently, and the public path is the one
+  # the aggregator's own notifications depend on. (Measured 2026-10-31: lock3 is
+  # reachable from gromit over BOTH tailnet and public, but wallace<->lock3 is
+  # blocked in both directions — so tailnet reachability here would prove less
+  # than it appears to.)
+  lock3WatchCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-lock3";
+    runtimeInputs = [ pkgs.curl ];
+    text = ''
+      # exit 0 = FIRE, exit 1 = all clear.
+      url="''${LOCK3_HEALTH_URL:-https://lock3.net/}"
+
+      # Two attempts, 5 s apart. A single failed fetch across the open internet
+      # is not evidence of anything; the sentinel's own debounce adds a second
+      # opinion 2 min later, and this adds one 5 s later for the common case of
+      # a momentary blip.
+      code=""
+      for _ in 1 2; do
+        # ⚠️ NO `|| echo 000` here. curl's own -w '%{http_code}' ALREADY prints
+        # 000 when it never got a response, so the fallback concatenates into
+        # "000000", which fails the = "000" test below and misreports a dead
+        # host as "answers but unhealthy". Caught in testing 2026-10-31; it is
+        # the documented curl-httpcode trap. `|| true` only stops set -e from
+        # aborting on curl's non-zero exit — it adds no output of its own.
+        code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$url" 2>/dev/null || true)
+        [ -n "$code" ] || code=000
+        case "$code" in 2*|3*) exit 1 ;; esac
+        sleep 5
+      done
+
+      # ⚠️ 000 is curl's "never got an answer" and is NOT an http code — do not
+      # report it as one. The distinction matters: a 5xx means the VPS is up and
+      # its web stack is broken; 000 means nothing answered at all.
+      if [ "$code" = "000" ]; then
+        echo "lock3 watcher: no answer from $url (DNS, routing, or the VPS is down). The EXTERNAL watcher that covers gromit going offline is itself unreachable, so gromit is currently unwatched from outside."
+      else
+        echo "lock3 watcher: $url returned HTTP $code. The VPS answers but its web stack is unhealthy, so the external watcher that covers gromit going offline may not be able to notify."
+      fi
+      exit 0   # fire
+    '';
+  };
+
   sentinelConfig = {
     enabled = true;
     pollSec = 120;          # informational; the systemd timer drives the cadence
@@ -1012,6 +1061,29 @@ EOF
       # mempool-api's RBF cache dump freezing silently (see rbfCacheCheck above).
       { id = "mempool-rbfcache"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "${rbfCacheCheck}/bin/sentinel-check-mempool-rbfcache"; timeout = 15; }
+
+      # Is the EXTERNAL watcher still there (see lock3WatchCheck above)?
+      #
+      # Chris asked for this explicitly: "we should also have a reverse watcher
+      # that monitors uptime kuma from gromit. If it can't see the lock 3 VPS
+      # then I should get a notification through ntfy."
+      #
+      # severity = warning and NOT critical: per the never-wake-for-network rule
+      # this is a monitoring-coverage gap, not an outage of anything Chris uses.
+      # agent = false — nothing on gromit can fix a VPS being unreachable.
+      #
+      # reescalateSec = 86400 rather than the default edge-trigger: being
+      # unwatched from outside is a standing condition, and a condition that
+      # only announces itself once is how gromit ended up unwatched in the first
+      # place. Daily is the right nag for "your safety net is down".
+      #
+      # ⚠️ Deliberately NOT minConsecutive = 1. Unlike nic-link-speed, there is
+      # no settling step that can make a single reading trustworthy here: the
+      # path crosses the open internet. Two polls 2 min apart, each already
+      # retrying once internally, is the cheapest honest confirmation.
+      { id = "lock3-watcher"; type = "command"; severity = "warning"; agent = false; act = false;
+        cmd = "${lock3WatchCheck}/bin/sentinel-check-lock3"; timeout = 40;
+        reescalateSec = 86400; }
 
       # The LAN link renegotiating down to 100 Mb (see nicSpeedCheck above).
       # From node_network_speed_bytes over 2026-08-01..10-31: SIX transitions,
