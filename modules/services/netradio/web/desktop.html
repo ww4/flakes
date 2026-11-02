@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="desktop.css">
 <link rel="stylesheet" href="remote-panel.css">
+<link rel="stylesheet" href="dialog.css">
 <!-- the admin, mounted here as a view rather than navigated to, so the
      stream is never torn down. Its rules are scoped under .adminpanel. -->
 <link rel="stylesheet" href="admin/admin.css">
@@ -108,7 +109,8 @@
           </span>
           <span class="badge" v-if="isUp(s.mount)">on air</span>
           <button class="play" @click.stop="isPlaying(s) ? stopTarget() : playTarget(s)"
-                  :title="isPlaying(s) ? 'Stop' : 'Play'" :aria-label="isPlaying(s) ? 'Stop' : 'Play'">
+                  :title="isPlaying(s) ? 'Stop' : ('Play on ' + targetName)"
+                  :aria-label="isPlaying(s) ? 'Stop' : ('Play on ' + targetName)">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <template v-if="isPlaying(s)"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></template>
               <path v-else d="M6 4l14 8-14 8z"></path>
@@ -155,10 +157,21 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="M15.5 15.5L20 20"></path></svg>Request</button>
     </div>
     <!-- Browsing a station you are NOT listening to: the actions would act on
-         the wrong track, so the only thing offered is starting it here. -->
+         the wrong track, so the only thing offered is starting it.
+
+         TWO buttons, because one of them used to lie. It read "Play here" and
+         started the station on whatever output was selected — its own tooltip
+         said "Play on <target>", which is the tell. "Here" is read as "in my
+         browser", and from a phone outside the house that press took the
+         living room off a film (Chris, 2026-11-02). Naming the destination on
+         the button is a better fix than any warning, because it removes the
+         ambiguity instead of catching it. The warning stays for a fumble. -->
     <div class="acts" v-else-if="openStationObj.mount">
-      <button @click="playTarget(openStationObj)" :title="'Play on ' + targetName">
+      <button @click="playHere(openStationObj)" title="Play in this browser">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4l14 8-14 8z" fill="currentColor" stroke="none"></path></svg>Play here</button>
+      <button v-if="target !== 'here'" @click="playTarget(openStationObj)"
+              :title="'Start this station on ' + targetName">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4l14 8-14 8z" fill="currentColor" stroke="none"></path></svg>Play on {{ targetName }}</button>
     </div>
     <div class="tech">{{ techLine }}</div>
   </section>
@@ -324,6 +337,9 @@
        `:app="this"` hands it the page: the state and the methods live in
        shared.js, where the receiver half already was. -->
   <remote-panel v-if="remote" :app="this"></remote-panel>
+  <!-- Always mounted: the markup is fetched at runtime, and a question
+       that arrives after its own answer is no use. -->
+  <ask-panel :app="this"></ask-panel>
 
   </div><!-- .app -->
 

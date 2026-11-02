@@ -21,6 +21,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="remote.css">
 <link rel="stylesheet" href="remote-panel.css">
+<link rel="stylesheet" href="dialog.css">
 <div id="app" v-cloak :class="{desktop: wide}">
 
   <!-- ===== top: where we're playing ======================================== -->
@@ -177,6 +178,7 @@
        — "The phone should have the roku, obviously. What am I sitting on the
        couch with" (Chris, 2026-10-21). -->
   <remote-panel v-if="remote" :app="this"></remote-panel>
+  <ask-panel :app="this"></ask-panel>
 
   <nav class="bar tabs">
     <button :class="{active: tab === 'now'}" @click="tab = 'now'"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2"/></svg>Now</button>
