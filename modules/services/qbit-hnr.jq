@@ -10,8 +10,30 @@
 # A torrent is earning seed credit only in these states. Notably `checkingUP`
 # is NOT included: mid-recheck it is not connected to the tracker, and counting
 # it as healthy would hide exactly the outage this module exists to catch.
+#
+# ⚠️ `queuedUP` was in this list until 2026-11-02 and must never go back. A
+# queued torrent is NOT started: qBittorrent sends a `stopped` event when it
+# parks one, and the tracker then reports the peer as gone — DarkPeers answered
+# `"Stopped peer doesn't exist."` for an obligation it was simultaneously
+# issuing a pre-warning on. Its `uploaded` stayed at 0 and its `last_activity`
+# and `seeding_time` froze at the moment it was queued, so it could never
+# satisfy the rule either. It is exactly the `checkingUP` case: present in the
+# client, invisible to the tracker.
+#
+# The failure it caused: with `queuedUP` counted as active, every queued torrent
+# read as healthy, so `not_seeding` was 0 for ALL SIX trackers,
+# `grace_used_ratio{darkpeers}` read 0.0000 where the true figure was ~248% of
+# the 24 h grace, and no alert could fire. `unmet` was correct throughout (15,
+# independently recounted) — the guard saw the obligations and believed they
+# were being served, which is the worst direction for a watchdog to fail.
+#
+# Why it lay dormant: `queuedUP` is only reachable once the library exceeds
+# qBittorrent's active-torrent cap. On 2026-11-02 there were 353 non-stopped
+# torrents against `max_active_torrents: 300`, parking exactly 53 — and queue
+# position favours the oldest, so the newest grab loses, which is precisely
+# when an H&R obligation is freshest.
 def is_seeding:
-  (.state | test("^(uploading|stalledUP|forcedUP|queuedUP)$"));
+  (.state | test("^(uploading|stalledUP|forcedUP)$"));
 
 # A torrent the tracker can see: seeding, OR still downloading. A download
 # in flight announces the whole time — it cannot be a hit-and-run — but it
