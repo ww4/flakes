@@ -200,6 +200,30 @@ let
     { src = kindleIP; dst = "185.199.111.153"; proto = "tcp"; port = 443;
       what = "kindlemodding.org (GitHub Pages) — fetches jb.so"; }
 
+    # ── Time, which turns out to gate the whole thing ───────────────────────
+    # The Kindle's clock reads 29 Dec 2024 — about 22 months slow. The
+    # kindlemodding.org certificate is notBefore 25 Oct 2026, so to this device
+    # it is "not yet valid" and curl refuses the TLS handshake. The jb.so fetch
+    # cannot succeed at any firewall setting until the clock is right. Checked,
+    # not assumed: the cert dates were read off the live host.
+    #
+    # Its own time hosts (kindle-time.amazon.com ×4, ntp-g7g.amazon.com) are
+    # blocked here, and pinholing them is unattractive anyway — they are
+    # load-balanced AWS endpoints that returned DIFFERENT addresses from
+    # 1.1.1.1 and 8.8.8.8, so any IP we permitted might not be the one the
+    # device resolves a minute later.
+    #
+    # So those names are pointed at Cloudflare's time service instead:
+    # 162.159.200.1 / .123, identical from 1.1.1.1, 8.8.8.8 and 9.9.9.9
+    # (anycast, stable), and verified answering NTP from gromit at stratum 3.
+    # No Amazon involved, nothing to rotate, and udp/123 cannot carry a
+    # firmware image — which is why this is a much smaller concession than an
+    # HTTP pinhole would have been.
+    { src = kindleIP; dst = "162.159.200.123"; proto = "udp"; port = 123;
+      what = "time.cloudflare.com — NTP, so TLS can validate"; }
+    { src = kindleIP; dst = "162.159.200.1"; proto = "udp"; port = 123;
+      what = "time.cloudflare.com — NTP, second anycast address"; }
+
     # ── AP → UniFi controller ────────────────────────────────────────────────
     # The observation pass on 2026-11-01 found the AP reaches its controller
     # TWO different ways, which is why both logs were needed:
@@ -244,6 +268,20 @@ let
   reservations =
     [{ hw-address = kindleMAC; ip-address = kindleIP; }]
     ++ lib.optional (apMAC != null) { hw-address = apMAC; ip-address = apIP; };
+
+  # The genuine Kindle reachability probe, byte-for-byte. Fetched from the real
+  # http://spectrum.s3.amazonaws.com/kindle-wifi/wifistub.html on 2026-11-01:
+  # 67 bytes, Content-Type text/html, and that UUID is the fixed token the
+  # device looks for.
+  #
+  # The first attempt returned `200 'ok'` and the Kindle put up a LOGIN PAGE.
+  # That is captive-portal detection working as designed — a reachable endpoint
+  # answering with UNEXPECTED content is precisely the signature of a hotspot
+  # intercepting traffic. Blocked made the device think the network was dead;
+  # wrong content made it think it was behind a hotel portal. Only the real
+  # bytes read as "plain internet".
+  probePage = pkgs.writeText "wifistub.html"
+    "<html>\n<body>\n81ce4465-7167-4dcb-835b-dcc9e44c112a\n</body>\n</html>\n";
 
   # One place to see everything this segment did: what it asked for, what it
   # sent, who holds a lease, and which rules fired.
@@ -426,7 +464,10 @@ in
   services.nginx.virtualHosts."kindle-connectivity-check" = {
     serverName = "dns.kindle.com spectrum.s3.amazonaws.com dogvgb9ujhybx.cloudfront.net kindle-wifi-cn.amazon.cn";
     listenAddresses = [ gateway ];   # segment side only; never shadows the house
-    locations."/".return = "200 'ok'";
+    locations."/".extraConfig = ''
+      default_type text/html;
+      alias ${probePage};
+    '';
   };
 
   # (tcp/80 for that responder is merged into the firewall block below — 443
