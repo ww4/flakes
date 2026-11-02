@@ -441,8 +441,15 @@ in
     internalInterfaces = [ iface ];
   };
 
-  # Gromit itself answers DHCP and DNS for the segment. Nothing else is exposed
-  # to it — no SSH, no 443, no Jellyfin.
+  # Gromit itself answers DHCP and DNS for the segment. Nothing else is
+  # exposed to it — no SSH, no 443, no Jellyfin, no Asterisk SIP/RTP.
+  # ⚠️ This was FALSE from first deploy until 2026-11-01: networking.nix,
+  # asterisk.nix and blocky.nix all mirrored this interface as a standby LAN
+  # NIC (added 2026-08-25, before this segment existed) and that mirroring
+  # opened 22/8096/5060/10000-10199 here via nixos-fw, completely bypassing
+  # kindle-fwd — an INPUT-chain exposure this module's own FORWARD-chain
+  # design can't see or stop. Found by audit, not by an incident. Fixed by
+  # retiring the standby-NIC role on this interface (see networking.nix).
   networking.firewall.interfaces.${iface} = {
     allowedUDPPorts = [ 53 67 ];
     allowedTCPPorts = [ 53 80 ];

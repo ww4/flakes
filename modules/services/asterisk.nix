@@ -249,7 +249,12 @@ in
       "+${genAuth} ${lib.concatStringsSep " " (lib.attrNames cfg.extensions)}"
     ];
 
-    networking.firewall.interfaces = lib.genAttrs [ "enp3s0" "enp6s0u1" "tailscale0" ] (_: {
+    # enp6s0u1 deliberately excluded (was mirrored here for the same standby-
+    # NIC reasoning as networking.nix/blocky.nix): that interface is now
+    # kindle-segment.nix's fail-closed segment, and SIP signalling + RTP media
+    # are exactly the kind of exposure it exists to keep off. See
+    # networking.nix for the full retirement note.
+    networking.firewall.interfaces = lib.genAttrs [ "enp3s0" "tailscale0" ] (_: {
       allowedUDPPorts = [ 5060 ];
       allowedUDPPortRanges = [ cfg.rtpRange ];
     });
