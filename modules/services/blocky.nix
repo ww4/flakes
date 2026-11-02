@@ -131,6 +131,12 @@ in
             /.*/
           ''
         ];
+        # repo.kindlemodding.org is the KPM package repository — the modern
+        # KOReader install is `;kpm install koreader` typed in the Kindle's
+        # search bar, not a USB sideload. It resolves to the SAME four GitHub
+        # Pages addresses as kindlemodding.org (checked against 1.1.1.1,
+        # 8.8.8.8 and 9.9.9.9), so the existing tcp/443 pinholes already cover
+        # it and no firewall change is needed — only the name has to resolve.
         # Resolve-but-do-not-route, on purpose (2026-11-01). The AP asked for
         # unifi.broadlinc.com four times and got 0.0.0.0, so it never sent an
         # inform packet — which means we still do not know which PORT it uses.
@@ -152,6 +158,7 @@ in
           ''
             sanctuary.skyvincent.com
             kindlemodding.org
+            repo.kindlemodding.org
             unifi.broadlinc.com
           ''
         ];
