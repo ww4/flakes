@@ -132,6 +132,7 @@ let
 
   uplink = "enp3s0";
   houseNet = "192.168.1.0/24";
+  houseProxy = "192.168.1.65";   # gromit on the house LAN — nginx/Calibre-Web
 
   # ── Pinholes ────────────────────────────────────────────────────────────────
   # Every entry is scoped to a SOURCE address, so one device's permitted flow can
@@ -261,29 +262,21 @@ let
   ];
 
 
-  # ── The one thing the Kindle may reach on the HOUSE LAN ──────────────────
-  # Calibre-Web, which is the entire point of the exercise. This has to be
-  # emitted BEFORE the house-LAN DROP below — ordering is the whole trick, and
-  # getting it wrong is silent: the packet is dropped and it looks like a
-  # Calibre-Web fault rather than a firewall one. Three earlier PR descriptions
-  # of mine said "repoint the pinhole at 192.168.1.65:443" without noticing
-  # that rule would never be reached.
-  #
-  # Deliberately NOT done: mapping ebooks.rosemaryacres.com to 192.168.50.1.
-  # customDNS is GLOBAL, so that would hand every house client an address it
-  # has no route to. Nothing needs to change in DNS at all — blocky already
-  # maps the whole rosemaryacres.com zone to 192.168.1.65, and customDNS beats
-  # the allowlist-only denylist (verified on a live blocky), so the name
-  # already resolves correctly on this segment. Only the route was missing.
-  houseAllowed = [
-    { src = kindleIP; dst = "192.168.1.65"; proto = "tcp"; port = 443;
-      what = "ebooks.rosemaryacres.com — Calibre-Web OPDS"; }
-  ];
 
-  mkHouse = p:
-    "iptables -A kindle-fwd -i ${iface} -s ${p.src} -d ${p.dst} -p ${p.proto}"
-    + " --dport ${toString p.port} -j ACCEPT  # ${p.what}";
-  houseRules = lib.concatMapStringsSep "\n    " mkHouse houseAllowed;
+  # ── Calibre-Web lives on gromit ITSELF, so it is an INPUT rule ───────────
+  # #469 put this in kindle-fwd and it never matched: 16 attempts from the
+  # Kindle, 0 packets on the rule. 192.168.1.65 is one of gromit's OWN
+  # addresses, so a packet from the segment to it is delivered LOCALLY — it
+  # goes to INPUT, never to FORWARD. kindle-fwd cannot see it at all, and the
+  # house-LAN DROP it was carefully ordered in front of is equally irrelevant.
+  #
+  # The real gate was nixos-fw, which allows only 22/53/80/8096/5060/10000-
+  # 10199 on this interface. 443 was simply refused.
+  #
+  # So the ACCEPT moves into the kindle-in chain below, scoped to the Kindle's
+  # reservation and to that one address and port. Deliberately NOT
+  # `allowedTCPPorts = [ 443 ]`, which would expose EVERY vhost on the box to
+  # the segment rather than just the book server.
 
   mkPinhole = p:
     "iptables -A kindle-fwd -i ${iface} -s ${p.src} -d ${p.dst} -p ${p.proto}"
@@ -524,7 +517,6 @@ in
     iptables -F kindle-fwd
 
     iptables -A kindle-fwd -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-    ${houseRules}
     iptables -A kindle-fwd -i ${iface} -d ${houseNet} -j DROP  # no reaching the house LAN
     ${acceptRules}
 
@@ -546,6 +538,7 @@ in
     iptables -F kindle-in
     iptables -A kindle-in -p tcp --syn -m limit --limit 20/min --limit-burst 40 \
       -j LOG --log-prefix "kindle-in: " --log-level 6
+    iptables -A kindle-in -s ${kindleIP} -d ${houseProxy} -p tcp --dport 443 -j ACCEPT  # ebooks.rosemaryacres.com — Calibre-Web OPDS
     iptables -A kindle-in -j RETURN
     iptables -C INPUT -i ${iface} -j kindle-in 2>/dev/null || iptables -I INPUT 1 -i ${iface} -j kindle-in
 
