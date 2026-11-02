@@ -353,8 +353,52 @@ in
   # to it — no SSH, no 443, no Jellyfin.
   networking.firewall.interfaces.${iface} = {
     allowedUDPPorts = [ 53 67 ];
-    allowedTCPPorts = [ 53 ];
+    allowedTCPPorts = [ 53 80 ];
   };
+
+  # ── The Kindle's connectivity check, answered LOCALLY ───────────────────────
+  # On 2026-11-01 the Kindle associated, took its .10 reservation, made exactly
+  # four DNS lookups — all blocked — and then declared "can't connect to Wi-Fi"
+  # and powered its radio down. It never sent a single packet; DNS stopped it
+  # first. The lookups were its connectivity check:
+  #
+  #     spectrum.s3.amazonaws.com      dogvgb9ujhybx.cloudfront.net
+  #     kindle-wifi-cn.amazon.cn       dns.kindle.com
+  #
+  # SpiderCat needs Wi-Fi up for the duration, so a Kindle that decides the
+  # network is dead is a blocker.
+  #
+  # Answered here rather than by letting it reach Amazon. Those are the hosts
+  # this whole segment exists to keep it away from, and a CloudFront pinhole is
+  # especially unappealing — CloudFront addresses are shared, so permitting one
+  # distribution's IP permits anything else served from it.
+  #
+  # Verified on a live blocky 0.29 rather than assumed: customDNS BEATS the
+  # allowlist-only denylist, so these names resolve here while google.com still
+  # returns 0.0.0.0 and sanctuary.skyvincent.com still resolves normally. No
+  # allowlist entries are needed.
+  #
+  # ⚠️ customDNS is GLOBAL, not per-client — house clients get this answer too,
+  # and 192.168.50.1 is unroutable for them. Checked before doing it: no
+  # Amazon-OUI device appears in the house ARP table (30 entries). That is
+  # evidence, not proof — a powered-off Fire TV would not show up — so if an
+  # Amazon device starts misbehaving on the house LAN, look here first.
+  #
+  # ⚠️ Without the vhost below, nginx answers an unknown Host on :80 with a 301
+  # to https — which would send the check to a closed port behind a cert that
+  # could never match. Verified by hand before relying on it.
+  services.nginx.virtualHosts."kindle-connectivity-check" = {
+    serverName = "dns.kindle.com spectrum.s3.amazonaws.com dogvgb9ujhybx.cloudfront.net kindle-wifi-cn.amazon.cn";
+    listenAddresses = [ gateway ];   # segment side only; never shadows the house
+    locations."/".return = "200 'ok'";
+  };
+
+  # (tcp/80 for that responder is merged into the firewall block below — 443
+  # stays SHUT on purpose: if the Kindle wants TLS instead, the attempt shows
+  # up in the kindle-in log and we change approach rather than guess.)
+  # OLD-NOTE: tcp/80 so the check can actually land. 443 stays SHUT on purpose: if the
+  # Kindle wants TLS instead, the attempt shows up in the kindle-in log below
+  # and we will know to change approach rather than guess.
 
   # ── The default-deny forward policy ─────────────────────────────────────────
   # Deliberately a DEDICATED CHAIN jumped to from FORWARD, rather than changing
@@ -380,6 +424,20 @@ in
       -j LOG --log-prefix "kindle-fw-drop: " --log-level 6
     iptables -A kindle-fwd -j DROP  # everything else, both directions
 
+
+    # Traffic to gromit ITSELF is INPUT, not FORWARD, so kindle-fwd never sees
+    # it and the connectivity check would be invisible. nginx has access_log
+    # off globally and nixos-fw-log-refuse carries no LOG target, so there is
+    # no existing signal to borrow. This chain only LOGs and RETURNs — it
+    # changes no policy, it just makes the segment's traffic to gromit visible.
+    # It is how we will tell "the check landed on :80" from "it wanted :443".
+    iptables -N kindle-in 2>/dev/null || true
+    iptables -F kindle-in
+    iptables -A kindle-in -p tcp --syn -m limit --limit 20/min --limit-burst 40 \
+      -j LOG --log-prefix "kindle-in: " --log-level 6
+    iptables -A kindle-in -j RETURN
+    iptables -C INPUT -i ${iface} -j kindle-in 2>/dev/null || iptables -I INPUT 1 -i ${iface} -j kindle-in
+
     # Jump in from FORWARD for both directions, at the top, idempotently.
     iptables -C FORWARD -i ${iface} -j kindle-fwd 2>/dev/null || iptables -I FORWARD 1 -i ${iface} -j kindle-fwd
     iptables -C FORWARD -o ${iface} -j kindle-fwd 2>/dev/null || iptables -I FORWARD 2 -o ${iface} -j kindle-fwd
@@ -391,6 +449,9 @@ in
   '';
 
   networking.firewall.extraStopCommands = ''
+    iptables -D INPUT -i ${iface} -j kindle-in 2>/dev/null || true
+    iptables -F kindle-in 2>/dev/null || true
+    iptables -X kindle-in 2>/dev/null || true
     iptables -D FORWARD -i ${iface} -j kindle-fwd 2>/dev/null || true
     iptables -D FORWARD -o ${iface} -j kindle-fwd 2>/dev/null || true
     iptables -F kindle-fwd 2>/dev/null || true
