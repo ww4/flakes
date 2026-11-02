@@ -284,6 +284,27 @@ class Kokoro:
         raise RuntimeError(f"no Kokoro answered: {last}")
 
 
+TRACK_NO = re.compile(r"^\s*\d{1,3}\s*[-._)\s]\s*")
+
+
+def song_key(path: str) -> str:
+    """What counts as "the same song" for the no-repeat list.
+
+    NOT the path. This library holds the same recording more than once — two
+    rips of Hot Rod Lincoln sit in one folder as `00 Hot Rod Lincoln.mp3` and
+    `Hot Rod Lincoln.mp3` — and a no-repeat list keyed on the filename sees
+    two unrelated tracks, so the song is free to follow itself (Chris,
+    2026-11-02: "it just plays Hot Rod Lincoln over and over again").
+
+    Derived from the PATH rather than the tags on purpose: this runs over
+    every candidate on every pick, and reading tags for a few hundred files to
+    choose one of them is not a trade worth making. A leading track number is
+    the only thing that reliably differs between two rips of one song.
+    """
+    stem = TRACK_NO.sub("", Path(path).stem)
+    return f"{artist_of_path(path)}|{' '.join(stem.lower().split())}"
+
+
 def artist_of_path(path: str) -> str:
     """The library folder's artist, normalised the way dislikes.json and
     ratings.json key artists.
@@ -575,6 +596,7 @@ class StationDJ:
         self.segment: dict | None = None    # the slot the queue is currently drawing from
         self.promo_next = False             # say the day's schedule at the next break
         self.skip_when_filled = False       # a skip is owed, once fill() has rewritten the queue
+        self._recent_loaded = False         # the no-repeat list survives a rebuild; see load_recent
 
     # -- inputs
     def load_playlist(self) -> None:
@@ -589,7 +611,55 @@ class StationDJ:
             self.tracks = [l.rstrip("\n") for l in fh if l.strip() and not l.startswith("#")]
         self.playlist_mtime = mtime
         self.load_fringe()
+        self._resize_recent()
+        if not self._recent_loaded:
+            self.load_recent()
+            self._recent_loaded = True
         log.info("%s: playlist loaded, %d tracks, %d fringe", self.mount, len(self.tracks), len(self.fringe))
+
+    # -- the no-repeat list ------------------------------------------------
+    #
+    # It used to be paths, in memory only. Both halves of that were wrong, and
+    # together they put the same song on the air four times in fourteen
+    # minutes on 2026-11-02.
+    #
+    # IN MEMORY: this object is rebuilt whenever the station comes back on
+    # air, which wipes it. The Liquidsoap queue is only drained while somebody
+    # is listening, so a rebuilt DJ cheerfully queued a track that was ALREADY
+    # waiting in it — the queue prepared the same file three times, as RIDs
+    # 75, 93 and 288. `pending()` counts the RIDs waiting and cannot see what
+    # they are, so nothing else was going to catch it.
+    #
+    # PATHS: see song_key.
+    def _recent_path(self) -> Path:
+        return self.out_dir / "recent.json"
+
+    def _resize_recent(self) -> None:
+        """Remember at most half a station's worth.
+
+        NO_REPEAT is a ceiling for a big station. On a small one a 300-deep
+        memory excludes every candidate, the `or playable` fallback takes over
+        and the guard quietly does nothing — a guard that reads as working.
+        """
+        want = max(10, min(NO_REPEAT, len(self.tracks) // 2))
+        if self.recent.maxlen != want:
+            self.recent = deque(self.recent, maxlen=want)
+
+    def load_recent(self) -> None:
+        try:
+            keys = json.loads(self._recent_path().read_text())
+        except (OSError, ValueError):
+            return
+        if isinstance(keys, list):
+            self.recent.extend(str(k) for k in keys)
+
+    def save_recent(self) -> None:
+        """Best effort: a station that cannot write this still plays music."""
+        try:
+            self.out_dir.mkdir(parents=True, exist_ok=True)
+            self._recent_path().write_text(json.dumps(list(self.recent)))
+        except OSError as e:
+            log.warning("%s: could not save the no-repeat list: %s", self.mount, e)
 
     def load_fringe(self) -> None:
         fringe = self.playlist.with_name(self.playlist.stem + "-fringe.m3u")
@@ -653,7 +723,8 @@ class StationDJ:
         playable = [t for t in candidates if t not in never and not self.verdicts.get(t, Verdict(False, False, False, "")).talk]
         if not playable:
             return None
-        pool = [t for t in playable if t not in self.recent] or playable
+        seen = set(self.recent)
+        pool = [t for t in playable if song_key(t) not in seen] or playable
         # The listener's opinion decides the odds: a hearted track comes round
         # four times as often, a skipped one seldomer, and one skipped four
         # times stops coming at all (netradio/ratings.py). An artist explicitly
@@ -669,7 +740,8 @@ class StationDJ:
                 if not alt or artist_of_path(alt) not in less:
                     path = alt or path
                     break
-        self.recent.append(path)
+        self.recent.append(song_key(path))
+        self.save_recent()
         return read_tags(path)
 
     def load_ratings(self) -> None:
