@@ -267,6 +267,73 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class TheSameSongDoesNotFollowItself(unittest.TestCase):
+    """Chris, 2026-11-02: "I'm listening to the western swing station, and it
+    just plays Hot Rod Lincoln over and over again."
+
+    Liquidsoap's own log had the queue preparing ONE file three times, as RIDs
+    75, 93 and 288 — pushes from three different fill cycles. Two things let
+    that happen, and both are guarded here.
+    """
+
+    HRL_A = "/mnt/fusion/Music/Asleep At The Wheel/Unknown Album/00 Hot Rod Lincoln.mp3"
+    HRL_B = "/mnt/fusion/Music/Asleep At The Wheel/Unknown Album/Hot Rod Lincoln.mp3"
+    OTHER = "/mnt/fusion/Music/Asleep At The Wheel/Collision Course/04 One O'Clock Jump.mp3"
+
+    def test_two_rips_of_one_song_are_one_song(self):
+        """The real pair out of the library: the same recording twice in one
+        folder, differing only by a leading track number. A no-repeat list
+        keyed on the path sees two unrelated tracks."""
+        self.assertEqual(dj.song_key(self.HRL_A), dj.song_key(self.HRL_B))
+        self.assertNotEqual(dj.song_key(self.HRL_A), dj.song_key(self.OTHER))
+
+    def test_a_different_artist_with_the_same_title_is_a_different_song(self):
+        """Commander Cody's Hot Rod Lincoln is not Asleep At The Wheel's, and
+        a station is allowed to play both."""
+        other_artist = "/mnt/fusion/Music/Commander Cody/Lost in the Ozone/03 Hot Rod Lincoln.mp3"
+        self.assertNotEqual(dj.song_key(self.HRL_A), dj.song_key(other_artist))
+
+    def _station(self, tracks):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        pl = root / "x.m3u"
+        pl.write_text("\n".join(["#EXTM3U"] + tracks) + "\n")
+        return dj.StationDJ("x", "Test", pl, root / "dj" / "x", FakeLS(), FakeTTS(),
+                            rng=random.Random(3), breaks_every=(99, 99)), root
+
+    def test_the_no_repeat_list_survives_a_rebuild(self):
+        """The station object is rebuilt whenever the station comes back on
+        air. The list used to live only in memory, so every rebuild forgot
+        what had just been queued — and the Liquidsoap queue is drained only
+        while somebody is listening, so the forgotten track was often still
+        sitting in it."""
+        tracks = [f"/m/Artist/Album/{i:02d} Song{i}.mp3" for i in range(20)]
+        station, root = self._station(tracks)
+        with mock.patch.object(dj, "read_tags", side_effect=lambda p: dj.Track(p, "t", "a")):
+            first = [station.choose().path for _ in range(5)]
+        self.assertEqual(len(set(first)), 5, "it repeated within one lifetime")
+
+        # same playlist, same directory: a fresh object, as a restart makes
+        rebuilt = dj.StationDJ("x", "Test", root / "x.m3u", root / "dj" / "x",
+                               FakeLS(), FakeTTS(), rng=random.Random(3), breaks_every=(99, 99))
+        with mock.patch.object(dj, "read_tags", side_effect=lambda p: dj.Track(p, "t", "a")):
+            after = [rebuilt.choose().path for _ in range(5)]
+        self.assertFalse(set(first) & set(after),
+                         "the rebuilt station replayed what the old one had just queued")
+
+    def test_the_window_does_not_swallow_a_small_station(self):
+        """NO_REPEAT is 300. On a station of 20 tracks a 300-deep memory
+        excludes every candidate, the `or playable` fallback takes over, and
+        the guard quietly does nothing — which looks exactly like working."""
+        station, _ = self._station([f"/m/A/B/{i:02d} S{i}.mp3" for i in range(20)])
+        with mock.patch.object(dj, "read_tags", side_effect=lambda p: dj.Track(p, "t", "a")):
+            station.choose()
+        self.assertLessEqual(station.recent.maxlen, 10,
+                             "the window is wider than the station, so it guards nothing")
+        self.assertGreaterEqual(station.recent.maxlen, 1)
+
+
 class Feedback(unittest.TestCase):
     """The admin's inbox files: skip, and a request that jumps the queue."""
     setUp = StationDJTests.setUp
