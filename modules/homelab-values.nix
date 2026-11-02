@@ -231,6 +231,26 @@
       }
       # Blocky (local split-horizon DNS) — query counts, cache hit ratio,
       # upstream failures. See services/blocky.nix (metrics on loopback :4000).
+      # The external watcher on lock3. Its COUNTERS are the only thing that can
+      # say anything true about a window Prometheus could not scrape: a counter
+      # read after a gap reflects what happened during it, so
+      # increase(homelab_watch_unreachable_seconds_total[24h]) still shows an
+      # outage that has no samples inside it.
+      #
+      # ⚠️ Build panels on homelab_watch_last_heartbeat_timestamp_seconds, NOT
+      # on an up-style gauge. This Prometheus runs --query.lookback-delta=16m,
+      # so a gauge scraped 15 minutes ago still answers a query — an up gauge
+      # can read "up" from a stale sample in the middle of an outage. A
+      # timestamp cannot look fresh when it is not.
+      #
+      # When lock3 is unreachable this job's own `up` drops to 0, which is the
+      # metrics-side complement to sentinel's lock3-watcher check: one shows in
+      # Grafana, the other pages over ntfy.
+      { job_name = "homelab-watch";
+        static_configs = [{ targets = [ "100.125.31.125:8650" ]; }];
+        scrape_interval = "60s";
+        scrape_timeout = "15s";
+      }
       { job_name = "blocky";
         static_configs = [{ targets = [ "127.0.0.1:4000" ]; }];
       }
@@ -278,6 +298,32 @@
           timeoutInSeconds = 30;
         };
       }
+        {
+          # The external watcher's verdict history, read off the lock3 VPS over
+          # Tailscale.
+          #
+          # Infinity rather than a SQLite datasource because SQLite has NO wire
+          # protocol: the plugin reads a local filesystem path, so a direct
+          # datasource would require the database to live on gromit — and the
+          # whole point of that database is that it is written while gromit is
+          # unreachable. Infinity is already installed here for NWPS, so this
+          # needs no new plugin.
+          #
+          # ⚠️ Pulls at query time, so a panel errors rather than showing cached
+          # history if lock3 is unreachable while you are looking. Accepted: the
+          # authoritative record is on lock3 regardless, and Prometheus carries
+          # the counters that survive a scrape gap.
+          name = "HomelabWatch";
+          uid = "homelab-watch-infinity";
+          type = "yesoreyeram-infinity-datasource";
+          access = "proxy";
+          jsonData = {
+            # Same SSRF fence as NWPS: this datasource can reach exactly one
+            # host and nothing else.
+            allowedHosts = [ "http://100.125.31.125:8650" ];
+            timeoutInSeconds = 20;
+          };
+        }
     ];
     extraPlugins = with pkgs.grafanaPlugins; [ yesoreyeram-infinity-datasource ];
     grafanaOidcSecretFile = config.sops.secrets."grafana-oidc-secret".path;

@@ -128,6 +128,14 @@
             ./hosts/wallace/hardware-configuration.nix
             ./hosts/wallace/configuration.nix
             ./modules/agent/comin.nix   # GitOps applier — builds nixosConfigurations.wallace
+            # sops on wallace, added 2026-11-02 for the homelab-watch heartbeat
+            # key. wallace decrypts with its OWN SSH host key (modules/sops.nix
+            # is host-agnostic), and is a recipient of exactly one secret — see
+            # the scoped creation rule in .sops.yaml.
+            sops-nix.nixosModules.sops
+            ./modules/sops.nix
+            ./modules/agent/homelab-watch-secret.nix
+            ./modules/services/homelab-heartbeat.nix
           ];
         };
 

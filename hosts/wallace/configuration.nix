@@ -90,4 +90,25 @@
   environment.systemPackages = with pkgs; [ git vim htop tmux efibootmgr ];
 
   system.stateVersion = "25.11";
+  # ── Heartbeat to the external watcher ───────────────────────────────────────
+  #
+  # wallace's half of the standoff. It reports its own liveness AND whether it
+  # can see gromit, which is what lets the correlator on lock3 tell "gromit is
+  # down" apart from "gromit is up but its heartbeat is not arriving".
+  #
+  # ⚠️ This is the ONLY way wallace's liveness reaches the watcher. lock3 cannot
+  # probe wallace at all — measured 2026-11-01, unreachable in BOTH directions,
+  # an ACL on lock3's tagged-devices tag — so absence of this heartbeat is the
+  # only evidence that will ever exist for wallace being down.
+  #
+  # Peer probe uses gromit's LAN address rather than its tailnet one on purpose:
+  # it tests the path that actually matters for the two of them, and does not
+  # report gromit as down merely because Tailscale is unhappy.
+  homelab.heartbeat = {
+    enable = true;
+    host = "wallace";
+    peer = "gromit";
+    peerAddr = "192.168.1.65";
+    keyFile = config.sops.secrets."homelab-watch".path;
+  };
 }

@@ -1,7 +1,14 @@
 # sops-nix — secrets encrypted in this repo, decrypted at activation.
 #
-# Decryption (the box): gromit decrypts with its SSH ed25519 HOST key, converted
-# to age — so no extra decryption key lives on the box (and it survives reboots).
+# Decryption (the box): each host decrypts with its OWN SSH ed25519 HOST key,
+# converted to age — so no extra decryption key lives on the box (and it
+# survives reboots). This module is host-agnostic on purpose.
+#
+# ⚠️ Used by gromit AND, since 2026-11-02, by wallace. wallace was added for the
+# homelab-watch heartbeat key and is a recipient of THAT FILE ALONE, via a
+# scoped creation rule that sits ABOVE the catch-all in ./.sops.yaml. Adding a
+# host to the catch-all instead grants it decryption of every secret here — if
+# you add a third host, scope it the same way rather than widening the default.
 # Editing (the human): Chris's admin age key, registered in ./.sops.yaml.
 #
 # Security boundary: the `claude` agent has NO decryption key. It can add the
