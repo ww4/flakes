@@ -88,6 +88,14 @@ in
         mapping."spectrum.s3.amazonaws.com" = kindleGateway;
         mapping."dogvgb9ujhybx.cloudfront.net" = kindleGateway;
         mapping."kindle-wifi-cn.amazon.cn" = kindleGateway;
+
+        # The Kindle's clock was 22 months slow, which makes every TLS
+        # handshake fail "certificate not yet valid". Its own time hosts are
+        # load-balanced AWS endpoints that answer differently per resolver, so
+        # they are pointed at Cloudflare's stable anycast time service instead.
+        # NTP has no hostname validation, so redirecting the name is fine.
+        mapping."kindle-time.amazon.com" = "162.159.200.123";
+        mapping."ntp-g7g.amazon.com" = "162.159.200.123";
       };
 
       caching = {
