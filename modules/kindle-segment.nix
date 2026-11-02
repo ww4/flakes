@@ -280,7 +280,7 @@ let
   # intercepting traffic. Blocked made the device think the network was dead;
   # wrong content made it think it was behind a hotel portal. Only the real
   # bytes read as "plain internet".
-  probePage = pkgs.writeText "wifistub.html"
+  probeDir = pkgs.writeTextDir "kindle-wifi/wifistub.html"
     "<html>\n<body>\n81ce4465-7167-4dcb-835b-dcc9e44c112a\n</body>\n</html>\n";
 
   # One place to see everything this segment did: what it asked for, what it
@@ -464,10 +464,18 @@ in
   services.nginx.virtualHosts."kindle-connectivity-check" = {
     serverName = "dns.kindle.com spectrum.s3.amazonaws.com dogvgb9ujhybx.cloudfront.net kindle-wifi-cn.amazon.cn";
     listenAddresses = [ gateway ];   # segment side only; never shadows the house
-    locations."/".extraConfig = ''
-      default_type text/html;
-      alias ${probePage};
-    '';
+    # ⚠️ `root` + try_files, NOT `alias`. With `location /` and an alias
+    # pointing at a FILE, nginx appends the rest of the URI to the alias path,
+    # so /kindle-wifi/wifistub.html resolved to
+    # "<store>/wifistub.htmlkindle-wifi/wifistub.html" and returned 404.
+    # Caught by fetching it back after deploy instead of trusting the build.
+    # writeTextDir puts the real request path on disk, so ordinary file
+    # serving works and the .html extension gets text/html from the standard
+    # mime map (deliberately not touching `types`, which REPLACES that map).
+    locations."/" = {
+      root = "${probeDir}";
+      tryFiles = "$uri /kindle-wifi/wifistub.html";
+    };
   };
 
   # (tcp/80 for that responder is merged into the firewall block below — 443
