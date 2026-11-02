@@ -765,11 +765,23 @@ EOF
 
       # Carrier up but no usable number: mid-negotiation, or the attribute went
       # unreadable. Reported as itself rather than folded into the degraded
-      # path, which would announce "negotiated -1Mb" — a nonsense alert. The
-      # 2-check debounce absorbs a transient.
+      # path, which would announce "negotiated -1Mb" — a nonsense alert.
+      #
+      # Re-read once after a pause before believing it. This check now runs with
+      # minConsecutive = 1, so there is no longer a second poll to absorb a
+      # transient — the settling has to happen inside the check. A PHY mid-retrain
+      # shows carrier up with speed -1 for well under a second.
       case "$speed" in
         ""|*[!0-9]*)
-          echo "nic-link-speed: $dev has carrier but its speed reads '$speed', not a number. Cannot determine link speed."
+          sleep 3
+          speed=$(cat "$net/$dev/speed" 2>/dev/null || echo "")
+          carrier=$(cat "$net/$dev/carrier" 2>/dev/null || echo 0)
+          [ "$carrier" = "1" ] || exit 1
+          ;;
+      esac
+      case "$speed" in
+        ""|*[!0-9]*)
+          echo "nic-link-speed: $dev has carrier but its speed still reads '$speed' after a retry, not a number. Cannot determine link speed."
           exit 0
           ;;
       esac
@@ -1022,8 +1034,17 @@ EOF
       # deleted reminder had. agent = false because the fix is physical — there
       # is nothing to diagnose and nothing the agent can do. severity = warning,
       # never critical: a degraded LAN link is not worth waking Chris for.
+      #
+      # minConsecutive = 1 (the default is debounce = 2). Paired with the udev
+      # trigger below this makes the notification near-immediate instead of
+      # 2-4 min: a link event starts a sentinel run within seconds, and that one
+      # run escalates. Safe here only because the check settles a transient
+      # itself (the retry above) rather than relying on a second poll — Chris
+      # wants to know within seconds of bumping the cable, and 2 min of silence
+      # after touching it is 2 min of assuming you got away with it.
       { id = "nic-link-speed"; type = "command"; severity = "warning"; agent = false; act = false;
-        cmd = "${nicSpeedCheck}/bin/sentinel-check-nic-speed"; reescalateSec = 604800; }
+        cmd = "${nicSpeedCheck}/bin/sentinel-check-nic-speed"; reescalateSec = 604800;
+        minConsecutive = 1; }
 
       # Is the front door open at all (see vhostCheck above). Distinct from
       # api-content, which watches ONE backend's freshness behind nginx and was
@@ -1704,5 +1725,61 @@ in
       OnUnitActiveSec = "10min";
       Persistent = true;
     };
+  };
+  # ── Event-driven trigger for nic-link-speed ──────────────────────────────────
+  #
+  # The 120 s poll means up to 2 min of silence after the link renegotiates, and
+  # the moment that matters most is the moment Chris has his hands on the cable:
+  # 2 min of nothing reads as "I got away with it". This fires a sentinel run
+  # within seconds of a link event instead.
+  #
+  # Why udev and not NetworkManager's dispatcher: NM is what manages enp3s0, but
+  # its dispatcher hooks fire on CONNECTIVITY changes (up/down/dhcp), and a PHY
+  # that retrains from 1 Gb to 100 Mb while keeping carrier and the same lease
+  # produces no NM event at all. The kernel's net `change` uevent does fire.
+  #
+  # ⚠️ Net `change` uevents are NOISY on this box — enp3s0 enters and leaves
+  # promiscuous mode every ~15 min (netwatch's arp-scan), and that is a `change`
+  # event too. So the trigger is made noise-tolerant rather than narrow: the unit
+  # compares the speed against the last value it saw and exits in milliseconds
+  # when nothing moved. An unfiltered trigger plus a cheap no-op beats a clever
+  # filter that silently stops matching.
+  services.udev.extraRules = ''
+    SUBSYSTEM=="net", ACTION=="change", KERNEL=="enp3s0", TAG+="systemd", ENV{SYSTEMD_WANTS}+="nic-link-change.service"
+  '';
+
+  systemd.services.nic-link-change = {
+    description = "On an enp3s0 link event, run the sentinel now instead of waiting for the poll";
+    path = [ pkgs.coreutils pkgs.systemd ];
+    serviceConfig = {
+      Type = "oneshot";
+      # Caps a flapping link: at most 5 triggers a minute, then systemd stops
+      # starting it until the window passes. The 120 s poll still covers the gap,
+      # so a flap storm degrades to the old behaviour rather than to nothing.
+      StartLimitIntervalSec = "60s";
+      StartLimitBurst = 5;
+    };
+    script = ''
+      dev=enp3s0
+      last=/run/nic-link-speed.last
+      now=$(cat /sys/class/net/$dev/speed 2>/dev/null || echo unknown)
+
+      # The no-op path. Every promiscuous-mode toggle lands here and costs
+      # nothing.
+      if [ -e "$last" ] && [ "$(cat "$last")" = "$now" ]; then
+        exit 0
+      fi
+      printf '%s' "$now" > "$last"
+
+      # Let negotiation finish before the check reads it, so sentinel sees a
+      # settled speed rather than a mid-retrain -1. Short enough that the
+      # notification still lands within ~10 s of the cable being touched.
+      sleep 8
+
+      # --no-block so udev's event worker is never held waiting on a sentinel
+      # run. Sentinel does the rest: it runs the nic-link-speed check, and with
+      # minConsecutive = 1 that one run escalates.
+      systemctl start --no-block gromit-sentinel.service
+    '';
   };
 }
