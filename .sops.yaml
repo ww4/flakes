@@ -8,7 +8,22 @@ keys:
   - &gromit age1sq7xs9vspukgduhuefhnca5h35tr88nqsz882ke75gmp8c0gd50s2ea8cc
   # Chris's admin key (private half in ~/.config/sops/age/keys.txt — set 2026-06-15)
   - &chris_admin age1rmpk5w7fe93clrsanm5vwss9388gafztwmd5f28cjhypzhghcqrsrvs7ar
+  # wallace's host key (derived from its /etc/ssh/ssh_host_ed25519_key.pub with
+  # ssh-to-age, 2026-11-02). A recipient of ONE secret only — see below.
+  - &wallace age1nsth3rntelpr9mg35ah6duz6f6vde7h8exw7sfqaptld5rjh3p2q0uagrp
 creation_rules:
+  # ⚠️ ORDER MATTERS — sops uses the FIRST matching rule, so this scoped entry
+  # must stay ABOVE the catch-all. wallace is a recipient of exactly one secret,
+  # the homelab-watch heartbeat key, because that is the only one it needs.
+  # Adding wallace to the catch-all instead would have handed it the ability to
+  # decrypt EVERY secret in this repo — a far larger grant than the feature asks
+  # for, and the kind that is never noticed afterwards.
+  - path_regex: secrets/homelab-watch\.yaml$
+    key_groups:
+      - age:
+          - *gromit
+          - *chris_admin
+          - *wallace
   - path_regex: secrets/[^/]+\.(yaml|json|env)$
     key_groups:
       - age:

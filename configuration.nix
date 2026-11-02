@@ -41,6 +41,8 @@ let hm = homelab-modules.nixosModules; in
     ./modules/agent/discourse-api-secret.nix # gromit-only: agent's DOW Discourse API key (sops)
     ./modules/agent/claude-oauth-token-secret.nix # gromit-only: 1-year subscription OAuth token for the UNATTENDED claude -p units (sops)
     ./modules/agent/digitalocean-secret.nix # gromit-only: agent's DO read-only creds — Spaces S3 + API token (sops)
+    ./modules/agent/homelab-watch-secret.nix # gromit AND wallace: HMAC keys for the homelab-watch heartbeats (sops)
+    ./modules/services/homelab-heartbeat.nix # signed heartbeat to the external watcher on lock3
     ./modules/agent/square-dow-secret.nix   # gromit-only: agent's Square token (DOW account, sops)
     ./modules/agent/sudo.nix
     ./modules/agent/comin.nix               # GitOps applier — rebuilds on merge to main
@@ -140,6 +142,27 @@ let hm = homelab-modules.nixosModules; in
 
   # The NixOS release the system was first installed from. Leave it pinned —
   # see `man configuration.nix`.
+  # ── Heartbeat to the external watcher ───────────────────────────────────────
+  #
+  # gromit's half of the standoff. Reports its own liveness and whether it can
+  # see wallace — the corroborating signal the correlator needs before calling
+  # wallace down, and the ONLY one it can get, since lock3 cannot reach wallace
+  # in either direction (an ACL on lock3's tagged-devices tag, measured
+  # 2026-11-01).
+  #
+  # ⚠️ This heartbeat existing does NOT make gromit self-watching. The verdict
+  # is formed on lock3 precisely because a box cannot report its own absence.
+  # If this unit starts failing, that is itself the signal — and it fails LOUD
+  # (non-zero exit, a failed unit here) rather than quietly, because a silent
+  # heartbeat is indistinguishable from a dead host at the far end.
+  homelab.heartbeat = {
+    enable = true;
+    host = "gromit";
+    peer = "wallace";
+    peerAddr = "192.168.1.37";
+    keyFile = config.sops.secrets."homelab-watch".path;
+  };
+
   system.stateVersion = "22.11";
 
   # A status surface for work that runs longer than one session: one JSON file
