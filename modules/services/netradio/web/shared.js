@@ -50,8 +50,26 @@ window.RadioShared = {
       // the server, so when the thing on the television came from the library
       // it knows exactly (Chris, 2026-10-09).
       watching: { playing: false },
+      // The in-page question. window.confirm() worked, but it is browser
+      // chrome: "that should be an in-page modal not a browser modal, those
+      // are ugly" (Chris, 2026-11-02). One at a time, by construction.
+      ask: null,
+      // A deploy happened while this tab was open. Not an error, so not a
+      // modal — see ask-panel.html.
+      updateReady: false,
     };
   },
+
+  mounted() {
+    // An open tab keeps the JavaScript it loaded, and this page is built never
+    // to reload: that is what keeps the stream alive across a view change. So
+    // a deploy is invisible here, and a change that shipped correctly looks
+    // like it did not — "I just merged that, and tested, and it still didn't
+    // gate", against a page four minutes older than the fix (2026-11-02).
+    this.checkBuild();
+    this._buildPoll = setInterval(() => this.checkBuild(), 60000);
+  },
+  unmounted() { clearInterval(this._buildPoll); },
 
   watch: {
     remote(open) {
@@ -543,6 +561,50 @@ window.RadioShared = {
     playback(action) { return this.receiverAction("", () => call("POST", "receiver/playback", { action })); },
     power(on) { return this.receiverAction(on ? "powering on…" : "standby…", () => call("POST", "receiver/power", { on })); },
     presetStep(up) { return this.receiverAction("", () => call("POST", "receiver/tuner", { preset: up ? "Up" : "Down" })); },
+    // ---- asking, in the page ---------------------------------------------
+    askConfirm(opts) {
+      return new Promise(resolve => {
+        this.ask = { title: "", body: "", confirm: "Go ahead", cancel: "Cancel", ...opts, resolve };
+      });
+    },
+    askAnswer(yes) {
+      const a = this.ask;
+      this.ask = null;                 // cleared FIRST: resolving can open another
+      if (a) a.resolve(!!yes);
+    },
+
+    // ---- is this page out of date? ---------------------------------------
+    async checkBuild() {
+      // site.json carries the content hash of the page assets. Cache-busted
+      // because the whole point is to notice a change on the server.
+      const s = await getJSON("site.json?b=" + Date.now());
+      const id = s && s.build;
+      if (!id) return;                 // an install without the stamp: say nothing
+      if (!this._build) { this._build = id; return; }
+      if (id !== this._build) this.updateReady = true;
+    },
+    reloadForUpdate() {
+      // Through the handover, so the reload costs the listener nothing: the
+      // page on the way out writes down what it was playing and the page on
+      // the way in picks it up.
+      try { this.noteHandover(); } catch (e) {}
+      location.reload();
+    },
+
+    // ---- starting a station ----------------------------------------------
+    // HERE means this browser. Always — not whatever output happens to be
+    // selected. The single button used to say "Play here" and follow the
+    // selector, which is how a film got interrupted from outside the house
+    // (Chris, 2026-11-02).
+    playHere(s) {
+      if (!s || !s.mount) return;
+      // The selector follows the press rather than the other way round: the
+      // button that says "here" now also MAKES here the output, so the two
+      // can never disagree again.
+      this.target = "here";
+      return this.play(s.mount);
+    },
+
     // ---- taking the room off the television ------------------------------
     //
     // Starting a station on the receiver takes it off whatever it was playing.
@@ -581,20 +643,25 @@ window.RadioShared = {
       if (w && w.playing) what = [w.head, w.sub].filter(Boolean).join(" · ") || what;
       return { what };
     },
-    confirmInterrupt(tv) {
+    async confirmInterrupt(tv) {
       const room = this.receiverLabel();
       const line = tv.what
         ? `${room} is on ${this.receiver.input} and the television is playing ${tv.what}.`
         : `${room} is on ${this.receiver.input} — the television's own sound.`;
-      if (window.confirm(`${line}\n\nStarting a station there will cut it off. Go ahead?`)) return true;
-      this.say("left the television alone — switch the output to listen here instead");
-      return false;
+      const yes = await this.askConfirm({
+        title: "Interrupt the television?",
+        body: `${line} Starting a station there will cut it off.`,
+        confirm: "Interrupt it",
+        cancel: "Leave it alone",
+      });
+      if (!yes) this.say("left the television alone");
+      return yes;
     },
     // Same as receiverAction, but for the acts that CHANGE WHAT THE ROOM IS
     // PLAYING rather than how loud it is.
     async startOnReceiver(label, fn) {
       const tv = await this.tvInTheWay();
-      if (tv && !this.confirmInterrupt(tv)) return;
+      if (tv && !(await this.confirmInterrupt(tv))) return;
       return this.receiverAction(label, fn);
     },
     async receiverAction(label, fn) {
@@ -684,6 +751,13 @@ window.RadioShared = {
 // this template touches ~20 members of the page, and every one of them would
 // otherwise need a prop in and an event back out, which is a lot of machinery
 // to keep two files from drifting when a mixin and one template already do it.
+window.askPanel = function (where) {
+  return Vue.defineAsyncComponent(async () => ({
+    props: { app: { type: Object, required: true } },
+    template: await fetch(where).then(r => r.text()),
+  }));
+};
+
 window.remotePanel = function (where) {
   return Vue.defineAsyncComponent(async () => ({
     props: { app: { type: Object, required: true } },

@@ -22,7 +22,10 @@ createApp({
   mixins: [RadioShared],
   // The remote is shared markup, fetched the first time it is opened. The
   // wide page mounts the same component from the same file.
-  components: { "remote-panel": remotePanel("remote-panel.html") },
+  components: {
+    "remote-panel": remotePanel("remote-panel.html"),
+    "ask-panel": askPanel("ask-panel.html"),
+  },
   data() {
     let quality = "", target = "here", tab = "now", last = { here: "", room: null, local: "" };
     try { quality = localStorage.getItem("radio.quality") || ""; target = localStorage.getItem("radio.target") || "here"; tab = localStorage.getItem("radio.tab") || "now"; last = { ...last, ...JSON.parse(localStorage.getItem("radio.last") || "{}") }; } catch (e) {}

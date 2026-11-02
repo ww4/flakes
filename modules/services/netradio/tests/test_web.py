@@ -429,6 +429,120 @@ class OnePageAtEveryWidth(unittest.TestCase):
                                 "resizing navigates, which drops the stream")
 
 
+class ThePlayButtonNamesWhereItPlays(unittest.TestCase):
+    """The station screen had ONE button. It read "Play here" and started the
+    station on whatever output was selected — its own tooltip said "Play on
+    <target>", which is the tell that the label and the behaviour disagreed.
+
+    Chris, 2026-11-02: "The button literally says 'Play here' under the station
+    track. 'Here' is usually interpreted as 'in my browser'." From a phone
+    outside the house that press took the living room off a film. Naming the
+    destination on the button removes the ambiguity rather than catching it,
+    which is why this is the real fix and the warning is only the net.
+    """
+
+    def test_there_are_two_buttons_and_each_says_where(self):
+        html = (WEB / "desktop.html").read_text()
+        acts = html[html.index('<div class="acts" v-else-if="openStationObj.mount">'):]
+        acts = acts[: acts.index("</div>")]
+        self.assertIn("playHere(openStationObj)", acts, "no button that means THIS BROWSER")
+        self.assertIn("playTarget(openStationObj)", acts, "no button that means the chosen output")
+        self.assertIn("Play on {{ targetName }}", acts,
+                      "the second button does not name the output it will use")
+
+    def test_play_here_cannot_reach_another_output(self):
+        """Whatever is selected, "here" is this browser — and the selector is
+        moved to match, so the button and the state can never disagree again."""
+        js = (WEB / "shared.js").read_text()
+        body = js[js.index("    playHere(s) {"):]
+        body = body[: body.index("\n    },")]
+        self.assertIn('this.target = "here"', body, "playHere leaves the output selector alone")
+        self.assertIn("this.play(", body, "playHere does not play in this browser")
+        self.assertNotIn("playTarget", body, "playHere can still reach another output")
+
+    def test_the_unlabelled_card_button_names_its_destination_too(self):
+        """It is an icon with no words, so the tooltip is the only thing that
+        can say where it is about to play."""
+        html = (WEB / "desktop.html").read_text()
+        self.assertIn("'Play on ' + targetName", html,
+                      "the card's play button still says only 'Play'")
+
+
+class AskingHappensInThePage(unittest.TestCase):
+    """Chris, 2026-11-02: "that should be an in-page modal not a browser modal,
+    those are ugly." """
+
+    def test_nothing_calls_window_confirm(self):
+        # Comments stripped: the code EXPLAINS what it replaced, and naming it
+        # in that explanation is not calling it. The uncommented version of
+        # this failed on its own rationale — twice now, in this file.
+        for f in ("shared.js", "app.js", "desktop.js"):
+            js = re.sub(r"//.*", "", (WEB / f).read_text())
+            self.assertNotIn("window.confirm", js, f"{f} still uses the browser dialog")
+
+    def test_the_dialog_is_one_component_both_pages_mount(self):
+        """Same reason the remote is one component: two copies drift, and last
+        time the phone ended up missing a feature entirely."""
+        for page in PAGES:
+            html = (WEB / page).read_text()
+            self.assertIn("<ask-panel", html, f"{page} does not mount the dialog")
+        for script in SCRIPTS:
+            js = (WEB / script).read_text()
+            self.assertIn('"ask-panel": askPanel(', js, f"{script} never registers it")
+        self.assertTrue((WEB / "ask-panel.html").exists())
+        self.assertTrue((WEB / "dialog.css").exists())
+
+    def test_the_question_resolves_whichever_way_it_is_answered(self):
+        """A promise that is never resolved is a station that never starts and
+        a page with no way back."""
+        js = (WEB / "shared.js").read_text()
+        body = js[js.index("    askAnswer(yes) {"):]
+        body = body[: body.index("\n    },")]
+        self.assertIn("this.ask = null", body, "the dialog is never dismissed")
+        self.assertIn("a.resolve(", body, "the caller is left waiting forever")
+
+    def test_the_gate_waits_for_the_answer(self):
+        """`confirmInterrupt` returns a promise now. Unawaited it is truthy,
+        and the station would start while the question was still on screen."""
+        js = (WEB / "shared.js").read_text()
+        body = js[js.index("    async startOnReceiver("):]
+        body = body[: body.index("\n    },")]
+        self.assertIn("await this.confirmInterrupt(", body,
+                      "the answer is not awaited — a promise object is always truthy")
+
+
+class AnOpenTabLearnsItIsStale(unittest.TestCase):
+    """This page is built never to reload — that is what keeps the stream alive
+    across a view change — so a deploy is invisible to a tab already open, and
+    a change that shipped correctly looks like it did not. It cost two rounds
+    of "merged, tested, still broken" on 2026-11-02 against a page that was
+    four minutes older than the fix.
+    """
+
+    def test_the_page_assets_are_stamped(self):
+        nix = (Path(os.environ["NETRADIO_NIX"]).read_text()
+               if os.environ.get("NETRADIO_NIX") else "")
+        if not nix:
+            self.skipTest("set NETRADIO_NIX")
+        self.assertIn("build = builtins.baseNameOf", nix,
+                      "site.json carries no build id, so nothing can notice a change")
+
+    def test_the_page_compares_it_and_offers_a_reload(self):
+        js = (WEB / "shared.js").read_text()
+        body = js[js.index("    async checkBuild() {"):]
+        body = body[: body.index("\n    },")]
+        self.assertIn("site.json?b=", body, "the check is cacheable, so it may never see a change")
+        self.assertIn("this.updateReady = true", body, "nothing is raised when the build changes")
+        self.assertNotIn("location.reload", body,
+                         "it reloads by itself — that drops the stream without asking")
+
+    def test_the_reload_keeps_the_stream(self):
+        js = (WEB / "shared.js").read_text()
+        body = js[js.index("    reloadForUpdate() {"):]
+        body = body[: body.index("\n    },")]
+        self.assertIn("noteHandover", body, "reloading would drop what is playing")
+
+
 class DoNotTakeTheRoomFromTheTelevision(unittest.TestCase):
     """Starting a station on the receiver takes it off whatever it was playing.
     Usually that is another station. When the receiver is on the television's

@@ -51,6 +51,7 @@ createApp({
     "admin-panel": adminPanel("admin/panel.html", "admin/"),
     // the same remote the phone mounts, from the same file
     "remote-panel": remotePanel("remote-panel.html"),
+    "ask-panel": askPanel("ask-panel.html"),
   },
   data() {
     let quality = "", target = "here", view = "wall", openMount = "", hereVol = 100, bedVol = 35, bedOn = false, notify = false;

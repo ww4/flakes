@@ -363,6 +363,17 @@ let
     localMount = cfg.speaker.defaultMount;
     roomName = cfg.receiver.label;
     tvInput = cfg.receiver.tvInput;
+    # A build id for the PAGES. `./web` is content-addressed, so its store path
+    # name changes exactly when a page asset changes and not otherwise.
+    #
+    # An open tab keeps the JavaScript it loaded, and this page is deliberately
+    # built never to reload — that is what keeps the stream alive across a view
+    # change. So a deploy is invisible to a tab that is already open, and a fix
+    # that shipped correctly can look like it did not: "I just merged that, and
+    # tested, and it still didn't gate" (Chris, 2026-11-02 — the page was right,
+    # his tab was four minutes older than it). The page compares this against
+    # what it loaded with and offers a reload.
+    build = builtins.baseNameOf "${./web}";
     hasLocal = cfg.speaker.enable;
     hasRoom = cfg.receiver.enable;
     hasRoku = cfg.roku.enable && cfg.roku.apiUrl != "";
@@ -403,6 +414,7 @@ let
     cp ${./web}/index.html ${./web}/app.js ${./web}/remote.css ${./web}/radio.js ${./web}/tokens.css ${./web}/shared.js $out/   # radio.js: fetch helpers; shared.js: the options both pages mix in; tokens.css: the palette
     cp ${./web}/desktop.html ${./web}/desktop.js ${./web}/desktop.css $out/   # the wide-screen page (the remote redirects there)
     cp ${./web}/remote-panel.html ${./web}/remote-panel.css $out/   # the remote: one component, both pages mount it
+    cp ${./web}/ask-panel.html ${./web}/dialog.css $out/   # the in-page question + the new-build strip, both pages
     cp ${./web}/manifest.webmanifest ${./web}/sw.js ${./web}/icon.svg ${./web}/icon-192.png ${./web}/icon-512.png $out/   # the PWA
     cp ${./web/admin}/index.html ${./web/admin}/admin.js ${./web/admin}/admin.css $out/admin/
     cp ${./web/admin}/panel.html $out/admin/   # the admin markup, fetched at runtime by whichever page mounts it
