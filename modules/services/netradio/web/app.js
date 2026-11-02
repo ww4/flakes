@@ -198,10 +198,10 @@ createApp({
       if (this.target === "local") { if (!s.mount) return; this.remember(s); return this.speakerPlay(s.mount); }
       if (this.target !== "room") return this.play(s.mount);
       this.remember(s);
-      if (s.kind === "preset") return this.receiverAction("tuning…", async () => { if (this.receiver.input !== "TUNER") await call("POST", "receiver/input", { name: "TUNER" }); return call("POST", "receiver/tuner", { preset: s.number }); });
-      if (s.kind === "pandora") return this.receiverAction(`starting ${s.name}…`, () => call("POST", "receiver/menu/path", { source: "Pandora", path: [s.name] }));
+      if (s.kind === "preset") return this.startOnReceiver("tuning…", async () => { if (this.receiver.input !== "TUNER") await call("POST", "receiver/input", { name: "TUNER" }); return call("POST", "receiver/tuner", { preset: s.number }); });
+      if (s.kind === "pandora") return this.startOnReceiver(`starting ${s.name}…`, () => call("POST", "receiver/menu/path", { source: "Pandora", path: [s.name] }));
       const category = s.kind === "quick" ? "Internet Radio" : s.kind === "specialty" ? "Specialty" : "Curated";
-      return this.receiverAction(`tuning to ${s.name}…`, () => call("POST", "receiver/menu/path", { path: ["My Stations", category, s.name] }));
+      return this.startOnReceiver(`tuning to ${s.name}…`, () => call("POST", "receiver/menu/path", { path: ["My Stations", category, s.name] }));
     },
 
     // ---- the receiver --------------------------------------------------------

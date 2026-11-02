@@ -362,6 +362,7 @@ let
     localName = cfg.speaker.label;
     localMount = cfg.speaker.defaultMount;
     roomName = cfg.receiver.label;
+    tvInput = cfg.receiver.tvInput;
     hasLocal = cfg.speaker.enable;
     hasRoom = cfg.receiver.enable;
     hasRoku = cfg.roku.enable && cfg.roku.apiUrl != "";
@@ -722,6 +723,23 @@ in
         '';
       };
       label = lib.mkOption { type = lib.types.str; default = "Living room"; description = "What the page calls the receiver."; };
+      tvInput = lib.mkOption {
+        type = lib.types.str;
+        default = "OPTICAL";
+        example = "HDMI1";
+        description = ''
+          The input on which this receiver carries the television's sound.
+
+          Starting a station on the receiver takes it off whatever it was
+          playing, and when that was the television it cuts the sound out from
+          under whoever is watching — from anywhere, including a phone that is
+          not in the house (Chris, 2026-11-02). On this input the page asks
+          first; on any other it does not, because nothing is being taken from
+          anyone.
+
+          Set to "" to never ask.
+        '';
+      };
       apiUrl = lib.mkOption {
         type = lib.types.str;
         default = "";
