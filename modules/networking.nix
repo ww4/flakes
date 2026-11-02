@@ -57,26 +57,17 @@
     #   8096 - Jellyfin direct (http://<ip>:8096) for Roku/TV clients
     interfaces."enp3s0".allowedTCPPorts = [ 22 8096 ];
     interfaces."tailscale0".allowedTCPPorts = [ 22 8096 ];
-    # enp6s0u1 — the ASIX AX88179 USB 3.0 gigabit adapter, the standby LAN NIC
-    # if the onboard r8169 port fails. Mirrors enp3s0 so moving the cable is a
-    # cable move and nothing else. Without this the adapter comes up, takes a
-    # DHCP lease from NetworkManager, and looks fine while SSH, Jellyfin-direct
-    # and (see blocky.nix) LAN DNS are all silently closed on it -- the failure
-    # would present as "the network works but half the house is broken".
-    # Harmless while unplugged: an interface with no link accepts nothing.
-    # Added 2026-08-25, when enp3s0 fell back to 100Mbps/Full, making a
-    # NIC-vs-cable swap a live possibility.
-    #
-    # ⚠️ Corrected 2026-10-31: this said the link "stayed there across a cable
-    # swap". It did not. node_network_speed_bytes (node_exporter exports
-    # /sys/class/net/*/speed, so the history was already on disk) shows enp3s0
-    # bouncing between 100 Mb and 1 Gb SIX times between 08-01 and 10-31, back
-    # at gigabit on its own on 08-27, 08-28, 09-05 and 10-30, and spending 44.8
-    # of those 90 days at 100 Mb. It is intermittent, not stuck, so a single
-    # reading on either NIC cannot tell port from cable — which is why the
-    # cable-vs-port test now rides on sentinel's `nic-link-speed` check and
-    # fires while the link is actually degraded.
-    interfaces."enp6s0u1".allowedTCPPorts = [ 22 8096 ];
+    # enp6s0u1 — the ASIX AX88179 USB 3.0 gigabit adapter. Was mirrored here
+    # 2026-08-25 as a standby LAN NIC for a cable-vs-port swap (see the
+    # sentinel `nic-link-speed` check for that history). RETIRED 2026-11-01:
+    # kindle-segment.nix now owns this interface permanently as a fail-closed
+    # segment for the jailbroken Kindle, and that module's own header already
+    # named this exact cost — using the interface there spends the failover.
+    # Mirroring SSH/Jellyfin onto it now would expose both to anything on the
+    # segment, which is precisely what that module exists to prevent; its
+    # "no SSH, no 443, no Jellyfin" comment was false until this line went.
+    # If the onboard port ever fails for good, the standby plan has to be
+    # chosen fresh — moving the cable here no longer "just works".
   };
 
   # Remote access. Security review 2026-06-04: key-only (password + keyboard-

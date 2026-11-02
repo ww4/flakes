@@ -196,17 +196,13 @@ in
     allowedUDPPorts = [ 53 ];
   };
 
-  # Same opening on enp6s0u1, the standby USB NIC (see networking.nix). This is
-  # the rule that matters most in a NIC swap: DNS here serves the whole LAN via
-  # the router's forwarder, so losing :53 does not merely degrade gromit — it
-  # takes name resolution away from every device in the house, which presents as
-  # "the internet is down" rather than as a gromit fault. Still interface-scoped
-  # rather than global, preserving the deliberate split-horizon above:
-  # tailscale0 must NOT get the LAN-IP answer.
-  networking.firewall.interfaces."enp6s0u1" = {
-    allowedTCPPorts = [ 53 ];
-    allowedUDPPorts = [ 53 ];
-  };
+  # enp6s0u1 had the same opening here as the standby LAN NIC (see
+  # networking.nix) until kindle-segment.nix took the interface over
+  # permanently on 2026-10-31/11-01. Removed rather than left duplicated:
+  # that module already grants TCP 53/80 + UDP 53/67 on enp6s0u1 for its own
+  # reasons (the segment's own DNS/DHCP), so this block was redundant, and its
+  # "standby NIC" framing is no longer true — see networking.nix's retirement
+  # note for the full history.
 
   environment.systemPackages = [ dhcpProbe ];
 }
