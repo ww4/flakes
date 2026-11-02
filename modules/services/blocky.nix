@@ -41,6 +41,7 @@ let
   # The isolated Kindle segment (see ../kindle-segment.nix). Kept in sync with
   # the subnet defined there.
   kindleSegment = "192.168.50.0/24";
+  kindleGateway = "192.168.50.1";
 
   # Upstreams for everything that ISN'T a local override.
   upstreams = [ "1.1.1.1" "9.9.9.9" ];
@@ -74,6 +75,19 @@ in
         customTTL = "1m";
         filterUnmappedTypes = true;
         mapping."rosemaryacres.com" = proxyIP;
+
+        # The Kindle's connectivity check, answered locally instead of by
+        # Amazon — see ../kindle-segment.nix for the full reasoning. Verified
+        # on a live blocky 0.29: customDNS BEATS the allowlist-only denylist,
+        # so these resolve here while everything else on that segment still
+        # returns 0.0.0.0.
+        # ⚠️ GLOBAL, not per-client: house clients get 192.168.50.1 for these
+        # too, which is unroutable for them. No Amazon-OUI device was in the
+        # house ARP table when this was added, but that is evidence, not proof.
+        mapping."dns.kindle.com" = kindleGateway;
+        mapping."spectrum.s3.amazonaws.com" = kindleGateway;
+        mapping."dogvgb9ujhybx.cloudfront.net" = kindleGateway;
+        mapping."kindle-wifi-cn.amazon.cn" = kindleGateway;
       };
 
       caching = {
@@ -129,6 +143,7 @@ in
         allowlists.kindle-permitted = [
           ''
             sanctuary.skyvincent.com
+            kindlemodding.org
             unifi.broadlinc.com
           ''
         ];

