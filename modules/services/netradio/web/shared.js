@@ -427,7 +427,7 @@ window.RadioShared = {
     // by itself; netradio-resume does this after Liquidsoap starts, and this is
     // the same thing on a finger for when it stopped some other way.
     resumeRoom() {
-      return this.receiverAction("resuming…", async () => {
+      return this.startOnReceiver("resuming…", async () => {
         const r = await call("POST", "admin/api/resume", {});
         this.say((r && r.message) || "asked the receiver to resume");
         return null;
@@ -543,6 +543,60 @@ window.RadioShared = {
     playback(action) { return this.receiverAction("", () => call("POST", "receiver/playback", { action })); },
     power(on) { return this.receiverAction(on ? "powering on…" : "standby…", () => call("POST", "receiver/power", { on })); },
     presetStep(up) { return this.receiverAction("", () => call("POST", "receiver/tuner", { preset: up ? "Up" : "Down" })); },
+    // ---- taking the room off the television ------------------------------
+    //
+    // Starting a station on the receiver takes it off whatever it was playing.
+    // Usually that is another station and nobody minds. When the receiver is
+    // on the television's input it is somebody's film, and the station button
+    // is reachable from a phone that is not in the house: "Interrupted the
+    // movie audio when I wasn't even at home... oops!" (Chris, 2026-11-02).
+    //
+    // The cause was not a mis-click. The output selector is sticky, so the
+    // press that starts a station HERE and the press that takes the room away
+    // from the television are the same press, and nothing distinguished them.
+    //
+    // This is on the START paths only. Volume, mute and power stay immediate:
+    // they are deliberate acts on a remote, and a confirmation on every one of
+    // them is a dialog people learn to dismiss without reading — which would
+    // cost us this one too.
+    async tvInTheWay() {
+      const tv = this.site.tvInput;
+      if (!tv || !this.receiver.on) return null;
+      if (String(this.receiver.input || "").toUpperCase() !== String(tv).toUpperCase()) return null;
+
+      // On that input, assume the television is in use unless the box says
+      // otherwise. An unreachable Roku is not a clear road: the receiver being
+      // on the television's input is the stronger of the two signals, and a
+      // diagnostic we could not read is no reason to decide the room is free.
+      let what = "";
+      const p = await getJSON("roku/player");
+      if (p && !p.error) {
+        if (!p.playing) return null;          // positively idle — nothing to take
+        what = p.app || "";
+      }
+      // The box knows the app, the media server knows the title. Only asked
+      // for on the rare path where we are about to interrupt something.
+      await this.pollWatching();
+      const w = this.watching;
+      if (w && w.playing) what = [w.head, w.sub].filter(Boolean).join(" · ") || what;
+      return { what };
+    },
+    confirmInterrupt(tv) {
+      const room = this.receiverLabel();
+      const line = tv.what
+        ? `${room} is on ${this.receiver.input} and the television is playing ${tv.what}.`
+        : `${room} is on ${this.receiver.input} — the television's own sound.`;
+      if (window.confirm(`${line}\n\nStarting a station there will cut it off. Go ahead?`)) return true;
+      this.say("left the television alone — switch the output to listen here instead");
+      return false;
+    },
+    // Same as receiverAction, but for the acts that CHANGE WHAT THE ROOM IS
+    // PLAYING rather than how loud it is.
+    async startOnReceiver(label, fn) {
+      const tv = await this.tvInTheWay();
+      if (tv && !this.confirmInterrupt(tv)) return;
+      return this.receiverAction(label, fn);
+    },
     async receiverAction(label, fn) {
       this.busy = label;
       try { const r = await fn(); if (r && "on" in r) this.receiver = { ...this.receiver, ...r }; await this.pollReceiver(); await this.refresh(); }
@@ -617,7 +671,7 @@ window.RadioShared = {
     // show ONE image, do filter — there a failure has to fall through to the
     // station's monogram rather than leave a blank square.
     tileCovers(s) { return s.mount && this.tiles[s.mount] ? (this.tiles[s.mount].covers || []) : []; },
-    tunerPreset(n) { return this.receiverAction("tuning…", () => call("POST", "receiver/tuner", { preset: n })); },
+    tunerPreset(n) { return this.startOnReceiver("tuning…", () => call("POST", "receiver/tuner", { preset: n })); },
   },
 };
 

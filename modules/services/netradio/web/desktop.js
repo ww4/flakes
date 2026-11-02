@@ -72,7 +72,7 @@ createApp({
       blocked: "",              // a mount the browser refused to start on its own; the play button takes it
       paused: false,            // paused by the OS transport: still tuned, and still holding the media session
       query: "", results: [], searchTimer: 0,
-      site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "", hasLocal: false, hasRoom: true, hasRoku: false, rokuName: "Roku", bedMount: "" },
+      site: { title: "Radio", localName: "These speakers", roomName: "Living room", localMount: "", hasLocal: false, hasRoom: true, hasRoku: false, rokuName: "Roku", bedMount: "", tvInput: "" },
       receiver: { name: "", on: false, input: "", volume: 0, volume_max: 100, mute: false, error: "" },
       inputs: [], presets: [], menu: { lines: [], layer: 0, max_line: 0, current_line: 1, status: "", name: "" }, menuSource: "",
       // The receiver's Pandora stations. Walking its menu to list them takes a
@@ -354,15 +354,15 @@ createApp({
     },
     playOnReceiver(s) {
       if (s.kind === "preset")
-        return this.receiverAction("tuning…", async () => {
+        return this.startOnReceiver("tuning…", async () => {
           if (this.receiver.input !== "TUNER") await call("POST", "receiver/input", { name: "TUNER" });
           return call("POST", "receiver/tuner", { preset: s.number });
         });
       if (s.kind === "pandora")
-        return this.receiverAction(`starting ${s.name}…`,
+        return this.startOnReceiver(`starting ${s.name}…`,
           () => call("POST", "receiver/menu/path", { source: "Pandora", path: [s.name] }));
       const category = s.kind === "quick" ? "Internet Radio" : s.kind === "specialty" ? "Specialty" : "Curated";
-      return this.receiverAction(`tuning the ${this.receiver.name || "receiver"} to ${s.name}…`,
+      return this.startOnReceiver(`tuning the ${this.receiver.name || "receiver"} to ${s.name}…`,
         () => call("POST", "receiver/menu/path", { path: ["My Stations", category, s.name] }));
     },
 

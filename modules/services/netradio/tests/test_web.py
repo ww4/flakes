@@ -429,6 +429,75 @@ class OnePageAtEveryWidth(unittest.TestCase):
                                 "resizing navigates, which drops the stream")
 
 
+class DoNotTakeTheRoomFromTheTelevision(unittest.TestCase):
+    """Starting a station on the receiver takes it off whatever it was playing.
+    Usually that is another station. When the receiver is on the television's
+    input it is somebody's film — and the station button is reachable from a
+    phone that is not in the house: "Interrupted the movie audio when I wasn't
+    even at home... oops!" (Chris, 2026-11-02).
+
+    The cause was not a mis-click. The output selector is sticky, so the press
+    that starts a station HERE and the press that takes the room away from the
+    television are the same press, and nothing told them apart.
+    """
+
+    def test_every_station_start_asks_first(self):
+        """Both pages, and both of the shared ones. A path that still calls
+        receiverAction directly is a way to cut the sound off without asking."""
+        for script in ("app.js", "desktop.js"):
+            js = (WEB / script).read_text()
+            body = js[js.index("playTarget(s) {"):]
+            body = body[: body.index("\n    },")]
+            self.assertNotIn("this.receiverAction(", body,
+                             f"{script} starts a station on the receiver without asking")
+            self.assertIn("this.startOnReceiver(", js, f"{script} never uses the guard")
+        shared = (WEB / "shared.js").read_text()
+        for name in ("resumeRoom", "tunerPreset"):
+            seg = shared[shared.index(f"    {name}("):][:400]
+            self.assertIn("this.startOnReceiver(", seg,
+                          f"{name} puts the room back on a station without asking")
+
+    def test_volume_and_mute_stay_immediate(self):
+        """A confirmation on every press is a dialog people learn to dismiss
+        without reading, which would cost us the one that matters. These are
+        deliberate acts on a remote and take nothing from anybody."""
+        shared = (WEB / "shared.js").read_text()
+        for name in ("mute", "power", "setVolume", "playback"):
+            seg = shared[shared.index(f"    {name}("):][:300]
+            self.assertNotIn("startOnReceiver", seg,
+                             f"{name} now prompts — the gate has spread to the controls")
+
+    def test_the_television_input_is_configured_not_hardcoded(self):
+        """OPTICAL is this house's wiring, not a fact about receivers."""
+        shared = (WEB / "shared.js").read_text()
+        self.assertIn("async tvInTheWay()", shared, "there is no guard to check")
+        body = shared[shared.index("async tvInTheWay()"):]
+        body = body[: body.index("\n    },")]
+        self.assertIn("this.site.tvInput", body, "the TV input is not read from config")
+        self.assertNotIn('"OPTICAL"', body, "OPTICAL is written into the page")
+
+    def test_an_unreachable_box_is_not_a_clear_road(self):
+        """The receiver being on the television's input is the stronger of the
+        two signals. A diagnostic we could not read is no reason to decide the
+        room is free — so the gate holds, and only a box that positively says
+        it is idle opens it."""
+        shared = (WEB / "shared.js").read_text()
+        self.assertIn("async tvInTheWay()", shared, "there is no guard to check")
+        body = shared[shared.index("async tvInTheWay()"):]
+        body = body[: body.index("\n    },")]
+        self.assertIn("if (!p.playing) return null;", body,
+                      "nothing lets an idle television through without a prompt")
+        self.assertRegex(body, r"if \(p && !p\.error\)",
+                         "an unreachable Roku is treated as an answer")
+
+    def test_the_module_ships_the_setting(self):
+        nix = (Path(os.environ["NETRADIO_NIX"]).read_text()
+               if os.environ.get("NETRADIO_NIX") else "")
+        if not nix:
+            self.skipTest("set NETRADIO_NIX")
+        self.assertIn("tvInput", nix, "site.json never tells the page which input is the television")
+
+
 class RemoteIsOnePanel(unittest.TestCase):
     """The remote is ONE component, mounted by both pages.
 
