@@ -26,6 +26,15 @@
 { config, lib, pkgs, ... }:
 
 let
+  # Failure has to reach a human. gromit's own ntfy is the right channel here,
+  # unlike the external watcher's: a broken lock3 deploy is gromit telling you
+  # about lock3, not lock3 trying to report its own absence.
+  notify = "${pkgs.writeShellScript "lock3-deploy-notify" ''
+    exec ${pkgs.curl}/bin/curl -sS --max-time 10 \
+      -H "Title: $1" -H "Priority: 3" -H "Tags: warning,satellite" \
+      -d "$2" http://127.0.0.1:8090/gromit-alerts >/dev/null
+  ''}";
+
   # lock3 over Tailscale. Its SSH is on 22022, not 22.
   target = "root@100.125.31.125";
   sshPort = 22022;
@@ -135,12 +144,97 @@ in
       fi
 
       echo "lock3-deploy: deploying $rev (was $last)"
-      nixos-rebuild switch --flake "${src}#lock3" --target-host ${target}
 
-      # Written ONLY after a successful switch, so a failed deploy is retried on
-      # the next tick instead of being recorded as done.
+      # ── What the target looked like BEFORE we touched it ──────────────────
+      # Needed to tell "we broke something" from "something was already
+      # broken". Without this baseline, a pre-existing failed unit would look
+      # like our fault and trigger a pointless rollback.
+      before=$(ssh $NIX_SSHOPTS ${target} 'systemctl --failed --no-legend --plain 2>/dev/null | awk "{print \$1}" | sort' || true)
+      prevgen=$(ssh $NIX_SSHOPTS ${target} 'readlink -f /nix/var/nix/profiles/system' || true)
+      echo "lock3-deploy: baseline failed units: $(echo "$before" | tr '\n' ' ')"
+      echo "lock3-deploy: current generation: $prevgen"
+
+      # ── GATE: does nginx itself accept the new config? ────────────────────
+      #
+      # ⚠️ THE NIX BUILD DOES NOT ANSWER THIS. NixOS renders nginx.conf without
+      # ever asking nginx whether it is valid, so BUILD_EXIT=0 is silent about
+      # it. On 2026-11-02 a duplicate `proxy_http_version` — emitted once by
+      # proxyWebsockets and again by extraConfig — made nginx reject the whole
+      # config, and lock3.net plus mcp.rosemaryacres.com were down for two
+      # hours after a green build.
+      #
+      # It has to run ON THE TARGET, not here: `nginx -t` on gromit fails on
+      # /var/lib/acme/lock3.net/fullchain.pem, which exists only on lock3. So
+      # the closure is copied first, the config tested there, and only then
+      # switched.
+      newsys=$(nix build --no-link --print-out-paths "${src}#nixosConfigurations.lock3.config.system.build.toplevel")
+      nix copy --to "ssh://${target}" "$newsys"
+
+      nginxconf=$(nix eval --raw "${src}#nixosConfigurations.lock3.config.systemd.services.nginx.preStart" 2>/dev/null \
+                  | grep -oE '/nix/store/[a-z0-9]+-nginx\.conf' | head -1 || true)
+      nginxbin=$(nix eval --raw "${src}#nixosConfigurations.lock3.config.services.nginx.package" 2>/dev/null || true)
+
+      if [ -n "$nginxconf" ] && [ -n "$nginxbin" ]; then
+        echo "lock3-deploy: testing nginx config on the target: $nginxconf"
+        # ⚠️ NOT `ssh ... | sed`. A pipeline's status is the LAST stage's, so
+        # `if ! ssh ... | sed` tests sed — which always succeeds — and the gate
+        # would never fire. Capture, then branch on ssh's own status.
+        nginx_t_rc=0
+        nginx_t_out=$(ssh $NIX_SSHOPTS ${target} "$nginxbin/bin/nginx -t -c $nginxconf" 2>&1) || nginx_t_rc=$?
+        printf '%s\n' "$nginx_t_out" | sed 's/^/  nginx: /'
+        if [ "$nginx_t_rc" -ne 0 ]; then
+          echo "lock3-deploy: REFUSING TO SWITCH — nginx rejected the new config (rc=$nginx_t_rc)" >&2
+          ${notify} "lock3 deploy BLOCKED" "nginx rejected the config for $rev; nothing was switched. $(printf '%s' "$nginx_t_out" | tail -2)" || true
+          exit 1
+        fi
+      else
+        # Not silently skipped: an unresolvable path means the gate is not
+        # running, and a gate that quietly stops matching is worse than none.
+        echo "lock3-deploy: WARNING could not resolve nginx conf/package; config gate SKIPPED" >&2
+      fi
+
+      # ── Switch ────────────────────────────────────────────────────────────
+      switch_rc=0
+      nixos-rebuild switch --flake "${src}#lock3" --target-host ${target} || switch_rc=$?
+
+      # ── Did we leave it worse than we found it? ───────────────────────────
+      #
+      # ⚠️ The switch's exit code is NOT sufficient, which is the bug that let
+      # the 2026-11-02 outage persist: the first run exited 4 and correctly did
+      # not record success, but a LATER run re-ran nixos-rebuild, found the
+      # generation already current, exited 0 "nothing to do", and wrote
+      # last-deployed — while the box sat `degraded` with nginx failed. A
+      # deploy is only done when the box is healthy, not when the command
+      # returns 0.
+      sleep 5
+      after=$(ssh $NIX_SSHOPTS ${target} 'systemctl --failed --no-legend --plain 2>/dev/null | awk "{print \$1}" | sort' || true)
+      newly=$(comm -13 <(echo "$before") <(echo "$after") || true)
+
+      if [ "$switch_rc" -ne 0 ] || [ -n "$newly" ]; then
+        echo "lock3-deploy: DEPLOY UNHEALTHY (switch rc=$switch_rc, newly failed: $(echo "$newly" | tr '\n' ' '))" >&2
+
+        # ── Automatic rollback ─────────────────────────────────────────────
+        # The 2026-11-02 outage lasted two hours only because it needed a human
+        # to notice and run one command. Reverting to the generation that was
+        # running a minute ago is the lowest-risk action available and it is
+        # strictly better than leaving the box broken while nobody is looking.
+        if [ -n "$prevgen" ]; then
+          echo "lock3-deploy: rolling back to $prevgen" >&2
+          ssh $NIX_SSHOPTS ${target} "$prevgen/bin/switch-to-configuration switch" >&2 || \
+            echo "lock3-deploy: ROLLBACK ALSO FAILED — the box needs hands" >&2
+        fi
+
+        # Deliberately NOT recording this rev, so a fix lands on the next tick.
+        ${notify} "lock3 deploy failed" \
+          "rev $rev left lock3 unhealthy (switch rc=$switch_rc; newly failed: $(echo "$newly" | tr '\n' ' ')). Rolled back to the previous generation." \
+          || true
+        exit 1
+      fi
+
+      # Written ONLY after a switch that both succeeded AND left the target no
+      # worse than the baseline.
       echo "$rev" > /var/lib/lock3-deploy/last-deployed
-      echo "lock3-deploy: deployed $rev"
+      echo "lock3-deploy: deployed $rev cleanly"
     '';
   };
 
