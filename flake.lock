@@ -7,11 +7,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1786657515,
-        "narHash": "sha256-7EyHlmM8wFSy2Ncg+c+nyYWmLsT8xzcvsYyO6rEZxzQ=",
+        "lastModified": 1793681379,
+        "narHash": "sha256-rJ/fHl0d7KRR7U2JzTM+pady1SXi8HlrT1TgPgx1qCM=",
         "owner": "ww4-bot",
         "repo": "agent-modules",
-        "rev": "aba377b4e2c2cf2dad7cee4777c88f1789f584d4",
+        "rev": "a9f3b9f4e2c88e065d768b3a98de83fc2fd137e9",
         "type": "github"
       },
       "original": {

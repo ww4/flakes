@@ -104,13 +104,16 @@
           # nixpkgs-silverbullet: consumed only by modules/services/silverbullet.nix.
           # nixpkgs-php: consumed only by modules/php-security-pin.nix (CVE-2026-109618).
           # homelab-modules: the public library — configuration.nix imports from it.
-          specialArgs = { inherit nixpkgs-silverbullet nixpkgs-php homelab-modules; };
+          # agent-modules is in specialArgs so modules/agent/skills.nix can call
+          # its lib.mkSkills. nixosModules.agent is passed separately below.
+          specialArgs = { inherit nixpkgs-silverbullet nixpkgs-php homelab-modules agent-modules; };
           modules = [
             ./configuration.nix
             vscode-server.nixosModules.default
             home-manager.nixosModules.home-manager
             comin.nixosModules.comin
             agent-modules.nixosModules.agent
+            agent-modules.nixosModules.secret-put
             sops-nix.nixosModules.sops
           ];
         };
@@ -120,6 +123,7 @@
         # the wallace/gromit split. No media pool yet — drives stay on gromit.
         wallace = lib.nixosSystem {
           inherit system;
+          specialArgs = { inherit agent-modules; };
           modules = [
             disko.nixosModules.disko
             comin.nixosModules.comin
@@ -136,6 +140,10 @@
             ./modules/sops.nix
             ./modules/agent/homelab-watch-secret.nix
             ./modules/services/homelab-heartbeat.nix
+            # secret-put: the one sanctioned way to hand a secret to a host.
+            # Separate from nixosModules.agent on purpose, so importing it does
+            # not drag the guard onto a host that should not have it.
+            agent-modules.nixosModules.secret-put
           ];
         };
 

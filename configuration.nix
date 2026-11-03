@@ -44,6 +44,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/agent/homelab-watch-secret.nix # gromit AND wallace: HMAC keys for the homelab-watch heartbeats (sops)
     ./modules/services/homelab-heartbeat.nix # signed heartbeat to the external watcher on lock3
     ./modules/services/lock3-deploy.nix     # build lock3's config here and push it (lock3 cannot pull: tag:jumphost ACL)
+    ./modules/agent/skills.nix              # ~/.claude/skills = shared agent-modules skills + this site's SITE.md
     ./modules/agent/square-dow-secret.nix   # gromit-only: agent's Square token (DOW account, sops)
     ./modules/agent/sudo.nix
     ./modules/agent/comin.nix               # GitOps applier — rebuilds on merge to main
