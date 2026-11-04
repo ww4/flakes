@@ -795,17 +795,25 @@ EOF
       echo '  node_network_speed_bytes{device="enp3s0"} * 8 / 1e6'
       echo
       echo "Cable vs port. Run this WHILE it is degraded, which is now:"
-      echo "  1. Move the LAN cable from the onboard port to the ASIX USB adapter ($alt)."
-      echo "  2. cat /sys/class/net/$alt/speed"
-      echo "       1000 -> cable and in-wall run are fine; the ONBOARD r8169 port is bad."
-      echo "       100  -> the port is fine; it is the CABLE or the in-wall run."
-      echo "  networking.nix already mirrors $dev onto $alt, so ssh, Jellyfin-direct"
-      echo "  and LAN DNS keep working on it."
+      echo "  Swap the cables on the switch, or move this cable to a DIFFERENT"
+      echo "  switch port on the USW-Lite-16-PoE, and re-read:"
+      echo "    cat /sys/class/net/$dev/speed"
+      echo "  Fault follows the cable -> it is the cable or the in-wall run."
+      echo "  Fault stays on the port  -> it is that switch port."
+      echo
+      echo "  ⚠️ DO NOT move this cable to $alt. That advice was correct when this"
+      echo "  check was written (2026-10-31) and became WRONG on 2026-11-01: $alt is"
+      echo "  now the isolated Kindle segment (192.168.50.0/24 on switch VLAN 3,"
+      echo "  gromit serving DHCP, fail-closed kindle-fwd chain). flakes #471"
+      echo "  retired its standby-LAN-NIC role deliberately. Moving the main LAN"
+      echo "  cable there would strand the main LAN on an isolated VLAN AND break"
+      echo "  the Kindle segment. The failover plan it replaced needs rethinking"
+      echo "  from scratch, not reusing."
       echo
       if [ -e "$net/$alt/carrier" ] && [ "$(cat "$net/$alt/carrier" 2>/dev/null || echo 0)" = "1" ]; then
-        echo "  NOTE: $alt already has link, at $(cat "$net/$alt/speed" 2>/dev/null)Mb."
-      else
-        echo "  ($alt has no link right now, so the cable has not been moved yet.)"
+        echo "  FYI $alt (Kindle segment, switch Port 4) is up at $(cat "$net/$alt/speed" 2>/dev/null)Mb."
+        echo "  It is a useful CONTROL, not a destination: both NICs share this switch,"
+        echo "  so if Port 4 holds while Port 13 flaps, the switch itself is exonerated."
       fi
       exit 0   # fire
     '';
@@ -889,6 +897,25 @@ EOF
     actEnabled = true;
     maxActionsPerDay = 5;
     actionCooldownSec = 86400;   # after acting on a check, won't act again on it for 24 h (recurrence => escalate)
+
+    # Units to retry ONCE when the network comes back.
+    #
+    # ⚠️ This is the half that actually fixes what Chris experienced. Suppression
+    # stops the alert storm, but a unit that failed during the outage stays
+    # failed — systemd keeps it that way — so he still wakes to a stale alarm
+    # for a cause that lasted minutes. 2026-11-04: gyb-backup died at 01:40:31
+    # on getaddrinfo, 38 minutes into a 49-minute outage, and would not have
+    # retried until 01:40 the NEXT night. Both failed-units and backup-health
+    # were still reporting it five hours later.
+    #
+    # Only units whose failure mode is "the network was gone". Each is retried
+    # only if it is ACTUALLY in the failed state, once per recovery.
+    retryUnitsAfterNetwork = [
+      "gyb-backup.service"            # Gmail backup; getaddrinfo at 01:40 on 11-04
+      "pim-sync-nextcloud.service"    # calendar sync
+      "homelab-heartbeat.service"     # would self-clear in 60s, but clear it now
+      "lock3-deploy.service"          # idempotent: re-runs and says "nothing to do"
+    ];
 
     checks = [
       # Any systemd unit in the failed state (excluding known-noisy ones).
@@ -1038,7 +1065,19 @@ EOF
       # fix is `systemctl restart docker-qbittorrent` (which IS in the agent's
       # sudo scope), but I want to see this fire correctly on a real incident
       # before letting it restart the client unattended.
+      # ⚠️ A BORDERLINE ONE, flagged on the verdict rather than the probe. Its
+      # probe is local (qBittorrent's API on 127.0.0.1:8085), but the signature it
+      # reports — connection_status = "firewalled" — cannot mean anything other
+      # than "no inbound from the internet" while the WAN is down. It is
+      # guaranteed true and carries no information in that window.
+      #
+      # The rule used everywhere else here is to gate on whether the PROBE leaves
+      # the box: api-content and container-errors both probe 127.0.0.1 and are
+      # deliberately NOT gated, because they can still catch a genuine local fault
+      # during an outage. This one is the exception, and the exception is the
+      # verdict being a restatement of the network state.
       { id = "seeding-health"; type = "command"; severity = "warning"; agent = true; act = false;
+        requiresNetwork = true;
         cmd = "${seedingCheck}/bin/sentinel-check-seeding"; timeout = 45; }
 
       # Pre-air grab — indexer bait, caught at grab time rather than after the
@@ -1083,7 +1122,11 @@ EOF
       # retrying once internally, is the cheapest honest confirmation.
       { id = "lock3-watcher"; type = "command"; severity = "warning"; agent = false; act = false;
         cmd = "${lock3WatchCheck}/bin/sentinel-check-lock3"; timeout = 40;
-        reescalateSec = 86400; }
+        reescalateSec = 86400;
+        # Its entire probe is an HTTPS fetch across the open internet, so with
+        # the WAN down it can only ever say "cannot reach" — which is a restatement
+        # of the outage, not news about lock3.
+        requiresNetwork = true; }
 
       # The LAN link renegotiating down to 100 Mb (see nicSpeedCheck above).
       # From node_network_speed_bytes over 2026-08-01..10-31: SIX transitions,
@@ -1130,7 +1173,14 @@ EOF
       # an agent DID auto-fix nginx unattended it was the agent's own change that
       # had broken it. Diagnose and say so; never restart the front door
       # unattended.
+      # requiresNetwork: it samples vhosts BY NAME, so a DNS or WAN failure makes
+      # all of them fail at once. On 2026-11-04 it reported exactly that — "all 4
+      # sampled vhosts fail BY NAME but 127.0.0.1 answers (200) — DNS resolution
+      # is broken" — which was an accurate and well-reasoned message about the
+      # OUTAGE, filed under a service-health check. Gating it keeps the diagnosis
+      # without the misfiling.
       { id = "vhost-health"; type = "command"; severity = "warning"; agent = true; act = false;
+        requiresNetwork = true;
         cmd = "${vhostCheck}/bin/sentinel-check-vhosts"; timeout = 90; }
 
       # DOW forum health — backup freshness + Discourse version drift (see
@@ -1511,6 +1561,75 @@ EOF
             pass
 
 
+    # ── Local network state ──────────────────────────────────────────────────
+    #
+    # ⚠️ MUST BE COMPUTED LOCALLY. The lock3 correlator already decides
+    # "house_offline" far more authoritatively — it is outside the house and can
+    # probe the WAN address directly — but gromit cannot ASK it during an
+    # outage, which is exactly when the answer is needed. A gate that depends on
+    # the network to tell you the network is down is no gate at all.
+    #
+    # Deliberately DNS-free for the reachability leg: TCP to literal addresses,
+    # so a DNS failure does not masquerade as a WAN failure. DNS is probed
+    # separately because the two have different remedies, and on 2026-11-04 the
+    # vhost-health check distinguished them correctly on its own ("fail BY NAME
+    # but 127.0.0.1 answers") — worth keeping that resolution.
+    def network_state():
+        import socket as _s
+
+        def tcp(host, port, t=2.0):
+            try:
+                with _s.create_connection((host, port), timeout=t):
+                    return True
+            except OSError:
+                return False
+
+        dev, gw = None, None
+        try:
+            r = sh(["ip", "-o", "route", "show", "default"], timeout=5)
+            if r and r.stdout:
+                parts = r.stdout.split()
+                if "via" in parts:
+                    gw = parts[parts.index("via") + 1]
+                if "dev" in parts:
+                    dev = parts[parts.index("dev") + 1]
+        except Exception:
+            pass
+
+        carrier = None
+        if dev:
+            try:
+                with open("/sys/class/net/%s/carrier" % dev) as fh:
+                    carrier = fh.read().strip() == "1"
+            except OSError:
+                carrier = None
+
+        gw_ok = bool(gw) and tcp(gw, 53, 1.5)
+        if gw and not gw_ok:
+            r = sh(["ping", "-c", "1", "-W", "1", gw], timeout=4)
+            gw_ok = bool(r) and r.returncode == 0
+
+        # Two anchors, different operators: one being down is not an outage.
+        wan_ok = tcp("1.1.1.1", 443) or tcp("9.9.9.9", 443)
+
+        dns_ok = False
+        try:
+            _s.setdefaulttimeout(3)
+            _s.getaddrinfo("one.one.one.one", 443)
+            dns_ok = True
+        except Exception:
+            dns_ok = False
+        finally:
+            _s.setdefaulttimeout(None)
+
+        return {
+            "ok": bool(wan_ok),
+            "dev": dev, "gw": gw,
+            "carrier": carrier, "gw_ok": gw_ok,
+            "wan_ok": wan_ok, "dns_ok": dns_ok,
+        }
+
+
     def main():
         cfg = load_json(CONFIG, {})
         if not cfg.get("enabled", True):
@@ -1533,6 +1652,47 @@ EOF
 
         os.makedirs(INCIDENT_DIR, exist_ok=True)
 
+        # ── The network gate ────────────────────────────────────────────────
+        net = network_state()
+        nstate = state.setdefault("network", {"ok": True, "since": now})
+        was_ok = bool(nstate.get("ok", True))
+
+        if was_ok and not net["ok"]:
+            nstate.update({"ok": False, "since": now})
+            ntfy(cfg,
+                 "Sentinel: network DOWN",
+                 "No route to either anchor (1.1.1.1, 9.9.9.9).\n"
+                 "carrier=%s gw=%s gw_ok=%s dns_ok=%s dev=%s\n\n"
+                 "Checks that need the internet are SUPPRESSED until it returns; "
+                 "they will report then, not now. Local checks still fire."
+                 % (net["carrier"], net["gw"], net["gw_ok"], net["dns_ok"], net["dev"]),
+                 3, "warning")
+        elif not was_ok and net["ok"]:
+            downfor = int(now - float(nstate.get("since", now)))
+            nstate.update({"ok": True, "since": now})
+            ntfy(cfg,
+                 "Sentinel: network recovered",
+                 "Back after %d min %d s.\n\nThis is the single story for any alert "
+                 "storm in that window." % (downfor // 60, downfor % 60),
+                 2, "white_check_mark")
+
+            # ⚠️ Suppression alone is NOT enough, and this is the part that
+            # matters. A unit that failed during the outage stays failed
+            # forever — systemd keeps it that way — so Chris still wakes to a
+            # stale alarm for a cause that lasted minutes. 2026-11-04:
+            # gyb-backup died at 01:40:31 on getaddrinfo inside a 49-minute
+            # outage, and would not have retried until 01:40 the NEXT night.
+            # So: retry the whitelisted network-dependent units, once, on
+            # recovery. Bounded to a config list and only if actually failed.
+            for unit in cfg.get("retryUnitsAfterNetwork", []):
+                r = sh(["systemctl", "is-failed", unit], timeout=10)
+                if r and (r.stdout or "").strip() == "failed":
+                    print("network recovered: retrying %s" % unit, file=sys.stderr)
+                    sh(["systemctl", "reset-failed", unit], timeout=10)
+                    sh(["systemctl", "start", "--no-block", unit], timeout=15)
+        else:
+            nstate["ok"] = net["ok"]
+
         for c in cfg.get("checks", []):
             if not c.get("enabled", True):
                 continue
@@ -1541,6 +1701,17 @@ EOF
                 continue
             cid = c["id"]
             st = cstate.setdefault(cid, {"consecutive": 0, "active": False, "last_escalated": 0})
+
+            # ⚠️ Skipped BEFORE the check runs, not after. Running it would be
+            # worse than useless in both directions: it could fire (an alert
+            # about the internet, not about this service) or it could fail to
+            # fire and reach the `not fired` branch, which would send a
+            # "resolved" — a false all-clear for something still unknown.
+            # Unknowable is not healthy.
+            if c.get("requiresNetwork") and not net["ok"]:
+                st["skipped_network_at"] = int(now)
+                continue
+
             try:
                 fired, detail = fn(c)
             except Exception as e:
