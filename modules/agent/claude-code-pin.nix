@@ -46,6 +46,28 @@
 # the same file nixpkgs vendors — so `fetchurl` verifies the binary against a
 # checksum published by Anthropic rather than one we computed locally.
 #
+# WHICH VERSION TO TAKE. Upstream publishes two channel pointers, both plain
+# text:
+#
+#   curl -sS https://downloads.claude.ai/claude-code-releases/stable   # e.g. 2.1.311
+#   curl -sS https://downloads.claude.ai/claude-code-releases/latest   # e.g. 2.1.318
+#
+# TRACK `stable`, NOT `latest`. This box runs ~10 unattended `claude -p` units
+# (daybook am/pm, weekly digest, queue consumer, inbox triage, podcast triage,
+# newsdesk, wx, and the sentinel every 120 s). A regression in any of them is
+# discovered by its output being wrong, hours later, with nobody watching — so
+# the few days `stable` lags `latest` are worth having.
+#
+# ⚠️ AND CHECK THE CHANGELOG AGAINST THE VERSION YOU TAKE. Capability gating is
+# real and easy to get wrong in both directions: on 2026-11-04 a review found
+# this box 48 releases behind and named features that turn out to need 2.1.314
+# (`permissions.blockWritesOutsideWorkingDirectories`), 2.1.317
+# (`onFailure: "block"` for SDK hooks) and 2.1.318 (`loginExpiresAt` in
+# `/auth status`) — none of which this bump to `stable` 2.1.311 brings. Read the
+# version a feature landed in BEFORE designing against it; a feature absent from
+# the pinned build fails silently, not loudly.
+# See docs/native-capability-review-2026-11-04.md in nixos-homelab-improvements.
+#
 # ⚠️ REMOVE THIS FILE once nixos-26.05 (or whatever channel this box is on) ships
 # a claude-code newer than the pinned manifest. Leaving it in place would PIN the
 # package BACKWARDS — an overlay is not a floor, it is an assignment.
