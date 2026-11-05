@@ -104,7 +104,19 @@ in
       description = "Weekly refresh of the podcast transcript archives";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
-      path = with pkgs; [ git python3 ];
+      # git, python3 for the build; bash/curl/jq because EVERY git invocation
+      # here also runs the claude user's GLOBAL pre-push hook
+      # (~/.gitconfig core.hooksPath, added 2026-09-13). The hook is
+      # `#!/usr/bin/env bash` and shells out to curl+jq, so without them on the
+      # unit's PATH `env` cannot find the interpreter, the hook exits non-zero
+      # and git aborts the push — `env: 'bash': No such file or directory`
+      # followed by "failed to push some refs", for all 9 archives, every week
+      # since the hook landed. The commits were made; only the push failed, and
+      # the unit stayed GREEN because a push failure is inside the staleDays
+      # grace window and the freshness stamp is written before the push. A unit
+      # does not inherit the login shell's PATH; a hook's dependencies are the
+      # unit's dependencies.
+      path = with pkgs; [ git python3 bash curl jq ];
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;
