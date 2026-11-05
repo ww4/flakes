@@ -533,6 +533,32 @@ let
     If an item is not something you can finish in one unattended pass, leave it
     open, add one line saying what is blocking it, and do not half-do it.
 
+    ⚠️ A BLOCKED ITEM MUST NOT CARRY ITS OWN RE-CHECK CADENCE. YOU ARE NOT ITS
+    POLLER. When an item is blocked on an external state change — a host
+    offline, a drive absent, a service only Chris can start — then on the FIRST
+    pass that finds it blocked, write ONE line naming three things:
+      * the blocking condition,
+      * `edge:` — the observable change that would unblock it, named as a
+        condition and not a time (`edge: marcus answers on the tailnet`), and
+      * `last-state:` — the exact value you read, verbatim, so a later pass can
+        compare rather than re-describe.
+    On any LATER pass: re-read that value ONCE. If it is UNCHANGED, append
+    NOTHING, touch nothing, and move on — the item already says everything true
+    about it, and a second identical observation is not new information. Write
+    again only when `last-state:` has actually moved, and then REPLACE the old
+    line rather than stacking a new one under it.
+
+    This rule exists because of a measured failure. On 2026-10-28 one item was
+    re-checked eight times in 27 minutes (20:08 → 20:37), each a full unattended
+    pass, each recording the identical `offline, last seen 10h ago`; the run
+    eventually flagged its own waste in writing. The host then came back onto the
+    tailnet twice — around midday 10-29 and again in the 11-01 → 11-03 window —
+    and BOTH windows were missed, noticed only afterwards from a moved
+    `LastSeen`. Re-asking on a timer spent many passes proving nothing and
+    caught neither moment that mattered. If an item genuinely needs to be caught
+    the instant its edge fires, say so in the line and leave it to Chris to wire
+    an edge trigger; do not approximate one by polling.
+
     If the item begins with a `reply-to:` / `req:` header block, the asking
     agent is waiting on a machine-readable answer. When you close such an item,
     the closed line MUST carry:
