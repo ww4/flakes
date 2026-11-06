@@ -132,6 +132,7 @@ let hm = homelab-modules.nixosModules; in
     hm.silverbullet                         # markdown notes/tasks space — scheduling-assistant SoT; two-writer values below
     ./modules/services/pim.nix              # plain-text calendar vdir + vdirsyncer (Nextcloud two-way, Google RO)
     ./modules/services/homelab-mcp.nix      # MCP connector for Claude-in-the-app — public via the lock3 VPS jump host
+    ./modules/services/rebooter-receiver.nix # Craigmyle link-rebooter push callbacks — same jump-host chain
     ./modules/services/cd-ripper.nix        # insert a CD in any USB drive → whipper rips it, beets files it in the library, ntfy says so
     ./modules/services/yamaha-ync.nix       # the living-room receiver: JSON API for the radio page + MCP server (public pkg ww4/yamaha-ync)
     ./modules/services/roku                 # the Roku on the TV: ECP control for the radio page's remote
