@@ -359,7 +359,8 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       <label class="search">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <input id="q" type="search" placeholder="Search notes and categories" aria-label="Search notes and categories"
-               autocomplete="off" role="combobox" aria-expanded="false" aria-controls="sug">
+               autocomplete="off" role="combobox" aria-expanded="false" aria-controls="sug"
+               title="Type words to search, or cat:woodgas to filter to a category">
       </label>
       <div class="sug" id="sug" role="listbox" aria-label="Suggestions" hidden></div>
     </div>
@@ -546,7 +547,11 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   // composes with the markdown renderer: bold, code and link text all get
   // highlighted without inline() needing to know about search at all.
   function terms(){
-    var t = (q || "").toLowerCase().split(/\s+/).filter(Boolean);
+    // cat: tokens are filters, not text to look for — highlighting them would
+    // paint nothing and look broken.
+    var t = (q || "").toLowerCase().split(/\s+/).filter(function(x){
+      return x && x.indexOf("cat:") !== 0;
+    });
     // longest first, so "food lion" marks the longer run before its pieces
     return t.sort(function(a, b){ return b.length - a.length; });
   }
@@ -775,14 +780,16 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     if (!cats.length && !titles.length) { closeSug(); return; }
 
     if (cats.length) {
-      el.sug.appendChild(node("div", "sug-head", "Categories"));
+      el.sug.appendChild(node("div", "sug-head", "Categories — filters with cat:"));
       cats.forEach(function(c){
         var b = node("button");
         b.setAttribute("role", "option");
         b.appendChild(highlight(node("span", "tag", c.replace(/-/g, " "))));
         b.appendChild(node("span", "n", CATS[c]));
+        // Put the real syntax in the box rather than flipping hidden state:
+        // it shows how to do it by hand next time, and stays editable.
         b.addEventListener("click", function(){
-          cat = c; q = ""; el.q.value = ""; closeSug();
+          cat = ""; q = "cat:" + c; el.q.value = q + " "; closeSug(); el.q.focus();
           refresh().catch(function(e){ fail("Couldn't filter", e); });
         });
         el.sug.appendChild(b);

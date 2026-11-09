@@ -360,3 +360,51 @@ def test_whole_word_hits_rank_above_in_word_hits(space):
     ids = [n.id for n in store.listing(space, "gas")]
     assert "Notes/inword.md" in ids          # still found
     assert ids.index("Notes/real.md") < ids.index("Notes/inword.md")
+
+
+# --- searching by category ---------------------------------------------------
+
+def test_category_name_pulls_in_the_whole_category(space):
+    """A note in the woodgas category counts as a hit for "woodgas" even if
+    its text never says the word — Chris: "if the category name is a high
+    grade match for the search term you should pull in the whole category"."""
+    rel = "Notes/chunker.md"
+    (space / rel).write_text("---\ncategory: woodgas\n---\n\n# chunker\n\nspare tire mount\n")
+    ids = [n.id for n in store.listing(space, "woodgas")]
+    assert rel in ids
+
+
+def test_a_four_letter_prefix_of_a_category_counts(space):
+    rel = "Notes/chunker.md"
+    (space / rel).write_text("---\ncategory: woodgas\n---\n\n# chunker\n\nspare tire mount\n")
+    assert rel in [n.id for n in store.listing(space, "wood")]
+
+
+def test_a_short_prefix_does_not_drag_a_category_in(space):
+    """"gas" must not pull every woodgas note; three letters is too loose."""
+    rel = "Notes/chunker.md"
+    (space / rel).write_text("---\ncategory: woodgas\n---\n\n# chunker\n\nspare tire mount\n")
+    assert rel not in [n.id for n in store.listing(space, "gas")]
+
+
+def test_a_hyphenated_category_matches_either_word(space):
+    rel = "Notes/shed.md"
+    (space / rel).write_text("---\ncategory: house-project\n---\n\n# shed\n\nnothing relevant\n")
+    assert rel in [n.id for n in store.listing(space, "house")]
+    assert rel in [n.id for n in store.listing(space, "project")]
+
+
+def test_cat_prefix_filters_hard(space):
+    (space / "Notes/a.md").write_text("---\ncategory: woodgas\n---\n\n# a\n\ntruck parts\n")
+    (space / "Notes/b.md").write_text("---\ncategory: travel\n---\n\n# b\n\ntruck parts\n")
+    assert [n.id for n in store.listing(space, "cat:woodgas")] == ["Notes/a.md"]
+    # the filter composes with ordinary terms
+    assert [n.id for n in store.listing(space, "cat:woodgas truck")] == ["Notes/a.md"]
+    assert store.listing(space, "cat:woodgas unicorn") == []
+
+
+def test_split_query_separates_filters_from_terms(space):
+    assert store.split_query("cat:woodgas truck parts") == (["woodgas"], ["truck", "parts"])
+    assert store.split_query("plain words") == ([], ["plain", "words"])
+    assert store.split_query("cat:") == ([], ["cat:"])     # not a filter, just text
+    assert store.split_query(None) == ([], [])

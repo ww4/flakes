@@ -308,6 +308,48 @@ def _word(hay: str, term: str) -> bool:
     return re.search(r"\b" + re.escape(term) + r"\b", hay) is not None
 
 
+# A term long enough that matching the FRONT of a category name is meaningful.
+# "wood" -> woodgas is a real intent; "gas" -> gasket-anything is not, and a
+# 3-letter prefix would drag whole categories in by accident.
+CAT_PREFIX_MIN = 4
+
+
+def split_query(query: str | None) -> tuple[list[str], list[str]]:
+    """Split a raw query into (cat: filters, ordinary terms).
+
+    ``cat:woodgas truck`` means "inside the woodgas category, anything about
+    trucks" -- the cat: part is a filter, the rest is the usual ranked OR.
+    """
+    cats: list[str] = []
+    terms: list[str] = []
+    for tok in (query or "").lower().split():
+        if tok.startswith("cat:") and len(tok) > 4:
+            cats.append(tok[4:].strip())
+        elif tok:
+            terms.append(tok)
+    return cats, terms
+
+
+def _cat_terms(note: Note, needles: list[str]) -> set[str]:
+    """Which query terms this note's CATEGORY answers.
+
+    Chris: "if the category name is a high grade match for the search term you
+    should pull in the whole category." So a term that names a category counts
+    as satisfied for every note in it, even one whose text never says the word
+    -- searching woodgas should return the woodgas notes, not just the ones
+    that happen to spell it out.
+    """
+    cat = (note.cat or "").lower()
+    if not cat:
+        return set()
+    parts = set(cat.split("-"))
+    out = set()
+    for t in needles:
+        if t == cat or t in parts or (len(t) >= CAT_PREFIX_MIN and cat.startswith(t)):
+            out.add(t)
+    return out
+
+
 def _score(note: Note, needles: list[str]) -> tuple[int, int, int]:
     """How well a note answers the query. Bigger is better.
 
@@ -322,8 +364,11 @@ def _score(note: Note, needles: list[str]) -> tuple[int, int, int]:
     """
     title = note.title.lower()
     hay = title + "\n" + note.body.lower()
-    anywhere = sum(1 for t in needles if t in hay)
-    whole = sum(1 for t in needles if _word(hay, t))
+    cats = _cat_terms(note, needles)
+    # A category match is high-grade by definition, so it counts as a
+    # whole-word hit rather than a weak substring one.
+    anywhere = sum(1 for t in needles if t in hay or t in cats)
+    whole = sum(1 for t in needles if _word(hay, t) or t in cats)
     in_title = sum(1 for t in needles if t in title)
     return anywhere, whole, in_title
 
@@ -360,7 +405,7 @@ def listing(space: Path, query: str | None = None) -> list[Note]:
     # "food lion": a note with neither word in full came back because "lion"
     # appears inside "million". So: substring, OR, and let the ranking decide
     # what rises -- a note matching both terms outranks one matching either.
-    needles = [t for t in (query or "").lower().split() if t]
+    cat_filters, needles = split_query(query)
     out: list[Note] = []
     seen: set[str] = set()
     for rel, p in _walk(space):
@@ -372,12 +417,14 @@ def listing(space: Path, query: str | None = None) -> list[Note]:
         except OSError:
             continue
         note = _cached(space, rel, st)
+        if cat_filters and (note.cat or "").lower() not in cat_filters:
+            continue
         if needles and not _score(note, needles)[0]:
             continue
         out.append(note)
     for gone in set(_CACHE) - seen:
         _CACHE.pop(gone, None)
-    if needles:
+    if needles:  # cat:-only queries keep plain newest-first order
         # Most terms matched first, title hits ahead of body-only hits, then
         # newest. Without this, OR puts a note mentioning "gas" once above the
         # note actually called "Wood gas truck front end parts".
