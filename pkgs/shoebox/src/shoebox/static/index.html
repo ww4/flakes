@@ -1,0 +1,871 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Shoebox</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+*{box-sizing:border-box}html,body{margin:0}img{max-width:100%}[hidden]{display:none!important}
+:root{
+  --ground:#eef1f0; --surface:#fdfdfc; --surface-2:#e7ebe9;
+  --ink:#16211f; --ink-soft:#5a6a66; --ink-faint:#8697924d;
+  --line:#d5dcd9; --line-strong:#bfc9c5;
+  --accent:#136b63; --accent-ink:#ffffff; --accent-wash:#136b6314;
+  --brass:#8d620f; --brass-wash:#8d620f17;
+  --shadow:0 1px 2px #16211f0f, 0 0 0 1px #16211f0a;
+  --shadow-lift:0 4px 14px #16211f1f, 0 0 0 1px #16211f14;
+  --r:10px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#101514; --surface:#19201e; --surface-2:#222a28;
+    --ink:#e4e9e7; --ink-soft:#93a19d; --ink-faint:#93a19d3d;
+    --line:#2a3331; --line-strong:#3a4542;
+    --accent:#55b9ad; --accent-ink:#07211f; --accent-wash:#55b9ad1f;
+    --brass:#d4a13f; --brass-wash:#d4a13f1f;
+    --shadow:0 1px 2px #0006, 0 0 0 1px #ffffff0d;
+    --shadow-lift:0 6px 18px #0008, 0 0 0 1px #ffffff14;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#101514; --surface:#19201e; --surface-2:#222a28;
+  --ink:#e4e9e7; --ink-soft:#93a19d; --ink-faint:#93a19d3d;
+  --line:#2a3331; --line-strong:#3a4542;
+  --accent:#55b9ad; --accent-ink:#07211f; --accent-wash:#55b9ad1f;
+  --brass:#d4a13f; --brass-wash:#d4a13f1f;
+  --shadow:0 1px 2px #0006, 0 0 0 1px #ffffff0d;
+  --shadow-lift:0 6px 18px #0008, 0 0 0 1px #ffffff14;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--ground); color:var(--ink);
+  font:400 15px/1.5 "IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  -webkit-text-size-adjust:100%;
+}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+
+/* ---------- chrome ---------- */
+.bar{
+  position:sticky; top:0; z-index:20; background:var(--ground);
+  border-bottom:1px solid var(--line);
+  padding:10px 14px 0;
+}
+.bar-row{display:flex; align-items:center; gap:10px; max-width:1280px; margin:0 auto}
+.brand{
+  font:700 17px/1 Archivo,"Archivo",system-ui,sans-serif; letter-spacing:-.01em;
+  display:flex; align-items:baseline; gap:8px; flex:none;
+}
+.brand b{color:var(--accent)}
+.count{font:500 10px/1 "IBM Plex Mono",ui-monospace,monospace; color:var(--ink-soft); letter-spacing:.06em}
+.search{
+  flex:1 1 auto; min-width:0; display:flex; align-items:center; gap:8px;
+  background:var(--surface); border:1px solid var(--line); border-radius:999px;
+  padding:0 12px; height:38px; box-shadow:var(--shadow);
+}
+.search svg{flex:none; color:var(--ink-soft)}
+.search input{
+  flex:1; min-width:0; border:0; background:none; color:var(--ink);
+  font:400 15px/1 "IBM Plex Sans",system-ui,sans-serif; outline:none; height:100%;
+}
+.search input::placeholder{color:var(--ink-soft)}
+.iconbtn{
+  flex:none; display:grid; place-items:center; width:38px; height:38px;
+  border:1px solid var(--line); border-radius:999px; background:var(--surface);
+  color:var(--ink-soft); cursor:pointer; box-shadow:var(--shadow);
+}
+.iconbtn:hover{color:var(--ink); border-color:var(--line-strong)}
+.iconbtn[aria-pressed="true"]{background:var(--accent-wash); border-color:var(--accent); color:var(--accent)}
+
+.chips{display:flex; gap:6px; overflow-x:auto; padding:10px 0; max-width:1280px; margin:0 auto; scrollbar-width:thin}
+.chip{
+  flex:none; cursor:pointer; border:1px solid var(--line); background:var(--surface);
+  color:var(--ink-soft); border-radius:999px; padding:5px 11px;
+  font:500 11px/1.3 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.04em;
+  text-transform:uppercase; white-space:nowrap;
+}
+.chip b{font-weight:500; color:var(--ink-faint); margin-left:5px}
+.chip:hover{border-color:var(--line-strong); color:var(--ink)}
+.chip[aria-pressed="true"]{background:var(--ink); border-color:var(--ink); color:var(--ground)}
+.chip[aria-pressed="true"] b{color:var(--ground); opacity:.55}
+
+/* ---------- wall ---------- */
+main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
+.eyebrow{
+  display:flex; align-items:center; gap:9px; margin:4px 0 12px;
+  font:500 10px/1 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--ink-soft);
+}
+.eyebrow::after{content:""; flex:1; height:1px; background:var(--line)}
+.eyebrow.brass{color:var(--brass)}
+.wall{column-gap:14px; column-count:4}
+@media (max-width:1180px){.wall{column-count:3}}
+@media (max-width:860px){.wall{column-count:2}}
+@media (max-width:560px){.wall{column-count:1}}
+.section{margin-bottom:26px}
+
+.card{
+  break-inside:avoid; -webkit-column-break-inside:avoid;
+  background:var(--surface); border-radius:var(--r); box-shadow:var(--shadow);
+  margin:0 0 14px; padding:13px 14px 10px; cursor:pointer; position:relative;
+  transition:box-shadow .14s ease, transform .14s ease;
+}
+.card:hover{box-shadow:var(--shadow-lift)}
+.card:active{transform:scale(.995)}
+.card.pinned{box-shadow:var(--shadow), inset 3px 0 0 var(--brass)}
+.card.pinned:hover{box-shadow:var(--shadow-lift), inset 3px 0 0 var(--brass)}
+.card h3{
+  margin:0 26px 7px 0;
+  font:600 15px/1.3 Archivo,system-ui,sans-serif; letter-spacing:-.005em;
+  text-wrap:balance;
+}
+.body{position:relative; max-height:184px; overflow:hidden}
+.body.clipped::after{
+  content:""; position:absolute; inset:auto 0 0; height:40px;
+  background:linear-gradient(to bottom, transparent, var(--surface));
+}
+.body p{margin:0 0 5px; white-space:pre-wrap; overflow-wrap:break-word}
+.body strong{font-weight:600}
+.body code{font:400 .92em/1.4 "IBM Plex Mono",ui-monospace,monospace; background:var(--surface-2); border-radius:4px; padding:1px 4px}
+@media (max-width:720px){.count{display:none}}
+.body .h{margin:9px 0 4px; font:600 11px/1.3 Archivo,system-ui,sans-serif;
+  letter-spacing:.08em; text-transform:uppercase; color:var(--ink-soft)}
+.body .li{display:flex; gap:7px; margin:0 0 3px; align-items:flex-start}
+.body .li > span{flex:1; min-width:0; overflow-wrap:break-word}
+.body .li::before{content:"\2022"; color:var(--ink-faint); line-height:1.5}
+.body .ck{display:flex; gap:8px; margin:0 0 4px; align-items:flex-start}
+.body .ck span{flex:1; overflow-wrap:break-word}
+.body .ck.done span{color:var(--ink-soft); text-decoration:line-through}
+.box{
+  flex:none; width:15px; height:15px; margin-top:2px; border-radius:3px;
+  border:1.5px solid var(--line-strong); background:none; cursor:pointer;
+  display:grid; place-items:center; color:var(--accent-ink); padding:0;
+}
+.box.on{background:var(--accent); border-color:var(--accent)}
+.more{
+  font:500 10px/1 "IBM Plex Mono",ui-monospace,monospace; color:var(--ink-soft);
+  letter-spacing:.05em; margin:6px 0 0;
+}
+.meta{
+  display:flex; align-items:center; gap:8px; margin-top:9px;
+  padding-top:8px; border-top:1px solid var(--line);
+  font:400 10px/1 "IBM Plex Mono",ui-monospace,monospace; color:var(--ink-soft);
+  letter-spacing:.04em;
+}
+.meta .cat{color:var(--accent); text-transform:uppercase; letter-spacing:.08em; font-weight:500}
+.meta .sp{flex:1}
+.meta .yr{font-variant-numeric:tabular-nums}
+.pin{
+  position:absolute; top:9px; right:8px; width:26px; height:26px; padding:0;
+  display:grid; place-items:center; border:0; border-radius:7px;
+  background:none; color:var(--ink-faint); cursor:pointer;
+}
+.card:hover .pin, .card.pinned .pin{color:var(--ink-soft)}
+.pin:hover{background:var(--surface-2); color:var(--ink)}
+.card.pinned .pin{color:var(--brass)}
+
+.empty{
+  text-align:center; padding:56px 20px; color:var(--ink-soft);
+  font:400 14px/1.6 "IBM Plex Sans",system-ui,sans-serif;
+}
+.empty code{font:400 13px/1 "IBM Plex Mono",monospace; background:var(--surface-2); padding:2px 5px; border-radius:4px}
+
+/* ---------- fab ---------- */
+.fab{
+  position:fixed; right:18px; bottom:18px; z-index:30;
+  height:52px; padding:0 20px 0 17px; display:flex; align-items:center; gap:9px;
+  border:0; border-radius:999px; background:var(--accent); color:var(--accent-ink);
+  font:600 14px/1 Archivo,system-ui,sans-serif; cursor:pointer;
+  box-shadow:0 5px 16px #16211f33;
+}
+.fab:hover{filter:brightness(1.07)}
+
+/* ---------- editor: the card, expanded ---------- */
+.scrim{
+  position:fixed; inset:0; z-index:40; background:#0b100fa6;
+  display:flex; align-items:center; justify-content:center;
+  -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px);
+}
+.scrim[hidden]{display:none}
+@media (min-width:700px){.scrim{padding:30px}}
+.sheet{
+  background:var(--surface); width:100%; height:100%;
+  display:flex; flex-direction:column; box-shadow:0 10px 50px #00000059;
+}
+@media (min-width:700px){
+  .sheet{max-width:620px; height:auto; max-height:88vh; border-radius:14px}
+}
+.ed-top{display:flex; align-items:center; gap:4px; padding:8px 8px 4px; flex:none}
+.ed-top input{
+  flex:1; min-width:0; border:0; background:none; color:var(--ink);
+  font:600 18px/1.35 Archivo,system-ui,sans-serif; outline:none; padding:6px 6px;
+}
+.ed-top input::placeholder{color:var(--ink-faint)}
+.ed-scroll{flex:1; overflow-y:auto; padding:2px 12px 10px; -webkit-overflow-scrolling:touch}
+
+/* uniform editable row */
+.row{display:flex; align-items:flex-start; gap:8px; border-radius:7px; padding:1px 2px}
+.row:focus-within{background:var(--accent-wash)}
+.row .grip{
+  flex:none; width:16px; align-self:center; color:var(--ink-faint);
+  display:grid; place-items:center; cursor:grab;
+}
+@media (max-width:700px){.row .grip{display:none}}
+.row .it{resize:none; overflow:hidden;
+  flex:1; min-width:0; border:0; background:none; color:var(--ink); outline:none;
+  font:400 15px/1.55 "IBM Plex Sans",system-ui,sans-serif; padding:4px 0;
+}
+.row.note .it{color:var(--ink-soft); font-style:italic}
+.row.done .it{color:var(--ink-soft); text-decoration:line-through}
+.row.sec .it{
+  font:600 11px/1.5 Archivo,system-ui,sans-serif; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--ink-soft); padding-top:12px;
+}
+.row .x{
+  flex:none; width:26px; height:26px; align-self:center; padding:0; border:0;
+  background:none; color:var(--ink-faint); border-radius:6px; cursor:pointer;
+  display:grid; place-items:center; opacity:0;
+}
+.row:hover .x, .row:focus-within .x{opacity:1}
+@media (pointer:coarse){.row .x{opacity:.55}}
+.row .x:hover{background:var(--surface-2); color:var(--ink)}
+.row .box{margin-top:7px}
+
+.add{
+  display:flex; align-items:center; gap:8px; padding:5px 2px; margin-left:24px;
+  background:none; border:0; cursor:pointer; color:var(--ink-soft);
+  font:400 15px/1.55 "IBM Plex Sans",system-ui,sans-serif; width:calc(100% - 24px);
+  text-align:left; border-radius:7px;
+}
+.add:hover{color:var(--ink); background:var(--surface-2)}
+.ed-raw{
+  width:100%; min-height:300px; resize:vertical; border:1px solid var(--line);
+  border-radius:8px; background:var(--ground); color:var(--ink); padding:11px 12px;
+  outline:none; font:400 13.5px/1.7 "IBM Plex Mono",ui-monospace,monospace; tab-size:2;
+}
+.ed-raw:focus{border-color:var(--accent)}
+
+/* bottom toolbar */
+.ed-bar{
+  flex:none; display:flex; align-items:center; gap:2px; padding:7px 9px;
+  border-top:1px solid var(--line);
+}
+.tool{
+  width:36px; height:36px; display:grid; place-items:center; padding:0;
+  border:0; border-radius:8px; background:none; color:var(--ink-soft); cursor:pointer;
+}
+.tool:hover{background:var(--surface-2); color:var(--ink)}
+.tool[aria-pressed="true"]{background:var(--accent-wash); color:var(--accent)}
+.tool.brass[aria-pressed="true"]{background:var(--brass-wash); color:var(--brass)}
+.ed-bar .sp{flex:1}
+.saved{
+  font:400 10px/1 "IBM Plex Mono",ui-monospace,monospace;
+  color:var(--ink-soft); letter-spacing:.04em; padding-right:6px;
+}
+.ed-path{
+  padding:2px 14px 9px; font:400 10px/1.5 "IBM Plex Mono",ui-monospace,monospace;
+  color:var(--ink-faint); overflow-wrap:anywhere; flex:none;
+}
+
+/* undo toast */
+.toast{
+  position:fixed; left:16px; bottom:18px; z-index:60; display:flex; align-items:center; gap:14px;
+  background:var(--ink); color:var(--ground); border-radius:9px; padding:11px 12px 11px 15px;
+  box-shadow:0 6px 22px #00000040;
+  font:400 13px/1 "IBM Plex Sans",system-ui,sans-serif;
+}
+.toast[hidden]{display:none}
+.toast button{
+  border:0; background:none; color:var(--accent); cursor:pointer;
+  font:600 13px/1 Archivo,system-ui,sans-serif; letter-spacing:.04em; text-transform:uppercase;
+}
+
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <div class="bar-row">
+    <div class="brand">Shoe<b>box</b> <span class="count" id="count"></span></div>
+    <label class="search">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="q" type="search" placeholder="Search notes" aria-label="Search notes">
+    </label>
+    <button class="iconbtn" id="archBtn" aria-pressed="false" title="Show archive" aria-label="Show archive">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h18v3H3zM5 10v10h14V10M9.5 14h5"/></svg>
+    </button>
+  </div>
+  <div class="chips" id="chips"></div>
+</div>
+
+<main>
+  <div id="wall"></div>
+</main>
+
+
+<button class="fab" id="newBtn">
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+  New note
+</button>
+
+<div class="scrim" id="scrim" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Edit note">
+    <div class="ed-top">
+      <button class="tool" id="edClose" aria-label="Close and save" title="Close">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+      </button>
+      <input id="edTitle" placeholder="Title">
+      <button class="tool brass" id="edPin" aria-pressed="false" aria-label="Pin note" title="Pin">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M7 4h10l-1.5 7 2.5 3H5.5L8 11z"/></svg>
+      </button>
+    </div>
+    <div class="ed-scroll" id="edScroll"></div>
+    <div class="ed-path" id="edPath"></div>
+    <div class="ed-bar">
+      <button class="tool" id="edCheck" aria-pressed="false" aria-label="Show checkboxes" title="Show checkboxes">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 7.5h7M14 17.5h7"/></svg>
+      </button>
+      <button class="tool" id="edRaw" aria-pressed="false" aria-label="Show markdown source" title="Markdown source">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6 4 12l5 6M15 6l5 6-5 6"/></svg>
+      </button>
+      <button class="tool" id="edArch" aria-label="Archive note" title="Archive">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18v3H3zM5 10v10h14V10M9.5 14h5"/></svg>
+      </button>
+      <button class="tool" id="edDel" aria-label="Delete note" title="Delete">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>
+      </button>
+      <span class="sp"></span>
+      <span class="saved" id="edSaved"></span>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">Undo</button></div>
+
+<script>
+(function(){
+  "use strict";
+  // ---- state: the server is the state. No localStorage, no client cache to
+  // go stale against four other writers of this space (SilverBullet, the
+  // daybook, the agent, a git restore). Every mutation is a request; the
+  // reply is what we render.
+  var NOTES = [];
+
+  function api(method, url, body){
+    return fetch(url, {
+      method: method,
+      headers: body ? {"Content-Type":"application/json"} : undefined,
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function(r){
+      if (!r.ok) {
+        return r.json().catch(function(){ return {}; }).then(function(j){
+          throw new Error(j.detail || j.error || (r.status + " " + r.statusText));
+        });
+      }
+      return r.json();
+    });
+  }
+
+  function refresh(){
+    return api("GET", "/api/notes").then(function(d){
+      NOTES = d.notes; render();
+    });
+  }
+
+  function fail(what, e){
+    console.error(what, e);
+    toast(what + " — " + ((e && e.message) || "unknown error"), null);
+  }
+
+  // Optimistic: apply locally, then persist. On failure say so and reload the
+  // truth rather than leaving the screen disagreeing with the disk.
+  function persist(n, patch, what){
+    var before = {};
+    for (var k in patch) { before[k] = n[k]; n[k] = patch[k]; }
+    render();
+    var req = {id:n.id};
+    for (var k2 in patch) req[k2] = patch[k2];
+    return api("PUT", "/api/notes", req).then(function(saved){
+      for (var k3 in saved) n[k3] = saved[k3];
+      render();
+      return saved;
+    }).catch(function(e){
+      for (var k4 in before) n[k4] = before[k4];
+      fail(what, e); refresh();
+      throw e;
+    });
+  }
+
+  var q = "", cat = "", showArch = false, openId = null;
+  var el = {
+    q:document.getElementById("q"), chips:document.getElementById("chips"),
+    wall:document.getElementById("wall"), count:document.getElementById("count"),
+    archBtn:document.getElementById("archBtn"), scrim:document.getElementById("scrim"),
+    edClose:document.getElementById("edClose"), edTitle:document.getElementById("edTitle"),
+    edPin:document.getElementById("edPin"), edScroll:document.getElementById("edScroll"),
+    edPath:document.getElementById("edPath"), edCheck:document.getElementById("edCheck"),
+    edRaw:document.getElementById("edRaw"), edArch:document.getElementById("edArch"),
+    edDel:document.getElementById("edDel"), edSaved:document.getElementById("edSaved"),
+    toast:document.getElementById("toast"), toastMsg:document.getElementById("toastMsg"),
+    toastUndo:document.getElementById("toastUndo"), newBtn:document.getElementById("newBtn")
+  };
+  el.q.placeholder = "Search notes";
+
+  function matches(n){
+    if (!!n.archived !== showArch) return false;
+    if (cat && n.cat !== cat) return false;
+    if (q && (n.title + "\n" + n.body).toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  }
+
+  var INL = /\*\*([^*]+)\*\*|`([^`]+)`|\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]|\[([^\]]+)\]\(([^)]+)\)/g;
+  function inline(text, parent){
+    var last = 0, m;
+    INL.lastIndex = 0;
+    while ((m = INL.exec(text)) !== null) {
+      if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+      if (m[1] !== undefined) parent.appendChild(node("strong", null, m[1]));
+      else if (m[2] !== undefined) parent.appendChild(node("code", null, m[2]));
+      else if (m[3] !== undefined) parent.appendChild(document.createTextNode(m[4] !== undefined ? m[4] : m[3]));
+      else parent.appendChild(document.createTextNode(m[5]));
+      last = INL.lastIndex;
+    }
+    if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+    return parent;
+  }
+
+  function node(tag, cls, text){
+    var d = document.createElement(tag);
+    if (cls) d.className = cls;
+    if (text !== undefined) d.textContent = text;
+    return d;
+  }
+
+  // --- markdown-lite preview: checkboxes, bullets, headings, prose ---
+  function renderBody(n, box){
+    var lines = n.body.split("\n"), para = [], nLines = 0;
+    function flush(){
+      if (!para.length) return;
+      box.appendChild(inline(para.join("\n"), node("p", null)));
+      para = [];
+    }
+    lines.forEach(function(line, i){
+      var m;
+      if (/^\s*$/.test(line)) { flush(); return; }
+      nLines++;
+      if ((m = line.match(/^\s*[-*]\s+\[([ xX])\]\s*(.*)$/))) {
+        flush();
+        var done = m[1].toLowerCase() === "x";
+        var row = node("div", "ck" + (done ? " done" : ""));
+        var b = node("button", "box" + (done ? " on" : ""));
+        b.setAttribute("aria-label", (done ? "Uncheck " : "Check ") + m[2]);
+        b.innerHTML = done ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"><path d="m5 13 4.5 4.5L19 7"/></svg>' : "";
+        b.addEventListener("click", function(ev){ ev.stopPropagation(); toggleCheck(n, i); });
+        row.appendChild(b); row.appendChild(inline(m[2], node("span", null)));
+        box.appendChild(row);
+      } else if ((m = line.match(/^\s*[-*]\s+(.*)$/))) {
+        flush();
+        var li = node("div", "li");
+        li.appendChild(inline(m[1], node("span", null)));
+        box.appendChild(li);
+      } else if ((m = line.match(/^#{1,4}\s+(.*)$/))) {
+        flush(); box.appendChild(inline(m[1], node("div", "h")));
+      } else {
+        para.push(line.replace(/^\s*\*(.+)\*\s*$/, "$1"));
+      }
+    });
+    flush();
+    return nLines;
+  }
+
+  function toggleCheck(n, idx){
+    var lines = n.body.split("\n");
+    lines[idx] = lines[idx].replace(/\[([ xX])\]/, function(_, c){ return c.toLowerCase() === "x" ? "[ ]" : "[x]"; });
+    persist(n, {body:lines.join("\n")}, "Couldn't tick that off").catch(function(){});
+  }
+
+  function card(n){
+    var c = node("div", "card" + (n.pinned ? " pinned" : ""));
+    c.tabIndex = 0;
+    c.appendChild(node("h3", null, n.title));
+
+    var pin = node("button", "pin");
+    pin.setAttribute("aria-label", (n.pinned ? "Unpin " : "Pin ") + n.title);
+    pin.setAttribute("title", n.pinned ? "Unpin" : "Pin");
+    pin.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="' + (n.pinned ? "currentColor" : "none") + '" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M7 4h10l-1.5 7 2.5 3H5.5L8 11z"/></svg>';
+    pin.addEventListener("click", function(ev){ ev.stopPropagation(); persist(n, {pinned:!n.pinned}, "Couldn't pin that").catch(function(){}); });
+    c.appendChild(pin);
+
+    var box = node("div", "body");
+    var nLines = renderBody(n, box);
+    c.appendChild(box);
+
+    var meta = node("div", "meta");
+    meta.appendChild(node("span", "cat", n.cat));
+    meta.appendChild(node("span", "sp"));
+    meta.appendChild(node("span", "yr", n.date));
+    c.appendChild(meta);
+
+    function act(){ open(n.id); }
+    c.addEventListener("click", act);
+    c.addEventListener("keydown", function(ev){ if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); act(); } });
+
+    // explicit truncation marker, measured after layout
+    requestAnimationFrame(function(){
+      if (box.scrollHeight > box.clientHeight + 2) {
+        box.classList.add("clipped");
+        var m = node("div", "more", nLines + " lines — tap to open");
+        box.parentNode.insertBefore(m, meta);
+      }
+    });
+    return c;
+  }
+
+  function section(label, items, brass){
+    var s = node("div", "section");
+    var e = node("div", "eyebrow" + (brass ? " brass" : ""), label);
+    s.appendChild(e);
+    var w = node("div", "wall");
+    items.forEach(function(n){ w.appendChild(card(n)); });
+    s.appendChild(w);
+    return s;
+  }
+
+  function render(){
+    var shown = NOTES.filter(matches);
+    shown.sort(function(a, b){ return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
+    var pinned = shown.filter(function(n){ return n.pinned; });
+    var rest = shown.filter(function(n){ return !n.pinned; });
+
+    el.wall.textContent = "";
+    if (!shown.length) {
+      var em = node("div", "empty");
+      em.appendChild(node("div", null, showArch ? "Nothing archived yet." : "No notes match " + (q ? '"' + q + '"' : "that filter") + "."));
+      el.wall.appendChild(em);
+    } else {
+      if (pinned.length) el.wall.appendChild(section("Pinned", pinned, true));
+      if (rest.length) el.wall.appendChild(section(
+        showArch ? "Archived"
+          : (cat || q) ? shown.length + " matching"
+          : pinned.length ? "Everything else" : "All notes", rest, false));
+    }
+    el.count.textContent = shown.length === NOTES.length
+      ? NOTES.length + " notes"
+      : shown.length + " / " + NOTES.length;
+    chips();
+  }
+
+  function chips(){
+    var counts = {}, live = NOTES.filter(function(n){ return !!n.archived === showArch; });
+    live.forEach(function(n){ counts[n.cat] = (counts[n.cat] || 0) + 1; });
+    var keys = Object.keys(counts).sort();
+    el.chips.textContent = "";
+    function mk(label, value, n){
+      var b = node("button", "chip");
+      b.setAttribute("aria-pressed", cat === value ? "true" : "false");
+      b.appendChild(document.createTextNode(label));
+      var s = node("b", null, n);
+      b.appendChild(s);
+      b.addEventListener("click", function(){ cat = (cat === value ? "" : value); render(); });
+      return b;
+    }
+    el.chips.appendChild(mk("All", "", live.length));
+    keys.forEach(function(k){ el.chips.appendChild(mk(k.replace(/-/g, " "), k, counts[k])); });
+  }
+
+  // --- editor: the card, expanded ---
+  // Blocks are the editing unit. One row per line, uniform: Enter makes the next
+  // row, Backspace on an empty row removes it. Nothing here needs markdown typed.
+  var ed = null, saveT = null, focusIdx = -1, focusEnd = false;
+
+  function parseBlocks(body){
+    var out = [];
+    body.split("\n").forEach(function(line){
+      var m;
+      if (/^\s*$/.test(line)) return;
+      if ((m = line.match(/^#{1,4}\s+(.*)$/))) out.push({t:"sec", x:m[1]});
+      else if ((m = line.match(/^\s*[-*]\s+\[([ xX])\]\s*(.*)$/))) out.push({t:"item", ck:true, done:m[1].toLowerCase() === "x", x:m[2]});
+      else if ((m = line.match(/^\s*[-*]\s+(.*)$/))) out.push({t:"item", ck:false, done:false, x:m[1]});
+      else if ((m = line.match(/^\*(?!\*)(.+)\*\s*$/))) out.push({t:"note", x:m[1]});
+      else out.push({t:"text", x:line});
+    });
+    if (!out.length) out.push({t:"text", x:""});
+    return out;
+  }
+
+  function serialize(blocks){
+    var lines = [];
+    blocks.forEach(function(b, i){
+      if (b.t === "sec") { if (i) lines.push(""); lines.push("## " + b.x); }
+      else if (b.t === "item" && b.ck) lines.push("- [" + (b.done ? "x" : " ") + "] " + b.x);
+      else if (b.t === "item") lines.push("- " + b.x);
+      else if (b.t === "note") lines.push("*" + b.x + "*");
+      else lines.push(b.x);
+    });
+    return lines.join("\n");
+  }
+
+  function bodyNow(){ return ed.raw !== null ? ed.raw : serialize(ed.blocks); }
+  function anyCk(){ return ed.blocks.some(function(b){ return b.t === "item" && b.ck; }); }
+
+  // a section run is the stretch of rows between two headings
+  function runOf(i){
+    var s = i, e = i, B = ed.blocks;
+    while (s > 0 && B[s - 1].t !== "sec") s--;
+    while (e < B.length - 1 && B[e + 1].t !== "sec") e++;
+    return [s, e];
+  }
+  function sink(i){                       // checked -> bottom of its own section
+    var b = ed.blocks.splice(i, 1)[0], r = runOf(i);
+    ed.blocks.splice(r[1], 0, b);
+  }
+  function raise(i){                      // unchecked -> above the checked ones
+    var B = ed.blocks, b = B.splice(i, 1)[0], r = runOf(i), at = r[1] + 1;
+    for (var k = r[0]; k <= r[1]; k++) { if (B[k] && B[k].t === "item" && B[k].done) { at = k; break; } }
+    B.splice(at, 0, b);
+  }
+
+  function touch(){
+    clearTimeout(saveT);
+    el.edSaved.textContent = "";
+    saveT = setTimeout(commit, 350);
+  }
+  function commit(){
+    if (!ed || ed.busy) return Promise.resolve();
+    var t = el.edTitle.value.trim(), b = bodyNow();
+    if (ed.note && t === ed.note.title && b === ed.note.body) return Promise.resolve();
+    if (!ed.id && !t && !b.trim()) return Promise.resolve();   // nothing typed yet
+    ed.busy = true;
+    var p = ed.id
+      ? api("PUT", "/api/notes", {id:ed.id, title:t || "Untitled", body:b})
+      : api("POST", "/api/notes", {title:t || "Untitled", body:b});
+    var mine = ed;
+    return p.then(function(saved){
+      // A new note gets its real path from the server; adopt it so the next
+      // keystroke updates rather than creating a second file.
+      if (mine === ed) { ed.id = saved.id; ed.note = saved; el.edPath.textContent = saved.id; }
+      var ex = null;
+      for (var i = 0; i < NOTES.length; i++) if (NOTES[i].id === saved.id) ex = NOTES[i];
+      if (ex) { for (var k in saved) ex[k] = saved[k]; } else { NOTES.push(saved); }
+      el.edSaved.textContent = "Saved";
+    }).catch(function(e){
+      el.edSaved.textContent = "Not saved";
+      fail("Couldn't save that note", e);
+    }).then(function(){ if (mine === ed) ed.busy = false; });
+  }
+
+  function mkRow(b, i){
+    var row = node("div", "row" + (b.t === "sec" ? " sec" : "") + (b.t === "note" ? " note" : "") + (b.done ? " done" : ""));
+
+    if (b.t === "item" && b.ck) {
+      var cb = node("button", "box" + (b.done ? " on" : ""));
+      cb.setAttribute("aria-label", (b.done ? "Uncheck " : "Check ") + b.x);
+      cb.innerHTML = b.done ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"><path d="m5 13 4.5 4.5L19 7"/></svg>' : "";
+      cb.addEventListener("click", function(){
+        b.done = !b.done;
+        if (b.done) sink(i); else raise(i);
+        focusIdx = -1; draw(); touch();
+      });
+      row.appendChild(cb);
+    } else if (b.t === "item") {
+      row.appendChild(node("div", "grip", "•"));
+    } else {
+      row.appendChild(node("div", "grip", ""));
+    }
+
+    var inp = document.createElement("textarea");
+    inp.className = "it"; inp.rows = 1; inp.value = b.x; inp.spellcheck = false;
+    function grow(){ inp.style.height = "auto"; inp.style.height = inp.scrollHeight + "px"; }
+    inp._grow = grow;
+    inp.setAttribute("aria-label", b.t === "sec" ? "Section name" : "Note line");
+    inp.addEventListener("input", function(){ b.x = inp.value; grow(); touch(); });
+    inp.addEventListener("keydown", function(ev){
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        var nb = b.t === "sec" ? {t:"text", x:""} : {t:b.t, ck:b.ck, done:false, x:""};
+        ed.blocks.splice(i + 1, 0, nb);
+        focusIdx = i + 1; focusEnd = false; draw(); touch();
+      } else if (ev.key === "Backspace" && inp.value === "" && ed.blocks.length > 1) {
+        ev.preventDefault();
+        ed.blocks.splice(i, 1);
+        focusIdx = Math.max(0, i - 1); focusEnd = true; draw(); touch();
+      } else if (ev.key === "ArrowUp" && i > 0) {
+        ev.preventDefault(); focusIdx = i - 1; focusEnd = true; focusRow();
+      } else if (ev.key === "ArrowDown" && i < ed.blocks.length - 1) {
+        ev.preventDefault(); focusIdx = i + 1; focusEnd = true; focusRow();
+      }
+    });
+    row.appendChild(inp);
+
+    var x = node("button", "x");
+    x.setAttribute("aria-label", "Delete line");
+    x.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+    x.addEventListener("click", function(){
+      ed.blocks.splice(i, 1);
+      if (!ed.blocks.length) ed.blocks.push({t:"text", x:""});
+      focusIdx = -1; draw(); touch();
+    });
+    row.appendChild(x);
+    return row;
+  }
+
+  function focusRow(){
+    if (focusIdx < 0) return;
+    var ins = el.edScroll.querySelectorAll(".it");
+    var t = ins[Math.min(focusIdx, ins.length - 1)];
+    if (!t) return;
+    t.focus();
+    if (focusEnd) t.setSelectionRange(t.value.length, t.value.length);
+  }
+
+  // one "+" per section, so an item lands under Walmart instead of at the bottom
+  function mkAdd(at){
+    while (at > 0 && ed.blocks[at - 1] && ed.blocks[at - 1].t === "item" && ed.blocks[at - 1].done) at--;
+    var add = node("button", "add");
+    add.appendChild(node("span", "grip", "+"));
+    add.appendChild(document.createTextNode(anyCk() ? "List item" : "Line"));
+    add.addEventListener("click", function(){
+      ed.blocks.splice(at, 0, anyCk() ? {t:"item", ck:true, done:false, x:""} : {t:"text", x:""});
+      focusIdx = at; focusEnd = false; draw(); touch();
+    });
+    return add;
+  }
+
+  function draw(){
+    el.edScroll.textContent = "";
+    if (ed.raw !== null) {
+      var ta = document.createElement("textarea");
+      ta.className = "ed-raw"; ta.value = ed.raw; ta.spellcheck = false;
+      ta.setAttribute("aria-label", "Markdown source");
+      ta.addEventListener("input", function(){ ed.raw = ta.value; touch(); });
+      el.edScroll.appendChild(ta);
+      return;
+    }
+    ed.blocks.forEach(function(b, i){
+      el.edScroll.appendChild(mkRow(b, i));
+      var nx = ed.blocks[i + 1];
+      if (!nx || nx.t === "sec") el.edScroll.appendChild(mkAdd(i + 1));
+    });
+    var ta = el.edScroll.querySelectorAll(".it");
+    for (var k = 0; k < ta.length; k++) { if (ta[k]._grow) ta[k]._grow(); }
+    focusRow(); focusIdx = -1; focusEnd = false;
+  }
+
+  function syncBar(){
+    el.edCheck.setAttribute("aria-pressed", ed.raw === null && anyCk() ? "true" : "false");
+    el.edRaw.setAttribute("aria-pressed", ed.raw !== null ? "true" : "false");
+    el.edPin.setAttribute("aria-pressed", ed.note && ed.note.pinned ? "true" : "false");
+    el.edCheck.disabled = ed.raw !== null;
+    el.edArch.setAttribute("aria-label", ed.note && ed.note.archived ? "Unarchive note" : "Archive note");
+  }
+
+  function open(id){
+    var n = null;
+    for (var i = 0; i < NOTES.length; i++) if (NOTES[i].id === id) n = NOTES[i];
+    ed = {id:id || null, note:n, busy:false, blocks:parseBlocks(n ? n.body : ""), raw:null};
+    el.edTitle.value = n ? n.title : "";
+    el.edPath.textContent = n ? n.path : "Inbox/" + new Date().toISOString().slice(0, 10) + "-new-note.md";
+    el.edSaved.textContent = n ? "Edited " + n.date : "";
+    el.scrim.hidden = false;
+    syncBar(); draw();
+    if (!n) el.edTitle.focus();
+  }
+  function close(){
+    if (!ed) return;
+    clearTimeout(saveT);
+    commit().then(render);
+    ed = null; el.scrim.hidden = true; render();
+  }
+
+  el.edTitle.addEventListener("input", touch);
+  el.edClose.addEventListener("click", close);
+  el.scrim.addEventListener("click", function(ev){ if (ev.target === el.scrim) close(); });
+  document.addEventListener("keydown", function(ev){ if (ev.key === "Escape" && ed) close(); });
+
+  el.edPin.addEventListener("click", function(){
+    commit().then(function(){
+      if (!ed || !ed.note) return;
+      return persist(ed.note, {pinned:!ed.note.pinned}, "Couldn't pin that").then(syncBar);
+    }).catch(function(){});
+  });
+
+  // Keep's "Show checkboxes", on a corpus that is mostly bare lines
+  el.edCheck.addEventListener("click", function(){
+    var on = anyCk();
+    ed.blocks.forEach(function(b){
+      if (b.t === "sec") return;
+      if (on) { b.t = "text"; b.ck = false; b.done = false; }
+      else { b.t = "item"; b.ck = true; b.done = !!b.done; }
+    });
+    focusIdx = -1; draw(); syncBar(); touch();
+  });
+
+  el.edRaw.addEventListener("click", function(){
+    if (ed.raw === null) ed.raw = serialize(ed.blocks);
+    else { ed.blocks = parseBlocks(ed.raw); ed.raw = null; }
+    focusIdx = -1; draw(); syncBar(); touch();
+  });
+
+  el.edArch.addEventListener("click", function(){
+    commit().then(function(){
+      if (!ed || !ed.note) { close(); return; }
+      var n = ed.note, was = !!n.archived;
+      close();
+      return persist(n, {archived:!was}, "Couldn't archive that").then(function(){
+        toast(was ? "Unarchived" : "Archived", function(){
+          persist(n, {archived:was}, "Couldn't undo that").catch(function(){});
+        });
+      });
+    }).catch(function(){});
+  });
+
+  // Delete MOVES the note to Trash/ on the box, so undo restores a real file
+  // and a mis-tap is recoverable from the space even after the toast is gone.
+  el.edDel.addEventListener("click", function(){
+    commit().then(function(){
+      if (!ed || !ed.id) { close(); return; }
+      var id = ed.id;
+      close();
+      return api("POST", "/api/notes/trash", {id:id}).then(function(d){
+        return refresh().then(function(){
+          toast("Note deleted", function(){
+            api("POST", "/api/notes/restore", {id:d.trashed})
+              .then(refresh)
+              .catch(function(e){ fail("Couldn't restore that note", e); });
+          });
+        });
+      });
+    }).catch(function(e){ fail("Couldn't delete that note", e); });
+  });
+
+  var toastT = null;
+  function toast(msg, undo){
+    clearTimeout(toastT);
+    el.toastMsg.textContent = msg;
+    el.toast.hidden = false;
+    el.toastUndo.onclick = function(){ undo(); el.toast.hidden = true; };
+    toastT = setTimeout(function(){ el.toast.hidden = true; }, 6000);
+  }
+
+  el.newBtn.addEventListener("click", function(){ open(null); });
+  el.archBtn.addEventListener("click", function(){
+    showArch = !showArch; cat = "";
+    el.archBtn.setAttribute("aria-pressed", showArch ? "true" : "false");
+    render();
+  });
+  el.q.addEventListener("input", function(){ q = el.q.value.trim().toLowerCase(); render(); });
+
+  el.wall.appendChild(node("div", "empty", "Loading notes…"));
+  refresh().catch(function(e){
+    el.wall.textContent = "";
+    var em = node("div", "empty");
+    em.appendChild(node("div", null, "Couldn't reach the notes service."));
+    em.appendChild(node("div", null, (e && e.message) || ""));
+    el.wall.appendChild(em);
+  });
+})();
+</script>
+</body>
+</html>
