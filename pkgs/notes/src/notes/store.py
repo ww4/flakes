@@ -58,6 +58,7 @@ class Note:
     archived_by: list[str]  # and per person, which is what a shared note needs
     shared: bool
     filed: bool
+    order: int | None      # manual position, pinned notes only
     author: str
     had_h1: bool
 
@@ -128,6 +129,13 @@ def _title_from_name(rel: str) -> str:
     return rest or stem
 
 
+def _int_or_none(v: str | None) -> int | None:
+    try:
+        return int((v or "").strip())
+    except ValueError:
+        return None
+
+
 def _archived_any(fm: list[str]) -> bool:
     """Archived by anyone — the legacy global flag, or any named person.
 
@@ -176,6 +184,7 @@ def read(space: Path, rel: str, *, allow_trash: bool = False) -> Note:
         # Without this "uncategorised" is invisible: an unfiled Keep note
         # reads as category "keep", indistinguishable from one filed there.
         filed=bool(_fm_get(fm, "category")),
+        order=_int_or_none(_fm_get(fm, "order")),
         date=when[:10],
         pinned=(_fm_get(fm, "pinned") or "").lower() in TRUE,
         archived=_archived_any(fm),
@@ -218,6 +227,7 @@ def write(
     pinned: bool | None = None,
     archived: bool | None = None,
     shared: bool | None = None,
+    order: int | None = None,
     actor: str | None = None,
     category: str | None = None,
     author: str | None = None,
@@ -254,6 +264,11 @@ def write(
             now.remove(act)
         fm = _fm_set(fm, "archived", None)
         fm = _fm_set(fm, "archived_by", ", ".join(sorted(set(now))) if now else None)
+    if order is not None:
+        # Manual position, and ONLY for pinned notes — Chris scoped it there
+        # deliberately. Ordering 1382 notes by hand is not a thing anyone does;
+        # ordering the handful you pinned is. A negative value clears it.
+        fm = _fm_set(fm, "order", str(order) if order >= 0 else None)
     if shared is not None:
         # "Shared" is a PLACE a note is put, like archived -- not a computed
         # union of everyone's notes. Chris: "I want that to be a shared space

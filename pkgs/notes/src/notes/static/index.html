@@ -321,6 +321,14 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 .drawer .sep{height:1px; background:var(--line); margin:8px 0}
 .drawer svg{flex:none}
 
+/* drag to reorder, pinned only */
+.card.lifted{
+  box-shadow:0 10px 26px #00000038, 0 0 0 2px var(--brass);
+  transform:scale(1.03); opacity:.97; position:relative; z-index:5;
+}
+.swipe.lifting{touch-action:none}
+.swipe.ghost .card{opacity:.28}
+
 /* selection mode — long press to enter, then tap to add, like Keep */
 .selbar{
   position:absolute; inset:0; z-index:22; display:flex; align-items:center; gap:4px;
@@ -1163,6 +1171,7 @@ body.selecting .pin{display:none}
     if (n.pending || n.trashed || !("ontouchstart" in window) || selMode) return wrap;
 
     var x0 = 0, y0 = 0, decided = false, dragging = false, lp = null, dx = 0;
+    var pressX = 0, pressY = 0;
     function reset(){
       wrap.classList.remove("dragging");
       cardEl.style.transform = ""; bg.style.opacity = 0; dx = 0;
@@ -1173,14 +1182,21 @@ body.selecting .pin{display:none}
       if (ev.touches.length !== 1) return;
       x0 = ev.touches[0].clientX; y0 = ev.touches[0].clientY;
       decided = false; dragging = false; dx = 0;
+      pressX = x0; pressY = y0;
       lp = setTimeout(function(){
         lp = null;
         if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) {} }
-        if (selMode) toggleSel(n.id); else enterSel(n.id);
+        // Keep's model: the hold LIFTS the note. Move from here and you are
+        // dragging it; let go without moving and you are selecting it. Only
+        // pinned notes can be dragged, so everything else selects at once.
+        if (n.pinned && view === "wall" && !selMode) { lift(wrap, cardEl, n); }
+        else if (selMode) toggleSel(n.id);
+        else enterSel(n.id);
       }, PRESS_MS);
     }, {passive: true});
 
     wrap.addEventListener("touchmove", function(ev){
+      if (DRAG) return;                   // a lifted note is being reordered
       var t = ev.touches[0], ax = t.clientX - x0, ay = t.clientY - y0;
       if (!decided) {
         if (Math.abs(ax) > DECIDE_PX && Math.abs(ax) > Math.abs(ay)) {
@@ -1206,6 +1222,7 @@ body.selecting .pin{display:none}
     }, {passive: false});
 
     function finish(){
+      if (DRAG) return;                   // dragEnd owns this gesture
       cancelPress();
       if (!dragging) { reset(); return; }
       var limit = Math.min(120, wrap.offsetWidth * 0.33);
@@ -1237,6 +1254,81 @@ body.selecting .pin{display:none}
     wrap.addEventListener("touchcancel", function(){ cancelPress(); reset(); }, {passive: true});
     return wrap;
   }
+
+  // ---- drag a pinned note to reorder it ----
+  // Scoped to pinned notes (Chris, 2026-11-09). That also makes the hard part
+  // vanish: the pinned set is small, so a drop RENUMBERS it 10, 20, 30… and
+  // writes only the ones whose number actually changed — no fractional
+  // indexing, no drift, nothing to rebalance later.
+  var DRAG = null;
+
+  function lift(wrap, cardEl, n){
+    DRAG = {wrap: wrap, card: cardEl, note: n, moved: false, x0: 0, y0: 0};
+    wrap.classList.add("lifting");
+    cardEl.classList.add("lifted");
+  }
+
+  function pinnedWraps(){
+    var sec = el.wall.querySelector(".section");
+    return sec ? [].slice.call(sec.querySelectorAll(".swipe")) : [];
+  }
+
+  function dragMove(cx, cy){
+    if (!DRAG) return;
+    DRAG.moved = true;
+    DRAG.card.style.transform = "translate(" + (cx - DRAG.x0) + "px," + (cy - DRAG.y0) + "px) scale(1.03)";
+    // Where would it land? The first sibling whose centre we are past.
+    var wraps = pinnedWraps(), me = wraps.indexOf(DRAG.wrap), target = me;
+    for (var i = 0; i < wraps.length; i++) {
+      if (wraps[i] === DRAG.wrap) continue;
+      var r = wraps[i].getBoundingClientRect();
+      if (cy > r.top && cy < r.bottom && cx > r.left && cx < r.right) { target = i; break; }
+    }
+    DRAG.target = target;
+    wraps.forEach(function(w, i){ w.classList.toggle("ghost", i === target && i !== me); });
+  }
+
+  function dragEnd(){
+    if (!DRAG) return;
+    var d = DRAG; DRAG = null;
+    d.wrap.classList.remove("lifting");
+    d.card.classList.remove("lifted");
+    d.card.style.transform = "";
+    pinnedWraps().forEach(function(w){ w.classList.remove("ghost"); });
+
+    if (!d.moved) {                       // held and released: that is a select
+      if (selMode) toggleSel(d.note.id); else enterSel(d.note.id);
+      return;
+    }
+    if (d.target === undefined) return;
+
+    var pins = NOTES.filter(function(x){ return x.pinned; }).sort(function(a, b){
+      var ao = (a.order == null) ? Infinity : a.order, bo = (b.order == null) ? Infinity : b.order;
+      if (ao !== bo) return ao - bo;
+      return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
+    });
+    var from = pins.findIndex(function(x){ return x.id === d.note.id; });
+    if (from < 0 || d.target === from) return;
+    pins.splice(d.target, 0, pins.splice(from, 1)[0]);
+
+    var writes = [];
+    pins.forEach(function(x, i){
+      var want = (i + 1) * 10;
+      if (x.order !== want) { x.order = want; writes.push({id: x.id, order: want}); }
+    });
+    render();
+    writes.reduce(function(chain, w){
+      return chain.then(function(){ return api("PUT", "/api/notes", w).catch(function(){}); });
+    }, Promise.resolve()).then(refresh).catch(function(e){ fail("Couldn't reorder", e); refresh(); });
+  }
+
+  document.addEventListener("touchmove", function(ev){
+    if (!DRAG) return;
+    ev.preventDefault();
+    dragMove(ev.touches[0].clientX, ev.touches[0].clientY);
+  }, {passive: false});
+  document.addEventListener("touchend", function(){ if (DRAG) dragEnd(); }, {passive: true});
+  document.addEventListener("touchcancel", function(){ if (DRAG) dragEnd(); }, {passive: true});
 
   // ---- pull down to sync ----
   // Only from the very top, only when nothing is layered over the wall.
@@ -1317,7 +1409,14 @@ body.selecting .pin{display:none}
     // With a query the server returns them RANKED; re-sorting by date here
     // would throw that away and bury the best match.
     if (!q) shown.sort(function(a, b){ return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
-    var pinned = shown.filter(function(n){ return n.pinned; });
+    var pinned = shown.filter(function(n){ return n.pinned; }).sort(function(a, b){
+      // Manual position wins; anything never dragged keeps its date place
+      // behind the ones that were.
+      var ao = (a.order === null || a.order === undefined) ? Infinity : a.order;
+      var bo = (b.order === null || b.order === undefined) ? Infinity : b.order;
+      if (ao !== bo) return ao - bo;
+      return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
+    });
     var rest = shown.filter(function(n){ return !n.pinned; });
 
     // Pinned always render in full -- there are a handful, and they are the

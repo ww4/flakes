@@ -736,3 +736,37 @@ def test_trash_is_global_and_that_is_deliberate(space):
     trashed = store.trash(space, n.id)
     assert not (space / n.id).exists()          # gone for everyone
     assert (space / trashed).exists()           # and recoverable by anyone
+
+
+# --- manual order, pinned notes only -----------------------------------------
+# Chris scoped drag-to-reorder to pinned notes: ordering 1382 notes by hand is
+# not a thing anyone does, ordering the handful you pinned is.
+
+def test_order_round_trips(space):
+    n = store.create(space, "a", "x")
+    assert store.read(space, n.id).order is None
+    store.write(space, n.id, order=20)
+    assert store.read(space, n.id).order == 20
+    assert "order: 20" in (space / n.id).read_text()
+
+
+def test_a_negative_order_clears_it(space):
+    n = store.create(space, "a", "x")
+    store.write(space, n.id, order=20)
+    store.write(space, n.id, order=-1)
+    assert store.read(space, n.id).order is None
+    assert "order:" not in (space / n.id).read_text()
+
+
+def test_order_survives_edits_and_pins(space):
+    n = store.create(space, "a", "x")
+    store.write(space, n.id, order=30)
+    store.write(space, n.id, body="y", pinned=True)
+    got = store.read(space, n.id)
+    assert got.order == 30 and got.pinned is True
+
+
+def test_a_junk_order_value_reads_as_unset(space):
+    rel = "Keep/2017-03-04 Bring from Kentucky.md"
+    (space / rel).write_text("---\norder: banana\n---\n\n# x\n\ny\n")
+    assert store.read(space, rel).order is None
