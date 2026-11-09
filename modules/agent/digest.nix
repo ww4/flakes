@@ -14,10 +14,18 @@
 # WorkingDirectory is the docs-repo project dir so the agent's memory loads (a run
 # from the wrong dir produced inaccurate results in testing). The explicit
 # Environment=PATH below mirrors the claude user's interactive env so /catch-up's
-# shell-outs (git/curl/jq/systemctl/gromit-notify) resolve — but note it OVERRIDES
-# the systemd `path` option, so cmark-gfm (not in the claude/system profile) is
-# referenced by absolute store path in the script instead of via PATH.
+# shell-outs (git/curl/jq/systemctl) resolve — but note it OVERRIDES the systemd
+# `path` option, so cmark-gfm (not in the claude/system profile) is referenced by
+# absolute store path in the script instead of via PATH. The notifier is too: it
+# was a bare `gromit-notify` until the homelab-modules migration (wave 3c)
+# renamed the system-profile binary to `notify`, which broke both daybook runs
+# on 2026-09-08 with exit 127.
 { config, lib, pkgs, ... }:
+let
+  notifyPkg = import ../services/notify-pkg.nix { inherit pkgs; };
+  claude-run = import ./claude-run-pkg.nix { inherit pkgs; };
+  notify = "${notifyPkg}/bin/gromit-notify";
+in
 {
   systemd.services.claude-weekly-digest = {
     description = "Weekly homelab digest (claude -p /catch-up -> page + ntfy)";
@@ -46,7 +54,7 @@
     script = ''
       set -uo pipefail
       out=/var/lib/digest
-      md="$(timeout 15m claude -p "/catch-up" 2>/dev/null)" \
+      md="$(${claude-run}/bin/claude-run 15m ${pkgs.writeText "catch-up-prompt" "/catch-up"})" \
         || md="# Digest run failed
 
 The weekly digest run did not complete. Check \`journalctl -u claude-weekly-digest\`.
@@ -109,7 +117,7 @@ $sentinel_md"
       # one-line TLDR for the notification (fallback to a generic line)
       tldr="$(printf '%s' "$md" | grep -m1 -iE '^TLDR:' | sed -E 's/^[Tt][Ll][Dd][Rr]:[[:space:]]*//')"
       [ -n "$tldr" ] || tldr="Weekly homelab digest is ready."
-      gromit-notify "Homelab weekly digest" "$tldr
+      ${notify} "Homelab weekly digest" "$tldr
 Full report: https://digest.rosemaryacres.com/" default "calendar"
     '';
   };

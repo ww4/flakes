@@ -51,6 +51,11 @@ in
       dependsOn = [ "mempool-db" ];
       environment = {
         MEMPOOL_BACKEND = "electrum";
+        # Price feed: the default is ONE averaged fetch per hour, on the hour
+        # (log: "Latest BTC fiat averaged price" at 14:00, 15:00, 16:00). The
+        # phone switchboard reads /api/v1/prices for "what's bitcoin at", so
+        # every five minutes — a handful of public-ticker requests per fetch.
+        MEMPOOL_PRICE_UPDATES_PER_HOUR = "12";
         ELECTRUM_HOST   = "172.17.0.1";              # docker0 host gateway
         ELECTRUM_PORT   = "50001";
         ELECTRUM_TLS_ENABLED = "false";
@@ -76,7 +81,22 @@ in
       volumes = [
         "/var/lib/mempool/cache:/backend/cache"
       ];
-      extraOptions = [ "--network=${mempoolNet}" ];
+      # Memory backstop. Deliberately a docker `--memory` flag and NOT
+      # serviceConfig.MemoryMax on docker-mempool-api.service: dockerd puts the
+      # container's processes in their own /system.slice/docker-<id>.scope, so a
+      # cgroup limit on the unit constrains nothing and would be a fig leaf
+      # (verified 2026-09-25 by reading /proc/<pid>/cgroup for the node process).
+      # --memory-swap equal to --memory denies the container swap entirely, which
+      # is the point: the 2026-09-25 incident was swap exhaustion, and this
+      # backend is hot (76% of a core) so its pages are not swap candidates.
+      # 6g is chosen to be loose enough not to misfire before we have measured a
+      # post-fix steady state — with a working cache this should sit far lower.
+      # TIGHTEN once the real figure is known.
+      extraOptions = [
+        "--network=${mempoolNet}"
+        "--memory=6g"
+        "--memory-swap=6g"
+      ];
     };
 
     mempool-web = {
@@ -116,24 +136,48 @@ in
       # API 500'd for 17 days (2026-07-23 → 08-09) while every unit looked
       # healthy. Same root cause, same fix, as services/fulcrum.nix.
       #
-      # Re-read the cookie until bitcoind ACCEPTS it. 401 is the only status
-      # meaning "wrong cookie"; 503 ("Loading block index") / 500 prove auth
-      # already succeeded and the node is just warming up.
+      # Re-read the cookie until bitcoind ACCEPTS it. 200 means the call worked;
+      # 503 ("Loading block index") / 500 prove auth already succeeded and the
+      # node is merely warming up.
+      #
+      # ⚠️ THE SUCCESS TEST IS A WHITELIST, AND THAT IS THE WHOLE POINT.
+      #
+      # It used to be a blacklist — `case "$code" in 401|000) wait ;; *) succeed`
+      # — and on 2026-09-08 that published a stale cookie 1 second into boot,
+      # taking fulcrum AND mempool down together until both were restarted by
+      # hand. The mechanism is a shell detail worth remembering:
+      #
+      #     code=$(curl -w '%{http_code}' ... || echo 000)
+      #
+      # curl ALREADY prints "000" via -w when it cannot connect, and then exits
+      # non-zero, so `|| echo 000` appends a SECOND one. The variable holds
+      # "000000", which is neither 401 nor 000, so the blacklist fell through to
+      # "success" and staged the previous boot's password. Reproduced exactly
+      # against a dead port before this fix was written.
+      #
+      # A blacklist has to enumerate every way the world can go wrong. A
+      # whitelist only has to enumerate the ways it can go RIGHT, so an
+      # unrecognised code — 000000, a proxy's 502, anything future — waits
+      # instead of declaring victory. That asymmetry is why this is a whitelist.
+      #
+      # The `|| true` also moves OUT of the substitution so a connection failure
+      # yields "000" rather than "000000", but that alone would not have saved
+      # us; the blacklist was the real defect.
       for _ in $(seq 1 150); do
         if [ -f ${bitcoindCookie} ]; then
           code=$(${pkgs.curl}/bin/curl -sS -o /dev/null -w '%{http_code}' \
             --max-time 5 --user "$(cat ${bitcoindCookie})" \
             --data-binary '{"jsonrpc":"1.0","id":"probe","method":"uptime","params":[]}' \
-            -H 'content-type: text/plain;' http://127.0.0.1:8332/ 2>/dev/null || echo 000)
-          case "$code" in
-            401|000) ;;
-            *)
+            -H 'content-type: text/plain;' http://127.0.0.1:8332/ 2>/dev/null) || true
+          case "''${code:-000}" in
+            200|500|503)
               # Cookie format: __cookie__:<password>. Strip the prefix; emit as env.
               pw=$(cut -d: -f2 ${bitcoindCookie})
               umask 077
               printf 'CORE_RPC_PASSWORD=%s\n' "$pw" > /var/lib/mempool/rpc.env
               exit 0
               ;;
+            *) ;;   # 401 wrong cookie, 000 not listening, anything else unknown
           esac
         fi
         sleep 2
@@ -232,16 +276,26 @@ in
   systemd.tmpfiles.rules = [
     "d /var/lib/mempool         0755 root root - -"
     "d /var/lib/mempool/mysql   0755 root root - -"
-    # mempool/backend:latest@sha256:358c0a517c8dcf26e7f5c02447de5bab33ec7e3fa6318685cf8012ce36098e3a runs `node backend/server.js` as uid 1001 / gid
-    # 65533 (verified via host `ps` — the container has no explicit User), and
-    # this dir is bind-mounted to /backend/cache. Left root-owned it could never
+    # This dir is bind-mounted to /backend/cache. Left unwritable it could never
     # be written: "EACCES: permission denied, open './cache/tmp-cache.json'".
     # That is not cosmetic — with no cache the backend re-fetches block and tx
     # data from bitcoind on every restart and after every hiccup, which is what
     # saturates bitcoind's RPC work queue (see rpcworkqueue in bitcoind.nix).
-    # Numeric on purpose: uid 1001 belongs to `pinchflat` on the host, so naming
-    # it would wrongly imply a relationship between the two services.
-    "d /var/lib/mempool/cache   0755 1001 65533 - -"
+    #
+    # ⚠️ 2026-09-25: this was `1001 65533` for the life of the deployment and the
+    # cache NEVER worked once. The old comment claimed the image runs as uid 1001
+    # "verified via host `ps`"; it does not. The authoritative read is
+    # /proc/<pid>/status, which reports Uid 1000 / Gid 0 for
+    # `node /backend/package/index.js`. Consequences measured on 2026-09-25:
+    # 303 x EACCES in the log ring, and 117 x "Error writing rbf data to cache
+    # file: Invalid string length" — V8 refusing to JSON.stringify the RBF cache
+    # because the result exceeds its ~512 MB max string length. The backend had
+    # grown to 3.6 GB RSS and 76% of a core, the largest process on the box, and
+    # was the reason all 8.8 GB of swap was consumed.
+    #
+    # Numeric on purpose: uid 1000 belongs to `chris` on the host, so naming it
+    # would wrongly imply a relationship between the two.
+    "d /var/lib/mempool/cache   0755 1000 0 - -"
   ];
 
   services.nginx.virtualHosts."mempool.rosemaryacres.com" = {

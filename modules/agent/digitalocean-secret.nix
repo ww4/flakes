@@ -69,4 +69,22 @@
     owner = "claude";
     mode = "0400";
   };
+  # The Spaces key that publishes the installer ISO (configurator/tools/publish-iso.sh
+  # in homelab-modules reads it as an env file). Declared here next to the other
+  # DO credential; the encrypted file landed in PR 390 without this declaration.
+  sops.secrets."digitalocean-iso" = {
+    sopsFile = ../../secrets/digitalocean-iso.yaml;
+    key = "digitalocean-iso";
+    owner = "claude";
+    mode = "0400";
+  };
+  # The Nix binary-cache signing key for the installer (homelab-installer-1):
+  # configurator/tools/publish-cache.sh signs the closure it pushes to Spaces
+  # with it; the matching public key is in the ISO. Generated 2026-10-05.
+  sops.secrets."homelab-cache-key" = {
+    sopsFile = ../../secrets/homelab-cache-key.yaml;
+    key = "homelab-cache-key";
+    owner = "claude";
+    mode = "0400";
+  };
 }

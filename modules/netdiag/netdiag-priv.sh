@@ -42,6 +42,7 @@ netdiag-priv <subcommand> [args]      (invoked through sudo by `netdiag`)
   lldp                                LLDP/CDP neighbours (receive-only daemon)
   ubnt <cidr>                         Ubiquiti UDP-10001 discovery (adoption state)
   udp-audit <ip>                      curated 20-port UDP service scan
+  plc <iface> [samples]               HomePlug/powerline adapters: membership + PHY rates
   ifstats <iface>                     NIC hardware counters (broadcast/mcast/errors)
   vlan-offload <iface> on|off         NIC VLAN-tag stripping (must be OFF to see tags)
   addr-add <iface> <cidr> [secs]      temporary secondary IP (default 1800s, self-expiring)
@@ -164,6 +165,57 @@ cmd_ra_probe() {
   rdisc6 -m -w 5000 -n "$iface" 2>&1 || true
 }
 
+# HomePlug AV management frames (ethertype 0x88E1) on the local segment.
+#
+# A powerline adapter is a transparent L2 bridge: no IP, no ARP entry of its
+# own, answers no ping. It is invisible to every other probe in this toolkit,
+# which is exactly why a flaky powerline leg presents as "the cameras behind it
+# drop together for no reason". These frames are the only way to see it.
+#
+# The number that matters is the negotiated PHY rate. HomePlug AV healthy is
+# roughly 80-200 Mbit/s; a degraded leg falls to single digits and will drop
+# camera streams while still answering a ping perfectly.
+cmd_plc() {
+  local iface=${1-} samples=${2-1}
+  valid_iface "$iface"
+  if [[ ! $samples =~ ^[0-9]{1,2}$ ]] || ((samples < 1)); then
+    die "samples must be 1-99"
+  fi
+
+  # A wireless interface finds nothing and looks identical to "no adapters
+  # here". Refuse rather than report a false negative — the same trap the other
+  # layer-2 checks carry a warning about.
+  if [[ -d /sys/class/net/${iface}/wireless ]]; then
+    die "${iface} is wireless; HomePlug management frames need a WIRED port on
+      the same segment as the adapters. A wifi run returns nothing and that is
+      indistinguishable from 'there are no powerline adapters'."
+  fi
+
+  echo "== powerline: network membership (${iface}) =="
+  # No device argument = local broadcast, so every adapter on the segment
+  # answers. That is the discovery step.
+  plcstat -i "$iface" -m 2>&1 || echo "  (no reply — see the note below)"
+
+  echo
+  echo "== powerline: topology + per-link PHY rate =="
+  plcstat -i "$iface" -t -l "$samples" -w 1 2>&1 ||
+    echo "  (no reply — see the note below)"
+
+  echo
+  echo "== powerline: local device identity =="
+  plctool -i "$iface" -I 2>&1 || true
+
+  cat <<'NOTE'
+
+NO REPLY AT ALL means one of: there are genuinely no HomePlug adapters on this
+segment; the port is not on the same L2 segment as them; or the adapters use
+HomePlug AV2/G.hn silicon that ignores these frames (G.hn is a different
+standard and these tools cannot see it). It does NOT prove the absence of a
+powerline leg on its own.
+NOTE
+}
+
+
 cmd_lldp() {
   lldpcli show neighbors details 2>/dev/null ||
     die "lldpcli failed — is lldpd running?"
@@ -251,6 +303,7 @@ main() {
     lldp)         cmd_lldp "$@" ;;
     ubnt)         cmd_ubnt "$@" ;;
     udp-audit)    cmd_udp_audit "$@" ;;
+    plc)       cmd_plc "$@" ;;
     ifstats)      cmd_ifstats "$@" ;;
     vlan-offload) cmd_vlan_offload "$@" ;;
     addr-add)     cmd_addr_add "$@" ;;

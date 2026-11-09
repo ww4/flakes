@@ -4,8 +4,12 @@
 { config, lib, pkgs, ... }:
 {
   imports = [
-    ./immich-ml.nix   # Immich ML inference offloaded from gromit (CPU on the 5900X)
-    ./llm.nix         # local LLM stack (llama.cpp GPU+CPU + Open WebUI)
+    ./immich-ml.nix    # Immich ML inference offloaded from gromit (CPU on the 5900X)
+    ./llm.nix          # local LLM stack (llama.cpp GPU+CPU + Open WebUI)
+    ./agent-access.nix # scoped `claude` agent login (SSH + ONE efibootmgr rule)
+    ./boot-order.nix   # re-assert NixOS first in the EFI order (Windows reverts it)
+    ./switchboard-inference.nix   # whisper + Kokoro for gromit's phone switchboard (gromit falls back to local when this box is off)
+    ./netradio-profile-server.nix # gromit's music-library profiler (YAMNet + era measurements), same fallback shape
   ];
 
   # Dual-boot: GRUB (EFI) with os-prober so the menu lists NixOS + Windows.
@@ -43,6 +47,22 @@
     openssh.authorizedKeys.keys = [
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFbsMI9lXpM1bi2fR2Ew1DnubEMGcdl3MuFNbqyyn0xI chris@saenzmail.net"   # Chris's personal workstation key (same key declared on gromit)
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII72tYB6OdaFY3kAOYk7A/AEa9hrbckKe6gCoeM1SRhB chris@mcp-server-claude-20260515"
+      # Chris's phone (JuiceSSH). Already trusted on gromit and has been for
+      # months; it was simply never added here, so every phone attempt fell
+      # through publickey to keyboard-interactive and PAM refused it —
+      # `PAM: Authentication failure for chris from 100.87.80.96`, with no
+      # `Failed publickey` line because sshd at LogLevel INFO does not log a
+      # key offer it declines. That absence is what made it look like the
+      # account was broken rather than the key missing.
+      # SHA256:4lC4gWWK5bpLuIDhNcw8rTOXo3FJYz+d61NUMUTJ3gk (2048-bit RSA)
+      "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDuzIfiW4Kg+PzvwLc3dHrTtfCGJ8SBG1h0+9ZOL7mstRwPNQZdPwFDLXeVcX9bqroHQdd1bABERBuR6K6MvnQYQRG+/qIj7wqBr0dqNH55Gd1A8UonMyc+60njo9pvGy/yuMYCKGYBFsX20guDgeQyHt52Dv7IruiRr0EdJ1iMYEusL8bHLbjXPHCKQ4QH245YBK15DFxXSedsYpYnsy1k1xoCAkPQVWsxKqNwABrP8DmtO0MuhtBhx/6Rn8EvwW9YVXQgTcQ6gdQvmodb09NaXhCMPykJOTeCVZ4GvNaWGFEBt0zUScZVx6k9k732/3mcu/a22ubRoHh7jZOA013H chris@bub"
+      # Same phone, ed25519 — generated 2026-10-30 to retire the RSA key above.
+      # SHA256:HWXZhl5fbIDEXZvmoy8ihWzvEGoQAz8hWFMSchsFUb4
+      # Both are listed deliberately: dropping the RSA in the same change that
+      # introduces its replacement would risk locking the phone out of a host
+      # it cannot currently reach at all. Remove the RSA once this one is
+      # confirmed working on both hosts.
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILF2EQv1KPMtUNRokROqzzM7BsrlByKfo+o5l4D3jdHg JuiceSSH"
       # (claude-gromit-tmp-dadpc-recon removed 2026-08-17 — the temporary key
       # from the Rick-WALLACE data recovery, on the standing revoke list.)
     ];
@@ -70,4 +90,25 @@
   environment.systemPackages = with pkgs; [ git vim htop tmux efibootmgr ];
 
   system.stateVersion = "25.11";
+  # ── Heartbeat to the external watcher ───────────────────────────────────────
+  #
+  # wallace's half of the standoff. It reports its own liveness AND whether it
+  # can see gromit, which is what lets the correlator on lock3 tell "gromit is
+  # down" apart from "gromit is up but its heartbeat is not arriving".
+  #
+  # ⚠️ This is the ONLY way wallace's liveness reaches the watcher. lock3 cannot
+  # probe wallace at all — measured 2026-11-01, unreachable in BOTH directions,
+  # an ACL on lock3's tagged-devices tag — so absence of this heartbeat is the
+  # only evidence that will ever exist for wallace being down.
+  #
+  # Peer probe uses gromit's LAN address rather than its tailnet one on purpose:
+  # it tests the path that actually matters for the two of them, and does not
+  # report gromit as down merely because Tailscale is unhappy.
+  homelab.heartbeat = {
+    enable = true;
+    host = "wallace";
+    peer = "gromit";
+    peerAddr = "192.168.1.65";
+    keyFile = config.sops.secrets."homelab-watch".path;
+  };
 }

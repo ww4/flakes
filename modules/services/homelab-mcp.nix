@@ -76,6 +76,29 @@ let
   stateDir = "/var/lib/homelab-mcp";
   credsEnv = "${stateDir}/credentials.env";
 
+  # --- customer NVR status tools -------------------------------------------
+  # Shared derivation with modules/services/blueiris.nix — the MCP tools shell
+  # out to the same tested CLI rather than reimplementing the NVR's MD5 login.
+  blueiris = pkgs.callPackage ../../pkgs/blueiris { };
+  blueirisState = "/var/lib/blueiris";
+
+  # Which customer NVRs the camera tools may name. This is an ALLOWLIST: a site
+  # name selects a credentials file, so leaving it open would be a way to probe
+  # which customers exist.
+  cameraSites = [ "craigmyle" ];
+
+  # ⚠️ SECURITY TRADE-OFF, made deliberately and worth re-reading before adding
+  # a second entry. This service is otherwise IPAddressAllow=localhost, so that
+  # "a bug in request handling cannot be turned into an outbound connection".
+  # The camera tools need exactly one exception: the NVR's tailnet address.
+  #
+  # Kept as narrow as it can be — single /32s, not the tailnet, not the LAN. The
+  # residual risk is that code execution inside homelab-mcp could reach this one
+  # host on this one address; it could already do so THROUGH the camera tools,
+  # so the hole does not grant reachability the tool surface withheld. Anything
+  # broader than a /32 would.
+  cameraNvrs = [ "100.68.224.97/32" ];  # craigmyle-blueiris
+
   # This box's Tailscale address. The listener below binds it specifically
   # rather than the wildcard, so the port cannot appear on the LAN or the WAN
   # even if the firewall rule below were ever loosened.
@@ -190,7 +213,29 @@ in
       # Widen deliberately, page by page or folder by folder — and remember the
       # audience is a chat window, not this box. JSON, because pydantic-settings
       # parses list fields as JSON.
-      HOMELAB_MCP_READABLE_SOURCES = builtins.toJSON [ "Inbox" ];
+      #
+      # ⚠️ WIDENED 2026-09-18, because "Inbox alone" interacted badly with the
+      # nightly triage that empties Inbox/. Measured on the live space that day:
+      # 713 pages, 3 readable — and those 3 were the capture log. search_notes
+      # and read_note could find essentially nothing, while get_context still
+      # worked (it reads CONVENTIONS/index/Projects/Areas directly, bypassing
+      # this list), so the connector LOOKED healthy and could not answer a
+      # follow-up.
+      #
+      # These four are the curated, homelab-facing parts of the space. Audited
+      # page by page before adding: 51 pages, no credential material — the only
+      # two candidates were a note saying a Django SECRET_KEY sits in cleartext
+      # on a droplet, and a billing line recording that a password was changed.
+      # Deliberately still OUT: Keep/ (556 pages of unreviewed import),
+      # Journal/ (personal), System/ (agent internals), and the space root,
+      # where the 2026-09-01 red team found an email address, the VPN exit IP
+      # and a forwarded port on one untagged page.
+      HOMELAB_MCP_READABLE_SOURCES = builtins.toJSON [ "Inbox" "Projects" "Areas" "Notes" ];
+
+      # Carve-outs inside the allowlist, checked BEFORE it and winning over it.
+      # Inbox/Log is the verbatim capture log; "Inbox" above would otherwise
+      # expose it, and there is no way to express the exception with roots alone.
+      HOMELAB_MCP_UNREADABLE_PATHS = builtins.toJSON [ "Inbox/Log" ];
 
       # HOMELAB_MCP_PATH_PREFIX is deliberately NOT set here — it comes from
       # EnvironmentFile below. Setting it in both places would make which one
@@ -200,6 +245,18 @@ in
       HOMELAB_MCP_CONTEXT_PAGE = "Areas/Agent Context.md";
       HOMELAB_MCP_INCLUDE_SERVICE_INVENTORY = "true";
       HOMELAB_MCP_FLAKE_ROOT = "/home/claude/flakes";
+
+      # Camera tools: status of a customer's NVR, and control of OUR alerting
+      # on it. No imagery and no NVR logs are reachable from here — see
+      # pkgs/homelab-mcp/src/homelab_mcp/cameras.py for where that line sits.
+      HOMELAB_MCP_CAMERA_TOOLS = "true";
+      HOMELAB_MCP_CAMERA_SITES = builtins.toJSON cameraSites;
+      HOMELAB_MCP_BLUEIRIS_BINARY = lib.getExe blueiris;
+
+      # Set explicitly rather than left to the pwd lookup: the CLI resolves its
+      # credentials at ~/.config/blueiris/<site>.env, and a service that fell
+      # back to a different HOME would report every site as unconfigured.
+      HOME = "/home/claude";
 
       PYTHONUNBUFFERED = "1"; # audit lines reach journald promptly
     };
@@ -250,12 +307,15 @@ in
 
       # The space is the ONLY writable path. Everything else is read-only even
       # before the application's own path scoping is considered.
-      ReadWritePaths = [ spaceDir ];
+      # The space, plus the blueiris mute list — muting is the one camera
+      # operation that writes, and it writes only here. Camera CREDENTIALS stay
+      # read-only (ProtectHome=read-only covers ~/.config/blueiris).
+      ReadWritePaths = [ spaceDir blueirisState ];
 
       # Loopback only — it cannot reach the LAN or the internet, so a bug in
       # request handling cannot be turned into an outbound connection.
       RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
-      IPAddressAllow = [ "localhost" ];
+      IPAddressAllow = [ "localhost" ] ++ cameraNvrs;
       IPAddressDeny = "any";
     };
   };

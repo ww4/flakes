@@ -89,7 +89,7 @@ AUTOREMOUNT_STATE=/var/lib/pool-autoremount
 # stay in the backup pool rather than being queued for cleanup. Clear them once
 # by hand (or approve the current queue BEFORE this deploys) — after that the
 # path is simply never touched again.
-EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclude=/arr --exclude=/pinchflat --exclude=/rick-offsite --exclude=/bitcoind --exclude=/archive --exclude=/legacy --exclude=/immich/backups --exclude=/immich/thumbs --exclude=/immich/encoded-video)
+EXCLUDES=(--exclude=/restic --exclude=/.graveyard --exclude=.pool-member --exclude=/arr --exclude=/pinchflat --exclude=/rick-offsite --exclude=/bitcoind --exclude=/tc-merge --exclude=/archive --exclude=/legacy --exclude=/immich/backups --exclude=/immich/thumbs --exclude=/immich/encoded-video)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Notification failures must never abort a backup.

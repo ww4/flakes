@@ -1,0 +1,680 @@
+"""Tests for wx. These run in the derivation's checkPhase, so a broken pipeline
+fails the BUILD and a bad merge cannot deploy.
+
+What is tested here is the part that is otherwise only observable during an
+actual storm: the dedup that decides he is not told twice, the four clauses of
+the Layer 3 threshold, and the quiet-hours contract. Those are exactly the
+behaviours nobody can check by watching it run on a calm Tuesday.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+import unittest
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# ⚠️ Same guard as the newsdesk suite: a test run that can reach live state
+# will eventually corrupt it. Refuse rather than trust the environment.
+_state = os.environ.get("WX_STATE", "")
+if not _state or _state.startswith("/var/lib"):
+    raise SystemExit("refusing to run: set WX_STATE to a sandbox path")
+
+from wx import db, extract, geo, notify, render, rules, ryan  # noqa: E402
+from wx import nws  # noqa: E402
+
+
+def mkcon():
+    tmp = tempfile.mkdtemp(dir=_state) if Path(_state).exists() else tempfile.mkdtemp()
+    return db.connect(Path(tmp) / "t.db")
+
+
+# --------------------------------------------------------------------------- geo
+
+SQUARE = {"type": "Polygon", "coordinates": [
+    [[-85.0, 38.0], [-84.0, 38.0], [-84.0, 39.0], [-85.0, 39.0], [-85.0, 38.0]]]}
+
+# A square with a square hole punched out of the middle. SPC draws these.
+HOLED = {"type": "Polygon", "coordinates": [
+    [[-85.0, 38.0], [-84.0, 38.0], [-84.0, 39.0], [-85.0, 39.0], [-85.0, 38.0]],
+    [[-84.7, 38.3], [-84.3, 38.3], [-84.3, 38.7], [-84.7, 38.7], [-84.7, 38.3]]]}
+
+
+class TestGeo(unittest.TestCase):
+    def test_point_inside_and_outside(self):
+        self.assertTrue(geo.point_in_geometry(SQUARE, -84.5, 38.5))
+        self.assertFalse(geo.point_in_geometry(SQUARE, -83.5, 38.5))
+        self.assertFalse(geo.point_in_geometry(SQUARE, -84.5, 39.5))
+
+    def test_hole_is_not_inside(self):
+        self.assertFalse(geo.point_in_geometry(HOLED, -84.5, 38.5))   # in the hole
+        self.assertTrue(geo.point_in_geometry(HOLED, -84.9, 38.1))    # in the ring
+
+    def test_multipolygon(self):
+        multi = {"type": "MultiPolygon",
+                 "coordinates": [SQUARE["coordinates"], HOLED["coordinates"]]}
+        self.assertTrue(geo.point_in_geometry(multi, -84.5, 38.5))
+
+    def test_missing_geometry_never_matches(self):
+        # An alert with no polygon must not silently match his house.
+        self.assertFalse(geo.point_in_geometry(None, -84.5, 38.5))
+        self.assertFalse(geo.point_in_geometry({"type": "Point"}, -84.5, 38.5))
+
+    def test_fence_strong_term_alone_passes(self):
+        self.assertTrue(geo.in_fence(["Northern Kentucky"]))
+        self.assertTrue(geo.in_fence(["the Ohio Valley"]))
+
+    def test_fence_one_weak_term_is_not_enough(self):
+        self.assertFalse(geo.in_fence(["the Midwest"]))
+        self.assertFalse(geo.in_fence([]))
+
+    def test_fence_two_weak_terms_pass(self):
+        self.assertTrue(geo.in_fence(["the Midwest", "Tennessee Valley"]))
+
+    def test_fence_scores_terms_not_mentions(self):
+        # Saying Kentucky four times is one signal, not four.
+        self.assertEqual(geo.fence_score(["Kentucky", "Kentucky", "Kentucky"]),
+                         geo.fence_score(["Kentucky"]))
+
+
+# --------------------------------------------------------------------------- nws
+
+def alert(event, aid, **kw):
+    props = {"id": aid, "event": event, "severity": "Severe",
+             "headline": kw.pop("headline", f"{event} issued"), "description": ""}
+    props.update(kw)
+    return props
+
+
+class TestNwsClassify(unittest.TestCase):
+    def test_tornado_warning_is_critical(self):
+        self.assertEqual(nws.classify(alert("Tornado Warning", "a")), "critical")
+
+    def test_severe_thunderstorm_warning_is_not_critical(self):
+        # Chris was explicit about this one on 2026-09-07.
+        self.assertEqual(nws.classify(alert("Severe Thunderstorm Warning", "a")),
+                         "warning")
+
+    def test_flash_flood_emergency_detected_in_the_text(self):
+        # It arrives as a Flash Flood Warning; the event name alone misses it.
+        props = alert("Flash Flood Warning", "a",
+                      description="...FLASH FLOOD EMERGENCY FOR OWEN COUNTY...")
+        self.assertEqual(nws.classify(props), "critical")
+
+    def test_extreme_severity_is_critical_whatever_the_event(self):
+        self.assertEqual(nws.classify(alert("Odd Product", "a", severity="Extreme")),
+                         "critical")
+
+    def test_slow_river_flooding_is_a_warning_not_info(self):
+        # 2026-09-15: the list carried Flash Flood Warning only, so a Kentucky
+        # River crest classified as `info` and was never pushed at all. Found by
+        # running REAL live NWS alerts through the classifier, not by reading it.
+        self.assertEqual(nws.classify(alert("Flood Warning", "a")), "warning")
+        self.assertEqual(nws.classify(alert("River Flood Warning", "a")), "warning")
+
+    def test_flood_warning_still_never_wakes_him(self):
+        # Worth knowing, never worth waking for — unless it escalates to a Flash
+        # Flood Emergency, which classify() catches from the TEXT, not the event.
+        self.assertNotEqual(nws.classify(alert("Flood Warning", "a")), "critical")
+        self.assertEqual(
+            nws.classify(alert("Flood Warning", "a",
+                               description="...FLASH FLOOD EMERGENCY...")), "critical")
+
+    def test_advisories_are_info(self):
+        self.assertEqual(nws.classify(alert("Heat Advisory", "a")), "info")
+        self.assertEqual(nws.classify(alert("Special Weather Statement", "a")), "info")
+        # Flood WATCH stays info — a watch is a maybe, and the whole point of the
+        # info class is that maybes do not generate pushes.
+        self.assertEqual(nws.classify(alert("Flood Watch", "a")), "info")
+
+    def test_family(self):
+        self.assertEqual(nws.family("Tornado Warning"), "Tornado")
+        self.assertEqual(nws.family("Tornado Watch"), "Tornado")
+
+
+class TestNwsProcess(unittest.TestCase):
+    def setUp(self):
+        self.con = mkcon()
+
+    def test_new_warning_is_reported_once(self):
+        a = [alert("Tornado Warning", "urn:1")]
+        self.assertEqual(len(nws.process(self.con, a)), 1)
+        # Same id again on the next poll: silence.
+        self.assertEqual(len(nws.process(self.con, a)), 0)
+
+    def test_reissue_with_a_new_id_is_suppressed(self):
+        t0 = datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc)
+        nws.process(self.con, [alert("Tornado Warning", "urn:1")], when=t0)
+        # NWS reissues the same warning minutes later under a new id.
+        out = nws.process(self.con, [alert("Tornado Warning", "urn:2")],
+                          when=t0 + timedelta(minutes=12))
+        self.assertEqual(out, [], "a reissue must not push a second time")
+
+    def test_escalation_gets_through_the_cooldown(self):
+        t0 = datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc)
+        nws.process(self.con, [alert("Tornado Watch", "urn:1")], when=t0)
+        out = nws.process(self.con, [alert("Tornado Warning", "urn:2")],
+                          when=t0 + timedelta(minutes=20))
+        self.assertEqual(len(out), 1, "watch -> warning is an upgrade, not a reissue")
+        self.assertEqual(out[0]["class"], "critical")
+        self.assertTrue(out[0]["escalated"])
+
+    def test_after_the_cooldown_a_fresh_episode_reports_again(self):
+        t0 = datetime(2026, 9, 7, 12, 0, tzinfo=timezone.utc)
+        nws.process(self.con, [alert("Severe Thunderstorm Warning", "urn:1")], when=t0)
+        out = nws.process(self.con, [alert("Severe Thunderstorm Warning", "urn:9")],
+                          when=t0 + timedelta(hours=5))
+        self.assertEqual(len(out), 1)
+
+    def test_info_alerts_never_report(self):
+        self.assertEqual(nws.process(self.con, [alert("Heat Advisory", "urn:1")]), [])
+
+    def test_unrelated_families_do_not_suppress_each_other(self):
+        t0 = datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc)
+        nws.process(self.con, [alert("Flash Flood Warning", "urn:1")], when=t0)
+        out = nws.process(self.con, [alert("Tornado Warning", "urn:2")],
+                          when=t0 + timedelta(minutes=5))
+        self.assertEqual(len(out), 1)
+
+
+# ------------------------------------------------------------------------- rules
+
+BASE = {
+    "system_id": "2026-09-10-ohv",
+    "hazards": ["tornado"],
+    "regions": ["northern Kentucky"],
+    "window_start": "2026-09-10",
+    "window_end": "2026-09-10",
+    "confidence": "confident",
+    "escalation": "flat",
+    "fence_score": 2,
+}
+TODAY = date(2026, 9, 7)
+
+
+def fields(**kw):
+    out = dict(BASE)
+    out.update(kw)
+    return out
+
+
+class TestWindowOffsets(unittest.TestCase):
+    def test_forward_window(self):
+        self.assertEqual(rules.window_offsets("2026-09-09", "2026-09-10", TODAY), [2, 3])
+
+    def test_past_window_is_empty(self):
+        self.assertEqual(rules.window_offsets("2026-09-01", "2026-09-02", TODAY), [])
+
+    def test_missing_dates(self):
+        self.assertEqual(rules.window_offsets(None, None, TODAY), [])
+
+
+class TestSpcAhead(unittest.TestCase):
+    def test_beyond_the_horizon_is_always_ahead(self):
+        self.assertTrue(rules.spc_is_ahead([5], drawn=set(), known={1, 2, 3}))
+
+    def test_looked_and_blank_is_ahead(self):
+        self.assertTrue(rules.spc_is_ahead([2], drawn=set(), known={1, 2, 3}))
+
+    def test_drawn_is_not_ahead(self):
+        self.assertFalse(rules.spc_is_ahead([2], drawn={2}, known={1, 2, 3}))
+
+    def test_could_not_look_is_treated_as_covered(self):
+        # The inverse would turn every SPC outage into a push storm.
+        self.assertFalse(rules.spc_is_ahead([2], drawn=set(), known=set()))
+
+
+class TestThreshold(unittest.TestCase):
+    def setUp(self):
+        self.con = mkcon()
+
+    def ev(self, f, drawn=frozenset(), known=frozenset({1, 2, 3})):
+        return rules.evaluate(f, drawn=set(drawn), known=set(known), today=TODAY)
+
+    def test_pushes_when_ahead_of_spc(self):
+        d = self.ev(fields())
+        self.assertTrue(d.push, d.reason)
+        self.assertIn("ahead of SPC", d.reason)
+
+    def test_quiet_when_spc_already_has_it(self):
+        d = self.ev(fields(), drawn={3})
+        self.assertFalse(d.push)
+        self.assertIn("SPC already has it", d.reason)
+
+    def test_escalation_pushes_even_when_spc_has_it(self):
+        d = self.ev(fields(escalation="up"), drawn={3})
+        self.assertTrue(d.push, d.reason)
+        self.assertIn("escalating", d.reason)
+
+    def test_non_severe_hazard_never_pushes(self):
+        self.assertFalse(self.ev(fields(hazards=["heat"])).push)
+        self.assertFalse(self.ev(fields(hazards=["rain"])).push)
+
+    def test_outside_the_fence_never_pushes(self):
+        self.assertFalse(self.ev(fields(regions=["west Texas"], fence_score=0)).push)
+
+    def test_beyond_seven_days_never_pushes(self):
+        far = fields(window_start="2026-09-30", window_end="2026-09-30")
+        self.assertFalse(self.ev(far).push)
+
+    def test_speculative_without_escalation_is_quiet(self):
+        self.assertFalse(self.ev(fields(confidence="speculative")).push)
+
+    def test_speculative_with_escalation_pushes(self):
+        self.assertTrue(self.ev(fields(confidence="speculative", escalation="up")).push)
+
+    def test_recap_of_past_weather_never_pushes(self):
+        past = fields(window_start="2026-09-01", window_end="2026-09-02")
+        self.assertFalse(self.ev(past).push)
+
+    def test_per_system_cooldown(self):
+        f = fields()
+        now_ = datetime(2026, 9, 7, 12, 0, tzinfo=timezone.utc)
+        recent = rules.evaluate(f, drawn=set(), known={1, 2, 3}, today=TODAY,
+                                previous_push=now_ - timedelta(hours=3), when=now_)
+        self.assertFalse(recent.push)
+        later = rules.evaluate(f, drawn=set(), known={1, 2, 3}, today=TODAY,
+                               previous_push=now_ - timedelta(hours=30), when=now_)
+        self.assertTrue(later.push)
+
+    def test_decide_reads_the_cooldown_from_the_push_log(self):
+        db.record_push(self.con, layer=3, key="ryan:2026-09-10-ohv",
+                       priority="default", title="t", body="b")
+        d = rules.decide(self.con, fields(), drawn=set(), known={1, 2, 3}, today=TODAY)
+        self.assertFalse(d.push)
+
+
+class TestHazardOrdering(unittest.TestCase):
+    """The two titles that actually reached Chris's phone are the test cases."""
+
+    def test_tornado_is_never_truncated_away(self):
+        # 2026-09-10 shipped as "damaging wind, hail" — it dropped the tornado.
+        stored = sorted(["damaging wind", "hail", "tornado"])   # alphabetical, as stored
+        self.assertEqual(rules.by_severity(stored)[:2], ["tornado", "damaging wind"])
+
+    def test_a_non_severe_hazard_never_leads(self):
+        # 2026-09-14 shipped as "cold, flash flood" — it led with "cold".
+        stored = sorted(["cold", "flash flood"])
+        self.assertEqual(rules.by_severity(stored)[0], "flash flood")
+
+    def test_full_ordering_is_most_dangerous_first(self):
+        hz = ["hail", "significant snow", "tornado", "flash flood"]
+        self.assertEqual(rules.by_severity(hz),
+                         ["tornado", "flash flood", "significant snow", "hail"])
+
+    def test_unknown_hazards_sort_last_but_are_not_dropped(self):
+        out = rules.by_severity(["waterspout", "tornado"])
+        self.assertEqual(out[0], "tornado")
+        self.assertIn("waterspout", out)
+
+    def test_empty(self):
+        self.assertEqual(rules.by_severity([]), [])
+        self.assertEqual(rules.by_severity(None), [])
+
+
+class TestLayer2Visibility(unittest.TestCase):
+    """`wx ryan` exits 0 on an external block, so this string is the only signal."""
+
+    def setUp(self):
+        from wx import cli
+        self.con = mkcon()
+        self.cli = cli
+
+    def test_never_run(self):
+        self.assertEqual(self.cli.layer2_state(self.con), "never run")
+
+    def test_quiet_day_is_not_an_alarm(self):
+        db.set_meta(self.con, "last_ryan_result", "0/0/0")
+        self.assertIn("ok", self.cli.layer2_state(self.con))
+
+    def test_wanted_but_fetched_nothing_is_loud(self):
+        # The exact 2026-09-09 shape: 2 videos wanted, both 429'd, unit exit 0.
+        db.set_meta(self.con, "last_ryan_result", "2/0/2")
+        state = self.cli.layer2_state(self.con)
+        self.assertIn("FETCHED NOTHING", state)
+        self.assertIn("never", state)          # no prior productive run
+
+    def test_a_productive_run_reads_as_ok(self):
+        db.set_meta(self.con, "last_ryan_result", "2/2/0")
+        self.assertIn("ok", self.cli.layer2_state(self.con))
+
+    def test_corrupt_meta_does_not_crash_status(self):
+        db.set_meta(self.con, "last_ryan_result", "garbage")
+        self.assertIn("unparseable", self.cli.layer2_state(self.con))
+
+
+# ------------------------------------------------------------------------- ryan
+
+JSON3 = json.dumps({"events": [
+    {"tStartMs": 0, "segs": [{"utf8": "A big "}, {"utf8": "severe"}]},
+    {"tStartMs": 900, "segs": [{"utf8": "\n"}]},
+    {"tStartMs": 1800, "segs": [{"utf8": " threat for Kentucky."}]},
+]})
+
+
+class TestRyan(unittest.TestCase):
+    def setUp(self):
+        self.con = mkcon()
+
+    def test_parse_json3_flattens_to_prose(self):
+        self.assertEqual(ryan.parse_json3(JSON3), "A big severe threat for Kentucky.")
+
+    def test_sync_listing_is_idempotent(self):
+        vids = [{"id": "a", "title": "T", "duration": 700}]
+        self.assertEqual(ryan.sync_listing(self.con, vids), 1)
+        self.assertEqual(ryan.sync_listing(self.con, vids), 0)
+
+    def test_throttling_does_not_burn_the_attempt_budget(self):
+        ryan.sync_listing(self.con, [{"id": "a", "title": "T", "duration": 700}])
+        for _ in range(4):
+            state = ryan.record_failure(self.con, "a", "HTTP Error 429: Too Many Requests")
+            self.assertEqual(state, "deferred")
+        row = self.con.execute("SELECT attempts FROM video WHERE id='a'").fetchone()
+        self.assertLess(row["attempts"], ryan.MAX_ATTEMPTS)
+
+    def test_real_failures_eventually_give_up(self):
+        ryan.sync_listing(self.con, [{"id": "b", "title": "T", "duration": 700}])
+        state = "deferred"
+        for _ in range(ryan.MAX_ATTEMPTS):
+            state = ryan.record_failure(self.con, "b", "video unavailable")
+        self.assertEqual(state, "failed")
+
+    def test_backoff_holds_a_deferred_video_back(self):
+        ryan.sync_listing(self.con, [{"id": "c", "title": "T", "duration": 700}])
+        ryan.record_failure(self.con, "c", "HTTP Error 429")
+        soon = datetime.now(timezone.utc) + timedelta(minutes=5)
+        self.assertEqual(ryan.pending_videos(self.con, when=soon), [])
+        later = datetime.now(timezone.utc) + timedelta(hours=4)
+        self.assertEqual(len(ryan.pending_videos(self.con, when=later)), 1)
+
+    def test_per_run_limit_protects_against_the_429(self):
+        ryan.sync_listing(self.con, [
+            {"id": f"v{i}", "title": "T", "duration": 700} for i in range(8)])
+        self.assertEqual(len(ryan.pending_videos(self.con)), ryan.PER_RUN_LIMIT)
+
+
+# ---------------------------------------------------------------------- extract
+
+class TestExtractParsing(unittest.TestCase):
+    def test_bare_json(self):
+        self.assertEqual(extract.parse_response('{"a": 1}'), {"a": 1})
+
+    def test_fenced_json(self):
+        self.assertEqual(extract.parse_response('```json\n{"a": 1}\n```'), {"a": 1})
+
+    def test_prefaced_json(self):
+        self.assertEqual(
+            extract.parse_response('Here you go:\n{"a": 1}\nhope that helps'),
+            {"a": 1})
+
+    def test_no_json_raises(self):
+        with self.assertRaises(ValueError):
+            extract.parse_response("I could not read that transcript.")
+
+    def test_normalise_fills_defaults_and_scores_the_fence(self):
+        out = extract.normalise({"hazards": ["Tornadoes", "flooding"],
+                                 "regions": ["Ohio Valley"],
+                                 "escalation": "sideways"})
+        self.assertEqual(out["hazards"], ["flash flood", "tornado"])
+        self.assertEqual(out["escalation"], "new")     # unknown value rejected
+        self.assertEqual(out["confidence"], "hedged")  # default
+        self.assertGreaterEqual(out["fence_score"], 2)
+
+    def test_normalise_tolerates_a_junk_window(self):
+        out = extract.normalise({"window": "next week"})
+        self.assertIsNone(out["window_start"])
+
+
+# ----------------------------------------------------------------------- render
+
+class TestRender(unittest.TestCase):
+    def test_a_terse_post_still_clears_the_newsdesk_floor(self):
+        # The failure this guards is silent: newsdesk drops short corpus posts
+        # and reports success, so the item simply never appears.
+        transcript = ("We are watching a system for Thursday. " * 60)
+        body = render.render_post(
+            video={"id": "abc", "title": "A Severe Threat Is Coming",
+                   "published": "2026-09-07T18:00:00+00:00"},
+            fields=extract.normalise({"summary": "He is watching Thursday.",
+                                      "hazards": ["tornado"],
+                                      "regions": ["northern Kentucky"],
+                                      "quotes": ["Thursday looks active."]}),
+            transcript=transcript, spc_note="SPC has nothing drawn")
+        self.assertGreaterEqual(render.word_count(body), render.NEWSDESK_MIN_WORDS)
+
+    def test_front_matter_is_what_the_newsdesk_expects(self):
+        body = render.render_post(
+            video={"id": "abc", "title": "T", "published": "2026-09-07T00:00:00+00:00"},
+            fields=extract.normalise({}), transcript="x " * 400)
+        self.assertTrue(body.startswith("---\n"))
+        self.assertIn("date: 2026-09-07", body)
+        self.assertIn("url: https://www.youtube.com/watch?v=abc", body)
+
+    def test_excerpt_centres_on_the_region_mention(self):
+        transcript = ("filler " * 200) + "big trouble for northern Kentucky " + ("tail " * 200)
+        out = render._excerpt(transcript, ["northern Kentucky"])
+        self.assertIn("northern Kentucky", out)
+
+
+# ----------------------------------------------------------------------- notify
+
+EVENING = datetime(2026, 9, 7, 23, 30, tzinfo=timezone.utc)   # 7:30 p.m. Eastern
+LATE = datetime(2026, 9, 8, 4, 30, tzinfo=timezone.utc)       # 12:30 a.m. Eastern
+
+
+class TestQuietHours(unittest.TestCase):
+    def setUp(self):
+        self.con = mkcon()
+
+    def test_quiet_window(self):
+        self.assertFalse(notify.in_quiet_hours(EVENING))
+        self.assertTrue(notify.in_quiet_hours(LATE))
+
+    def test_warning_at_night_is_held(self):
+        with mock.patch.object(notify, "send") as send:
+            state = notify.deliver(self.con, layer=1, key="k", title="t", body="b",
+                                   alert_class="warning", when=LATE)
+        self.assertEqual(state, "held")
+        send.assert_not_called()
+        self.assertEqual(
+            self.con.execute("SELECT COUNT(*) c FROM pending").fetchone()["c"], 1)
+
+    def test_critical_at_night_goes_straight_out_as_urgent(self):
+        with mock.patch.object(notify, "send") as send:
+            state = notify.deliver(self.con, layer=1, key="k", title="Tornado Warning",
+                                   body="b", alert_class="critical", when=LATE)
+        self.assertEqual(state, "sent")
+        self.assertEqual(send.call_args.kwargs["priority"], "urgent")
+
+    def test_warning_in_the_evening_goes_out_normally(self):
+        with mock.patch.object(notify, "send") as send:
+            state = notify.deliver(self.con, layer=1, key="k", title="t", body="b",
+                                   alert_class="warning", when=EVENING)
+        self.assertEqual(state, "sent")
+        self.assertEqual(send.call_args.kwargs["priority"], "default")
+
+    def test_flush_sends_one_message_not_n(self):
+        for i in range(4):
+            db.queue_pending(self.con, layer=1, key=f"k{i}", title=f"t{i}", body="b")
+        with mock.patch.object(notify, "send") as send:
+            n = notify.flush_pending(self.con)
+        self.assertEqual(n, 4)
+        self.assertEqual(send.call_count, 1, "one consolidated summary, never N pings")
+        self.assertEqual(
+            self.con.execute("SELECT COUNT(*) c FROM pending").fetchone()["c"], 0)
+
+    def test_flush_of_an_empty_queue_sends_nothing(self):
+        with mock.patch.object(notify, "send") as send:
+            self.assertEqual(notify.flush_pending(self.con), 0)
+        send.assert_not_called()
+
+
+# --------------------------------------------------------------------------- db
+
+class TestLocation(unittest.TestCase):
+    def _write(self, text):
+        p = Path(tempfile.mkdtemp()) / "loc"
+        p.write_text(text, encoding="utf-8")
+        return p
+
+    def test_json_form(self):
+        lat, lon = db.load_location(
+            self._write('{"latitude": "38.4", "longitude": "-84.8"}'))
+        self.assertAlmostEqual(lat, 38.4)
+        self.assertAlmostEqual(lon, -84.8)
+
+    def test_key_value_form(self):
+        # Whichever way sops-nix materialises the secret, this must work.
+        lat, lon = db.load_location(
+            self._write("# comment\nlatitude: 38.4\nlongitude: '-84.8'\n"))
+        self.assertAlmostEqual(lat, 38.4)
+        self.assertAlmostEqual(lon, -84.8)
+
+    def test_missing_keys_raise_without_echoing_the_contents(self):
+        with self.assertRaises(ValueError) as ctx:
+            db.load_location(self._write("nothing: here\n"))
+        self.assertNotIn("here", str(ctx.exception))
+
+    def test_layer1_ready_discriminates(self):
+        # Since 2026-09-09 the unit is SKIPPED rather than failed when the
+        # secret is missing, so this function is the ONLY thing that reports
+        # "layer 1 never ran". A constant here would make the state invisible.
+        from wx import cli
+        good = self._write('{"latitude": "38.4", "longitude": "-84.8"}')
+        with mock.patch.dict(os.environ, {"WX_LOCATION_FILE": str(good)}):
+            self.assertTrue(cli.layer1_ready())
+        with mock.patch.dict(os.environ,
+                             {"WX_LOCATION_FILE": "/nonexistent/wx-location"}):
+            self.assertFalse(cli.layer1_ready())
+
+
+if __name__ == "__main__":  # pragma: no cover
+    unittest.main()
+
+
+# ----------------------------------------------- the 2026-10-02 truncation bug
+
+# The EXACT stderr yt-dlp 2026.07.04 produced on 2026-10-19, captured from a
+# live run. 450 characters, with "429" at character 428 — past every
+# truncation this module applies.
+REAL_STDERR_429 = (
+    "WARNING: Your yt-dlp version (2026.07.04) is older than 90 days!\n"
+    "         It is strongly recommended to always use the latest version.\n"
+    "         Nixpkgs/NixOS likely already contain an updated version.\n"
+    "       To get it run nix-channel --update or nix flake update in your"
+    " config directory..\n"
+    "         To suppress this warning, add --no-update to your command/config.\n"
+    "ERROR: Unable to download video subtitles for 'en': HTTP Error 429:"
+    " Too Many Requests"
+)
+
+
+class TestSalientError(unittest.TestCase):
+    """⚠️ Regression guard for the fault that stranded four videos.
+
+    A version warning printed ahead of the real error pushed "429" out of the
+    stored message, so `record_failure` read a rate limit as a hard failure
+    and burned the attempt budget. The throttle signal must survive
+    truncation no matter what upstream prints first.
+    """
+
+    def test_the_real_stderr_puts_429_past_a_plain_truncation(self):
+        # The bug, demonstrated. If this ever stops being true the fix below
+        # is no longer load-bearing and this whole block can go.
+        self.assertGreater(len(REAL_STDERR_429), 300)
+        self.assertNotIn("429", REAL_STDERR_429[:300])
+
+    def test_salient_hoists_the_error_so_429_survives(self):
+        msg = ryan._salient(REAL_STDERR_429)[:300]
+        self.assertIn("429", msg)
+        self.assertTrue(msg.startswith("ERROR:"))
+
+    def test_record_failure_defers_the_real_429_instead_of_failing_it(self):
+        con = mkcon()
+        con.execute("INSERT INTO video (id, title, duration, first_seen, state)"
+                    " VALUES ('v1','t',600,?, 'pending')", (db.now(),))
+        con.commit()
+        message = "no captions for v1: " + ryan._salient(REAL_STDERR_429)[:300]
+        state = ryan.record_failure(con, "v1", message)
+        self.assertEqual(state, "deferred")
+
+    def test_the_old_message_would_have_failed_it(self):
+        """The counterfactual, so the regression cannot be reintroduced
+        quietly: the pre-fix message classifies as a hard failure."""
+        con = mkcon()
+        con.execute("INSERT INTO video (id, title, duration, first_seen, state)"
+                    " VALUES ('v1','t',600,?, 'pending')", (db.now(),))
+        con.execute("UPDATE video SET attempts = ? WHERE id = 'v1'",
+                    (ryan.MAX_ATTEMPTS - 1,))
+        con.commit()
+        old_style = "no captions for v1: " + REAL_STDERR_429.strip()[:300]
+        self.assertEqual(ryan.record_failure(con, "v1", old_style), "failed")
+
+    def test_fetch_transcript_raises_a_message_that_still_says_429(self):
+        """⚠️ THE ONE THAT GUARDS THE CALL SITE.
+
+        The other tests here exercise `_salient` and `record_failure`
+        directly, so they pass even if `fetch_transcript` goes back to
+        truncating raw stderr — which is the actual bug. This drives the real
+        function and asserts on the message it really raises.
+        """
+        class FakeProc:
+            returncode = 1
+            stderr = REAL_STDERR_429
+            stdout = ""
+
+        with mock.patch("subprocess.run", return_value=FakeProc()):
+            with self.assertRaises(RuntimeError) as caught:
+                ryan.fetch_transcript("v1", ytdlp="/nonexistent/yt-dlp")
+        message = str(caught.exception)
+        self.assertIn("429", message)
+        # And the whole point: the message must classify as a deferral.
+        con = mkcon()
+        con.execute("INSERT INTO video (id,title,duration,first_seen,state)"
+                    " VALUES ('v1','t',600,?, 'pending')", (db.now(),))
+        con.commit()
+        self.assertEqual(ryan.record_failure(con, "v1", message), "deferred")
+
+    def test_salient_keeps_context_after_the_error(self):
+        msg = ryan._salient(REAL_STDERR_429)
+        self.assertIn("WARNING", msg)
+
+    def test_salient_tolerates_empty_and_warning_only_stderr(self):
+        self.assertEqual(ryan._salient(""), "")
+        self.assertEqual(ryan._salient(None), "")
+        self.assertIn("WARNING", ryan._salient("WARNING: something benign"))
+
+
+class TestResetFailed(unittest.TestCase):
+    def test_requeues_only_failed_rows(self):
+        con = mkcon()
+        for vid, state in (("a", "failed"), ("b", "have"), ("c", "deferred")):
+            con.execute("INSERT INTO video (id,title,duration,first_seen,state,attempts)"
+                        " VALUES (?,?,600,?,?,6)", (vid, vid, db.now(), state))
+        con.commit()
+        self.assertEqual(ryan.reset_failed(con), ["a"])
+        rows = {r["id"]: r for r in con.execute("SELECT * FROM video").fetchall()}
+        self.assertEqual(rows["a"]["state"], "pending")
+        self.assertEqual(rows["a"]["attempts"], 0)
+        self.assertIsNone(rows["a"]["last_error"])
+        # Untouched.
+        self.assertEqual(rows["b"]["state"], "have")
+        self.assertEqual(rows["c"]["attempts"], 6)
+
+    def test_requeued_video_is_picked_up_again(self):
+        con = mkcon()
+        con.execute("INSERT INTO video (id,title,duration,first_seen,state,attempts)"
+                    " VALUES ('a','a',600,?, 'failed', 6)", (db.now(),))
+        con.commit()
+        self.assertEqual(ryan.pending_videos(con), [])
+        ryan.reset_failed(con)
+        self.assertEqual([r["id"] for r in ryan.pending_videos(con)], ["a"])
+
+    def test_nothing_failed_is_a_no_op(self):
+        self.assertEqual(ryan.reset_failed(mkcon()), [])
+

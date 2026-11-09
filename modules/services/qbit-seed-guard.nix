@@ -64,7 +64,7 @@ let
   # Longest prefix FIRST — `/scratch/incomplete` must be tested before any
   # shorter mount that could also match.
   mounts = [
-    { container = "/scratch/incomplete"; host = "/mnt/scratch/qbittorrent-incomplete"; }
+    { container = "/scratch/incomplete"; host = "/var/lib/qbittorrent-incomplete"; }
     { container = "/data";               host = "/mnt/fusion/arr"; }
   ];
 
@@ -76,6 +76,21 @@ let
 
   maxAttempts = 3;    # rechecks per torrent per rolling 24 h
   maxPerRun = 8;      # rechecks started per run, to bound pool I/O
+
+  # ── retirement ──────────────────────────────────────────────────────────
+  # qBittorrent's active-torrent cap is a hard ceiling, and gromit is at its
+  # memory limit (32 GB on LGA1150, not upgradeable), so a full queue is
+  # answered by retiring old releases rather than raising the cap.
+  #
+  # Chris, 2026-11-02: "Older releases should be retired if the queue is full,
+  # especially public torrents or satisfied ratios. You're correct memory is
+  # tight, so we don't want to just expand the queue."
+  #
+  # The target is derived from qBittorrent's OWN max_active_torrents at run
+  # time, not hardcoded: if that preference changes, the policy follows it
+  # instead of silently never firing again.
+  retireHeadroom = 20;   # keep this many slots free below max_active_torrents
+  maxRetirePerRun = 10;  # bound, so a classification bug cannot mass-stop
 
   # ── Hit-and-run rules, per tracker ──────────────────────────────────────
   # Supplied by Chris 2026-08-18. These are the ACTUAL rules of each site, not
@@ -443,6 +458,72 @@ ${pathMapCases}          esac
         fi
       fi
 
+      # ── retirement ───────────────────────────────────────────────────────
+      # Free active slots by STOPPING torrents that owe nothing, so no torrent
+      # is ever parked in `queuedUP` — a queued torrent announces nothing, which
+      # is how DarkPeers came to issue an H&R pre-warning on 2026-11-02 against
+      # a torrent that had been silent for 32 h.
+      #
+      # Stop, never delete: the data stays and a resume undoes it.
+      retired=0
+      retire_target=0
+      cap=$(curl -s --max-time 10 "$QBIT/api/v2/app/preferences" | jq -r '.max_active_torrents // empty')
+      n_nonstopped=$(jq -r '.retire.non_stopped' <<<"$report")
+      if ! [ "$cap" -gt 0 ] 2>/dev/null; then
+        echo "could not read max_active_torrents — skipping retirement this run"
+      else
+        retire_target=$(( cap - ${toString retireHeadroom} ))
+        if [ "$n_nonstopped" -le "$retire_target" ]; then
+          echo "active population $n_nonstopped is within target $retire_target (cap $cap) — nothing to retire"
+        elif [ "$pool_ok" -eq 0 ]; then
+          # Stopping torrents while a pool member is missing is how a torrent
+          # ends up permanently missingFiles; the recovery path above defers for
+          # the same reason.
+          echo "active population $n_nonstopped exceeds target $retire_target but a pool member is UNHEALTHY — deferring retirement until the pool is whole"
+        else
+          want=$(( n_nonstopped - retire_target ))
+          [ "$want" -gt ${toString maxRetirePerRun} ] && want=${toString maxRetirePerRun}
+          echo "active population $n_nonstopped exceeds target $retire_target (cap $cap) — retiring up to $want"
+
+          # Defence in depth: the jq already excludes protected hashes from
+          # candidates, and this re-checks each one against the published
+          # protect list before stopping it. The two are derived separately on
+          # purpose — a single ordering bug should not be able to stop a torrent
+          # that owes seed time.
+          retire_list=""
+          while read -r line; do
+            [ -n "$line" ] || continue
+            [ "$retired" -lt "$want" ] || break
+            rhash=$(jq -r '.hash' <<<"$line")
+            rname=$(jq -r '.name' <<<"$line")
+            rtier=$(jq -r '.tier' <<<"$line")
+            if jq -e --arg h "$rhash" '.retire.protect | index($h)' <<<"$report" >/dev/null; then
+              echo "  REFUSING to retire $rname — it is on the protect list"
+              continue
+            fi
+            retire_list="$retire_list|$rhash"
+            retired=$(( retired + 1 ))
+            echo "  retiring (tier $rtier) $rname"
+          done < <(jq -c '.retire.candidates[]' <<<"$report")
+
+          if [ -n "$retire_list" ]; then
+            # QBIT_RETIRE_DRY_RUN=1 exercises every decision above and stops
+            # nothing. Added because the only honest way to test a destructive
+            # path is to run the GENERATED script against the real API — a
+            # module that builds clean can still fail at runtime.
+            if [ "''${QBIT_RETIRE_DRY_RUN:-0}" = "1" ]; then
+              echo "DRY RUN — would stop $retired torrent(s); nothing changed"
+            elif curl -s -o /dev/null --max-time 20 -X POST \
+                 --data "hashes=''${retire_list#|}" "$QBIT/api/v2/torrents/stop"; then
+              echo "retired $retired torrent(s); data left on disk, resume to undo"
+            else
+              echo "retirement POST failed — no torrents stopped"
+              retired=0
+            fi
+          fi
+        fi
+      fi
+
       # ── metrics ──────────────────────────────────────────────────────────
       # One sample per series (Prometheus rejects duplicates and one bad file
       # fails the whole textfile collector — learned the hard way in the
@@ -452,6 +533,21 @@ ${pathMapCases}          esac
         echo "# HELP qbit_torrents_missing_files Torrents qBittorrent has dropped to missingFiles."
         echo "# TYPE qbit_torrents_missing_files gauge"
         echo "qbit_torrents_missing_files $n_missing"
+        echo "# HELP qbit_active_population Torrents qBittorrent counts against max_active_torrents."
+        echo "# TYPE qbit_active_population gauge"
+        echo "qbit_active_population $n_nonstopped"
+        echo "# HELP qbit_active_target Population retirement aims to stay under (max_active_torrents - headroom); 0 = could not read the cap."
+        echo "# TYPE qbit_active_target gauge"
+        echo "qbit_active_target $retire_target"
+        echo "# HELP qbit_retire_candidates Torrents eligible for retirement — public, or obligation already satisfied."
+        echo "# TYPE qbit_retire_candidates gauge"
+        echo "qbit_retire_candidates $(jq -r '.retire.candidates | length' <<<"$report")"
+        echo "# HELP qbit_retire_protected Torrents retirement must never stop — outstanding obligation, incomplete, or unclassifiable."
+        echo "# TYPE qbit_retire_protected gauge"
+        echo "qbit_retire_protected $(jq -r '.retire.protect | length' <<<"$report")"
+        echo "# HELP qbit_retired_last_run Torrents stopped by the last retirement pass."
+        echo "# TYPE qbit_retired_last_run gauge"
+        echo "qbit_retired_last_run $retired"
         echo "# HELP qbit_torrents_total Torrents known to qBittorrent."
         echo "# TYPE qbit_torrents_total gauge"
         echo "qbit_torrents_total $n_total"

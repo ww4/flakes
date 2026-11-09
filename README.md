@@ -1,93 +1,83 @@
-# gromit — NixOS homelab configuration
+# flakes — the NixOS fleet configuration
 
-The NixOS flake for **gromit**: a single mini-tower in rural Kentucky running
-~50 services — media, photos, documents, a Git forge, a Bitcoin full node,
-single-sign-on, monitoring, and 3-2-1 backups — entirely declaratively. It also
-runs KDE Plasma as a desktop. Public repo; lift anything useful.
+One flake, three hosts:
 
-> A longer, narrative tour (and the unusual part — an AI agent that does real ops
-> work here without being able to break anything) lives in the companion docs
-> repo: `showcase.md` and `code-audit-2026-06.md`.
+| Host | Role |
+|---|---|
+| **gromit** | Homelab server: storage pools, ~50 services, monitoring, the GitOps hub. Also a KDE Plasma desktop. |
+| **wallace** | Compute node (Ryzen 9 5900X / RX 580): remote Nix builds, Immich machine learning. |
+| **marcus** | ThinkPad T480 laptop, intermittently online. |
+
+Most service and infrastructure modules live in a separate public library,
+[homelab-modules](https://git.rosemaryacres.com/ww4/homelab-modules), consumed
+as a flake input. This repo holds what is specific to these machines:
+
+- **`modules/homelab-values.nix`** — the values the library modules read:
+  domain, admin user, pool definitions, ntfy topic, per-service settings, and
+  the sops secret declarations. If you are looking for "where is X
+  configured", start here.
+- **`configuration.nix`** — gromit's module manifest. Each import is one line:
+  `hm.<name>` pulls a module from the library; `./modules/...` is local.
+- **`hosts/`** — wallace and marcus.
+- **`modules/`** — what stays local: hardware-specific modules, the scoped
+  agent (`modules/agent/`), and services not in the library (the dashboard,
+  the Bitcoin stack, backups, and personal one-offs).
+- **`secrets/`** — sops-encrypted secrets. Safe to commit: ciphertext only,
+  encrypted to gromit's SSH host key and the admin age key. See
+  `secrets/README.md`.
 
 ## How changes ship (GitOps)
 
-Nobody SSHes in to "just tweak something." The flow is:
+Nobody SSHes in to make changes. The flow is:
 
-1. Edit a module, open a **pull request**.
-2. **[comin](https://github.com/nlewo/comin)** (a GitOps applier running on the
-   box) polls `main` every ~60s and rebuilds when a PR is merged. **Merging is
-   the human gate.**
-3. For a live trial, push to the **`testing`** branch instead — comin applies it
-   with `nixos-rebuild test` (ephemeral, auto-reverts on reboot). Promote to
-   `main` when happy.
+1. Edit, open a **pull request** on Forgejo.
+2. **[comin](https://github.com/nlewo/comin)** runs on each host, polls `main`
+   about every 60 seconds, and rebuilds when a PR is merged. Merging is the
+   human gate — `main` is branch-protected.
+3. For a live trial, push to the **`testing`** branch instead. comin applies
+   it with `nixos-rebuild test`: real, but reverts on reboot. Promote to
+   `main` when satisfied.
 
-The repo is hosted on a self-hosted **Forgejo**, mirrored to GitHub, which comin
-pulls — so the whole loop closes on gromit's own hardware.
+comin polls two remotes: Forgejo (the source of truth) and the GitHub
+push-mirror. The mirror is normally passive; it exists so deploys survive a
+Forgejo outage, and so that in a disaster a direct push to GitHub `main` can
+still drive the fleet. A timer (`mirror-drift-watch`, from the library)
+alerts if the mirror stops tracking Forgejo.
 
-Manual rebuild (fresh box / bootstrap):
+Manual rebuild (bootstrap or recovery):
 
 ```bash
-sudo nixos-rebuild switch --flake .#gromit
+sudo nixos-rebuild switch --flake .#gromit    # or #wallace, #marcus
 ```
 
-## Layout
+## Conventions
 
-Each concern is exactly one file — one import line, one greppable name.
+- **One concern, one file, one import line.** The manifest reads top to
+  bottom as a description of the machine.
+- **Secrets: [sops-nix](https://github.com/Mic92/sops-nix).** Values are
+  encrypted in this repo and decrypted at activation with the host's SSH key.
+  The agent can wire a secret's plumbing but cannot read its value; editing
+  needs the admin age key.
+- **Two package lanes.** `modules/packages.nix` holds root-PATH admin tools
+  only; personal and GUI apps live in `home/packages.nix`.
+- **Network posture.** Every vhost sits behind the nginx source gate (library
+  module `nginx-access`): reachable over Tailscale and the trusted LAN,
+  denied from everywhere else. SSO (Authelia) in front of the apps that
+  support it.
+- **Backups.** restic to a local pool and offsite Backblaze B2, plus mirror
+  jobs for media. Full design in `BACKUP-ARCHITECTURE.md`.
 
-```
-flake.nix                  inputs (nixpkgs, home-manager, comin, sops-nix, vscode-server) + the gromit host
-configuration.nix          the module manifest — just the imports list
-hardware-configuration.nix generated hardware scan (machine-specific)
-.sops.yaml                 sops recipients (gromit host key + admin age key)
-secrets/                   sops-encrypted secrets — safe to commit (ciphertext; keys aren't in the repo)
-modules/
-  boot, storage, networking, desktop, users, system,
-  packages, virtualisation, home-manager, sops          base system
-  agent/                                                 the scoped, non-root Claude agent (see agent/README.md)
-    claude-user, sudo, comin, claude-harness, digest
-  services/                                              ~40 per-service modules (catalog below)
-home/                                                    Home-Manager user config (shell, git, packages, vscode)
-```
+## The scoped agent
 
-## Service catalog
+A Claude agent has its own Unix user on gromit and does routine operations
+work through the same PR gate as everyone else. It cannot apply changes, hold
+root, or read secrets. See `modules/agent/README.md`.
 
-| Area | Services |
-|------|----------|
-| **Media** | Jellyfin, Audiobookshelf, Immich (photos), the *arr stack (Prowlarr/Sonarr/Radarr/Lidarr/LazyLibrarian), Jellyseerr, Aurral, Recyclarr, Decluttarr, qBittorrent (via Gluetun VPN), MeTube, Pinchflat, Tandoor |
-| **Cloud & productivity** | Nextcloud, Paperless-ngx, Vaultwarden, Forgejo |
-| **Bitcoin** | bitcoind (full node), Fulcrum (Electrum server), mempool.space, Alby Hub (Lightning) |
-| **Platform** | nginx (Tailscale/LAN source-gate), Authelia (SSO: forward-auth + OIDC), Homepage dashboard, Prometheus + Grafana + Alertmanager, Glances, Uptime-Kuma, ntfy, Riverwatch (a creek-gauge exporter) |
-| **Storage & backup** | mergerfs (two pools), pool-autoremount (self-healing), SnapRAID, restic (local + B2), Litestream, bub-mirror |
-| **Remote / misc** | VS Code remote server, RDP remote desktop, GYB (Gmail backup) |
+## For anyone reading this from outside
 
-## Conventions worth knowing
-
-- **Secrets: [sops-nix](https://github.com/Mic92/sops-nix).** Every credential is
-  encrypted *in this repo* under `secrets/` and decrypted at activation with
-  gromit's SSH **host** key — so the config is self-contained and nothing
-  sensitive is ever in plaintext on disk. Edit a value with `sops
-  secrets/<name>.yaml` (needs the admin age key); the agent can wire the plumbing
-  but can't read the values. See `modules/sops.nix`.
-- **Two package lanes.** `modules/packages.nix` is deliberately minimal —
-  root-PATH admin tools only. Personal/GUI apps live in `home/packages.nix` and
-  land only in chris's user profile.
-- **Backups.** restic to a local mergerfs pool repo **and** offsite Backblaze B2,
-  plus a guarded weekly media mirror; status/alerts via self-hosted ntfy. Postgres
-  dumps are per-DB (`postgresqlBackup.databases = [...]`) not `pg_dumpall`, so one
-  bad DB can't break the whole chain. Full design in `BACKUP-ARCHITECTURE.md`.
-- **Home Manager** is integrated as a NixOS module (one `nixos-rebuild switch`
-  does system + user). `backupFileExtension = "hm-backup"` means the first switch
-  to manage a pre-existing dotfile renames the original rather than clobbering it
-  — inspect and delete the `*.hm-backup` files once you're happy with HM's version.
-- **Network posture.** All vhosts are reachable over Tailscale only; an nginx
-  source-gate (`modules/services/nginx-access.nix`) is the perimeter, with SSO in
-  front of the apps that support it.
-
-## A note for anyone forking this
-
-It's a living homelab, not a turnkey template. Disk layout, the domain
-(`rosemaryacres.com`), the Tailscale IP, and the `chris` user are gromit-specific
-and currently hardcoded; a few services need a documented manual bootstrap (admin
-users, API keys, the B2 bucket); and `secrets/` only decrypts on a host whose key
-is a recipient in `.sops.yaml`. The `code-audit-2026-06.md` in the docs repo is
-candid about all of this and tracks the path to a cleaner, more liftable layout.
+The reusable parts are in
+[homelab-modules](https://git.rosemaryacres.com/ww4/homelab-modules)
+(mirrored to [GitHub](https://github.com/ww4/homelab-modules)) — an
+option-driven module library you can consume directly. This repo is one
+consumer of it: a values file, hardware scans, and local modules. It is not a
+template; it is an example of the pattern.

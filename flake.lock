@@ -7,11 +7,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1786657515,
-        "narHash": "sha256-7EyHlmM8wFSy2Ncg+c+nyYWmLsT8xzcvsYyO6rEZxzQ=",
+        "lastModified": 1793681379,
+        "narHash": "sha256-rJ/fHl0d7KRR7U2JzTM+pady1SXi8HlrT1TgPgx1qCM=",
         "owner": "ww4-bot",
         "repo": "agent-modules",
-        "rev": "aba377b4e2c2cf2dad7cee4777c88f1789f584d4",
+        "rev": "a9f3b9f4e2c88e065d768b3a98de83fc2fd137e9",
         "type": "github"
       },
       "original": {
@@ -117,11 +117,11 @@
     },
     "homelab-modules": {
       "locked": {
-        "lastModified": 1788801672,
-        "narHash": "sha256-gvf2tmiW2OeQmDr9kqSbPHzMGC1YAxWJepNXsmiJdWQ=",
+        "lastModified": 1793279352,
+        "narHash": "sha256-WfIAXcFXEtkMqkib5eW2hBLEu63/mL6PDhDtTNeO/hE=",
         "ref": "refs/heads/main",
-        "rev": "271153e608edd41a5cade6fb2f92ab7e41dbfcb0",
-        "revCount": 2,
+        "rev": "ed745fef62803e57a6c9d16ef03d2424ed44e085",
+        "revCount": 94,
         "type": "git",
         "url": "https://git.rosemaryacres.com/ww4/homelab-modules.git"
       },
@@ -178,6 +178,22 @@
       "original": {
         "owner": "nixos",
         "ref": "nixos-25.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs-php": {
+      "locked": {
+        "lastModified": 1792615934,
+        "narHash": "sha256-MlvRfa1O5Cqc2/a+gG+l9TSuowEoCKCmrJ1d9oAVm0I=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "da6dc0e7b26060f2f71ce3ef7088fb56ee44fa36",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixos-26.05",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -240,6 +256,7 @@
         "nixos-06cb-009a-fingerprint-sensor": "nixos-06cb-009a-fingerprint-sensor",
         "nixpkgs": "nixpkgs_3",
         "nixpkgs-2505": "nixpkgs-2505",
+        "nixpkgs-php": "nixpkgs-php",
         "nixpkgs-silverbullet": "nixpkgs-silverbullet",
         "sops-nix": "sops-nix",
         "vscode-server": "vscode-server"

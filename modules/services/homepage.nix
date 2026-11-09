@@ -32,43 +32,708 @@ let
   hostname = "rosemaryacres.com";
   port = 3000;
 
+  # ── Favicon ──────────────────────────────────────────────────────────────
+  # Setting `favicon:` in settings.yaml replaces ALL FIVE of Homepage's default
+  # icon links with exactly two — `icon` and `apple-touch-icon` — so one asset
+  # covers both the browser tab and an Android home-screen shortcut. (Read off
+  # upstream's src/pages/index.jsx, which branches on initialSettings.favicon.)
+  #
+  # ⚠️ WHY THIS IS A DRAWING AND NOT THE REAL GROMIT.
+  # Chris asked for the Aardman character, and on a tailnet-only dashboard
+  # that is his business. But THIS REPO IS PUBLIC ON GITHUB, so committing the
+  # artwork would republish someone else's copyrighted work. The split: the
+  # repo ships an original drawing, and `faviconPath` below points anywhere
+  # you like on the box — so the real still can live at
+  # /var/lib/homepage/favicon.png, outside git, and never leave the house.
+  #
+  # The drawing is primitives (two ellipses for ears, a rounded head, three
+  # punched holes), not a trace of anyone's character art.
+  faviconSvg = pkgs.writeText "homepage-favicon.svg" ''
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs><rect width="64" height="64" rx="14" fill="url(#g)"/><g fill="#0b1120"><path d="M17 20 C8 24 8 42 16 47 C21 50 24 44 23 36 Z"/><path d="M47 20 C56 24 56 42 48 47 C43 50 40 44 41 36 Z"/><path d="M32 13 C42 13 48 21 48 31 C48 42 41 51 32 51 C23 51 16 42 16 31 C16 21 22 13 32 13 Z"/></g><circle cx="26" cy="29" r="3" fill="url(#g)"/><circle cx="38" cy="29" r="3" fill="url(#g)"/><ellipse cx="32" cy="41" rx="6.2" ry="5" fill="url(#g)"/></svg>
+  '';
+
+  # Point this at any file on the box to use your own icon instead. Dropping
+  # /var/lib/homepage/favicon.png here is the supported way to put the real
+  # Gromit on the dashboard WITHOUT the image entering this public repo:
+  #
+  #     scp gromit.png gromit:/var/lib/homepage/favicon.png
+  #     faviconPath = "/var/lib/homepage/favicon.png";
+  #
+  # ⚠️ Keep the extension honest. nginx types the response from the REQUEST
+  # URI, and faviconUrl below is derived from this path's extension, so a PNG
+  # named .svg would be served as image/svg+xml and simply not render.
+  # Where YOUR icon goes, if you want one. Drop a file here and it wins; leave
+  # the path empty and the drawing above is used.
+  #
+  #     sudo cp gromit.png /var/lib/homepage/favicon.png
+  #
+  # ⚠️ The nginx location for this sets `error_page 404 = <the drawing>`, so a
+  # path that does not exist yet falls back instead of leaving the tab with no
+  # icon at all. That is deliberate: it means this line and the file can land
+  # in either order, which matters because the flake is deployed by merge and
+  # the file is copied by hand.
+  faviconOverride = "/var/lib/homepage/favicon.png";
+
+  # nginx types a response from the REQUEST URI, not from the file it aliases,
+  # so the URL has to carry the real extension — a PNG served at /favicon.svg
+  # goes out as image/svg+xml and silently does not render.
+  extOf = path: let m = builtins.match ".*(\\.[a-zA-Z0-9]+)$" path;
+                in if m == null then ".svg" else builtins.head m;
+  faviconUrl = "/favicon" + extOf (if faviconOverride != "" then faviconOverride
+                                   else toString faviconSvg);
+  faviconFallbackUrl = "/favicon-builtin.svg";
+
+  # ── Layout ───────────────────────────────────────────────────────────────
+  # Groups are assigned to TABS. Tab order follows the order groups appear in
+  # this block, and the first one ("Home") is what opens on load. Home is a
+  # hand-picked Favorites row over the household apps; everything else is one
+  # tap away. Quicklaunch (the search box) still finds services on *every*
+  # tab, so nothing is lost by moving a group off Home.
+  #
+  # ⚠️ Every service group MUST be listed here. Homepage renders laid-out
+  # groups into #layout-groups and any group *missing* from this block into a
+  # separate #services container that comes AFTER all of them — so a forgotten
+  # group silently teleports to the bottom of the page. That is exactly how
+  # "Productivity" and "Gromit (live)" ended up stranded below Riverwatch
+  # before 2026-10-19. If you add a group to services.yaml, add it here too.
+  #
+  # ⚠️ A group with no `tab:` is shown on EVERY tab (upstream behaviour), so
+  # leaving one out does not hide it — it duplicates it.
   settingsYaml = pkgs.writeText "homepage-settings.yaml" ''
     title: Gromit
     theme: dark
-    color: gray
+    # slate (blue-tinted) rather than gray — the flat neutral grey is what
+    # made the page look washed out. The real colour comes from customCss.
+    color: slate
     headerStyle: clean
+    hideVersion: true
+    # Served by the nginx location below, on this same vhost.
+    favicon: ${faviconUrl}
+    # Card translucency/blur is handled in customCss rather than with the
+    # built-in `cardBlur:` knob, so one mechanism owns the glass effect
+    # instead of two fighting over the same surface.
+
     layout:
+      # ── Home ── what actually gets opened
+      # Favorites is NOT a themed group: it is the four things Chris reaches
+      # for most, and it is expected to be edited by hand whenever that
+      # changes. Homepage tracks nothing — no click counter, no usage
+      # ordering, no persistence of any kind on a tile click (checked against
+      # src/components/services/item.jsx, 2026-10-19) — so a "top apps" row
+      # can only ever be a hand-kept list.
+      Favorites:
+        tab: Home
+        style: row
+        columns: 4
+        useEqualHeights: true
+      # Four tiles, one row, now that Nextcloud and Tandoor have moved up to
+      # Favorites rather than appearing twice on the same tab.
+      Household:
+        tab: Home
+        style: row
+        columns: 4
+        useEqualHeights: true
+      # Last on the tab, under Household: the tiles are what Chris came to the
+      # page for, and this is what he reads once he is already here.
+      # Full width, so columns: 1.
+      Briefing:
+        tab: Home
+        style: row
+        columns: 1
+
+      # ── Media ── watching on top, the acquisition machinery below it
+      # Media is deliberately DUPLICATED: its four tiles also appear in
+      # Favorites. Homepage has no "show this group on two tabs" option
+      # (a group with no `tab:` appears on ALL of them, which is worse), so
+      # the services.yaml entries are simply written twice. Each copy polls
+      # its own widget — negligible for services on this host, but worth
+      # knowing before duplicating anything that costs a real API call.
       Media:
+        tab: Media
         style: row
-        columns: 3
+        columns: 4
       Media Mgmt:
+        tab: Media
         style: row
         columns: 3
-      Cloud:
-        style: row
-        columns: 2
+        useEqualHeights: true
+
+      # ── Lab ── things that are interesting but not daily
       AI:
+        tab: Lab
         style: row
         columns: 2
       Bitcoin:
+        tab: Lab
         style: row
         columns: 2
       Infrastructure:
+        tab: Lab
         style: row
         columns: 2
+        useEqualHeights: true
+
+      # ── System ── host health, dashboards, alerts
+      Gromit (live):
+        tab: System
+        style: row
+        columns: 5
+        useEqualHeights: true
+      Temperatures:
+        tab: System
+        style: row
+        columns: 1
       Monitoring:
+        tab: System
         style: row
-        columns: 2
-      Riverwatch:
-        style: row
-        columns: 2
+        columns: 3
+        useEqualHeights: true
       Recent Alerts:
+        tab: System
+        style: row
+        columns: 1
+
+      # ── Weather ── the strip first, the river underneath it
+      # Both want the full width: the strip is a wide single card and the
+      # Riverwatch embed is a 640px Grafana panel.
+      Weather:
+        tab: Weather
+        style: row
+        columns: 1
+      Riverwatch:
+        tab: Weather
+        style: row
+        columns: 1
+
+      # Bookmark groups (bookmarks.yaml) need a tab for the same reason
+      # service groups do — without one they are drawn on every tab.
+      Code:
+        tab: Lab
+      Admin:
+        tab: Lab
+
+      # Genuinely LAST on the Lab tab — below the bookmark groups, not just
+      # below the service groups. Verified on the live page 2026-10-19:
+      # bookmark groups with a `tab:` render inside #layout-groups in layout
+      # order, alongside services, so "after Infrastructure" would still have
+      # put this above Code and Admin.
+      Projects:
+        tab: Lab
         style: row
         columns: 1
   '';
 
+  # ── custom.css ───────────────────────────────────────────────────────────
+  # Homepage reads /app/config/custom.css and injects it after its own
+  # stylesheet. Everything below targets class names Homepage actually emits —
+  # they were read off the live DOM on 2026-10-19, not guessed:
+  #
+  #   #page_wrapper  #inner_wrapper (the scroll container, NOT the document)
+  #   #information-widgets  #widgets-wrap
+  #   ul#myTab[role=tablist] > li[role=presentation] > button[role=tab]
+  #   #layout-groups / #services  .services-group  h2.service-group-name
+  #     ul.services-list > li.service > .service-card
+  #       .service-title > .service-icon + .service-title-text > .service-name
+  #       .service-container > .service-block > div.font-thin / div.font-bold
+  #   #bookmarks  .bookmark-group  h2.bookmark-group-name  .bookmark-list
+  #
+  # ⚠️ Homepage styles cards with Tailwind utilities (dark:bg-white/5 and
+  # friends). A bare `.service-card { background: … }` loses to those, so the
+  # card rules are scoped under the #layout-groups / #services ids to win on
+  # specificity rather than by carpet-bombing with !important. Where a single
+  # Tailwind utility has to be beaten in place (margins on #information-widgets,
+  # text-xl on the group headings) !important is used deliberately and noted.
+  #
+  # ⚠️ The tablist carries `sm:flex`, i.e. it is NOT flex below 640px — the
+  # tabs stack into full-width rows and eat half a phone screen. The phone
+  # block at the bottom forces it back to a single scrollable row.
+  customCss = pkgs.writeText "homepage-custom.css" ''
+    /* ===================================================================
+       Gromit — rosemaryacres.com
+       Dark slate base with two soft colour blooms, frosted cards on top.
+       =================================================================== */
+
+    /* --- 1. Background ------------------------------------------------ */
+    /* The gradient is painted by a fixed pseudo-element so it stays put
+       while #inner_wrapper scrolls underneath it. Page content sits in a
+       .container with z-10, so z-index 0 here keeps it behind everything. */
+    html,
+    body {
+      background-color: #0b1120 !important;
+    }
+
+    #page_wrapper::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(55rem 38rem at 8% -10%, rgba(99, 102, 241, 0.30), transparent 62%),
+        radial-gradient(44rem 30rem at 92% 2%, rgba(13, 148, 136, 0.22), transparent 64%),
+        radial-gradient(62rem 44rem at 50% 114%, rgba(56, 89, 180, 0.20), transparent 66%),
+        linear-gradient(168deg, #0b1120 0%, #111c33 48%, #0b1120 100%);
+    }
+
+    /* --- 2. Header strip ---------------------------------------------- */
+    /* The banner is NOT a card. It was briefly given the same glass panel as
+       the tiles below it, which made it compete with them and boxed in the
+       one part of the page that should read as sitting directly on the
+       background. No panel, no border, no blur — just spacing.
+       Tailwind puts m-5/sm:m-9 on this; !important to reclaim it. */
+    #information-widgets {
+      margin: 1.1rem 1.5rem 0 !important;
+      padding: 0;
+      background: none;
+      border: 0;
+      box-shadow: none;
+    }
+
+    /* The search field is the one element here that still needs an edge —
+       it is an input, and an input with no boundary is not obviously
+       typable. Kept deliberately quieter than a service card. */
+    #information-widgets input {
+      border-radius: 11px !important;
+    }
+
+    /* --- 3. Tab bar ---------------------------------------------------- */
+    #myTab {
+      display: flex !important;
+      /* The tablist is a child of a `flex flex-col … min-h-screen` container,
+         so with the default flex-shrink the long service list squeezes it
+         down to a ~12px sliver. */
+      flex: none;
+      gap: 0.25rem;
+      margin: 0.85rem 1.5rem 0.1rem;
+      padding: 0.3rem;
+      border-radius: 14px;
+      background: rgba(148, 163, 184, 0.06) !important;
+      border: 1px solid rgba(226, 232, 240, 0.08);
+      box-shadow: 0 10px 30px -20px rgba(0, 0, 0, 0.9);
+      backdrop-filter: blur(16px) saturate(140%);
+      -webkit-backdrop-filter: blur(16px) saturate(140%);
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    #myTab::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* Upstream gives each li `h-10 w-full` and the button `m-1`. Leave the
+       40px height alone — an earlier `height: auto` here collapsed the whole
+       bar to a 12px sliver — but drop w-full: five tabs sharing 1680px makes
+       each pill 350px wide, which reads as a stretched toolbar rather than a
+       tab bar. Content-width pills, left-aligned, on every screen size; the
+       bar itself still spans the width to line up with the header strip. */
+    #myTab > li {
+      align-items: stretch;
+      flex: 0 0 auto;
+      width: auto !important;
+    }
+
+    #myTab button[role="tab"] {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      margin: 0 !important;
+      padding: 0 0.95rem;
+      border-radius: 10px !important;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      color: rgba(203, 213, 225, 0.6);
+      transition: color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    #myTab button[role="tab"]:hover {
+      color: #e2e8f0;
+    }
+
+    #myTab button[aria-selected="true"] {
+      background: linear-gradient(180deg, rgba(129, 140, 248, 0.32), rgba(99, 102, 241, 0.18)) !important;
+      color: #f1f5f9;
+      box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.14) inset,
+        0 6px 18px -9px rgba(99, 102, 241, 0.8);
+    }
+
+    /* --- 4. Group headings --------------------------------------------- */
+    /* Small caps + a rule out to the right edge, so the eye reads a section
+       break instead of another big title competing with the card names.
+       text-xl has to be overridden in place, hence !important here. */
+    h2.service-group-name,
+    h2.bookmark-group-name {
+      display: flex;
+      flex: 1 1 auto;
+      align-items: center;
+      gap: 0.55rem;
+      font-size: 0.74rem !important;
+      font-weight: 600 !important;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: rgba(203, 213, 225, 0.68) !important;
+    }
+
+    h2.service-group-name::before,
+    h2.bookmark-group-name::before {
+      content: "";
+      flex: none;
+      width: 0.28rem;
+      height: 0.95rem;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #818cf8, #22d3ee);
+    }
+
+    h2.service-group-name::after,
+    h2.bookmark-group-name::after {
+      content: "";
+      flex: 1 1 auto;
+      height: 1px;
+      /* Fixed-length fade: on a 1680px row a `to transparent` gradient is
+         already invisible 200px in, so the rule has to stop deliberately
+         rather than stretch with the container. */
+      background: linear-gradient(90deg, rgba(148, 163, 184, 0.4), rgba(148, 163, 184, 0) 260px);
+    }
+
+    /* --- 5. Cards ------------------------------------------------------ */
+    #layout-groups .service-card,
+    #services .service-card,
+    #bookmarks li.bookmark > a {
+      border-radius: 14px !important;
+      border: 1px solid rgba(226, 232, 240, 0.09);
+      background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.075),
+        rgba(255, 255, 255, 0.035)
+      ) !important;
+      box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.07) inset,
+        0 10px 26px -16px rgba(0, 0, 0, 0.85) !important;
+      backdrop-filter: blur(14px) saturate(135%);
+      -webkit-backdrop-filter: blur(14px) saturate(135%);
+      transition:
+        transform 0.18s ease,
+        border-color 0.18s ease,
+        box-shadow 0.18s ease,
+        background 0.18s ease;
+    }
+
+    /* Lift on hover only where there is a real pointer — on a phone every
+       card would otherwise be stuck in its hover state after a tap. */
+    @media (hover: hover) {
+      #layout-groups .service-card:hover,
+      #services .service-card:hover,
+      #bookmarks li.bookmark > a:hover {
+        transform: translateY(-2px);
+        border-color: rgba(129, 140, 248, 0.45);
+        box-shadow:
+          0 1px 0 rgba(255, 255, 255, 0.1) inset,
+          0 18px 34px -16px rgba(0, 0, 0, 0.9),
+          0 0 0 1px rgba(129, 140, 248, 0.2) !important;
+      }
+    }
+
+    /* Service name a touch larger; the description is secondary. */
+    .service-name {
+      font-size: 0.86rem !important;
+      letter-spacing: 0.005em;
+    }
+
+    /* --- 6. Stat chips -------------------------------------------------- */
+    /* .service-block is the labelled stat tile. Widgets that render a list
+       instead (customapi display: list, e.g. Library radio) emit sibling
+       divs carrying Tailwind's rounded-sm, so they are matched by shape. */
+    #layout-groups .service-block,
+    #services .service-block,
+    #layout-groups .service-container div[class*="rounded-sm"],
+    #services .service-container div[class*="rounded-sm"] {
+      border-radius: 10px !important;
+      background: rgba(2, 6, 23, 0.4) !important;
+      border: 1px solid rgba(226, 232, 240, 0.055);
+    }
+
+    .service-block .font-thin {
+      font-size: 0.95rem !important;
+      font-weight: 500 !important;
+      color: #e2e8f0 !important;
+    }
+
+    .service-block .font-bold {
+      font-size: 0.6rem !important;
+      letter-spacing: 0.09em;
+      color: rgba(148, 163, 184, 0.78) !important;
+    }
+
+    /* --- 6b. Embedded frames -------------------------------------------- */
+    /* ⚠️ Iframe heights live HERE, not in the widget's `classes`.
+       Homepage builds the iframe as `rounded-sm w-full ''${classes}` and
+       `classes` REPLACES its default height classes. Tailwind compiles
+       arbitrary values (h-[640px]) only when they appear in its own source
+       scan, and our YAML never does — so the class resolved to nothing and
+       every embed fell back to the browser's intrinsic 150px iframe height.
+       Measured live on 2026-10-19: the river graph had been drawing at 150px
+       instead of 640px, and the temperature panel at 150px instead of 360px.
+       Keying off the service `id` (which Homepage puts verbatim on the
+       <li class="service">) is the documented way to do this and cannot
+       silently evaporate the same way. */
+    #embed-river iframe {
+      height: 640px;
+    }
+
+    #embed-temps iframe {
+      height: 360px;
+    }
+
+    #embed-wx-strip iframe {
+      height: 240px;
+    }
+
+    /* 215px, not the 190px this started at: the card measured 197px of
+       content and the overflowing 7px drew a scrollbar INSIDE the tile. The
+       card itself also sets overflow:hidden now, so this height only has to
+       be generous enough that nothing is actually clipped. */
+    #embed-briefing iframe {
+      height: 215px;
+    }
+
+    /* Four rows, every line single-line and ellipsised, so the card measures
+       280px at 1600px wide and 275px on a phone — the same at every width.
+       295px is that plus headroom. */
+    #embed-projects iframe {
+      height: 295px;
+    }
+
+    @media (max-width: 640px) {
+      /* A 640px graph is most of a phone screen, and the strip's ten-day row
+         wraps to two rows of five below this width. */
+      #embed-river iframe {
+        height: 420px;
+      }
+
+      #embed-temps iframe {
+        height: 300px;
+      }
+
+      /* 420px, not 340. The read block is clamped now, so the card's height
+         is finally deterministic: measured 406px natural at both 390px and
+         320px wide (the ten-day grid becomes 5x2 below 640px, which is most
+         of it). 340px clipped the bottom of that grid and the timestamp, and
+         html{overflow:hidden} meant there was no scrollbar to reveal them. */
+      #embed-wx-strip iframe {
+        height: 420px;
+      }
+
+      /* The two panels stack below 640px, and the issue pills wrap: measured
+         natural height is 333px at 360-430px wide and 363px at 320px (three
+         rows of pills). 375px covers the worst case with headroom. The panels
+         carry flex:1, so a quiet day grows them rather than leaving a gap. */
+      #embed-briefing iframe {
+        height: 375px;
+      }
+    }
+
+    /* --- 7. Phone ------------------------------------------------------- */
+    @media (max-width: 640px) {
+      /* Tighter gutters: on a 390px screen the default m-5 throws away
+         10% of the width. */
+      #information-widgets {
+        margin: 0.6rem 0.7rem 0 !important;
+        padding: 0;
+      }
+
+      #myTab {
+        margin: 0.6rem 0.7rem 0.1rem;
+        padding: 0.25rem;
+        /* Enough of tab 4 stays visible to show the row scrolls. */
+        justify-content: flex-start;
+      }
+
+      #myTab button[role="tab"] {
+        padding: 0 0.8rem;
+        font-size: 0.7rem;
+        letter-spacing: 0.1em;
+      }
+
+      #layout-groups,
+      #services,
+      #bookmarks {
+        margin: 0.5rem 0.7rem !important;
+      }
+
+      #widgets-wrap {
+        gap: 0.1rem 0.4rem;
+      }
+
+      #information-widgets .text-xs {
+        font-size: 0.66rem;
+      }
+
+      /* Five resources (cpu, mem, /, fusion, backup) at Homepage's default
+         117px each fit only two per row on a 390px phone, so the block costs
+         three rows / 122px before a single service card appears. Trimming the
+         icon gap (ml-3) and the 85px text column to ~104px per item fits
+         three per row, i.e. two rows. Measured on the live page 2026-10-19. */
+      #information-widgets .information-widget-resource {
+        margin-right: 0.35rem !important;
+        padding-top: 0.2rem !important;
+        padding-bottom: 0.2rem !important;
+      }
+
+      #information-widgets .information-widget-resource > div {
+        margin-left: 0.4rem !important;
+        min-width: 74px !important;
+      }
+    }
+
+    /* --- 8. Motion ------------------------------------------------------ */
+    @media (prefers-reduced-motion: reduce) {
+      #layout-groups .service-card,
+      #services .service-card,
+      #bookmarks li.bookmark > a,
+      #myTab button[role="tab"] {
+        transition: none;
+      }
+
+      @media (hover: hover) {
+        #layout-groups .service-card:hover,
+        #services .service-card:hover,
+        #bookmarks li.bookmark > a:hover {
+          transform: none;
+        }
+      }
+    }
+  '';
+
   servicesYaml = pkgs.writeText "homepage-services.yaml" ''
+    # ── Projects ─────────────────────────────────────────────────────────
+    # The LAST group on the Lab tab. One row per project: percent complete
+    # from its done/total steps, and the `next` field — which the board writes
+    # as the thing that has to happen for the project to move, so a blocked
+    # project shows what it is blocked ON. Rendered every ten minutes by
+    # `briefing projects`.
+    #
+    # ⚠️ Same as Briefing: NO `allowScrolling: "no"`, because Homepage sets
+    # pointer-events:none on the frame when that is present and every row here
+    # is a link to the full board.
+    - Projects:
+        - Project board:
+            description: Where the agent's multi-day work stands
+            href: https://digest.rosemaryacres.com/board/
+            icon: mdi-clipboard-text-clock
+            id: embed-projects
+            widget:
+              type: iframe
+              name: Projects
+              src: /briefing/projects.html
+              classes: w-full
+              referrerPolicy: same-origin
+
+    # ── Briefing ─────────────────────────────────────────────────────────
+    # The LAST group on the Home tab (see settings.layout — group order on a
+    # tab comes from the layout block, not from the order here): open sentinel
+    # conditions, today's daybook plan, and the newsdesk edition as a reading
+    # teaser. The tiles above are what the page is for; this is what you read
+    # once you are already on it. Rendered every five minutes by
+    # `briefing card` (modules/services/briefing) and served by nginx off this
+    # same vhost, so the iframe is same-origin.
+    #
+    # ⚠️ NO `allowScrolling: "no"` here, unlike the other embeds. Homepage sets
+    # `pointer-events: none` on the frame when that option is present, which
+    # would make every link on this card dead — and this card is entirely
+    # about being clicked.
+    - Briefing:
+        - Today:
+            description: What is open, what today is about, and something to read
+            href: https://notes.rosemaryacres.com
+            icon: mdi-script-text-outline
+            id: embed-briefing
+            widget:
+              type: iframe
+              name: Briefing
+              src: /briefing/card.html
+              classes: w-full
+              referrerPolicy: same-origin
+
+    # ── Favorites ────────────────────────────────────────────────────────
+    # The top-apps row, and the only group here chosen by use rather than by
+    # theme. Hand-kept on purpose: Homepage records nothing when a tile is
+    # clicked, so there is no usage data to sort by and never will be without
+    # a backend it does not have.
+    #
+    # Every tile below is a DUPLICATE of its entry in a themed group further
+    # down — Tandoor and Nextcloud from Household, Jellyfin and Immich from
+    # Media. The themed groups stay complete; this is an additional way in,
+    # not a move. ⚠️ Edit a widget here and you must edit its twin too; a
+    # rotated API key breaks both copies, and a key fixed in only one place
+    # leaves a tile that looks fine on one tab and empty on another.
+    - Favorites:
+        - Tandoor:
+            description: Recipes
+            href: https://recipes.rosemaryacres.com
+            icon: tandoor-recipes.png
+            widget:
+              type: tandoor
+              url: https://recipes.rosemaryacres.com
+              key: {{HOMEPAGE_VAR_TANDOOR_KEY}}
+        - Nextcloud:
+            description: Files, calendar, notes
+            href: https://cloud.rosemaryacres.com
+            icon: nextcloud.png
+            widget:
+              type: nextcloud
+              url: https://cloud.rosemaryacres.com
+              username: "{{HOMEPAGE_VAR_NEXTCLOUD_USER}}"
+              password: "{{HOMEPAGE_VAR_NEXTCLOUD_PASS}}"
+        - Jellyfin:
+            description: Movies, TV, music
+            href: https://jellyfin.rosemaryacres.com
+            icon: jellyfin.png
+            widget:
+              type: jellyfin
+              url: https://jellyfin.rosemaryacres.com
+              key: {{HOMEPAGE_VAR_JELLYFIN_KEY}}
+              enableNowPlaying: true
+              enableBlocks: true
+        - Immich:
+            description: Photos & videos
+            href: https://photos.rosemaryacres.com
+            icon: immich.png
+            widget:
+              type: immich
+              url: https://photos.rosemaryacres.com
+              key: {{HOMEPAGE_VAR_IMMICH_KEY}}
+              version: 2
+
     - Media:
+        - Library radio:
+            description: The house radio, and the living-room receiver
+            href: https://radio.rosemaryacres.com
+            icon: mdi-radio
+            widget:
+              # the receiver's JSON API (yamaha-ync-api on the host-gateway
+              # port, opened to br-+ by services.yamaha-ync.exposeApiToContainers)
+              type: customapi
+              url: http://host.docker.internal:8791/status
+              refreshInterval: 10000
+              method: GET
+              display: list
+              mappings:
+                - field: power
+                  label: Receiver
+                - field: input
+                  label: Input
+                - field:
+                    now_playing: station
+                  label: Station
+                - field:
+                    now_playing: track
+                  label: Now playing
+                - field: volume
+                  label: Volume
         - Jellyfin:
             description: Movies, TV, music
             href: https://jellyfin.rosemaryacres.com
@@ -184,30 +849,6 @@ let
             href: https://metube.rosemaryacres.com
             icon: metube.png
             # Link-only: Homepage has no MeTube widget.
-        - Stacks:
-            description: Book catalog — scan at a sale, browse the shelves
-            href: https://books.rosemaryacres.com
-            icon: mdi-bookshelf
-            # Link-only: Homepage has no widget for this; it is ours.
-
-    - Productivity:
-        - Vaultwarden:
-            description: Password vault
-            href: https://keys.rosemaryacres.com
-            icon: vaultwarden.png
-        - Paperless:
-            description: OCR document archive
-            href: https://paperless.rosemaryacres.com
-            icon: paperless.png
-        - Uptime Kuma:
-            description: Status board
-            href: https://uptime.rosemaryacres.com
-            icon: uptime-kuma.png
-            widget:
-              type: uptimekuma
-              url: https://uptime.rosemaryacres.com
-              slug: default
-
     - AI:
         - Open WebUI:
             description: Local LLM chat + book RAG (Qwen 3B-GPU / 32B-CPU, on Wallace)
@@ -220,16 +861,22 @@ let
             icon: mdi-notebook-outline
             # Link-only: no Homepage widget for open-notebook.
 
-    - Cloud:
-        - Nextcloud:
-            description: Files, calendar, notes
-            href: https://cloud.rosemaryacres.com
-            icon: nextcloud.png
-            widget:
-              type: nextcloud
-              url: https://cloud.rosemaryacres.com
-              username: "{{HOMEPAGE_VAR_NEXTCLOUD_USER}}"
-              password: "{{HOMEPAGE_VAR_NEXTCLOUD_PASS}}"
+    # Household — the second half of the Home tab, and the merger of the old
+    # "Cloud" and "Productivity" groups. Those two were a distinction without
+    # a difference (three tiles and two), and Productivity was one of the two
+    # groups missing from settings.layout, so it rendered below everything
+    # else. Named for what is actually in it: recipes, documents, books,
+    # files, passwords and notes are the household's records, not work output.
+    # Uptime Kuma went to Monitoring with the other dashboards, and Stacks
+    # came over from Media Mgmt — a book catalogue is not part of the
+    # download pipeline.
+    - Household:
+        # ⚠️ Nextcloud and Tandoor are NOT here — they live in Favorites, which
+        # is on the same tab. They were in both at first, which put the only
+        # two widget-bearing cards on the Home tab side by side with their own
+        # duplicates. Anything promoted to Favorites must be removed from its
+        # themed group IF that group shares a tab with Favorites; the Media
+        # duplicates are fine precisely because Media sits on another tab.
         - SilverBullet:
             description: Notes, tasks & the daybook (scheduling assistant)
             href: https://notes.rosemaryacres.com
@@ -239,14 +886,24 @@ let
             href: https://shoebox.rosemaryacres.com
             icon: mdi-card-text-outline
             # Link-only: no Homepage widget exists for this; it's ours.
-        - Tandoor:
-            description: Recipes
-            href: https://recipes.rosemaryacres.com
-            icon: tandoor-recipes.png
-            widget:
-              type: tandoor
-              url: https://recipes.rosemaryacres.com
-              key: {{HOMEPAGE_VAR_TANDOOR_KEY}}
+        - Vaultwarden:
+            description: Password vault
+            href: https://keys.rosemaryacres.com
+            icon: vaultwarden.png
+        - Paperless:
+            description: OCR document archive
+            href: https://paperless.rosemaryacres.com
+            icon: paperless.png
+        - Calibre-Web:
+            description: Ebook library — read in a browser, or OPDS to a reader
+            href: https://ebooks.rosemaryacres.com
+            icon: calibre-web.png
+            # Link-only: Homepage has no Calibre-Web widget.
+        - Stacks:
+            description: Book catalog — scan at a sale, browse the shelves
+            href: https://books.rosemaryacres.com
+            icon: mdi-bookshelf
+            # Link-only: Homepage has no widget for this; it is ours.
 
     # Bitcoin / Lightning. mempool has a native Homepage widget (fee + block
     # stats, no key). Alby Hub has no widget, so it's an href tile. bitcoind and
@@ -285,6 +942,10 @@ let
             description: Remote device management (server)
             href: https://mesh.rosemaryacres.com
             icon: meshcentral.png
+        # The Project board link tile used to sit here. It is now the Projects
+        # card at the bottom of this same tab, which links to the same place
+        # and also says what each project is waiting on — a plain link beside
+        # it would be the duplication Favorites/Household just got cleaned of.
 
     - Monitoring:
         - Grafana:
@@ -301,6 +962,14 @@ let
               # from this container, and the Authelia-protected vhost 302s
               # them to a login page they cannot follow (2026-08 audit M3).
               url: http://host.docker.internal:9090
+        - Uptime Kuma:
+            description: Status board
+            href: https://uptime.rosemaryacres.com
+            icon: uptime-kuma.png
+            widget:
+              type: uptimekuma
+              url: https://uptime.rosemaryacres.com
+              slug: default
 
     - Gromit (live):
         # Widget polling goes to the host-gateway ports directly (the
@@ -357,10 +1026,20 @@ let
               url: http://host.docker.internal:61208
               metric: info
               version: 4
-        - Temperatures:
+
+    # The temperature graph is a 360px-tall iframe. Left inside "Gromit (live)"
+    # it had to share a grid row with the five small metric cards, so it either
+    # squeezed into a fifth-width column or stretched that whole row to 360px.
+    # Its own full-width group keeps the metric row compact and the graph
+    # readable.
+    - Temperatures:
+        - Gromit temperatures:
             description: CPU / NVMe / ambient °C — warn & critical alerts armed
             href: https://grafana.rosemaryacres.com/d/gromit-temps
             icon: mdi-thermometer
+            # `id` lands verbatim on the <li class="service">; customCss sizes
+            # the iframe by it. See the ⚠️ below about why not `classes`.
+            id: embed-temps
             widget:
               # Same embed pattern as the Riverwatch graph below: panel 1 of
               # the gromit-temps Grafana dashboard via d-solo. Anonymous Viewer
@@ -369,7 +1048,35 @@ let
               type: iframe
               name: Temps
               src: https://grafana.rosemaryacres.com/d-solo/gromit-temps/_?orgId=1&panelId=1&theme=dark&from=now-24h&to=now&refresh=1m&kiosk
-              classes: h-[360px] w-full
+              # See the embed-river note below: no h-[Npx] here.
+              classes: w-full
+              referrerPolicy: same-origin
+              allowScrolling: "no"
+
+    # The weather strip: current conditions, the latest Ryan Hall read, a
+    # one-line summary and a ten-day row with icons. Rendered every 15 minutes
+    # by `wx strip` (modules/services/wx) into /var/lib/wx/public and served
+    # by nginx as an exact-match location on THIS vhost — same origin as the
+    # dashboard, so no second cert, no second DNS record, and no cross-origin
+    # restriction on the iframe.
+    #
+    # ⚠️ Homepage cannot build this card itself. Its openmeteo widget is
+    # current-conditions-only, customapi renders text rows with no icons, and
+    # nothing in Homepage can reach the wx database for the Ryan Hall line.
+    # Hence a rendered page behind an iframe, the same pattern as the
+    # Riverwatch and temperature embeds.
+    - Weather:
+        - Forecast:
+            description: Current conditions, the Ryan Hall read, and ten days
+            href: https://forecast.weather.gov/
+            icon: mdi-weather-partly-cloudy
+            id: embed-wx-strip
+            widget:
+              type: iframe
+              name: Weather strip
+              src: /wx/strip.html
+              # Height in customCss, keyed off `id` — see embed-river.
+              classes: w-full
               referrerPolicy: same-origin
               allowScrolling: "no"
 
@@ -378,6 +1085,7 @@ let
             description: Stage at Lockport & Gratz with flood thresholds
             href: https://grafana.rosemaryacres.com/d/riverwatch
             icon: mdi-chart-line
+            id: embed-river
             widget:
               # Embeds panel 1 (Stage time series + flood-threshold reference
               # lines + NWPS 5-day forecast) from the Riverwatch Grafana
@@ -390,7 +1098,14 @@ let
               # `to=now+5d` (URL-encoded) makes room for the NWPS forecast
               # overlay, which extends ~5 days into the future.
               src: https://grafana.rosemaryacres.com/d-solo/riverwatch/_?orgId=1&panelId=7&theme=dark&from=now-7d&to=now%2B5d&refresh=5m&kiosk
-              classes: h-[640px] w-full
+              # ⚠️ NO h-[Npx] HERE. `classes` REPLACES the widget's default
+              # height classes, and an arbitrary Tailwind value is only
+              # compiled if it appears in Homepage's own source — ours never
+              # is, so the class resolved to nothing and the iframe fell back
+              # to the browser's intrinsic 150px. Measured on the live page
+              # 2026-10-19: this graph had been rendering at 150px, not 640px.
+              # Height is set in customCss via the `id` above.
+              classes: w-full
               referrerPolicy: same-origin
               allowScrolling: "no"
         - Lockport (Lock 2):
@@ -468,7 +1183,9 @@ let
     - datetime:
         text_size: xl
         format:
-          dateStyle: long
+          # medium ("Oct 19, 2026") rather than long ("October 19, 2026") —
+          # the long form wraps the header on a phone for no added meaning.
+          dateStyle: medium
           timeStyle: short
           hour12: true
   '';
@@ -495,6 +1212,7 @@ in {
         "${servicesYaml}:/app/config/services.yaml:ro"
         "${bookmarksYaml}:/app/config/bookmarks.yaml:ro"
         "${widgetsYaml}:/app/config/widgets.yaml:ro"
+        "${customCss}:/app/config/custom.css:ro"
         "${dockerYaml}:/app/config/docker.yaml:ro"
         "${kubernetesYaml}:/app/config/kubernetes.yaml:ro"
         # Mounted so the resources widget can statfs() these — host paths
@@ -538,6 +1256,65 @@ in {
     locations."/" = {
       proxyPass = "http://127.0.0.1:${toString port}";
       proxyWebsockets = true;
+    };
+
+    # The weather strip, rendered by `wx strip` (modules/services/wx) and
+    # iframed by the Weather tab. Served from this vhost rather than its own
+    # so the iframe is SAME-ORIGIN — no second certificate, no second DNS
+    # record, and no X-Frame-Options/CSP negotiation with ourselves.
+    #
+    # ⚠️ An exact-match (`= /path`) location beats the `/` prefix location
+    # above, so this does NOT get proxied into the Homepage container. A
+    # prefix location here would lose to nothing but is easy to get wrong —
+    # the same trap as the MIME/regex ordering noted in nginx-config-verify.
+    # The favicon, served off this same vhost so it works whether it lives in
+    # the nix store or in /var/lib/homepage. See faviconOverride above.
+    locations."= ${faviconUrl}" = {
+      alias = if faviconOverride != "" then faviconOverride else toString faviconSvg;
+      extraConfig = ''
+        # Browsers cache a favicon aggressively; an hour is long enough to
+        # avoid a request per tab and short enough that swapping the image
+        # shows up the same afternoon.
+        add_header Cache-Control "public, max-age=3600";
+      '' + lib.optionalString (faviconOverride != "") ''
+        # The override file is copied in by hand and may not be there yet.
+        # Fall back to the drawing rather than leaving the tab iconless.
+        error_page 404 = ${faviconFallbackUrl};
+      '';
+    };
+
+    # The committed drawing, always available — both as the fallback target
+    # above and as a thing you can open to check it rendered.
+    locations."= ${faviconFallbackUrl}" = {
+      alias = toString faviconSvg;
+      extraConfig = ''
+        add_header Cache-Control "public, max-age=3600";
+      '';
+    };
+
+    locations."= /briefing/projects.html" = {
+      alias = "/var/lib/briefing/public/projects.html";
+      extraConfig = ''
+        add_header Cache-Control "no-cache, must-revalidate";
+      '';
+    };
+
+    locations."= /briefing/card.html" = {
+      alias = "/var/lib/briefing/public/card.html";
+      extraConfig = ''
+        # Regenerated every five minutes; a cached copy would show a resolved
+        # issue as still open.
+        add_header Cache-Control "no-cache, must-revalidate";
+      '';
+    };
+
+    locations."= /wx/strip.html" = {
+      alias = "/var/lib/wx/public/strip.html";
+      extraConfig = ''
+        # Regenerated every 15 minutes; a stale cached copy would quietly
+        # show yesterday's forecast, which is worse than a slow load.
+        add_header Cache-Control "no-cache, must-revalidate";
+      '';
     };
   };
 

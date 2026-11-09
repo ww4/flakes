@@ -37,6 +37,7 @@ let
   # systemd `path` option — the exact shape of the #165 bug, where a tool was
   # on the interactive PATH and missing from every timer run.
   nd = "${newsdesk}/bin/newsdesk";
+  notify = "${import ../notify-pkg.nix { inherit pkgs; }}/bin/gromit-notify";
 
   # Shared by both edition units. `kind` is resolved at runtime for the brief
   # so that Monday picks up the release-radar lane (releases are not news;
@@ -85,9 +86,45 @@ let
       # ranking behind a loud banner, because a blank page is indistinguishable
       # from "no news" and that is the failure mode this whole design is
       # organised against.
+      #
+      # The reader writes to its OWN file, never straight into $raw. On 2026-09-04
+      # and 09-05 it wrote directly, and `claude -p` printed
+      #     Failed to authenticate: OAuth session expired and could not be refreshed
+      # to STDOUT. That 73-byte error BECAME the edition body: non-empty, so
+      # publish's fallback declined to fire; no [nd:N] citations, so 0 items
+      # published; published=0, so no notification. Two editions lost in silence.
+      #
+      # Promote to $raw only if the reader SUCCEEDED and actually cited items.
+      # Anything else leaves $raw empty, which is publish's fallback signal.
+      readerout=${cfg.stateDir}/edition.reader.md
+      readererr=${cfg.stateDir}/edition.reader.err
+      : > "$readerout"
+      : > "$readererr"
+
+      rc=0
       timeout ${cfg.judge.timeout} claude -p "$(cat ${newsdesk}/share/newsdesk/judge-prompt.md)" \
-        > "$raw" 2>/dev/null \
-        || echo "newsdesk: reader did not complete (see journalctl)"
+        > "$readerout" 2> "$readererr" || rc=$?
+
+      # stderr goes to the JOURNAL, not /dev/null. It used to be discarded while
+      # the failure message told the reader to "see journalctl" — where nothing
+      # had been written. Bounded so a runaway reader cannot flood the log.
+      if [ -s "$readererr" ]; then
+        echo "newsdesk: reader stderr:"
+        head -c 2000 "$readererr" | sed 's/^/  /'
+      fi
+      if [ "$rc" -ne 0 ]; then
+        echo "newsdesk: reader exited $rc"
+      fi
+
+      if [ "$rc" -eq 0 ] && grep -q '\[nd:[0-9]\+\]' "$readerout"; then
+        cp "$readerout" "$raw"
+      else
+        # Deliberately leave $raw EMPTY — that is what publish keys its fallback
+        # on. Copying a failed reader's output here is precisely the bug above.
+        echo "newsdesk: reader produced no item citations — publishing the raw ranking instead"
+        echo "newsdesk: reader said: $(head -c 200 "$readerout" | tr '\n' ' ')"
+        : > "$raw"
+      fi
     ''}
     fi
 
@@ -113,7 +150,7 @@ let
     hour="$(date +%-H)"
     if [ "$published" -gt 0 ] && [ "$hour" -ge ${toString cfg.notifyAfterHour} ] \
        && [ "$hour" -lt ${toString cfg.notifyBeforeHour} ]; then
-      gromit-notify "Newsdesk — $kind" "$tldr
+      ${notify} "Newsdesk — $kind" "$tldr
 ${cfg.editionUrl}" default "newspaper" "${cfg.editionUrl}"
     else
       echo "newsdesk: not notifying (published=$published hour=$hour)"

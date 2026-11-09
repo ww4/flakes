@@ -20,6 +20,75 @@
 let
   # Helper for the backup-health check: fires (exit 0 + a message) if any key
   # backup unit's last run did not succeed.
+  # Claude subscription login — warns BEFORE the refresh token dies rather than
+  # after every scheduled run has started failing. The access token refreshes
+  # silently on use and is never the problem; the refresh token is a hard wall,
+  # and when it goes every `claude -p` unit fails at once with no fix but an
+  # interactive login. Chris found out the bad way: "Its annoying to find out
+  # I'm logged out because a bunch of auto-run commands start failing."
+  #
+  # ⚠️ Reads only the expiry timestamp — no token is printed, and no API call is
+  # made, so this costs nothing and cannot itself be the thing that fails.
+  # A revoked-but-unexpired token is NOT caught here; that shows up as a failed
+  # unit instead, and `claude-auth` tells the two apart.
+  #
+  # ⚠️ EXIT-CODE POLARITY — this check shipped INVERTED and was fixed 2026-10-31.
+  # A `command` check fires when the command exits with `fireOnExit`, which
+  # defaults to 0, so for sentinel **exit 0 means "there is a problem"**. Every
+  # other command check obeys that: backupCheck prints and exits 0, and the
+  # `oom` check is a bare grep, which exits 0 on a match. This one exited 0 when
+  # the login was HEALTHY and 1 once the token was nearly dead.
+  #
+  # The result was not a missing alert but a wrong one in both directions:
+  #   healthy  -> exit 0 -> fires  -> escalates once, then latches active=True
+  #   expiring -> exit 1 -> "not fired" -> the watcher's resolve path sends
+  #                                        "Sentinel resolved: claude-login cleared."
+  # So the notification owed to Chris when his login actually died was a green
+  # resolved tick, and the one real escalation it ever sent was for a healthy
+  # token. Confirmed live before this fix: refresh token healthy with 26.6 days
+  # left, the check exited 0 with empty stdout, and state.json carried
+  # claude-login active=True since 2026-10-28 15:38 — latched, so the `active`
+  # gate below would have suppressed every later detection anyway.
+  #
+  # The ⚠️ note on that `active` gate cites claude-login as an example of a
+  # chronic condition going quiet (11,671 consecutive, one escalation). The
+  # edge-trigger problem is real, but it is NOT why this check was stuck: it was
+  # firing on the healthy state, which never clears. Fixing the gate would not
+  # have fixed this. No `reescalateSec` is added here — an expiring token is a
+  # genuine edge (it happens once per login cycle) and the existing 7-day lead
+  # is the reminder.
+  claudeLoginCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-claude-login";
+    runtimeInputs = [ pkgs.python3 ];
+    text = ''
+      # exit 0 = FIRE (sentinel's command-check convention), exit 1 = all clear.
+      cred=/home/claude/.claude/.credentials.json
+      if [ ! -r "$cred" ]; then
+        echo "claude login: no readable credentials at $cred — every scheduled claude -p run will fail. Run 'claude' interactively on gromit."
+        exit 0
+      fi
+      # Epoch MILLISECONDS. Read as seconds this dates to 1970 and cries wolf
+      # permanently, which is worse than having no check.
+      python3 - "$cred" <<'EOF'
+import json, sys, time
+d = json.load(open(sys.argv[1]))["claudeAiOauth"]
+days = (d["refreshTokenExpiresAt"] / 1000 - time.time()) / 86400
+when = time.strftime("%Y-%m-%d %H:%M", time.localtime(d["refreshTokenExpiresAt"] / 1000))
+if days <= 0:
+    # Already gone. "expires in -5.0 days" is a confusing thing to read at 7am,
+    # and this is the case that matters most: every claude -p unit is ALREADY
+    # soft-failing (exits 0, prints the auth error to stdout) — see
+    # modules/agent/claude-run-pkg.nix.
+    print("claude login: refresh token EXPIRED %.1f days ago (%s). Every scheduled claude -p unit is already failing silently. Run 'claude' interactively on gromit." % (-days, when))
+    sys.exit(0)   # fire
+if days <= 7:
+    print("claude login: refresh token expires in %.1f days (%s). Run 'claude' interactively on gromit to re-auth; every scheduled claude -p unit stops when it lapses." % (days, when))
+    sys.exit(0)   # fire
+sys.exit(1)       # healthy
+EOF
+    '';
+  };
+
   backupCheck = pkgs.writeShellApplication {
     name = "sentinel-check-backups";
     runtimeInputs = [ pkgs.systemd ];
@@ -336,6 +405,50 @@ let
     '';
   };
 
+  # mempool-api's RBF cache dump (disk-cache.ts, upstream) is a single
+  # unchunked `JSON.stringify` of every tracked RBF tree — unlike the regular
+  # mempool/blocks cache, which the SAME file deliberately splits into 25
+  # chunks to avoid exactly this. Past ~512 MB, V8 refuses to stringify it,
+  # the backend's own try/catch logs a warning and gives up, and the file
+  # simply stops moving. That ran undetected for a month (2026-09-26 ->
+  # 2026-10-26, frozen at 485 MB) before anyone noticed — there was no check
+  # on this file, only on the permissions bug that preceded it (#337). This
+  # cannot be fixed from our side (no MEMPOOL_RBF_* setting exists in either
+  # the pinned digest or the current mempool/backend:latest — checked by
+  # pulling both images' start.sh/mempool-config.json, byte-identical; the
+  # unchunked JSON.stringify is unchanged on upstream's current main branch
+  # too), so this is a tripwire, not a cure: catch the next freeze in hours,
+  # not a month.
+  rbfCacheCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-mempool-rbfcache";
+    runtimeInputs = [ pkgs.coreutils ];
+    text = ''
+      f=/var/lib/mempool/cache/rbfcache.json
+      # Absent is normal early (first dump needs Fulcrum caught up) — not an incident.
+      [ -e "$f" ] || exit 1
+
+      age=$(( $(date +%s) - $(stat -c %Y "$f") ))
+      size=$(stat -c %s "$f")
+
+      # Written every ~6 blocks (~60 min on average). 6h is several multiples
+      # of that, so this only fires on a real stall, not ordinary block-time
+      # variance.
+      if [ "$age" -gt 21600 ]; then
+        echo "mempool rbfcache.json stale: last write $((age / 60)) min ago — the dump may be failing silently (V8 string-length ceiling, or something else; check docker logs mempool-api for 'Error writing rbf data')"
+        exit 0
+      fi
+
+      # Early warning well under the ~512 MB ceiling that froze it at 485 MB
+      # last time, so there's room to look before it seizes again.
+      if [ "$size" -gt 400000000 ]; then
+        echo "mempool rbfcache.json is $((size / 1000000)) MB and still being written — approaching the ~512 MB V8 ceiling that froze it on 2026-09-26"
+        exit 0
+      fi
+
+      exit 1
+    '';
+  };
+
   # forum.driveonwood.com — the one production service in Chris's world that
   # nothing watched. Two questions, both previously answerable only by hand:
   # is it behind upstream, and did last night's backup finish.
@@ -494,11 +607,268 @@ let
     '';
   };
 
+  # ── media pipeline integrity (added 2026-09-27, The Ark S03E07/E08) ─────────
+  # The arr API keys, read from the sops copy owned by the sentinel user. Same
+  # encrypted value decluttarr already uses — no new secret material.
+  arrKeys = config.sops.secrets."arr-api-keys".path;
+
+  # PRE-AIR GRAB. The single best discriminator for indexer bait: nothing
+  # legitimate publishes days before broadcast. The Ark S03E07 was grabbed
+  # 2026-09-07 for an episode that aired 2026-09-10, and S03E08 three days early
+  # likewise; both were a single Windows .exe. Comparing the grab against the
+  # airdate Sonarr already holds catches the whole class at grab time, hours
+  # before the download finishes — far earlier than any content scan can.
+  #
+  # TOLERANCE is 24 h, not zero. TVDB airDateUtc is broadcast time, a WEB-DL can
+  # legitimately surface the same evening, and a few hours of metadata skew is
+  # ordinary. The bait pattern is measured in days, so a day of slack costs
+  # nothing and removes the only plausible false positive.
+  #
+  # Sonarr only: a movie has no airdate in this sense, and judging Radarr grabs
+  # against inCinemas/digitalRelease is a genuinely different (and noisier)
+  # question.
+  preAirGrabCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-preair-grab";
+    runtimeInputs = [ pkgs.curl pkgs.jq pkgs.coreutils ];
+    text = ''
+      TOLERANCE_HOURS=24
+      set -a
+      # shellcheck source=/dev/null
+      . "${arrKeys}"
+      set +a
+
+      since=$(date -u -d '-26 hours' +%Y-%m-%dT%H:%M:%SZ)
+      h=$(curl -sS --max-time 20 -H "X-Api-Key: $SONARR_API_KEY" \
+            "http://127.0.0.1:8989/api/v3/history/since?date=$since&eventType=grabbed&includeEpisode=true" \
+            2>/dev/null || true)
+      # An unreachable Sonarr is the seeding/container checks' business, not
+      # this one's. Staying quiet here avoids two alarms for one fault — but it
+      # does mean a silent Sonarr reads as "no pre-air grabs", which is only
+      # safe BECAUSE another check owns that failure.
+      printf '%s' "$h" | jq -e 'type=="array"' >/dev/null 2>&1 || exit 1
+
+      bad=$(printf '%s' "$h" | jq -r --argjson tol "$TOLERANCE_HOURS" '
+        [ .[]
+          | select(.episode.airDateUtc != null)
+          | ((.episode.airDateUtc | fromdateiso8601) - (.date | fromdateiso8601)) as $lead
+          | select($lead > ($tol * 3600))
+          | "\(.sourceTitle) — grabbed \(($lead/86400)|floor)d before air, from \(.data.indexer // "?")"
+        ] | .[]' 2>/dev/null || true)
+
+      if [ -n "$bad" ]; then
+        n=$(printf '%s\n' "$bad" | grep -c . || true)
+        echo "$n pre-air grab(s) — nothing legitimate publishes this early, treat as indexer bait:"
+        printf '%s\n' "$bad"
+        exit 0   # fire
+      fi
+      exit 1     # all good
+    '';
+  };
+
+  # STUCK IMPORT. The fault that turned two bad grabs into a three-week outage:
+  # a blocked import parks the queue item as importPending/importBlocked, which
+  # Sonarr reads as "still working", so it never re-searches — AND the parked
+  # item then rejects every real release for that episode ("Release in queue
+  # already meets cutoff"). Nothing surfaced it; the gap was found by eye.
+  #
+  # Reports each downloadId ONCE and then stays quiet. Some of these can only be
+  # cleared by a person (a season pack whose episode numbering does not match,
+  # say), and a check that re-fires every two hours against a condition only a
+  # human can clear is a false-alarm generator that trains you to mute the
+  # channel. Decluttarr handles the machine-clearable ones inside ~45 min, so
+  # anything still here after two days is genuinely worth one look.
+  stuckImportCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-stuck-import";
+    runtimeInputs = [ pkgs.curl pkgs.jq pkgs.coreutils ];
+    text = ''
+      STALE_DAYS=2
+      SEEN=/var/lib/sentinel/stuck-import-seen.json
+      set -a
+      # shellcheck source=/dev/null
+      . "${arrKeys}"
+      set +a
+
+      [ -s "$SEEN" ] || echo '[]' > "$SEEN"
+      seen=$(cat "$SEEN")
+      cutoff=$(date -u -d "-$STALE_DAYS days" +%Y-%m-%dT%H:%M:%SZ)
+      found=""; ids=""
+
+      for app in "sonarr:8989:$SONARR_API_KEY" "radarr:7878:$RADARR_API_KEY"; do
+        name="''${app%%:*}"; rest="''${app#*:}"; port="''${rest%%:*}"; key="''${rest#*:}"
+        q=$(curl -sS --max-time 20 -H "X-Api-Key: $key" \
+              "http://127.0.0.1:$port/api/v3/queue?pageSize=200" 2>/dev/null || true)
+        printf '%s' "$q" | jq -e '.records|type=="array"' >/dev/null 2>&1 || continue
+
+        # One line per stuck downloadId: finished downloading, not importing,
+        # and older than the cutoff.
+        rows=$(printf '%s' "$q" | jq -r --arg cut "$cutoff" --arg app "$name" '
+          [ .records[]
+            | select(.status == "completed")
+            | select(.trackedDownloadState == "importPending" or .trackedDownloadState == "importBlocked")
+            | select(.added < $cut)
+            | { id: .downloadId, added: .added,
+                msg: ([.statusMessages[]?.messages[]?] | unique | .[0] // "no message") }
+          ] | unique_by(.id) | .[]
+          | "\(.id)\t\($app)\t\(.added[0:10])\t\(.msg)"' 2>/dev/null || true)
+
+        while IFS=$'\t' read -r id a added msg; do
+          [ -n "$id" ] || continue
+          printf '%s' "$seen" | jq -e --arg i "$id" 'index($i)' >/dev/null 2>&1 && continue
+          found="$found
+  [$a] stuck since $added — ''${msg:0:90}"
+          ids="$ids $id"
+        done <<< "$rows"
+      done
+
+      if [ -n "$found" ]; then
+        for id in $ids; do
+          seen=$(printf '%s' "$seen" | jq --arg i "$id" '. + [$i]')
+        done
+        # Keep the ack list from growing without bound; ids are 40-char hashes
+        # and only the recent ones can still be in a queue.
+        printf '%s' "$seen" | jq '.[-200:]' > "$SEEN.tmp" && mv "$SEEN.tmp" "$SEEN"
+        n=$(printf '%s' "$ids" | wc -w)
+        echo "$n download(s) finished but stuck un-imported for over $STALE_DAYS days (each blocks re-search for its episode):$found"
+        exit 0   # fire
+      fi
+      exit 1     # all good
+    '';
+  };
+
+  # enp3s0 does not hold a link speed — it renegotiates at every link event and
+  # has landed on 100 Mb as often as on gigabit. Reads /sys directly, so it is
+  # instant and does not depend on Prometheus being up.
+  nicSpeedCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-nic-speed";
+    text = ''
+      # exit 0 = FIRE, exit 1 = all clear (sentinel's command-check convention).
+      dev=enp3s0
+      alt=enp6s0u1
+      # Overridable ONLY so both branches can be exercised against a fixture
+      # tree. The fire path is the one that matters and a gigabit link cannot
+      # demonstrate it, so without this the check could only ever be tested in
+      # the state where it does nothing.
+      net="''${SENTINEL_NET_SYSFS:-/sys/class/net}"
+
+      if [ ! -e "$net/$dev/speed" ]; then
+        echo "nic-link-speed: $dev has no speed attribute. The LAN interface was renamed or is absent."
+        exit 0
+      fi
+
+      carrier=$(cat "$net/$dev/carrier" 2>/dev/null || echo 0)
+      speed=$(cat "$net/$dev/speed" 2>/dev/null || echo "")
+
+      # A DOWN link is deliberately NOT this check's business. It reports speed
+      # -1, which would read as "degraded" and mask the real fault, and with the
+      # LAN down nothing could deliver the notification anyway.
+      [ "$carrier" = "1" ] || exit 1
+
+      # Carrier up but no usable number: mid-negotiation, or the attribute went
+      # unreadable. Reported as itself rather than folded into the degraded
+      # path, which would announce "negotiated -1Mb" — a nonsense alert.
+      #
+      # Re-read once after a pause before believing it. This check now runs with
+      # minConsecutive = 1, so there is no longer a second poll to absorb a
+      # transient — the settling has to happen inside the check. A PHY mid-retrain
+      # shows carrier up with speed -1 for well under a second.
+      case "$speed" in
+        ""|*[!0-9]*)
+          sleep 3
+          speed=$(cat "$net/$dev/speed" 2>/dev/null || echo "")
+          carrier=$(cat "$net/$dev/carrier" 2>/dev/null || echo 0)
+          [ "$carrier" = "1" ] || exit 1
+          ;;
+      esac
+      case "$speed" in
+        ""|*[!0-9]*)
+          echo "nic-link-speed: $dev has carrier but its speed still reads '$speed' after a retry, not a number. Cannot determine link speed."
+          exit 0
+          ;;
+      esac
+
+      [ "$speed" -lt 1000 ] || exit 1
+
+      echo "nic-link-speed: $dev negotiated ''${speed}Mb, not 1000. Every LAN transfer off gromit is capped near 11 MiB/s. Test cable-vs-port NOW, while it is degraded (see evidence)."
+      echo
+      echo "The negotiated speed is already a Prometheus series, so this needs no"
+      echo "inferring from average throughput:"
+      echo '  node_network_speed_bytes{device="enp3s0"} * 8 / 1e6'
+      echo
+      echo "Cable vs port. Run this WHILE it is degraded, which is now:"
+      echo "  1. Move the LAN cable from the onboard port to the ASIX USB adapter ($alt)."
+      echo "  2. cat /sys/class/net/$alt/speed"
+      echo "       1000 -> cable and in-wall run are fine; the ONBOARD r8169 port is bad."
+      echo "       100  -> the port is fine; it is the CABLE or the in-wall run."
+      echo "  networking.nix already mirrors $dev onto $alt, so ssh, Jellyfin-direct"
+      echo "  and LAN DNS keep working on it."
+      echo
+      if [ -e "$net/$alt/carrier" ] && [ "$(cat "$net/$alt/carrier" 2>/dev/null || echo 0)" = "1" ]; then
+        echo "  NOTE: $alt already has link, at $(cat "$net/$alt/speed" 2>/dev/null)Mb."
+      else
+        echo "  ($alt has no link right now, so the cable has not been moved yet.)"
+      fi
+      exit 0   # fire
+    '';
+  };
+
+  # The REVERSE watcher. Everything else here watches gromit from gromit, which
+  # cannot cover gromit falling off the network — that is what the lock3 VPS
+  # aggregator is for. This is the other half of the loop: gromit checking that
+  # the external watcher is still there, so a dead aggregator cannot look like
+  # "no news is good news".
+  #
+  # ⚠️ Checks the PUBLIC endpoint deliberately, not the tailnet one. The tailnet
+  # path and the public path fail independently, and the public path is the one
+  # the aggregator's own notifications depend on. (Measured 2026-10-31: lock3 is
+  # reachable from gromit over BOTH tailnet and public, but wallace<->lock3 is
+  # blocked in both directions — so tailnet reachability here would prove less
+  # than it appears to.)
+  lock3WatchCheck = pkgs.writeShellApplication {
+    name = "sentinel-check-lock3";
+    runtimeInputs = [ pkgs.curl ];
+    text = ''
+      # exit 0 = FIRE, exit 1 = all clear.
+      url="''${LOCK3_HEALTH_URL:-https://lock3.net/}"
+
+      # Two attempts, 5 s apart. A single failed fetch across the open internet
+      # is not evidence of anything; the sentinel's own debounce adds a second
+      # opinion 2 min later, and this adds one 5 s later for the common case of
+      # a momentary blip.
+      code=""
+      for _ in 1 2; do
+        # ⚠️ NO `|| echo 000` here. curl's own -w '%{http_code}' ALREADY prints
+        # 000 when it never got a response, so the fallback concatenates into
+        # "000000", which fails the = "000" test below and misreports a dead
+        # host as "answers but unhealthy". Caught in testing 2026-10-31; it is
+        # the documented curl-httpcode trap. `|| true` only stops set -e from
+        # aborting on curl's non-zero exit — it adds no output of its own.
+        code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$url" 2>/dev/null || true)
+        [ -n "$code" ] || code=000
+        case "$code" in 2*|3*) exit 1 ;; esac
+        sleep 5
+      done
+
+      # ⚠️ 000 is curl's "never got an answer" and is NOT an http code — do not
+      # report it as one. The distinction matters: a 5xx means the VPS is up and
+      # its web stack is broken; 000 means nothing answered at all.
+      if [ "$code" = "000" ]; then
+        echo "lock3 watcher: no answer from $url (DNS, routing, or the VPS is down). The EXTERNAL watcher that covers gromit going offline is itself unreachable, so gromit is currently unwatched from outside."
+      else
+        echo "lock3 watcher: $url returned HTTP $code. The VPS answers but its web stack is unhealthy, so the external watcher that covers gromit going offline may not be able to notify."
+      fi
+      exit 0   # fire
+    '';
+  };
+
   sentinelConfig = {
     enabled = true;
     pollSec = 120;          # informational; the systemd timer drives the cadence
     debounce = 2;           # a condition must persist this many checks before it escalates
-    cooldownSec = 7200;     # don't re-escalate the same incident within 2 h
+    # ⚠️ This does NOT mean "re-escalate every 2 h". It is the floor between two
+    # SEPARATE edges of the same check; a condition that never clears never
+    # reaches it at all (see the `active` gate in the watcher). Per-check
+    # `reescalateSec` is the knob that actually re-notifies a standing problem.
+    cooldownSec = 7200;     # minimum gap between two escalations of one check
     maxPerHour = 6;         # global rate limits (cost + anti-storm guard)
     maxPerDay = 30;
     ntfyServer = "http://127.0.0.1:8090";
@@ -535,17 +905,63 @@ let
       # agent shouldn't auto-delete to free space).
       { id = "disk-space"; type = "metric"; severity = "warning"; agent = true; act = false;
         expr = "100 - (node_filesystem_avail_bytes{mountpoint=~\"/|/mnt/fusion|/mnt/backup/all\"} * 100 / node_filesystem_size_bytes{mountpoint=~\"/|/mnt/fusion|/mnt/backup/all\"})";
-        op = ">"; threshold = 90; }
+        op = ">"; threshold = 90; reescalateSec = 86400; }
+
+      # ⚠️ A SECOND BAND, because one threshold cannot say how urgent it is.
+      # `disk-space` fires at >90% and — being edge-triggered — says it once.
+      # 91% on a 449 G root is 40 G free and a this-month problem; 98% is 9 G
+      # free and tonight's. On 2026-10-21 root crossed from the first to the
+      # second over fifteen days and never produced a second word about it.
+      #
+      # Deliberately in FREE BYTES, not percent, and only for `/`. What breaks
+      # is ENOSPC, and ENOSPC arrives at an absolute number: 10 GB free kills
+      # postgres's checkpointer whether the disk is 449 G or 4 T. Percent is
+      # also the wrong unit for the pools — 97% of 28 TB is still 840 G free,
+      # which is nobody's emergency — so they stay on the percentage check.
+      #
+      # This is a separate check id, so it carries its OWN `active` flag:
+      # crossing 10 GB is a fresh edge and notifies even though `disk-space`
+      # has been standing (and silent) for days. That is the existing
+      # edge-trigger used correctly rather than fought.
+      #
+      # Verified against live Prometheus before shipping: the division keeps the
+      # mountpoint label, so `detail` reads `disk-critical: /=24.6886` —
+      #   node_filesystem_avail_bytes{mountpoint="/"} / 1e9
+      #   => {"mountpoint":"/", ...} value 24.688644096   (2026-10-21 20:19)
+      { id = "disk-critical"; type = "metric"; severity = "critical"; agent = true; act = false;
+        expr = "node_filesystem_avail_bytes{mountpoint=\"/\"} / 1e9";
+        op = "<"; threshold = 10; reescalateSec = 86400; }
 
       # Backup health — fires if any key backup unit's last run did not succeed.
       # (NOTE: catches FAILED runs; staleness/never-ran is a future refinement.)
       { id = "backup-health"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "${backupCheck}/bin/sentinel-check-backups"; }
 
+      # Fires at 7 days out, so there is a week of notice rather than a morning
+      # of mystery failures. agent = false: there is nothing to diagnose and
+      # nothing the agent can do — only an interactive login fixes it.
+      { id = "claude-login"; type = "command"; severity = "warning"; agent = false; act = false;
+        cmd = "${claudeLoginCheck}/bin/sentinel-check-claude-login"; }
+
       # Kernel OOM-kills in the last 10 min (cert renewal failures are already
       # covered by failed-units, so no separate cert check).
       { id = "oom"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "journalctl -k --since -10min --no-pager | grep -iE 'out of memory|oom-kill|killed process'"; }
+
+      # Swap HEADROOM — the gap the 2026-09-25 investigation exposed. `oom` above
+      # only greps for kills that have ALREADY happened, so it is a post-mortem,
+      # not a warning: gromit ran with 0 free swap from 09-14 to 09-25 (11 days)
+      # and nothing fired, because nothing was ever killed. Chris noticed by feel.
+      # This is the leading indicator that was missing.
+      #
+      # Fires under 10% free swap. Warning, not critical, and act = false: the box
+      # is not necessarily in distress when swap is full (on 09-25 the swap held
+      # cold pages from idle services, PSI full stall was 0.1% of wall clock and
+      # falling), so this means "the shock absorber is spent, go look" — exactly
+      # the agent-diagnose case. Critical would make it a false alarm generator.
+      { id = "swap-headroom"; type = "metric"; severity = "warning"; agent = true; act = false;
+        expr = "node_memory_SwapFree_bytes * 100 / node_memory_SwapTotal_bytes";
+        op = "<"; threshold = 10; }
 
       # Drive FAILURE — the real thing (Chris 2026-08-10: only wants to know if a
       # drive is actually failing, not just transiently slow). Fed by the SMART
@@ -560,6 +976,50 @@ let
       { id = "drive-bad-sectors"; type = "metric"; severity = "warning"; agent = true; act = false;
         expr = "gromit_drive_reallocated_sectors + gromit_drive_pending_sectors + gromit_drive_offline_uncorrectable";
         op = ">"; threshold = 0; }
+
+      # A POOL MEMBER IS DOWN. Deliberately NOT a new detector — pool-autoremount
+      # already finds this, tries to remount it, and exports the gauge this reads
+      # (`pool_member_healthy{pool,member}`, 1 = mounted and answering real I/O).
+      # This exists purely for the RE-NOTIFICATION that pool-autoremount lacks:
+      # its escalation is `if [ "$n" -eq 4 ]`, which fires once at the fourth
+      # consecutive failed recovery and then never again.
+      #
+      # 2026-10-29 showed why that is not enough. After the 23:37 reboot, fusion
+      # D1 and D3 did not come back. pool-autoremount noticed within minutes,
+      # notified once at failure 4, and by 08:33 was at **177 consecutive failed
+      # recoveries** having said nothing further for nine hours. Chris found it by
+      # eye, not by alert, and the pool sat degraded with ~7 TB invisible and the
+      # weekly mirror gated off the whole time.
+      #
+      # So the one thing added here is `reescalateSec` — the knob documented above
+      # as "what actually re-notifies a standing problem", and the same fix the
+      # disk-space check needed for the identical reason. Daily, because a missing
+      # drive needs hands and a 2-minute reminder would just train him to mute it.
+      #
+      # ⚠️ Note what the sibling drive checks CANNOT do here: `gromit_drive_smart_ok`
+      # and the bad-sector counters are per-drive series, so a drive that is ABSENT
+      # exports nothing and no threshold can be breached — the series count fell
+      # from 6 to 4 and stayed quiet. `pool_member_healthy` is keyed on the MOUNT,
+      # which is always present in the gauge, so 0 is observable where an absent
+      # series is not. And `disk-space` gets quieter, not louder: losing D1 and D3
+      # took /mnt/fusion from 71% to 69% full.
+      #
+      # act = false: pool-autoremount owns the remount attempt, and a physically
+      # absent disk is not something any action here could clear. agent = true is
+      # worth it — the diagnosis can read `journalctl -k` and distinguish a masked
+      # AHCI port (`ata3: DUMMY`, firmware) from a link-down (cable/drive), which
+      # is the first question asked on a site visit.
+      # ⚠️ The label_join is LOAD-BEARING — do not simplify it to a bare
+      # `pool_member_healthy`. check_metric names a firing series with the first
+      # of mountpoint / device / instance / __name__ that exists, and this gauge
+      # carries only `pool` and `member`. A bare expr therefore fires correctly
+      # and then reports `127.0.0.1:9100=0, 127.0.0.1:9100=0` — an alert that
+      # tells you a drive is down but not WHICH, which is the only fact the
+      # message needed to carry. Joining pool+member into `device` renders
+      # `fusion/D1, fusion/D3`. Verified against live Prometheus.
+      { id = "pool-member-down"; type = "metric"; severity = "warning"; agent = true; act = false;
+        expr = "label_join(pool_member_healthy, \"device\", \"/\", \"pool\", \"member\")";
+        op = "<"; threshold = 1; reescalateSec = 86400; }
 
       # Container-level silent failures (error-spam + dead HTTP backends) —
       # see containerCheck above for the two proven incident modes. Diagnose
@@ -581,9 +1041,82 @@ let
       { id = "seeding-health"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "${seedingCheck}/bin/sentinel-check-seeding"; timeout = 45; }
 
+      # Pre-air grab — indexer bait, caught at grab time rather than after the
+      # download finishes. agent = true so the diagnosis names the indexer and
+      # the release; act = false because removing a queue item and blocklisting
+      # a release is not in the whitelisted-action set.
+      { id = "preair-grab"; type = "command"; severity = "warning"; agent = true; act = false;
+        cmd = "${preAirGrabCheck}/bin/sentinel-check-preair-grab"; timeout = 45; }
+
+      # A finished download that never imported. Reports each downloadId once
+      # (see stuckImportCheck) — some are only human-clearable and a repeating
+      # alarm against those just teaches you to ignore the topic.
+      { id = "stuck-import"; type = "command"; severity = "warning"; agent = true; act = false;
+        cmd = "${stuckImportCheck}/bin/sentinel-check-stuck-import"; timeout = 60; }
+
       # scoped sudo, but it should say what it found before touching anything.
       { id = "api-content"; type = "command"; severity = "warning"; agent = true; act = false;
         cmd = "${apiCheck}/bin/sentinel-check-apis"; timeout = 60; }
+
+      # mempool-api's RBF cache dump freezing silently (see rbfCacheCheck above).
+      { id = "mempool-rbfcache"; type = "command"; severity = "warning"; agent = true; act = false;
+        cmd = "${rbfCacheCheck}/bin/sentinel-check-mempool-rbfcache"; timeout = 15; }
+
+      # Is the EXTERNAL watcher still there (see lock3WatchCheck above)?
+      #
+      # Chris asked for this explicitly: "we should also have a reverse watcher
+      # that monitors uptime kuma from gromit. If it can't see the lock 3 VPS
+      # then I should get a notification through ntfy."
+      #
+      # severity = warning and NOT critical: per the never-wake-for-network rule
+      # this is a monitoring-coverage gap, not an outage of anything Chris uses.
+      # agent = false — nothing on gromit can fix a VPS being unreachable.
+      #
+      # reescalateSec = 86400 rather than the default edge-trigger: being
+      # unwatched from outside is a standing condition, and a condition that
+      # only announces itself once is how gromit ended up unwatched in the first
+      # place. Daily is the right nag for "your safety net is down".
+      #
+      # ⚠️ Deliberately NOT minConsecutive = 1. Unlike nic-link-speed, there is
+      # no settling step that can make a single reading trustworthy here: the
+      # path crosses the open internet. Two polls 2 min apart, each already
+      # retrying once internally, is the cheapest honest confirmation.
+      { id = "lock3-watcher"; type = "command"; severity = "warning"; agent = false; act = false;
+        cmd = "${lock3WatchCheck}/bin/sentinel-check-lock3"; timeout = 40;
+        reescalateSec = 86400; }
+
+      # The LAN link renegotiating down to 100 Mb (see nicSpeedCheck above).
+      # From node_network_speed_bytes over 2026-08-01..10-31: SIX transitions,
+      # and 44.8 of those 90 days spent at 100 Mb — including one unbroken
+      # 40-day run from 09-20 18:50 to the 10-30 19:40 reboot. Nothing detected
+      # any of it. Chris found it by hand on 10-28 while sizing the Wallace copy,
+      # and the flake comments until now recorded it as "stuck since 08-25",
+      # which the series disproves: it returned to gigabit on its own on 08-27,
+      # 08-28, 09-05 and 10-30.
+      #
+      # This REPLACES the weekly `nic-cable-test` daily-reminder, deleted in this
+      # change. That reminder fired every Saturday regardless of the link state,
+      # so it kept asking for a cable-vs-port test at moments when the link was
+      # at gigabit and the test could prove nothing — which is what happened on
+      # 10-31. An intermittent fault has to be measured while it is present, and
+      # only a condition-triggered check can say "now".
+      #
+      # reescalateSec = 604800: a 40-day degraded run is exactly the chronic
+      # shape the `active` gate silences, and a week matches the cadence the
+      # deleted reminder had. agent = false because the fix is physical — there
+      # is nothing to diagnose and nothing the agent can do. severity = warning,
+      # never critical: a degraded LAN link is not worth waking Chris for.
+      #
+      # minConsecutive = 1 (the default is debounce = 2). Paired with the udev
+      # trigger below this makes the notification near-immediate instead of
+      # 2-4 min: a link event starts a sentinel run within seconds, and that one
+      # run escalates. Safe here only because the check settles a transient
+      # itself (the retry above) rather than relying on a second poll — Chris
+      # wants to know within seconds of bumping the cable, and 2 min of silence
+      # after touching it is 2 min of assuming you got away with it.
+      { id = "nic-link-speed"; type = "command"; severity = "warning"; agent = false; act = false;
+        cmd = "${nicSpeedCheck}/bin/sentinel-check-nic-speed"; reescalateSec = 604800;
+        minConsecutive = 1; }
 
       # Is the front door open at all (see vhostCheck above). Distinct from
       # api-content, which watches ONE backend's freshness behind nginx and was
@@ -834,10 +1367,20 @@ let
         req = urllib.request.Request(
             "%s/%s" % (server, topic), data=body.encode(),
             headers={"Title": safe_title, "Priority": str(priority), "Tags": tags})
+        # Log EVERY send, success included (2026-09-06). Previously only the
+        # failure path printed, so a delivered alert and a silently dropped one
+        # looked identical in the journal afterwards — the exact question that
+        # could not be answered when several newsdesk editions seemed to go
+        # missing. Title only, never the body: sentinel bodies carry diagnoses,
+        # device names and addresses, and the journal is a wider audience than
+        # the phone.
         try:
-            urllib.request.urlopen(req, timeout=10)
+            resp = urllib.request.urlopen(req, timeout=10)
+            print("ntfy: sent topic=%s priority=%s tags=%s bytes=%d http=%s title=%r"
+                  % (topic, priority, tags or "-", len(body), resp.status, safe_title))
         except Exception as e:
-            print("ntfy post failed: %r" % e, file=sys.stderr)
+            print("ntfy: FAILED topic=%s priority=%s title=%r err=%r"
+                  % (topic, priority, safe_title, e), file=sys.stderr)
 
 
     PRI = {"test": 2, "info": 2, "warning": 3, "critical": 4}
@@ -1012,8 +1555,33 @@ let
                 continue
 
             st["consecutive"] = st.get("consecutive", 0) + 1
+            # ⚠️ THIS GATE IS WHY A CHRONIC PROBLEM GOES SILENT. `active` is set
+            # when we escalate and cleared ONLY in the `not fired` branch above,
+            # so for a condition that never clears this `continue` short-circuits
+            # every later detection — before the cooldownSec check below is ever
+            # reached. The watcher is therefore EDGE-TRIGGERED: one ntfy on the
+            # way in, one on the way out, and nothing in between however much
+            # worse it gets. Demonstrated on 2026-10-21, from state.json:
+            # `disk-space` = {"consecutive": 10965, "active": true,
+            # "last_escalated": <2026-10-06 11:36>} — root sat above 90% for
+            # FIFTEEN DAYS, was detected 10,965 consecutive times, and was
+            # reported exactly once, on day one, at 90.89%. It then filled to
+            # 100% (382 MB free) and took out postgresql, paperless and Fulcrum,
+            # whose RocksDB corrupted beyond repair. `claude-login` has the same
+            # shape (11,671 consecutive, one escalation). `swap-headroom` and
+            # `failed-units` re-notify only because they OSCILLATE, so each dip
+            # below threshold manufactures a fresh edge — the checks that behave
+            # are the ones whose problem keeps going away.
+            #
+            # Edge-triggered stays the DEFAULT (the polite-polling ethos: a
+            # condition nobody can clear tonight should not nag all night). But
+            # a check may now opt into a reminder with `reescalateSec`, and the
+            # two disk checks do, at 24 h. Unset = exactly today's behaviour,
+            # so the other seventeen checks are untouched.
             if st.get("active"):
-                continue
+                reesc = int(c.get("reescalateSec", 0))
+                if not reesc or (now - st.get("last_escalated", 0)) < reesc:
+                    continue
             if st["consecutive"] < int(c.get("minConsecutive", debounce)):
                 continue
             if now - st.get("last_escalated", 0) < int(c.get("cooldownSec", cooldown)):
@@ -1229,5 +1797,61 @@ in
       OnUnitActiveSec = "10min";
       Persistent = true;
     };
+  };
+  # ── Event-driven trigger for nic-link-speed ──────────────────────────────────
+  #
+  # The 120 s poll means up to 2 min of silence after the link renegotiates, and
+  # the moment that matters most is the moment Chris has his hands on the cable:
+  # 2 min of nothing reads as "I got away with it". This fires a sentinel run
+  # within seconds of a link event instead.
+  #
+  # Why udev and not NetworkManager's dispatcher: NM is what manages enp3s0, but
+  # its dispatcher hooks fire on CONNECTIVITY changes (up/down/dhcp), and a PHY
+  # that retrains from 1 Gb to 100 Mb while keeping carrier and the same lease
+  # produces no NM event at all. The kernel's net `change` uevent does fire.
+  #
+  # ⚠️ Net `change` uevents are NOISY on this box — enp3s0 enters and leaves
+  # promiscuous mode every ~15 min (netwatch's arp-scan), and that is a `change`
+  # event too. So the trigger is made noise-tolerant rather than narrow: the unit
+  # compares the speed against the last value it saw and exits in milliseconds
+  # when nothing moved. An unfiltered trigger plus a cheap no-op beats a clever
+  # filter that silently stops matching.
+  services.udev.extraRules = ''
+    SUBSYSTEM=="net", ACTION=="change", KERNEL=="enp3s0", TAG+="systemd", ENV{SYSTEMD_WANTS}+="nic-link-change.service"
+  '';
+
+  systemd.services.nic-link-change = {
+    description = "On an enp3s0 link event, run the sentinel now instead of waiting for the poll";
+    path = [ pkgs.coreutils pkgs.systemd ];
+    serviceConfig = {
+      Type = "oneshot";
+      # Caps a flapping link: at most 5 triggers a minute, then systemd stops
+      # starting it until the window passes. The 120 s poll still covers the gap,
+      # so a flap storm degrades to the old behaviour rather than to nothing.
+      StartLimitIntervalSec = "60s";
+      StartLimitBurst = 5;
+    };
+    script = ''
+      dev=enp3s0
+      last=/run/nic-link-speed.last
+      now=$(cat /sys/class/net/$dev/speed 2>/dev/null || echo unknown)
+
+      # The no-op path. Every promiscuous-mode toggle lands here and costs
+      # nothing.
+      if [ -e "$last" ] && [ "$(cat "$last")" = "$now" ]; then
+        exit 0
+      fi
+      printf '%s' "$now" > "$last"
+
+      # Let negotiation finish before the check reads it, so sentinel sees a
+      # settled speed rather than a mid-retrain -1. Short enough that the
+      # notification still lands within ~10 s of the cable being touched.
+      sleep 8
+
+      # --no-block so udev's event worker is never held waiting on a sentinel
+      # run. Sentinel does the rest: it runs the nic-link-speed check, and with
+      # minConsecutive = 1 that one run escalates.
+      systemctl start --no-block gromit-sentinel.service
+    '';
   };
 }

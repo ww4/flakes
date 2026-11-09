@@ -108,6 +108,29 @@
       # hard enough to saturate the queue in the first place.
       rpcworkqueue=64
       rpcthreads=8
+
+      # OP_RETURN / datacarrier RELAY POLICY.
+      #
+      # Core v30 raised the -datacarriersize default from 83 bytes to 100000
+      # (~100 kB) and this node had no setting, so it was running the permissive
+      # default. Restricting it is the one thing Bitcoin Knots originally existed
+      # to offer, and it is now a supported option in Core itself — which is
+      # precisely why running Core rather than Knots costs nothing here.
+      #
+      # 83 is the historical Core default: a single OP_RETURN output carrying up
+      # to 80 bytes, plus the opcode and pushdata bytes.
+      #
+      # THIS IS RELAY AND MINING POLICY, NOT CONSENSUS. It changes what this node
+      # will accept into its own mempool and pass on. It does NOT reject blocks,
+      # cannot fork this node off the network, and is reversible with a restart.
+      #
+      # ⚠️ It does have a visible consequence: mempool.space runs off THIS node's
+      # mempool, so transactions with large data payloads will be absent from the
+      # local mempool view while still being mined by the wider network. Expect
+      # the local mempool to read slightly smaller than public explorers, and
+      # fee estimates to differ at the margin. That is the trade being made
+      # deliberately, not a fault to chase later.
+      datacarriersize=83
     '';
   };
 

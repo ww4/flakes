@@ -1,0 +1,444 @@
+"""wx command line — one subcommand per systemd unit.
+
+  wx alerts    LAYER 1. Poll NWS for this point, notify what is new. Fast timer.
+  wx ryan      LAYER 2 + 3. Poll the channel, transcribe, extract, render for
+               the newsdesk, and decide whether any of it earns an interruption.
+  wx morning   Flush anything quiet hours held, as one message. 07:05.
+  wx spc       Refresh the SPC picture. Also a useful hand-run for debugging.
+  wx status    Read-only summary. Safe to call from /health at any time.
+
+Every subcommand is exit-0 on "nothing to do" and non-zero only when it could
+not do its job — because a timer that reports failure for a quiet Tuesday is a
+timer whose failures nobody reads.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+from . import db, extract, notify, render, rules, ryan, spc, strip
+from .nws import fetch as nws_fetch
+from .nws import process as nws_process
+
+
+def _ua() -> str:
+    # NWS asks for a contactable identifier. No coordinates in it.
+    return os.environ.get("WX_USER_AGENT", "(gromit-wx, chris.saenz@broadlinc.com)")
+
+
+def _location() -> tuple[float, float]:
+    path = os.environ.get("WX_LOCATION_FILE", "/run/secrets/wx-location")
+    return db.load_location(path)
+
+
+def _public_dir() -> Path:
+    """Where the rendered weather strip lands. nginx serves this directory
+    read-only on the dashboard vhost; nothing else writes here."""
+    return Path(os.environ.get("WX_PUBLIC_DIR", str(db.state_dir() / "public")))
+
+
+def _corpus_dir() -> Path:
+    return Path(os.environ.get("WX_CORPUS_DIR", str(db.state_dir() / "corpus")))
+
+
+def _prompt_path() -> Path:
+    return Path(os.environ.get("WX_PROMPT", "/etc/wx/extract-prompt.md"))
+
+
+def cmd_alerts(args) -> int:
+    con = db.connect()
+    try:
+        lat, lon = _location()
+    except (OSError, ValueError) as exc:
+        # Deliberately does not print the path's CONTENTS on a parse failure.
+        print(f"wx: cannot read location: {exc}", file=sys.stderr)
+        return 1
+    try:
+        alerts = nws_fetch(lat, lon, user_agent=_ua())
+    except Exception as exc:                      # noqa: BLE001 - network is broad
+        print(f"wx: NWS fetch failed: {exc}", file=sys.stderr)
+        return 1
+
+    fresh = nws_process(con, alerts)
+    print(f"wx: {len(alerts)} active, {len(fresh)} new to report")
+    for item in fresh:
+        state = notify.deliver(
+            con, layer=1, key=item["key"], title=item["title"],
+            body=item["body"], alert_class=item["class"],
+            click=os.environ.get("WX_ALERT_URL", ""),
+            notifier=args.notifier)
+        print(f"wx: [{item['class']}] {item['event']} -> {state}")
+    return 0
+
+
+def cmd_spc(args) -> int:
+    con = db.connect()
+    try:
+        lat, lon = _location()
+    except (OSError, ValueError) as exc:
+        print(f"wx: cannot read location: {exc}", file=sys.stderr)
+        return 1
+    labels = spc.refresh(con, lat, lon, user_agent=_ua())
+    if not labels:
+        print("wx: SPC unreachable — leaving the previous picture in place",
+              file=sys.stderr)
+        return 1
+    for day in sorted(labels):
+        print(f"wx: SPC day{day}: {labels[day] or 'no risk area over the point'}")
+    return 0
+
+
+def _spc_note(drawn: set[int], known: set[int]) -> str:
+    if not known:
+        return "SPC outlook unavailable at the time of writing"
+    if drawn:
+        return ("SPC has a severe risk drawn over the house on day "
+                + ", ".join(str(d) for d in sorted(drawn)))
+    return "SPC has nothing drawn over the house through day 3"
+
+
+def cmd_ryan(args) -> int:
+    con = db.connect()
+
+    try:
+        videos = ryan.list_recent(ytdlp=args.ytdlp)
+    except Exception as exc:                      # noqa: BLE001
+        print(f"wx: channel listing failed: {exc}", file=sys.stderr)
+        return 1
+    added = ryan.sync_listing(con, videos)
+    print(f"wx: {len(videos)} long-form uploads listed, {added} new")
+
+    # SPC first: the correlation is only meaningful against a current picture,
+    # and it is cheap.
+    try:
+        lat, lon = _location()
+        spc.refresh(con, lat, lon, user_agent=_ua())
+    except Exception as exc:                      # noqa: BLE001
+        print(f"wx: SPC refresh failed, continuing on the cached picture: {exc}",
+              file=sys.stderr)
+    drawn, known = spc.drawn_days(con), spc.known_days(con)
+
+    prompt_base = _prompt_path().read_text(encoding="utf-8")
+    titles = {v["id"]: v for v in videos}
+
+    # A run that fetched nothing and a run with nothing to fetch are DIFFERENT
+    # facts, and exiting 0 for both is how layer 2 sat dead for a day looking
+    # healthy. Counted here, reported in the summary below and in `wx status`.
+    wanted = ryan.pending_videos(con)
+    got = blocked = 0
+
+    for row in wanted:
+        vid = row["id"]
+        try:
+            transcript = ryan.fetch_transcript(vid, ytdlp=args.ytdlp)
+        except Exception as exc:                  # noqa: BLE001
+            state = ryan.record_failure(con, vid, str(exc))
+            blocked += 1
+            print(f"wx: {vid} transcript {state}: {str(exc)[:120]}", file=sys.stderr)
+            continue
+        ryan.store_transcript(con, vid, transcript)
+        got += 1
+
+        video = {"id": vid, "title": row["title"], "duration": row["duration"],
+                 "published": titles.get(vid, {}).get("published")}
+        prompt = extract.build_prompt(prompt_base, video, transcript,
+                                      extract.previous_extractions(con))
+        try:
+            raw = extract.run_claude(prompt, claude=args.claude,
+                                     timeout=args.extract_timeout)
+            fields = extract.normalise(extract.parse_response(raw))
+        except Exception as exc:                  # noqa: BLE001
+            # An extraction failure is not fatal and must not lose the
+            # transcript — the row keeps state='have' and the next run retries.
+            print(f"wx: extraction failed for {vid}: {str(exc)[:200]}", file=sys.stderr)
+            continue
+        extract.store(con, vid, fields, raw)
+
+        note = _spc_note(drawn, known)
+        body = render.render_post(video=video, fields=fields,
+                                  transcript=transcript, spc_note=note)
+        path = render.write_post(_corpus_dir(), video, body)
+        words = render.word_count(body)
+        if words < render.NEWSDESK_MIN_WORDS:
+            # Loud, because the newsdesk would drop it in silence.
+            print(f"wx: WARNING {path.name} is {words} words — under the newsdesk"
+                  f" corpus floor of {render.NEWSDESK_MIN_WORDS}; it will not be"
+                  " ingested", file=sys.stderr)
+        print(f"wx: wrote {path.name} ({words} words)")
+
+        decision = rules.decide(con, fields, drawn=drawn, known=known)
+        print(f"wx: layer 3 -> {'PUSH' if decision.push else 'quiet'}: {decision.reason}")
+        if decision.push:
+            # Most severe first — a glanced-at notification has to carry the
+            # word that matters, and there is only room for two.
+            lead = rules.by_severity(fields["hazards"])[:2]
+            title = f"Ryan Hall: {', '.join(lead)} — {fields['window_start'] or 'soon'}"
+            state = notify.deliver(
+                con, layer=3, key=f"ryan:{fields.get('system_id') or 'unknown'}",
+                title=title,
+                body=f"{fields['summary']}\n\n{decision.reason}\n"
+                     f"https://www.youtube.com/watch?v={vid}",
+                alert_class="warning", notifier=args.notifier, tags="cloud_tornado",
+                click=f"https://www.youtube.com/watch?v={vid}")
+            print(f"wx: trend push -> {state}")
+
+    # Self-healing backfill: ONE extraction per run that still has no `local`
+    # line. The dashboard card shows that line and nothing else, so a row
+    # without one is a card that cannot say anything useful — and leaving that
+    # to a command somebody has to remember is how it stays broken. Bounded to
+    # one because this runs three times a day and a stampede of `claude -p`
+    # calls is a worse failure than a card that catches up by tomorrow.
+    try:
+        filled, _ = _backfill_local(con, prompt_base, claude=args.claude,
+                                    timeout=args.extract_timeout, limit=1)
+        if filled:
+            print(f"wx: backfilled the local line on {filled} older extraction")
+    except Exception as exc:                      # noqa: BLE001
+        # Never fail the run for this — the day's actual work is already done.
+        print(f"wx: local backfill skipped: {str(exc)[:160]}", file=sys.stderr)
+
+    db.set_meta(con, "last_ryan_run", db.now())
+    db.set_meta(con, "last_ryan_result", f"{len(wanted)}/{got}/{blocked}")
+    if got:
+        db.set_meta(con, "last_ryan_productive", db.now())
+
+    # The summary line is the point: "0 wanted" is a quiet day, "N wanted, 0
+    # fetched" is layer 2 being dead while the unit exits 0.
+    print(f"wx: run summary — {len(wanted)} wanted, {got} transcribed, {blocked} blocked")
+    if wanted and not got:
+        print(f"wx: LAYER 2 FETCHED NOTHING — {blocked} video(s) wanted a transcript and"
+              " every attempt failed; extractions, corpus posts and trend alerts are all"
+              " stalled until this clears", file=sys.stderr)
+    # Deliberately still exit 0: the cause is upstream and not something this
+    # box can clear, and a unit that fails every run on an external block is a
+    # false-alarm generator. The state is carried by `wx status` instead.
+    return 0
+
+
+def layer1_ready() -> bool:
+    """Can layer 1 run at all? Mirrors the unit's ConditionPathExists.
+
+    The unit is SKIPPED rather than failed while the location secret is
+    missing, which is quiet by design. This is what keeps the state
+    discoverable instead of invisible.
+    """
+    try:
+        _location()
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def cmd_morning(args) -> int:
+    con = db.connect()
+    n = notify.flush_pending(con, notifier=args.notifier)
+    print(f"wx: flushed {n} held item(s)")
+    # The counterweight to the condition check: once a day, in the journal, so
+    # "layer 1 never ran" cannot go unnoticed. Deliberately NOT an ntfy — a
+    # daily push about something only Chris can fix is a nag, and this is the
+    # same class of thing the newsdesk refuses to nag about.
+    if not layer1_ready():
+        print("wx: LAYER 1 IS NOT RUNNING — secrets/wx-location.json is missing,"
+              " so there are no coordinates to query NWS with", file=sys.stderr)
+    return 0
+
+
+def layer2_state(con) -> str:
+    """Whether layer 2 is actually producing, or only exiting 0.
+
+    `wx ryan` deliberately returns 0 even when every transcript fetch failed —
+    the cause is upstream and a unit that fails on an external block is a false
+    alarm. That makes this string the only place a dead layer 2 is visible, so
+    it must distinguish "nothing to do" from "could not do it".
+    """
+    last = db.get_meta(con, "last_ryan_result")
+    if last is None:
+        return "never run"
+    try:
+        wanted, got, blocked = (int(x) for x in last.split("/"))
+    except ValueError:
+        return f"unparseable last result: {last!r}"
+    if wanted and not got:
+        since = db.get_meta(con, "last_ryan_productive") or "never"
+        return (f"FETCHED NOTHING — {blocked} blocked, 0 transcribed"
+                f" (last productive: {since[:16] if since != 'never' else 'never'})")
+    if not wanted:
+        return "ok — nothing new to fetch"
+    return f"ok — {got} transcribed, {blocked} blocked"
+
+
+def _backfill_local(con, prompt_base, *, claude: str, timeout: int,
+                    limit: int) -> tuple[int, int]:
+    """Re-derive extractions that have no `local` line. Returns (done, failed).
+
+    Re-runs the prompt against the transcript ALREADY IN THE DATABASE — no
+    listing call and no caption fetch, so it cannot trip the 429 that kept
+    layer 2 down for sixteen days in October.
+    """
+    rows = con.execute(
+        "SELECT e.video_id, v.title, v.duration, v.transcript FROM extraction e"
+        " JOIN video v ON v.id = e.video_id"
+        " WHERE (e.local IS NULL OR TRIM(e.local) = '')"
+        "   AND v.transcript IS NOT NULL AND TRIM(v.transcript) != ''"
+        " ORDER BY e.created_at DESC").fetchall()[:limit]
+    done = failed = 0
+    for row in rows:
+        vid = row["video_id"]
+        video = {"id": vid, "title": row["title"], "duration": row["duration"],
+                 "published": None}
+        prompt = extract.build_prompt(prompt_base, video, row["transcript"],
+                                      extract.previous_extractions(con))
+        try:
+            raw = extract.run_claude(prompt, claude=claude, timeout=timeout)
+            fields = extract.normalise(extract.parse_response(raw))
+        except Exception as exc:                  # noqa: BLE001
+            print(f"wx: re-extraction failed for {vid}: {str(exc)[:200]}",
+                  file=sys.stderr)
+            failed += 1
+            continue
+        extract.store(con, vid, fields, raw)
+        done += 1
+        print(f"wx: {vid} local = {fields['local'] or '(empty)'}")
+    return done, failed
+
+
+def cmd_relocal(args) -> int:
+    """Backfill the `local` line on extractions written before it existed.
+
+    Re-runs the extraction prompt against the transcript ALREADY IN THE
+    DATABASE — no listing call, no caption fetch, so it cannot trip the 429
+    that kept layer 2 down for sixteen days in October. It rewrites the whole
+    extraction row for each video it touches, which is the honest thing: the
+    prompt has changed, so the other fields are re-derived from the same
+    prompt rather than left as a mix of two versions.
+
+    Default is the newest extraction only — that is the one on the dashboard.
+    `--all` does every row still missing a local line.
+    """
+    con = db.connect()
+    done, failed = _backfill_local(
+        con, _prompt_path().read_text(encoding="utf-8"),
+        claude=args.claude, timeout=args.extract_timeout,
+        limit=10_000 if args.all else 1)
+    if not done and not failed:
+        print("wx: every extraction already has a local line")
+        return 0
+    print(f"wx: backfilled {done}, failed {failed}")
+    # Non-zero only if nothing at all succeeded while something was tried.
+    return 1 if done == 0 and failed else 0
+
+
+def cmd_retry(args) -> int:
+    """Requeue videos that gave up. See ryan.reset_failed for why it is manual."""
+    con = db.connect()
+    ids = ryan.reset_failed(con)
+    if not ids:
+        print("wx: nothing in 'failed' — nothing to retry")
+        return 0
+    print("wx: requeued %d video(s): %s" % (len(ids), ", ".join(ids)))
+    return 0
+
+
+def cmd_strip(args) -> int:
+    """Render the dashboard's weather strip.
+
+    Exit 0 whenever a page was written, INCLUDING the "could not fetch" page —
+    the unit's job is to keep an honest card on screen, and an upstream outage
+    is not a failure of this unit. Non-zero is reserved for "could not write
+    the file at all", which is the one case a human has to fix.
+
+    ⚠️ Written to a temp file and renamed, not written in place. nginx can
+    serve this path at any moment; a partial write would be served as a
+    truncated page, and the rename is atomic within the directory.
+    """
+    try:
+        lat, lon = _location()
+    except Exception as exc:  # noqa: BLE001 - reported, never raised at a timer
+        # No coordinates means no forecast. Say so on the card rather than
+        # leaving whatever was there before.
+        print(f"wx: cannot read location: {exc}", file=sys.stderr)
+        page = strip.render_error("The location secret is not readable.",
+                                  now=datetime.now(timezone.utc))
+    else:
+        con = db.connect()
+        page = strip.build(con, lat, lon, user_agent=_ua())
+
+    out_dir = _public_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = out_dir / "strip.html"
+    tmp = target.with_suffix(".html.tmp")
+    tmp.write_text(page, encoding="utf-8")
+    # 0644: nginx runs as its own user and must be able to read this.
+    tmp.chmod(0o644)
+    tmp.replace(target)
+    print(f"wx: wrote {target} ({len(page)} bytes)")
+    return 0
+
+
+def cmd_status(args) -> int:
+    con = db.connect()
+    ready = layer1_ready()
+    out = {
+        # First field on purpose: /health reads this, and "layer 1 is not
+        # running" is the single most important thing this command can say.
+        "layer1": "ready" if ready else "NOT RUNNING — secrets/wx-location.json missing",
+        "layer2": layer2_state(con),
+        "active_alerts_seen": con.execute(
+            "SELECT COUNT(*) c FROM nws_alert").fetchone()["c"],
+        "notified": con.execute(
+            "SELECT COUNT(*) c FROM nws_alert WHERE notified_class IS NOT NULL"
+        ).fetchone()["c"],
+        "videos": con.execute("SELECT COUNT(*) c FROM video").fetchone()["c"],
+        "transcripts": con.execute(
+            "SELECT COUNT(*) c FROM video WHERE state='have'").fetchone()["c"],
+        "deferred": con.execute(
+            "SELECT COUNT(*) c FROM video WHERE state='deferred'").fetchone()["c"],
+        "extractions": con.execute("SELECT COUNT(*) c FROM extraction").fetchone()["c"],
+        "pending_notifications": con.execute(
+            "SELECT COUNT(*) c FROM pending").fetchone()["c"],
+        "spc": {str(r["day"]): r["label"] for r in
+                con.execute("SELECT day, label FROM spc_state").fetchall()},
+        "last_push": (con.execute(
+            "SELECT sent_at FROM push ORDER BY sent_at DESC LIMIT 1").fetchone() or
+            {"sent_at": None})["sent_at"],
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    print(json.dumps(out, indent=2))
+    return 0
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(prog="wx", description=__doc__)
+    ap.add_argument("--notifier", default="gromit-notify")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("alerts", help="LAYER 1 — poll NWS and notify").set_defaults(fn=cmd_alerts)
+    sub.add_parser("spc", help="refresh the SPC outlook picture").set_defaults(fn=cmd_spc)
+    sub.add_parser("morning", help="flush what quiet hours held").set_defaults(fn=cmd_morning)
+    rl = sub.add_parser("relocal",
+                        help="backfill the Kentucky line on old extractions")
+    rl.add_argument("--all", action="store_true",
+                    help="every row missing one, not just the newest")
+    rl.add_argument("--claude", default="claude")
+    rl.add_argument("--extract-timeout", type=int, default=600)
+    rl.set_defaults(fn=cmd_relocal)
+    sub.add_parser("retry", help="requeue videos stuck in 'failed'").set_defaults(fn=cmd_retry)
+    sub.add_parser("strip", help="render the dashboard weather strip").set_defaults(fn=cmd_strip)
+    sub.add_parser("status", help="read-only summary").set_defaults(fn=cmd_status)
+
+    p = sub.add_parser("ryan", help="LAYER 2+3 — transcripts, extraction, trends")
+    p.add_argument("--ytdlp", default="yt-dlp")
+    p.add_argument("--claude", default="claude")
+    p.add_argument("--extract-timeout", type=int, default=600)
+    p.set_defaults(fn=cmd_ryan)
+
+    args = ap.parse_args(argv)
+    return args.fn(args)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

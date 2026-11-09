@@ -1,0 +1,425 @@
+import math
+import time
+
+from switchboard import btcwatch
+from switchboard.config import Settings
+
+H = 3600.0
+
+
+def hourly(now, prices):
+    """prices oldest->newest, one per hour ending at `now`."""
+    n = len(prices)
+    return [(now - (n - 1 - i) * H, float(p)) for i, p in enumerate(prices)]
+
+
+def D(hist, now, **kw):
+    d = dict(window_h=3, sigma_k=3.0, min_move_pct=1.2, min_hours=8)
+    d.update(kw)
+    return btcwatch.detect(hist, now, **d)
+
+
+def test_today_up_spike_fires():
+    now = 1_000_000.0
+    # ~24h flat near 78k, then a clean run to 81k over 3h (the real 09-18 shape)
+    flat = [78000, 78100, 77900, 78050, 78000, 78200, 78100, 77950, 78000, 78100,
+            78050, 77900, 78000, 78150, 78050, 77980, 78000, 78100, 78050, 78000, 78100]
+    spike = [79200, 80400, 81253]
+    m = D(hourly(now, flat + spike), now)
+    assert m and m.direction == "up" and m.pct > 3 and round(m.now) == 81253
+
+
+def test_reverted_blip_does_not_fire():
+    now = 1_000_000.0
+    flat = [80000 + (50 if i % 2 else -50) for i in range(22)]
+    blip = [83300, 80100, 80000]   # popped then came right back
+    assert D(hourly(now, flat + blip), now) is None
+
+
+def test_bull_run_routine_chop_is_quiet():
+    now = 1_000_000.0
+    # high-vol tape: +-2%/hr swings but no net directional leg beyond the churn
+    import random
+    random.seed(7)
+    p = 100000.0
+    prices = []
+    for _ in range(28):
+        p *= 1 + random.uniform(-0.02, 0.02)
+        prices.append(p)
+    # ends roughly where it churned; a single 2% hourly wiggle should NOT clear
+    # the bar because sigma is large in this regime
+    m = D(hourly(now, prices), now)
+    assert m is None or m.pct > 6   # only an extreme break would fire here
+
+
+def test_dead_market_small_real_move_fires():
+    now = 1_000_000.0
+    flat = [76000 + (20 if i % 2 else -20) for i in range(22)]  # sigma ~ tiny
+    move = [76900, 77400, 77700]   # +2.2% is huge relative to this churn
+    m = D(hourly(now, flat + move), now)
+    assert m and m.direction == "up"
+
+
+def test_needs_min_history():
+    now = 1_000_000.0
+    assert D(hourly(now, [78000, 79000, 80000, 81000]), now) is None  # < min_hours
+
+
+def test_new_leg_gating():
+    now = 1_000_000.0
+    up = btcwatch.Move("up", 4.2, 77900, 81253, 81253, 180)
+    assert btcwatch.is_new_leg(up, None, threshold_pct=1.2, reexplain_after_s=12 * H, now_ts=now)
+    last = {"direction": "up", "reference_price": 81253, "ts": now - 3600}
+    plateau = btcwatch.Move("up", 4.3, 77900, 81400, 81400, 180)
+    assert not btcwatch.is_new_leg(plateau, last, threshold_pct=1.2, reexplain_after_s=12 * H, now_ts=now)
+    leg2 = btcwatch.Move("up", 5.0, 77900, 82500, 82500, 200)     # +1.5% beyond ref
+    assert btcwatch.is_new_leg(leg2, last, threshold_pct=1.2, reexplain_after_s=12 * H, now_ts=now)
+    down = btcwatch.Move("down", 3.0, 78700, 81253, 78700, 90)
+    assert btcwatch.is_new_leg(down, last, threshold_pct=1.2, reexplain_after_s=12 * H, now_ts=now)
+    assert btcwatch.is_new_leg(plateau, {**last, "ts": now - 13 * H}, threshold_pct=1.2, reexplain_after_s=12 * H, now_ts=now)
+
+
+def test_history_roundtrip_and_prune(tmp_path):
+    s = Settings(state_dir=tmp_path)
+    now = time.time()
+    btcwatch.save_history(s, [(now - 40 * H, 70000.0), (now - 2 * H, 80000.0), (now, 81000.0)])
+    got = btcwatch.load_history(s)
+    assert len(got) == 3 and got[-1][1] == 81000.0
+
+
+def test_spoken_age():
+    now = 1_000_000.0
+    assert btcwatch.spoken({"text": "Bitcoin rose on ETF inflows.", "ts": now - 30 * 60}, now) == \
+        "Bitcoin rose on ETF inflows. That was just now."
+    assert btcwatch.spoken({"text": "X.", "ts": now - 3 * H}, now) == "X. That was about 3 hours ago."
+
+
+def test_clean_answer_strips_sources_and_urls():
+    raw = ("Bitcoin rose on a short squeeze after the Fed. It was a broad rally.\n\n"
+           "Sources: [CoinDesk](https://coindesk.com/x), [Yahoo](https://finance.yahoo.com/y)")
+    out = btcwatch._clean_answer(raw)
+    assert out == "Bitcoin rose on a short squeeze after the Fed. It was a broad rally."
+    assert "http" not in out and "Sources" not in out
+    assert btcwatch._clean_answer("See [here](http://x) for **details**.") == "See here for details."
+
+
+def test_notify_defers_overnight_and_flushes_in_morning(tmp_path, monkeypatch):
+    posted = []
+    from switchboard import btcwatch as bw
+    monkeypatch.setattr(bw, "_post_ntfy", lambda settings, title, text: posted.append((title, text)) or True)
+    s = Settings(state_dir=tmp_path, quiet_start_h=22, quiet_end_h=7)
+    m = bw.Move("up", 3.7, 77993, 80896, 80896, 180)
+    # 3 a.m. -> deferred, nothing posted
+    monkeypatch.setattr(bw, "_is_quiet", lambda settings, now_ts=None: True)
+    bw._notify(s, m, "Bitcoin rose on ETF inflows.")
+    assert posted == [] and (tmp_path / "btc-pending-ntfy.json").exists()
+    assert bw.flush_pending(s) == 0            # still quiet -> held
+    # 8 a.m. -> flush releases it once, prefixed Overnight
+    monkeypatch.setattr(bw, "_is_quiet", lambda settings, now_ts=None: False)
+    assert bw.flush_pending(s) == 1
+    assert posted[0][0].startswith("Overnight: Bitcoin up 3.7%")
+    assert not (tmp_path / "btc-pending-ntfy.json").exists()
+    assert bw.flush_pending(s) == 0            # nothing left
+
+
+def test_notify_posts_immediately_in_daytime(tmp_path, monkeypatch):
+    posted = []
+    from switchboard import btcwatch as bw
+    monkeypatch.setattr(bw, "_post_ntfy", lambda settings, title, text: posted.append(title) or True)
+    monkeypatch.setattr(bw, "_is_quiet", lambda settings, now_ts=None: False)
+    bw._notify(Settings(state_dir=tmp_path), bw.Move("down", 4.0, 78000, 81000, 78000, 120), "x")
+    assert len(posted) == 1 and posted[0].startswith("Bitcoin down 4.0%")
+
+
+# ---------------------------------------------------------------- feed
+
+
+def _parse_atom_like_newsdesk(xml: str):
+    """Extract entries exactly as newsdesk/feeds.parse_feed does, so this test
+    fails if the two ever drift. Keeps the switchboard package standalone."""
+    import xml.etree.ElementTree as ET
+
+    ATOM = "http://www.w3.org/2005/Atom"
+    root = ET.fromstring(xml)
+    assert root.tag == f"{{{ATOM}}}feed"          # newsdesk keys on exactly this
+    out = []
+    for e in root.findall(f"{{{ATOM}}}entry"):
+        link = ""
+        for ln in e.findall(f"{{{ATOM}}}link"):
+            if ln.get("rel", "alternate") == "alternate" and ln.get("href"):
+                link = ln.get("href", "")
+                break
+        out.append({
+            "guid": (e.findtext(f"{{{ATOM}}}id") or link),
+            "url": link,
+            "title": e.findtext(f"{{{ATOM}}}title"),
+            "content": e.findtext(f"{{{ATOM}}}content"),
+            "published": e.findtext(f"{{{ATOM}}}published"),
+        })
+    return out
+
+
+def test_render_atom_roundtrips_through_newsdesk_parser():
+    base = "https://digest.rosemaryacres.com/btc-moves.xml"
+    recs = [
+        {"ts": 1_700_000_000, "direction": "up", "pct": 3.7, "now": 80896,
+         "lo": 77993, "hi": 80896, "text": "Bitcoin rose after a spot-ETF inflow surge."},
+        {"ts": 1_700_100_000, "direction": "down", "pct": 4.1, "now": 76000,
+         "lo": 76000, "hi": 79200, "text": "A hotter-than-expected CPI print hit risk assets."},
+    ]
+    entries = _parse_atom_like_newsdesk(btcwatch.render_atom(recs, base))
+    assert len(entries) == 2
+    # newest first
+    assert entries[0]["content"] == "A hotter-than-expected CPI print hit risk assets."
+    assert entries[1]["content"] == "Bitcoin rose after a spot-ETF inflow surge."
+    # every field newsdesk needs is present and usable
+    for e in entries:
+        assert e["title"] and e["url"] and e["content"] and e["published"]
+        assert e["title"].startswith("Bitcoin ")
+        assert e["published"].endswith("Z")
+    # ids/links are stable and unique so INSERT OR IGNORE de-dupes on re-poll
+    guids = [e["guid"] for e in entries]
+    assert len(set(guids)) == 2 and all(g.startswith(base + "#move-") for g in guids)
+    assert entries[1]["title"] == "Bitcoin up 3.7% to $80,896"
+
+
+def test_write_feed_appends_rolls_and_renders(tmp_path):
+    feed = tmp_path / "digest" / "btc-moves.xml"
+    s = Settings(state_dir=tmp_path, btc_feed_path=feed,
+                 btc_feed_base_url="https://x/btc-moves.xml", btc_feed_keep=3)
+    for i in range(5):
+        btcwatch.write_feed(s, btcwatch.Move("up", float(i), 70000, 70000 + i, 70000 + i, 60),
+                            f"move {i}", 1_700_000_000 + i)
+    assert feed.exists()                         # digest dir created as needed
+    entries = _parse_atom_like_newsdesk(feed.read_text())
+    assert len(entries) == 3                      # rolled to btc_feed_keep
+    assert entries[0]["content"] == "move 4"      # newest first
+    assert entries[-1]["content"] == "move 2"     # oldest kept
+
+
+def test_write_feed_disabled_when_path_empty(tmp_path):
+    from pathlib import Path
+    s = Settings(state_dir=tmp_path, btc_feed_path=Path(""))
+    # must not raise and must not create the moves record
+    btcwatch.write_feed(s, btcwatch.Move("up", 3.0, 70000, 72000, 72000, 60), "x", 1_700_000_000)
+    assert not (tmp_path / "btc-moves.json").exists()
+
+
+def test_render_atom_empty_is_valid_feed_with_no_entries():
+    entries = _parse_atom_like_newsdesk(btcwatch.render_atom([], "https://x/f.xml"))
+    assert entries == []                          # valid empty feed -> 0 entries, no 404
+
+
+def test_ensure_feed_writes_empty_feed_when_missing(tmp_path):
+    feed = tmp_path / "digest" / "btc-moves.xml"
+    s = Settings(state_dir=tmp_path, btc_feed_path=feed, btc_feed_base_url="https://x/f.xml")
+    assert not feed.exists()
+    btcwatch.ensure_feed(s)                        # brand-new watch, no moves yet
+    assert feed.exists()
+    assert _parse_atom_like_newsdesk(feed.read_text()) == []
+    # does not clobber a feed that already has content
+    btcwatch.write_feed(s, btcwatch.Move("up", 3.0, 70000, 72000, 72000, 60), "real move", 1_700_000_000)
+    btcwatch.ensure_feed(s)
+    entries = _parse_atom_like_newsdesk(feed.read_text())
+    assert len(entries) == 1 and entries[0]["content"] == "real move"
+
+
+def test_ensure_feed_noop_when_disabled(tmp_path):
+    from pathlib import Path
+    btcwatch.ensure_feed(Settings(state_dir=tmp_path, btc_feed_path=Path("")))  # must not raise
+
+
+# ── the step detector (2026-10-21) ─────────────────────────────────────────
+# Chris saw a visible step on the chart and no report. The sigma/disp test was
+# behaving correctly; it simply cannot see a 42-minute move measured over 3
+# hours. These cover the arm → hold → confirm/drop machine that replaced it.
+
+import json
+import pathlib
+
+
+def _settings(tmp_path, **kw):
+    s = Settings(state_dir=tmp_path, answers_dir=tmp_path, btc_feed_path=pathlib.Path(""))
+    for k, v in kw.items():
+        object.__setattr__(s, k, v) if getattr(type(s), "model_config", None) is None else setattr(s, k, v)
+    return s
+
+
+def minutely(now, prices, gap=600.0):
+    """prices oldest->newest, one every `gap` seconds ending at `now`."""
+    n = len(prices)
+    return [(now - (n - 1 - i) * gap, float(p)) for i, p in enumerate(prices)]
+
+
+def test_step_detects_a_fast_move_the_slow_test_misses():
+    now = 1_000_000.0
+    # +2.2% inside ~40 min, the real 2026-10-20 shape
+    hist = minutely(now, [81331, 81350, 81400, 82600, 83119], gap=600)
+    step = btcwatch.detect_step(hist, now, step_pct=1.5, window_s=75 * 60)
+    assert step and step.direction == "up" and step.pct > 2.0
+
+
+def test_step_ignores_a_slow_grind_of_the_same_size():
+    now = 1_000_000.0
+    # same +2.2%, but spread over 12 hours — not a step, must not arm
+    hist = [(now - (12 - i) * H, 81331 * (1 + 0.022 * i / 12)) for i in range(13)]
+    assert btcwatch.detect_step(hist, now, step_pct=1.5, window_s=75 * 60) is None
+
+
+def test_step_arms_a_candidate_and_reports_NOTHING(tmp_path):
+    s = _settings(tmp_path)
+    now = 1_000_000.0
+    hist = minutely(now, [81331, 81350, 81400, 82600, 83119])
+    move, status = btcwatch.step_tick(s, hist, now, 83119.0)
+    assert move is None, "arming must never report"
+    assert "ARMED" in status
+    assert btcwatch._load_candidate(s) is not None
+
+
+def test_step_confirms_only_after_the_move_is_retained(tmp_path):
+    s = _settings(tmp_path)
+    now = 1_000_000.0
+    hist = minutely(now, [81331, 81350, 81400, 82600, 83119])
+    btcwatch.step_tick(s, hist, now, 83119.0)
+
+    # too early: still holding, nothing reported
+    move, status = btcwatch.step_tick(s, hist, now + 1800, 83000.0)
+    assert move is None and "to go" in status
+
+    # an hour later, price held → confirm (the hold window must carry the samples)
+    hist = hist + [(now + k * 600, p) for k, p in
+                   enumerate([83000, 82900, 83050, 82980, 83010, 82950], start=1)]
+    move, status = btcwatch.step_tick(s, hist, now + 3700, 82950.0)
+    assert move is not None and move.direction == "up"
+    assert "CONFIRMED" in status
+    assert btcwatch._load_candidate(s) is None, "candidate must be consumed"
+
+
+def test_step_drops_a_blip_that_came_back(tmp_path):
+    s = _settings(tmp_path)
+    now = 1_000_000.0
+    hist = minutely(now, [81331, 81350, 81400, 82600, 83119])
+    btcwatch.step_tick(s, hist, now, 83119.0)
+    # The hold window has to contain the samples that came back down — retention
+    # is judged over the period, so the period has to be in the history.
+    hist = hist + [(now + k * 600, p) for k, p in
+                   enumerate([82400, 81900, 81600, 81500, 81480, 81500], start=1)]
+    move, status = btcwatch.step_tick(s, hist, now + 3700, 81500.0)   # gave it all back
+    assert move is None and "dropped" in status
+    assert btcwatch._load_candidate(s) is None
+
+
+def test_retained_frac_is_measured_from_the_pre_step_price(tmp_path):
+    # 81331 -> 83119, now 82900. From the START that is 88% retained ("it held").
+    # From the PEAK it would read as a 12% retracement, which is the wrong frame.
+    cand = {"direction": "up", "pct": 2.2, "start_price": 81331.0, "peak_price": 83119.0,
+            "start_ts": 0, "armed_ts": 0}
+    assert 0.85 < btcwatch.retained_frac(cand, 82900.0) < 0.90
+
+
+def test_the_real_2026_10_20_spike_would_have_been_reported(tmp_path):
+    """Replay of the actual history that prompted this. The slow test fired zero
+    times across 135 h; the step path must arm on the spike and confirm after."""
+    s = _settings(tmp_path)
+    raw = json.loads((pathlib.Path(__file__).parent / "btc-history-2026-10-20.json").read_text())
+    hist = [(float(t), float(p)) for t, p in raw]
+    armed = confirmed = None
+    for i, (t, p) in enumerate(hist):
+        move, status = btcwatch.step_tick(s, hist[:i + 1], t, p)
+        if status and "ARMED" in status and armed is None:
+            armed = t
+        if move is not None:
+            confirmed = (t, move)
+            break
+    assert armed is not None, "the real spike must arm a candidate"
+    assert confirmed is not None, "and must confirm once it held"
+    t, move = confirmed
+    assert move.direction == "up" and move.pct >= 1.5
+    assert 0 < t - armed <= 2 * 3600, "confirmation should land within a couple of hours"
+
+
+def test_the_slow_detector_really_does_miss_the_real_spike():
+    """The claim that motivated the step detector, asserted against real data.
+
+    A synthetic series cannot carry this: hand-made history has a near-zero
+    sigma, so the slow test fires on almost anything and "it stays quiet" would
+    be a property of the fixture. Replayed over the real 2026-10-20 history it
+    fires zero times — which is why a second detector was needed rather than a
+    looser threshold on this one.
+    """
+    raw = json.loads((pathlib.Path(__file__).parent / "btc-history-2026-10-20.json").read_text())
+    hist = [(float(t), float(p)) for t, p in raw]
+    fired = [t for i, (t, _p) in enumerate(hist)
+             if D(hist[:i + 1], t) is not None]
+    assert fired == [], f"slow detector unexpectedly fired at {fired}"
+
+
+# ── price sourcing (2026-10-30) ────────────────────────────────────────────
+# The price came only from the local mempool backend. On 2026-10-28 23:42 that
+# stopped — bitcoind's disk left for Wallace — and the watcher ran blind for
+# 42 h while every tick reported success. A Bitcoin node has no price in it, so
+# the coupling bought nothing; these cover the fallback and the two guards it
+# needs.
+
+
+def test_parsers_match_the_real_response_shapes():
+    # captured from the live endpoints 2026-10-30, all four agreed within 0.09%
+    assert btcwatch._p_kraken(
+        {"error": [], "result": {"XXBTZUSD": {"c": ["76716.40000", "0.001"]}}}) == 76716.4
+    assert btcwatch._p_bitstamp({"last": "76712.00"}) == 76712.0
+
+
+def test_sanity_band_refuses_an_absurd_price():
+    assert btcwatch.price_is_sane(76700.0, 76650.0)
+    assert btcwatch.price_is_sane(76700.0, None)      # nothing to compare against
+    assert not btcwatch.price_is_sane(0.0, 76650.0)
+    assert not btcwatch.price_is_sane(7.67, 76650.0)  # a parser grabbing the wrong field
+    assert not btcwatch.price_is_sane(766500.0, 76650.0)
+
+
+def test_source_switch_with_a_jump_is_dropped():
+    # the failure this prevents: a venue change read as a 1.5% step
+    assert btcwatch.drop_for_source_switch("mempool", "kraken", 76000.0, 77200.0, 0.5)
+
+
+def test_source_switch_within_tolerance_is_kept():
+    # venues really do agree this closely; dropping here would waste samples
+    assert not btcwatch.drop_for_source_switch("mempool", "kraken", 76700.0, 76650.0, 0.5)
+
+
+def test_same_source_is_never_dropped_however_big_the_move():
+    # a real 5% move must survive — this is the whole point of the monitor
+    assert not btcwatch.drop_for_source_switch("kraken", "kraken", 76000.0, 79800.0, 0.5)
+
+
+def test_first_sample_after_a_cold_start_is_never_dropped():
+    assert not btcwatch.drop_for_source_switch(None, "mempool", None, 76700.0, 0.5)
+
+
+def test_stale_feed_warns_once_then_stays_quiet(tmp_path, monkeypatch):
+    s = _settings(tmp_path)
+    posted = []
+    monkeypatch.setattr(btcwatch, "_post_ntfy",
+                        lambda st, title, text: posted.append(title) or True)
+    now = 1_000_000.0
+    hist = [(now - 5 * 3600, 76000.0)]            # last good sample 5 h ago
+
+    first = btcwatch._note_stale(s, hist, now)
+    assert first and "blind" in first
+    assert posted == ["Bitcoin price feed is down"]
+
+    again = btcwatch._note_stale(s, hist, now + 600)
+    assert again is None, "a dead feed must not nag every ten minutes"
+    assert len(posted) == 1
+
+    # a good sample re-arms it, so the NEXT outage is reported too
+    btcwatch._clear_stale(s)
+    assert btcwatch._note_stale(s, hist, now + 1200) is not None
+    assert len(posted) == 2
+
+
+def test_a_brief_gap_is_not_called_stale(tmp_path, monkeypatch):
+    s = _settings(tmp_path)
+    monkeypatch.setattr(btcwatch, "_post_ntfy", lambda *a, **k: True)
+    now = 1_000_000.0
+    assert btcwatch._note_stale(s, [(now - 600, 76000.0)], now) is None

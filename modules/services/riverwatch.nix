@@ -379,7 +379,7 @@ in {
             alert = "RiverFloodModerate";
             expr = ''riverwatch_flood_category_active{category="moderate"} == 1'';
             for = "5m";
-            labels.severity = "critical";
+            labels = { severity = "critical"; tier = "physical"; };   # flood: may ring the phone (switchboard)
             annotations = {
               summary = "{{ $labels.gauge }} at MODERATE flood stage";
               description = "Gauge {{ $labels.gauge }} has reached MODERATE flood category. Property damage possible.";
@@ -389,7 +389,7 @@ in {
             alert = "RiverFloodMajor";
             expr = ''riverwatch_flood_category_active{category="major"} == 1'';
             for = "5m";
-            labels.severity = "critical";
+            labels = { severity = "critical"; tier = "physical"; };   # flood: may ring the phone (switchboard)
             annotations = {
               summary = "{{ $labels.gauge }} at MAJOR flood stage";
               description = "Gauge {{ $labels.gauge }} has reached MAJOR flood category. Significant impact expected.";

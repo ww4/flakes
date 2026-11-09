@@ -1,0 +1,773 @@
+"""Notice a sustained bitcoin price spike and, only then, find out why.
+
+Chris, 2026-09-18: BTC sometimes jumps a few percent over an hour or two and
+he doesn't want to go digging for the reason. The cost worry is real, so the
+model is NEVER called on a schedule — a cheap arithmetic detector runs on a
+timer over a self-maintained price log, and `claude -p` (which can web-search)
+is invoked ONLY when a sustained move clears the threshold and it's a genuinely
+new leg, not a plateau we've already explained.
+
+Flow (cli `btc-watch`, on switchboard-btcwatch.timer):
+  1. sample the current price (mempool /api/v1/prices) -> append to
+     <state>/btc-history.json, prune > history_keep_s.
+  2. detect(): a regime-adaptive test over the trailing 3h — a >= sigma_k
+     outlier against 24h hourly volatility AND a >= min_move_pct mean shift.
+     ⚠️ An earlier design used a `sustain_frac` retention check; it was replaced
+     by the sigma/disp test and `sustain_frac` never existed in the code. The
+     line describing it survived here until 2026-10-21 and was simply false.
+  2b. detect_step(): the sigma/disp test measures over 3 HOURS, so a fast step
+     is nearly invisible to it — 2026-10-20's +2.20% in 42 minutes peaked at
+     z=2.34 against a 3.0 bar, and by +3h the window had slid past the step and
+     the 3h return was NEGATIVE. Replayed over 135h of real history the slow
+     test would have fired zero times. So a short, large move now ARMS A
+     CANDIDATE and reports nothing; it is confirmed one hour later only if the
+     move was retained. That is what keeps a reverted blip quiet, and it is the
+     retention idea the stale docstring above was reaching for.
+  3. fire only if it's a new leg vs the last explained reference (a further
+     threshold move in the same direction, a direction flip, or the prior
+     explanation aged out) -> one claude -p call -> store as the "btc-move"
+     standing answer + one quiet-hours-respecting ntfy + one entry appended to
+     a small rolling Atom feed on disk (btc_feed_path, served by the digest
+     vhost) that newsdesk polls as a bitcoin-lane source.
+
+The phone reads it back via the "btc-move" intent ("why did bitcoin move");
+the digest picks it up via the feed, so no second model call is ever made.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import subprocess
+import time
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+import httpx
+
+from .config import Settings
+from .sources import SourceError
+
+log = logging.getLogger(__name__)
+
+ATOM_NS = "http://www.w3.org/2005/Atom"
+
+
+# ---------------------------------------------------------------- price log
+
+def _history_path(settings: Settings) -> Path:
+    return settings.state_dir / "btc-history.json"
+
+
+def load_history(settings: Settings) -> list[tuple[float, float]]:
+    try:
+        return [(float(t), float(p)) for t, p in json.loads(_history_path(settings).read_text())]
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def save_history(settings: Settings, hist: list[tuple[float, float]]) -> None:
+    p = _history_path(settings)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.part")
+    tmp.write_text(json.dumps([[round(t), round(pr, 2)] for t, pr in hist]))
+    tmp.replace(p)
+
+
+# Ordered: local first so the normal case sends no external traffic, then two
+# public keyless venues. Each entry is (name, url, parser). Checked 2026-10-30:
+# mempool, Kraken, Bitstamp, Coinbase and CoinGecko all agreed within 0.09%.
+def _p_kraken(d):    return float(d["result"]["XXBTZUSD"]["c"][0])
+def _p_bitstamp(d):  return float(d["last"])
+
+_FALLBACKS = [
+    ("kraken",   "https://api.kraken.com/0/public/Ticker?pair=XBTUSD", _p_kraken),
+    ("bitstamp", "https://www.bitstamp.net/api/v2/ticker/btcusd/",      _p_bitstamp),
+]
+
+# A price outside this band of the last known one is refused outright. A
+# malformed or stale response must not be able to inject a move into the
+# detector; BTC does not move 25% between two ten-minute samples, and if it
+# ever does, one skipped sample is the cheap failure.
+SANITY_BAND_PCT = 25.0
+
+
+def price_is_sane(price: float, last_price: float | None) -> bool:
+    """Refuse a price that is absurdly far from the last known one."""
+    if price <= 0:
+        return False
+    if not last_price:
+        return True
+    return abs(price - last_price) / last_price * 100 <= SANITY_BAND_PCT
+
+
+def drop_for_source_switch(prev_source: str | None, source: str,
+                           last_price: float | None, price: float,
+                           tolerance_pct: float) -> bool:
+    """Should this sample be discarded because the VENUE changed under it?
+
+    The venues agree to about 0.1% at any instant, so a failover normally
+    costs nothing. But the step detector exists to notice a sudden change of
+    exactly that shape, and a switch landing mid-window would manufacture one.
+    Dropping costs a single ten-minute sample; the next same-source reading
+    re-establishes the comparison. Only a switch that ALSO jumps is dropped,
+    so a flapping source cannot starve the history.
+    """
+    if not prev_source or source == prev_source or not last_price:
+        return False
+    return abs(price - last_price) / last_price * 100 > tolerance_pct
+
+
+async def sample_price(settings: Settings, last_price: float | None = None
+                       ) -> tuple[float, float, str]:
+    """(feed_timestamp, usd, source_name).
+
+    ⚠️ A Bitcoin node has NO price in it. mempool's /api/v1/prices is itself an
+    aggregation of exchange data, so the local call was never the more
+    trustworthy number -- just the same external one behind an extra hop. On
+    2026-10-28 that hop went away with bitcoind's disk and this ran blind for
+    42 h. Local stays first because it costs nobody anything; it is no longer
+    load-bearing.
+    """
+    attempts: list[tuple[str, str, object]] = [
+        ("mempool", f"{settings.mempool_url}/api/v1/prices",
+         lambda d: float(d["USD"]))
+    ]
+    if settings.btc_price_fallback:
+        attempts += _FALLBACKS
+
+    errors = []
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        for name, url, parse in attempts:
+            try:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                d = resp.json()
+                price = float(parse(d))
+                ts = float(d.get("time") or time.time()) if name == "mempool" else time.time()
+            except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
+                errors.append(f"{name}: {exc}")
+                continue
+            if price <= 0:
+                errors.append(f"{name}: non-positive price {price}")
+                continue
+            if not price_is_sane(price, last_price):
+                errors.append(f"{name}: {price:.0f} is >{SANITY_BAND_PCT:.0f}% from the last "
+                              f"sample {last_price:.0f} — refusing it")
+                continue
+            if name != "mempool":
+                log.warning("btc-watch: primary price source unavailable, using %s", name)
+            return ts, price, name
+    raise SourceError("no price source answered — " + "; ".join(errors))
+
+
+# ---------------------------------------------------------------- detection
+
+@dataclass(frozen=True)
+class Move:
+    direction: str      # "up" | "down"
+    pct: float          # magnitude of the sustained move, always positive
+    lo: float
+    hi: float
+    now: float
+    minutes: float      # span from the extreme-start to now
+
+
+import math
+
+
+def _stdev(xs: list[float]) -> float:
+    if len(xs) < 2:
+        return 0.0
+    m = sum(xs) / len(xs)
+    return math.sqrt(sum((x - m) ** 2 for x in xs) / (len(xs) - 1))
+
+
+def _hourly(hist: list[tuple[float, float]], now_ts: float, hours: int) -> list[float]:
+    """Newest price in each hourly bucket over the last `hours`, oldest->newest.
+    Buckets the dense 10-min samples so sigma/moves match the hourly backtest."""
+    b: dict[int, float] = {}
+    for t, pr in sorted(hist):
+        if t > now_ts or t < now_ts - hours * 3600:
+            continue
+        b[int((now_ts - t) // 3600)] = pr        # later t in a bucket wins (newest)
+    return [b[i] for i in sorted(b, reverse=True)]  # largest index = oldest
+
+
+def detect(hist: list[tuple[float, float]], now_ts: float, *, window_h: int,
+           sigma_k: float, min_move_pct: float, min_hours: int) -> "Move | None":
+    """A move that is BOTH a statistical outlier vs the last 24h of churn AND a
+    real economic shift of the mean. Regime-adaptive: the bar rises with
+    volatility, so it stays quiet in a bull run's routine chop yet still fires
+    on genuine legs (validated across calm/grind/drop/crash months, 2026-09-18).
+
+      sigma  = stdev of hourly log-returns over the trailing ~24h
+      z      = (W-hour log-return) / (sigma * sqrt(W))     -> outlier test
+      disp   = (mean(last 2h) - mean(prior hours)) / mean  -> "did it really move"
+      fire   = |z| >= sigma_k AND |disp| >= min_move_pct AND signs agree
+    """
+    hp = _hourly(hist, now_ts, 25)
+    if len(hp) < max(min_hours, window_h + 3):
+        return None
+    rets = [math.log(hp[j] / hp[j - 1]) for j in range(1, len(hp)) if hp[j - 1] > 0 and hp[j] > 0]
+    sigma = _stdev(rets)
+    if sigma <= 0:
+        return None
+    now = hp[-1]
+    then = hp[-1 - window_h]
+    if then <= 0:
+        return None
+    recent = math.log(now / then)
+    z = recent / (sigma * math.sqrt(window_h))
+    base = hp[:-window_h]
+    mean_base = sum(base) / len(base)
+    mean_recent = sum(hp[-2:]) / 2
+    disp = (mean_recent - mean_base) / mean_base if mean_base else 0.0
+    if abs(z) < sigma_k or abs(disp) * 100 < min_move_pct or (recent > 0) != (disp > 0):
+        return None
+    pct = round((now - then) / then * 100, 2)
+    if recent > 0:
+        return Move("up", abs(pct), then, now, now, window_h * 60)
+    return Move("down", abs(pct), now, then, now, window_h * 60)
+
+
+def detect_step(hist: list[tuple[float, float]], now_ts: float, *,
+                step_pct: float, window_s: float) -> Move | None:
+    """The largest retained move inside a SHORT trailing window.
+
+    Deliberately not statistical. The sigma/disp test is regime-adaptive and
+    that is right for a grind, but a fast step defeats it twice over: the step
+    sits in one or two hourly buckets, and the same large return inflates the
+    very sigma it is scored against. Here we just ask "did price move this much,
+    this fast" -- and because firing on that alone would be noisy, the answer
+    only ever arms a candidate (see step_tick).
+    """
+    window = [(t, p) for t, p in hist if t >= now_ts - window_s]
+    if len(window) < 3:
+        return None
+    now_p = window[-1][1]
+    lo_t, lo_p = min(window, key=lambda x: x[1])
+    hi_t, hi_p = max(window, key=lambda x: x[1])
+    # Only count a move whose extreme came BEFORE now, otherwise "now" is the
+    # extreme and there is no move yet, just a new high.
+    up = (now_p - lo_p) / lo_p * 100 if lo_p > 0 and lo_t < now_ts else 0.0
+    down = (hi_p - now_p) / hi_p * 100 if hi_p > 0 and hi_t < now_ts else 0.0
+    if up >= step_pct and up >= down:
+        return Move("up", round(up, 2), lo_p, now_p, now_p, (now_ts - lo_t) / 60)
+    if down >= step_pct:
+        return Move("down", round(down, 2), now_p, hi_p, now_p, (now_ts - hi_t) / 60)
+    return None
+
+
+def _source_path(settings: Settings) -> Path:
+    return settings.state_dir / "btc-last-source.txt"
+
+
+def _load_source(settings: Settings) -> str | None:
+    try:
+        return _source_path(settings).read_text().strip() or None
+    except OSError:
+        return None
+
+
+def _save_source(settings: Settings, name: str) -> None:
+    p = _source_path(settings)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(name)
+
+
+def _stale_path(settings: Settings) -> Path:
+    return settings.state_dir / "btc-stale-warned"
+
+
+def _note_stale(settings: Settings, hist, now_ts: float) -> str | None:
+    """Surface a dead feed ONCE. Returns the message if it warned."""
+    last_good = hist[-1][0] if hist else None
+    if last_good is None or now_ts - last_good < settings.btc_stale_after_s:
+        return None
+    if _stale_path(settings).exists():
+        return None                       # already said so; do not nag
+    age_h = (now_ts - last_good) / 3600
+    msg = (f"No bitcoin price for {age_h:.1f} h — every source refused. "
+           f"The spike watcher is blind until one answers.")
+    _stale_path(settings).parent.mkdir(parents=True, exist_ok=True)
+    _stale_path(settings).write_text(str(int(now_ts)))
+    log.error("btc-watch: %s", msg)
+    try:
+        _post_ntfy(settings, "Bitcoin price feed is down", msg)
+    except Exception as exc:                      # never let the warning fail the run
+        log.warning("btc-watch: stale notify failed: %s", exc)
+    return msg
+
+
+def _clear_stale(settings: Settings) -> None:
+    """A good sample re-arms the warning, so the NEXT outage is reported too."""
+    _stale_path(settings).unlink(missing_ok=True)
+
+
+def _candidate_path(settings: Settings) -> Path:
+    # NOT btc-pending-ntfy.json -- that one defers a notification through quiet
+    # hours. This defers the DECISION itself, which is a different thing.
+    return settings.state_dir / "btc-step-candidate.json"
+
+
+def _load_candidate(settings: Settings) -> dict | None:
+    try:
+        return json.loads(_candidate_path(settings).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _save_candidate(settings: Settings, cand: dict | None) -> None:
+    p = _candidate_path(settings)
+    if cand is None:
+        p.unlink(missing_ok=True)
+        return
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.part")
+    tmp.write_text(json.dumps(cand))
+    tmp.replace(p)
+
+
+def retained_frac(cand: dict, ref_price: float) -> float:
+    """How much of the armed move is still present.
+
+    Measured from the PRE-step price, not from the peak: a step from 81,331 to
+    83,119 sitting at 82,900 has retained (82,900-81,331)/(83,119-81,331) = 88%,
+    which is "it held". From the peak the same thing reads as a 12% retracement,
+    which is the wrong frame.
+    """
+    start, peak = float(cand["start_price"]), float(cand["peak_price"])
+    span = peak - start
+    if span == 0:
+        return 0.0
+    return (ref_price - start) / span if cand["direction"] == "up" else (start - ref_price) / (start - peak)
+
+
+def hold_price(hist: list[tuple[float, float]], armed_ts: float, now_ts: float) -> float | None:
+    """The price to judge retention against: the MEAN across the hold window.
+
+    ⚠️ NOT the spot price at the confirming tick. Replaying the real 2026-10-20
+    spike, the candidate armed at 10:16 and held cleanly for an hour -- 82,846 /
+    82,928 / 83,132 / 83,077 / 82,956 -- and then the single sample at 11:19,
+    the first past the confirm window, happened to be a dip to 82,322. On that
+    one reading retention was 55% against a 60% bar and the candidate was
+    DROPPED, discarding a move that had plainly held. The mean over the same
+    window is 82,876 = 86% retained.
+
+    "Did the price stay up over the next period" is a claim about a period, so
+    it has to be measured over one. A spot sample at an arbitrary instant is
+    the same class of error as judging a drive by one slow read.
+    """
+    window = [p for t, p in hist if armed_ts <= t <= now_ts]
+    if not window:
+        return None
+    return sum(window) / len(window)
+
+
+def step_tick(settings: Settings, hist: list[tuple[float, float]], now_ts: float,
+              price: float) -> tuple[Move | None, str | None]:
+    """Advance the candidate state machine. Returns (confirmed_move, status).
+
+    Never reports on the way in. A step arms; only retention fires.
+    """
+    cand = _load_candidate(settings)
+
+    if cand is not None:
+        if now_ts - float(cand["armed_ts"]) > settings.btc_step_max_age_s:
+            _save_candidate(settings, None)
+            return None, "candidate expired unconfirmed"
+        if now_ts - float(cand["armed_ts"]) < settings.btc_step_confirm_s:
+            return None, (f"candidate held ({cand['direction']} {cand['pct']}%, "
+                          f"{int((settings.btc_step_confirm_s - (now_ts - float(cand['armed_ts']))) / 60)}m to go)")
+        ref = hold_price(hist, float(cand["armed_ts"]), now_ts)
+        frac = retained_frac(cand, ref if ref is not None else price)
+        if frac < settings.btc_step_retain_frac:
+            _save_candidate(settings, None)
+            return None, f"candidate dropped — only {frac * 100:.0f}% retained"
+        _save_candidate(settings, None)
+        minutes = (now_ts - float(cand["start_ts"])) / 60
+        move = Move(cand["direction"], float(cand["pct"]),
+                    min(float(cand["start_price"]), price),
+                    max(float(cand["start_price"]), price), price, minutes)
+        return move, f"candidate CONFIRMED — {frac * 100:.0f}% retained"
+
+    step = detect_step(hist, now_ts, step_pct=settings.btc_step_pct,
+                       window_s=settings.btc_step_window_s)
+    if step is None:
+        return None, None
+    start_p = step.lo if step.direction == "up" else step.hi
+    _save_candidate(settings, {
+        "direction": step.direction, "pct": step.pct,
+        "start_price": start_p, "peak_price": price,
+        "start_ts": now_ts - step.minutes * 60, "armed_ts": now_ts,
+    })
+    return None, f"candidate ARMED — {step.direction} {step.pct}% in {int(step.minutes)}m, not reporting yet"
+
+
+def is_new_leg(move: Move, last: dict | None, *, threshold_pct: float, reexplain_after_s: float, now_ts: float) -> bool:
+    """Should this move trigger a (costly) explanation? Keeps a plateau quiet."""
+    if last is None:
+        return True
+    if last.get("direction") != move.direction:
+        return True                                   # reversal is always news
+    ref = float(last.get("reference_price") or 0)
+    if ref and abs(move.now - ref) / ref * 100 >= threshold_pct:
+        return True                                   # another full leg beyond what we explained
+    if now_ts - float(last.get("ts") or 0) >= reexplain_after_s:
+        return True                                   # the explanation is stale and a move still stands
+    return False
+
+
+# ---------------------------------------------------------------- explain + store
+
+_PROMPT = """\
+Bitcoin has moved {dir_word} {pct:.1f} percent, from about {lo} dollars to about \
+{now} dollars, over roughly the last {minutes} minutes (as of {when}). Search the \
+web and recent news and explain WHY, for someone who will hear this over the phone.
+
+Rules for a credible answer:
+- LEAD with the underlying catalyst: a specific news, regulatory, macro, or flow \
+event (name it concretely, e.g. an SEC/CFTC action, an ETF flow, a CPI or Fed \
+decision, a large buyer). Not a vague "risk-on mood".
+- Liquidations, a short squeeze, or a long squeeze are AMPLIFIERS, not causes. \
+Mention them only after the catalyst, and say so plainly ("a short squeeze \
+amplified it"). Never present a squeeze as the root cause.
+- State macro events by their real direction. A rate HIKE is a hike (bearish); do \
+not imply a bearish event drove a rally — if the market rose despite bad news, say \
+that.
+- If there is genuinely no fundamental catalyst and it looks purely technical (a \
+liquidation cascade with no news), say exactly that — that is a valid, useful answer.
+- Two or three short spoken sentences. Plain prose, no markdown, no URLs, no \
+"Sources" list. Lead sentence = the cause.
+
+"""
+
+
+def _dollars(n: float) -> str:
+    return f"{round(n):,}"
+
+
+def explain(settings: Settings, move: Move) -> str:
+    when = time.strftime("%-I:%M %p", time.localtime())
+    prompt = _PROMPT.format(dir_word=("up" if move.direction == "up" else "down"), pct=move.pct,
+                            lo=_dollars(move.lo if move.direction == "up" else move.hi),
+                            now=_dollars(move.now), minutes=int(move.minutes), when=when)
+    proc = subprocess.run(
+        [settings.claude_bin, "-p", prompt, "--output-format", "text"],
+        cwd=str(settings.claude_cwd), capture_output=True, text=True,
+        env={**_env(), "CLAUDE_AUTONOMOUS": "1"}, timeout=settings.btc_explain_timeout_s,
+    )
+    if proc.returncode != 0:
+        raise SourceError(f"claude -p exited {proc.returncode}: {proc.stderr[-300:]}")
+    text = _clean_answer(proc.stdout)
+    if not text:
+        raise SourceError("claude -p returned nothing")
+    return text
+
+
+import re as _re
+
+
+def _clean_answer(raw: str) -> str:
+    """Strip the model's citation tail and any markup — Kokoro must not read
+    URLs aloud. Cuts from a 'Sources:'/'Source:' marker, unwraps [text](url),
+    drops bare URLs and markdown emphasis."""
+    text = _re.split(r"\n?\s*Sources?\s*:", raw, maxsplit=1)[0]
+    text = _re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)   # [label](url) -> label
+    text = _re.sub(r"https?://\S+", "", text)
+    text = text.replace("**", "").replace("`", "").replace("*", "")
+    return " ".join(text.split())
+
+
+def _env() -> dict:
+    import os
+    e = dict(os.environ)
+    e.setdefault("HOME", "/home/claude")
+    return e
+
+
+def spoken(answer: dict, now_ts: float | None = None) -> str:
+    now_ts = now_ts or time.time()
+    age_h = (now_ts - float(answer.get("ts", now_ts))) / 3600
+    when = "just now" if age_h < 1 else ("about an hour ago" if age_h < 1.5 else f"about {round(age_h)} hours ago")
+    return f"{answer['text']} That was {when}."
+
+
+# ---------------------------------------------------------------- the timer entry point
+
+async def run(settings: Settings, now_ts: float | None = None) -> dict:
+    """One watch tick. Returns a small status dict (also what the CLI prints)."""
+    now_ts = now_ts or time.time()
+    flush_pending(settings)      # release anything deferred overnight, now that it's morning
+    ensure_feed(settings)        # a valid (possibly empty) feed exists before newsdesk ever polls it
+    hist = load_history(settings)
+    last_price = hist[-1][1] if hist else None
+    try:
+        _feed_ts, price, source = await sample_price(settings, last_price)
+    except SourceError as exc:
+        log.warning("btc-watch: %s", exc)
+        # ⚠️ A monitor that cannot see its subject must not report success.
+        # Every failed run used to return quietly, so when the price feed died
+        # with bitcoind's disk on 2026-10-28 this ran blind for 42 h and
+        # `systemctl --failed` stayed empty. Warn ONCE per outage: the system
+        # cannot clear this itself (someone has to fix the source), so alerting
+        # every ten minutes would just train Chris to ignore it.
+        stale = _note_stale(settings, hist, now_ts)
+        return {"ok": False, "error": str(exc), **({"stale": stale} if stale else {})}
+    _clear_stale(settings)
+
+    # ⚠️ A SOURCE CHANGE IS ITSELF A SMALL STEP. The venues agree to about 0.1%
+    # at any instant, but the step detector exists to notice steps -- so a
+    # failover that lands mid-window can manufacture a move that never
+    # happened. Drop a sample that BOTH changes source and jumps: the next
+    # same-source sample re-establishes the comparison 10 minutes later.
+    prev_source = _load_source(settings)
+    _save_source(settings, source)
+    if drop_for_source_switch(prev_source, source, last_price, price,
+                              settings.btc_source_switch_tolerance_pct):
+        log.info("btc-watch: source %s->%s with a %.2f%% jump — sample dropped "
+                 "so the switch is not read as a move", prev_source, source,
+                 abs(price - last_price) / last_price * 100)
+        return {"ok": True, "price": price, "source": source, "move": None,
+                "dropped": "source-switch discontinuity"}
+
+    # de-dupe identical feed samples (the backend only refreshes every few min)
+    if not hist or abs(hist[-1][1] - price) > 0.001 or now_ts - hist[-1][0] >= settings.btc_sample_min_gap_s:
+        hist.append((now_ts, price))
+    hist = [(t, p) for t, p in hist if t >= now_ts - settings.btc_history_keep_s]
+    save_history(settings, hist)
+
+    move = detect(hist, now_ts, window_h=settings.btc_window_h, sigma_k=settings.btc_sigma_k,
+                  min_move_pct=settings.btc_min_move_pct, min_hours=settings.btc_min_hours)
+
+    # The step path runs only when the slow test is quiet, and it is allowed to
+    # produce a move ONLY by confirming a candidate armed on an earlier tick.
+    # Arming is deliberately invisible to the caller except as `step` status --
+    # that is the "register it, but don't report yet" Chris asked for.
+    step_status = None
+    if move is None:
+        move, step_status = step_tick(settings, hist, now_ts, price)
+        if step_status:
+            log.info("btc-watch: %s", step_status)
+
+    if move is None:
+        out = {"ok": True, "price": price, "source": source, "move": None}
+        if step_status:
+            out["step"] = step_status
+        return out
+
+    last = _load_move(settings)
+    if not is_new_leg(move, last, threshold_pct=settings.btc_min_move_pct,
+                      reexplain_after_s=settings.btc_reexplain_after_s, now_ts=now_ts):
+        return {"ok": True, "price": price, "move": f"{move.direction} {move.pct}%",
+                "explained": "already", **({"step": step_status} if step_status else {})}
+
+    log.info("btc-watch: %s %.1f%% (%s->%s over %dm) — explaining", move.direction, move.pct,
+             _dollars(move.lo), _dollars(move.now), int(move.minutes))
+    try:
+        text = explain(settings, move)
+    except SourceError as exc:
+        log.warning("btc-watch explain: %s", exc)
+        return {"ok": False, "error": str(exc), "move": f"{move.direction} {move.pct}%"}
+    _store_move(settings, move, text, now_ts)
+    write_feed(settings, move, text, now_ts)
+    _notify(settings, move, text)
+    return {"ok": True, "price": price, "move": f"{move.direction} {move.pct}%",
+            "explained": "new", "text": text[:120], **({"step": step_status} if step_status else {})}
+
+
+def _move_path(settings: Settings) -> Path:
+    return settings.answers_dir / "btc-move.json"
+
+
+def _load_move(settings: Settings) -> dict | None:
+    try:
+        return json.loads(_move_path(settings).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _store_move(settings: Settings, move: Move, text: str, now_ts: float) -> None:
+    settings.answers_dir.mkdir(parents=True, exist_ok=True)
+    d = {"text": text, "ts": now_ts, "direction": move.direction, "pct": move.pct,
+         "reference_price": move.now, "lo": move.lo, "hi": move.hi}
+    p = _move_path(settings)
+    tmp = p.with_suffix(".json.part")
+    tmp.write_text(json.dumps(d))
+    tmp.replace(p)
+
+
+# ---------------------------------------------------------------- rolling feed
+
+def _moves_path(settings: Settings) -> Path:
+    return settings.state_dir / "btc-moves.json"
+
+
+def _load_moves(settings: Settings) -> list[dict]:
+    try:
+        data = json.loads(_moves_path(settings).read_text())
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _entry_title(rec: dict) -> str:
+    arrow = "up" if rec["direction"] == "up" else "down"
+    return f"Bitcoin {arrow} {float(rec['pct']):.1f}% to ${_dollars(float(rec['now']))}"
+
+
+def render_atom(records: list[dict], base_url: str) -> str:
+    """Render the rolling move list as an Atom 1.0 feed. Newest entry first.
+
+    The default namespace is Atom so newsdesk's parser (which keys on
+    `{http://www.w3.org/2005/Atom}feed`) recognises it; each entry gets a
+    stable, unique id/link (base_url#move-<ts>) so INSERT OR IGNORE de-dupes on
+    the guid and an explanation is never ingested twice."""
+    ET.register_namespace("", ATOM_NS)
+    feed = ET.Element(f"{{{ATOM_NS}}}feed")
+    ET.SubElement(feed, f"{{{ATOM_NS}}}title").text = "Gromit BTC Watch"
+    ET.SubElement(feed, f"{{{ATOM_NS}}}id").text = base_url
+    ET.SubElement(feed, f"{{{ATOM_NS}}}link", {"href": base_url, "rel": "self"})
+    ordered = sorted(records, key=lambda r: float(r.get("ts", 0)), reverse=True)
+    updated = ordered[0]["ts"] if ordered else time.time()
+    ET.SubElement(feed, f"{{{ATOM_NS}}}updated").text = _rfc3339(updated)
+    for rec in ordered:
+        ts = float(rec.get("ts", 0))
+        e = ET.SubElement(feed, f"{{{ATOM_NS}}}entry")
+        ET.SubElement(e, f"{{{ATOM_NS}}}title").text = _entry_title(rec)
+        ET.SubElement(e, f"{{{ATOM_NS}}}id").text = f"{base_url}#move-{int(ts)}"
+        ET.SubElement(e, f"{{{ATOM_NS}}}link",
+                      {"href": f"{base_url}#move-{int(ts)}", "rel": "alternate"})
+        ET.SubElement(e, f"{{{ATOM_NS}}}published").text = _rfc3339(ts)
+        ET.SubElement(e, f"{{{ATOM_NS}}}updated").text = _rfc3339(ts)
+        ET.SubElement(e, f"{{{ATOM_NS}}}content", {"type": "text"}).text = rec.get("text", "")
+    return '<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(feed, encoding="unicode")
+
+
+def _rfc3339(ts: float) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _feed_disabled(settings: Settings) -> bool:
+    return str(settings.btc_feed_path) in ("", ".")   # empty path disables the feed
+
+
+def _render_feed_file(settings: Settings, recs: list[dict]) -> None:
+    """Atomically render `recs` to the Atom feed file. Best-effort: the digest
+    is a secondary consumer, so a write failure (e.g. the digest dir absent on
+    a host that has no digest) is logged, never fatal to the watch tick."""
+    try:
+        xml = render_atom(recs, settings.btc_feed_base_url)
+        fp = settings.btc_feed_path
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        ftmp = fp.with_suffix(".xml.part")
+        ftmp.write_text(xml)
+        ftmp.replace(fp)
+    except OSError as exc:
+        log.warning("btc-watch feed: %s", exc)
+
+
+def ensure_feed(settings: Settings) -> None:
+    """Guarantee the feed file exists before newsdesk ever polls it. A brand-new
+    watch has no moves yet, but a MISSING file 404s and newsdesk would flag the
+    source as 'failing' (that check runs ahead of the 'quiet' exemption). An
+    empty-but-valid Atom feed keeps fail_streak at 0 until the first real move."""
+    if _feed_disabled(settings) or settings.btc_feed_path.exists():
+        return
+    _render_feed_file(settings, _load_moves(settings))
+
+
+def write_feed(settings: Settings, move: Move, text: str, now_ts: float) -> None:
+    """Append this explained move to the rolling on-disk record and re-render
+    the Atom feed."""
+    if _feed_disabled(settings):
+        return
+    recs = _load_moves(settings)
+    recs.append({"ts": now_ts, "direction": move.direction, "pct": move.pct,
+                 "now": move.now, "lo": move.lo, "hi": move.hi, "text": text})
+    recs = recs[-settings.btc_feed_keep:]
+    try:
+        mp = _moves_path(settings)
+        mp.parent.mkdir(parents=True, exist_ok=True)
+        tmp = mp.with_suffix(".json.part")
+        tmp.write_text(json.dumps(recs))
+        tmp.replace(mp)
+    except OSError as exc:
+        log.warning("btc-watch moves: %s", exc)
+        return
+    _render_feed_file(settings, recs)
+
+
+def _is_quiet(settings: Settings, now_ts: float | None = None) -> bool:
+    hour = int(time.strftime("%H", time.localtime(now_ts)))
+    return hour >= settings.quiet_start_h or hour < settings.quiet_end_h
+
+
+def _pending_path(settings: Settings) -> Path:
+    return settings.state_dir / "btc-pending-ntfy.json"
+
+
+def _post_ntfy(settings: Settings, title: str, text: str) -> bool:
+    try:
+        httpx.post(settings.ntfy_post_url, content=text.encode("ascii", "replace"),
+                   headers={"Title": title.encode("ascii", "replace").decode(),
+                            "Priority": "default", "Tags": "chart_with_upwards_trend"},
+                   timeout=5.0)
+        return True
+    except httpx.HTTPError as exc:
+        log.warning("btc-watch ntfy: %s", exc)
+        return False
+
+
+def _notify(settings: Settings, move: Move, text: str) -> None:
+    """One informational push per new move. Overnight it is DEFERRED (Chris'
+    rule: nothing non-critical pierces quiet hours) and flushed by the next
+    waking-hour tick — so a 3 a.m. move's reason still reaches him, at 7 a.m.,
+    without a buzz. Never wakes anyone."""
+    if not settings.btc_notify:
+        return
+    arrow = "up" if move.direction == "up" else "down"
+    title = f"Bitcoin {arrow} {move.pct:.1f}% to ${_dollars(move.now)}"
+    if _is_quiet(settings):
+        _queue_pending(settings, title, text)
+        log.info("btc-watch: quiet hours, deferred the ntfy to morning")
+        return
+    _post_ntfy(settings, title, text)
+
+
+def _queue_pending(settings: Settings, title: str, text: str) -> None:
+    try:
+        pend = json.loads(_pending_path(settings).read_text())
+    except (OSError, ValueError):
+        pend = []
+    pend.append({"title": title, "text": text})
+    _pending_path(settings).parent.mkdir(parents=True, exist_ok=True)
+    tmp = _pending_path(settings).with_suffix(".json.part")
+    tmp.write_text(json.dumps(pend[-10:]))   # cap; an overnight can't queue a flood anyway
+    tmp.replace(_pending_path(settings))
+
+
+def flush_pending(settings: Settings) -> int:
+    """Send any deferred notifications, once it's a humane hour. Returns count."""
+    if _is_quiet(settings):
+        return 0
+    try:
+        pend = json.loads(_pending_path(settings).read_text())
+    except (OSError, ValueError):
+        return 0
+    if not pend:
+        return 0
+    sent = 0
+    for n in pend:
+        pre = "Overnight: " if not n["title"].startswith("Overnight") else ""
+        if _post_ntfy(settings, pre + n["title"], n["text"]):
+            sent += 1
+    try:
+        _pending_path(settings).unlink()
+    except OSError:
+        pass
+    log.info("btc-watch: flushed %d deferred ntfy(s)", sent)
+    return sent

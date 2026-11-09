@@ -18,7 +18,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -53,6 +53,12 @@ CREATE TABLE IF NOT EXISTS sources (
     -- event detector — never published, never in a lane, never a good read,
     -- never in the not-selected list. See events.py.
     role          TEXT NOT NULL DEFAULT 'read',
+    -- Bursty by nature, like a release feed: it publishes only when its event
+    -- happens (e.g. the BTC-watch feed fires only on a real price spike), so a
+    -- long gap carries no information and must not raise a "source silent"
+    -- warning. This is the per-source form of NO_SILENCE_CHECK_LANES; the
+    -- failing-poll check still applies. See collect.stale_sources.
+    quiet         INTEGER NOT NULL DEFAULT 0,
     -- tuned columns: written by the tuner and by hand, never by the seeder
     cap           INTEGER NOT NULL DEFAULT 1,
     weight        REAL    NOT NULL DEFAULT 1.0,
@@ -157,6 +163,7 @@ MIGRATIONS = {
         "kind": "TEXT NOT NULL DEFAULT 'feed'",
         "evergreen": "INTEGER NOT NULL DEFAULT 0",
         "role": "TEXT NOT NULL DEFAULT 'read'",
+        "quiet": "INTEGER NOT NULL DEFAULT 0",
     },
 }
 
@@ -214,13 +221,13 @@ def seed_sources(con: sqlite3.Connection, catalogue: Path) -> tuple[int, int]:
         if cur.fetchone() is None:
             con.execute(
                 "INSERT INTO sources (name, lane, url, tier, insecure_tls, note,"
-                " dormant, longform, kind, evergreen, role, cap)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                " dormant, longform, kind, evergreen, role, quiet, cap)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (s["name"], s["lane"], s["url"], s["tier"],
                  int(bool(s.get("insecure_tls"))), s.get("note", ""),
                  int(bool(s.get("dormant"))), int(s.get("longform", True)),
                  s.get("kind", "feed"), int(bool(s.get("evergreen"))),
-                 s.get("role", "read"), int(s["cap"])),
+                 s.get("role", "read"), int(bool(s.get("quiet"))), int(s["cap"])),
             )
             added += 1
         else:
@@ -229,11 +236,11 @@ def seed_sources(con: sqlite3.Connection, catalogue: Path) -> tuple[int, int]:
             # it back to sleep.
             con.execute(
                 "UPDATE sources SET lane=?, url=?, tier=?, insecure_tls=?, note=?,"
-                " longform=?, kind=?, evergreen=?, role=? WHERE name=?",
+                " longform=?, kind=?, evergreen=?, role=?, quiet=? WHERE name=?",
                 (s["lane"], s["url"], s["tier"], int(bool(s.get("insecure_tls"))),
                  s.get("note", ""), int(s.get("longform", True)),
                  s.get("kind", "feed"), int(bool(s.get("evergreen"))),
-                 s.get("role", "read"), s["name"]),
+                 s.get("role", "read"), int(bool(s.get("quiet"))), s["name"]),
             )
             updated += 1
     con.commit()

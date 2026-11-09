@@ -21,12 +21,13 @@
 # traversal corpus that runs at build time, because this service is
 # unauthenticated and a note id is a client-supplied path.
 #
-# PERMISSIONS. No new plumbing: silverbullet.nix already lays recursive default
-# ACLs granting g:silverbullet:rwX over the whole space and keeps the mask at
-# rwX via a root timer, so a `shoebox` user in that group can write. UMask 0002
-# matches the other writers — a file born 0644 would cap the ACL mask at r--
-# and lock the other parties out (the trap that cost four testing deploys in
-# July; see the comments in silverbullet.nix).
+# PERMISSIONS. No new plumbing: the silverbullet module (now `hm.silverbullet`,
+# in the public homelab-modules library since the wave-0 modularization) already
+# lays recursive default ACLs granting g:silverbullet:rwX over the whole space
+# and keeps the mask at rwX via a root timer, so a `shoebox` user in that group
+# can write. UMask 0002 matches the other writers — a file born 0644 would cap
+# the ACL mask at r-- and lock the other parties out (the trap that cost four
+# testing deploys in July; the reasoning is in that module).
 #
 # AUTH. None, matching the SilverBullet vhost beside it. The perimeter is the
 # global source-gate in nginx-access.nix (Tailscale/LAN only) plus the tailnet

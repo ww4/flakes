@@ -3,13 +3,486 @@
 # split: implementations live in the library; everything gromit-specific they
 # read lives here. When a module migrates to the library, its values and
 # secret declarations land here.
-{ ... }:
+{ config, pkgs, nixpkgs-silverbullet, ... }:
 
 {
   # ── homelab.* option values ────────────────────────────────────────────────
+  homelab.domain = "rosemaryacres.com";
+  homelab.adminUser = "chris";
+  homelab.adminDisplayName = "Chris";
   homelab.ntfy.url = "http://localhost:8090/gromit-alerts";
+
+  # ── mergerfs pools (wave 1; assembled by the library's mergerfs-pools) ─────
+  # The physical member mounts live in ./storage.nix (hardware).
+  homelab.pools = {
+    fusion = {   # Primary Bucket - 28.3 TB (sdf 7.3T + sdg 9.1T + 3× 2.7T Hitachis + sdk 3.6T)
+      mountpoint = "/mnt/fusion";
+      branches = "/mnt/primary/D*";
+      createPolicy = "mfs";
+      fsname = "mergerfs";
+      # For the auto-remounter (wave 2).
+      memberDir = "/mnt/primary";
+      members = [ "D1" "D2" "D3" "D4" "D5" "D6" ];
+    };
+    backup = {   # Backup Bucket - 22 TB (4× 6TB drives)
+      mountpoint = "/mnt/backup/all";
+      branches = "/mnt/backup/D*";
+      memberDir = "/mnt/backup";
+      members = [ "D1" "D2" "D3" "D4" ];
+      # epmfs: media-mirror writes /mnt/backup/all/Movies/X and bub-mirror the
+      # parallel copy under rick-offsite/; epmfs keeps them on one branch so
+      # rsync --link-dest can hardlink between them (see the library module).
+      createPolicy = "epmfs";
+      # Must exceed the largest single file — the 4 GiB default let bub-mirror
+      # fill D1 until a movie temp file no longer fit.
+      minFreeSpace = "100G";
+    };
+  };
+
+  # ── pinchflat (wave 3a) ────────────────────────────────────────────────────
+  homelab.pinchflat.mediaDir = "/mnt/fusion/pinchflat";
+
+  # ── download-stack shared values + wave 3d ─────────────────────────────────
+  homelab.arrStack = {
+    root = "/mnt/fusion/arr";
+    owner = "chris";
+    group = "users";
+    # puid/pgid defaults (1000/100) match chris:users.
+    # incomplete/ stays off the fusion pool to spare its IO. It lived on the WD
+    # Green tier-3 scratch disk until that disk left for Wallace carrying the
+    # bitcoind datadir; it now sits on sde1 via the bind below.
+    scratchDir = "/var/lib/qbittorrent-incomplete";
+    vpnProvider = "airvpn";   # switched from Mullvad 2026-07-27 (account expired; AirVPN adds static port forwarding)
+    vpnEnvFile = config.sops.secrets."gluetun-wg".path;
+    # Tier-2 "keepers" promotion targets (add as second root folders in the UIs).
+    keepersMovies = "/mnt/fusion/Movies";
+    keepersTv = "/mnt/fusion/TV Shows";
+    # The stack owns the *arr API keys: the same claude-readable sops file the
+    # agent, arr-settings and the sentinel already use. Each app is seeded with
+    # its key before start (library lib/arr-api-seed.nix) and recyclarr renders
+    # its secrets.yml from it — nothing is copied out of a UI any more.
+    apiKeyEnvFile = config.sops.secrets."arr-api".path;   # declared in agent/arr-api-secret.nix
+  };
+
+  # The incomplete dir's actual home. Kept HERE, beside the scratchDir that
+  # names it, for the reason #214 taught: a path that lives apart from its
+  # users grows stale copies of itself. Same shape as the Fulcrum bind in
+  # services/fulcrum.nix, and for the same two reasons.
+  #
+  # WHY sde1, not the root SSD: root is 449 G with ~218 G free and already hit
+  # 100% once (2026-10-21, Fulcrum). sde1 — the Mushkin Reactor 1 TB, the
+  # "munchkin drive" — frees to ~690 G once Fulcrum's 191 G index leaves with
+  # the chain, and it is an SSD, which in-flight torrent writes want.
+  #
+  # WHY A BIND, and not scratchDir = "/home/chris/qbittorrent-incomplete":
+  # /home/chris is 0700 chris:users. The container runs as 1000:100, but docker
+  # resolves the bind source as root at mount time and qbit-seed-guard's
+  # host-path checks run as root too — a direct path would make both depend on
+  # traversing a person's home directory. The bind sidesteps 0700 without
+  # loosening it.
+  #
+  # The bind SOURCE is state, not configuration: /home/chris/qbittorrent-
+  # incomplete must exist (0775 chris:users) before this can mount. It is
+  # created once during the cutover; a systemd.tmpfiles rule is ordered after
+  # local-fs.target and would lose the race to the mount it prepares.
+  fileSystems."/var/lib/qbittorrent-incomplete" = {
+    device = "/home/chris/qbittorrent-incomplete";
+    fsType = "none";
+    options = [ "bind" "nofail" ];
+    depends = [ "/home/chris" ];
+  };
+
+  # `nofail` above keeps a missing bind from blocking boot — but without this
+  # gate qBittorrent would start anyway and write in-flight torrents into the
+  # bare mountpoint ON ROOT, which is how the root disk reached 100% in
+  # October. RequiresMountsFor is the same guard fulcrum.nix pairs with its
+  # own nofail bind: boot survives, the downloader stays down and says so.
+  systemd.services.docker-qbittorrent.unitConfig.RequiresMountsFor =
+    "/var/lib/qbittorrent-incomplete";
+  homelab.recyclarr.configFile = ./services/recyclarr-config.yml;
+
+  # ── mirror-drift watch (forge redundancy, 2026-09-08) ─────────────────────
+  # Watches the GitHub push-mirrors of the two PUBLIC load-bearing repos
+  # anonymously. The private mirrors (docs, showcase) ride the same
+  # sync_on_commit config but can't be checked without credentials — their
+  # stakes are lower and the 8h interval retries cover them.
+  homelab.mirrorDriftWatch.pairs = [
+    {
+      name = "flakes";
+      source = "https://git.rosemaryacres.com/ww4/flakes.git";
+      mirror = "https://github.com/ww4/flakes.git";
+    }
+    {
+      name = "homelab-modules";
+      source = "https://git.rosemaryacres.com/ww4/homelab-modules.git";
+      mirror = "https://github.com/ww4/homelab-modules.git";
+    }
+  ];
+
+  # ── silverbullet (wave 3f) ─────────────────────────────────────────────────
+  # Two-writer space: Chris (web UI/PWA) + the claude agent (direct files),
+  # the scheduling-assistant source of truth. Package from nixos-unstable:
+  # the 26.05 pin is frozen at 2.6.1; 2.7+ carry the mobile sync/offline/
+  # indexing fixes that matter on the phone. Plain package import (no module
+  # eval), so unstable's darwin eval problem (see flake.nix) is not in play.
+  # ⚠️ Check the client-patch journal after every version bump.
+  homelab.silverbullet = {
+    package = (import nixpkgs-silverbullet {
+      inherit (pkgs.stdenv.hostPlatform) system;
+    }).silverbullet;
+    indexPage = "Home";   # quick-capture dashboard, not the space map (Chris, 2026-08-23)
+    secondWriter = "claude";
+  };
+
+  # ── wave 3c service values ─────────────────────────────────────────────────
+  homelab.acme = {
+    email = "chris@saenzmail.com";
+    credentialsFile = config.sops.secrets."cloudflare-dns-api".path;
+  };
+  homelab.nextcloud = {
+    adminPasswordFile = config.sops.secrets."nextcloud-admin-pass".path;
+    oidcSecretFile = config.sops.secrets."nextcloud-oidc-secret".path;
+  };
+  homelab.forgejo.oidcSecretFile = config.sops.secrets."forgejo-oidc-secret".path;
+  homelab.ntfy = {
+    baseUrl = "http://100.82.117.116:8090";   # what the phone app subscribes to
+    topic = "gromit-alerts";
+  };
+
+  # Nightly database backups. Dump named databases individually (pg_dump per
+  # DB) rather than pg_dumpall — pg_dumpall aborts entirely if any one
+  # database fails, which silently broke ALL backups for 16 months when the
+  # orphaned immich DB became undumpable.
+  services.postgresqlBackup = {
+    enable = true;
+    startAt = "*-*-* 01:15:00";
+    databases = [ "nextcloud" "immich" "stacks" ];
+  };
+
+  # ── wave 3b service values ─────────────────────────────────────────────────
+  homelab.paperless = {
+    adminPasswordFile = config.sops.secrets."paperless-admin".path;
+    oidcEnvFile = config.sops.secrets."paperless-oidc-env".path;
+  };
+  homelab.vaultwarden = {
+    subdomain = "keys";   # renamed from vault.* — Chrome Safe Browsing kept flagging it
+    envFile = config.sops.secrets."vaultwarden-env".path;
+    extraConfig = {
+      # Outbound email via Postmark: invites, new-device alerts, email 2FA.
+      # Postmark uses its Server API token as BOTH SMTP_USERNAME and
+      # SMTP_PASSWORD — both live in the env secret. SMTP_FROM must be a
+      # Postmark-verified sender.
+      SMTP_HOST = "smtp.postmarkapp.com";
+      SMTP_PORT = 587;
+      SMTP_SECURITY = "starttls";        # 587 = STARTTLS
+      SMTP_FROM = "vault@rosemaryacres.com";
+      SMTP_FROM_NAME = "Rosemary Acres Vault";
+    };
+  };
+  homelab.immich = {
+    mediaLocation = "/mnt/fusion/immich";
+    # ML offloaded to wallace (Ryzen 9 5900X) over the tailnet; version kept
+    # in lockstep via hosts/wallace/immich-ml.nix (pkgs.immich.version).
+    mlUrl = "http://100.66.171.120:3003";
+  };
+  homelab.metube = {
+    downloadDir = "/mnt/fusion/youtube/metube";
+    # uid pinned to what was ACTUALLY auto-allocated before pinning (NixOS
+    # refuses to change an existing user's uid); 984 = the media group's gid.
+    uid = 971;
+    mediaGid = 984;
+  };
+
+  # ── drive-temps (wave 2) ───────────────────────────────────────────────────
+  homelab.driveTemps = {
+    # Historical metric name — dashboards, the drive-temperature alert group
+    # and months of TSDB history use it; keep it.
+    metricPrefix = "gromit_drive_";
+    # The backup-pool WD Elements bridges misreport power state, so these are
+    # SMART-read only while actively doing I/O (same by-id set as
+    # drive-spindown.nix — keep the two lists in step).
+    spindownDriveIds = [
+      "usb-WD_Elements_25A3_575832324439303132343737-0:0"
+      "usb-WD_Elements_25A3_57583532444330364C304B32-0:0"
+      "usb-WD_Elements_25A3_575835314438394844563632-0:0"
+      "usb-WD_Elements_25A3_575832324443303254584B36-0:0"
+    ];
+  };
+
+  # ── deploy-drift watch (wave 2) ────────────────────────────────────────────
+  # Compares Forgejo main against comin's deployed commit. Born from the
+  # Sep 5 outage: the GitHub mirror froze and every comin gauge stayed green
+  # while merges piled up undeployed for two days.
+  homelab.deployDriftWatch = {
+    enable = true;
+    repoUrl = "https://git.rosemaryacres.com/ww4/flakes.git";
+  };
+
+  # ── Monitoring (wave 1b; the stack machinery lives in the library) ─────────
+  homelab.monitoring = {
+    enable = true;
+    # Site-specific exporters the library doesn't know about.
+    extraScrapeConfigs = [
+      # comin's own metrics — last_build/eval/deployment/fetch_failed gauges,
+      # so a broken merge (comin running but NOT deploying) pages instead of
+      # silently sitting on the old generation.
+      { job_name = "comin";
+        static_configs = [{ targets = [ "127.0.0.1:4243" ]; }];
+      }
+      # Blocky (local split-horizon DNS) — query counts, cache hit ratio,
+      # upstream failures. See services/blocky.nix (metrics on loopback :4000).
+      # The external watcher on lock3. Its COUNTERS are the only thing that can
+      # say anything true about a window Prometheus could not scrape: a counter
+      # read after a gap reflects what happened during it, so
+      # increase(homelab_watch_unreachable_seconds_total[24h]) still shows an
+      # outage that has no samples inside it.
+      #
+      # ⚠️ Build panels on homelab_watch_last_heartbeat_timestamp_seconds, NOT
+      # on an up-style gauge. This Prometheus runs --query.lookback-delta=16m,
+      # so a gauge scraped 15 minutes ago still answers a query — an up gauge
+      # can read "up" from a stale sample in the middle of an outage. A
+      # timestamp cannot look fresh when it is not.
+      #
+      # When lock3 is unreachable this job's own `up` drops to 0, which is the
+      # metrics-side complement to sentinel's lock3-watcher check: one shows in
+      # Grafana, the other pages over ntfy.
+      { job_name = "homelab-watch";
+        static_configs = [{ targets = [ "100.125.31.125:8650" ]; }];
+        scrape_interval = "60s";
+        scrape_timeout = "15s";
+      }
+      { job_name = "blocky";
+        static_configs = [{ targets = [ "127.0.0.1:4000" ]; }];
+      }
+    ];
+    # Riverwatch operational/health alerts are info-level AND muted overnight —
+    # they hold until morning. NOT actual river conditions; flood/forecast/
+    # rapid-rise alerts are deliberately not routed here.
+    extraAlertmanagerRoutes = [
+      # The physical-hazard tier (fire precursor, flood; electrical when there
+      # is something to detect it) RINGS THE PHONE — services/switchboard.nix
+      # serves the hook. The only class allowed to pierce quiet hours (Chris,
+      # 2026-08-19). continue = true so ntfy still gets it; hourly repeats
+      # until acknowledged with a 1 on the call.
+      {
+        matchers = [ ''tier="physical"'' ];
+        receiver = "switchboard-call";
+        continue = true;
+        repeat_interval = "1h";
+        group_wait = "10s";
+      }
+      {
+        matchers = [ ''alertname="RiverwatchFetchFailing"'' ];
+        receiver = "ntfy-noresolve";          # also no "RESOLVED" ping
+        mute_time_intervals = [ "nights" ];
+      }
+      {
+        matchers = [ ''alertname="RiverObservationStale"'' ];
+        receiver = "ntfy";
+        mute_time_intervals = [ "nights" ];
+      }
+    ];
+    extraAlertRuleFiles = [ ./services/grafana/alert-rules-local.json ];
+    extraDatasources = [
+      {
+        # Used by the riverwatch dashboard to overlay the NWPS stage forecast.
+        # No base URL — the panel target supplies the full URL per-query.
+        name = "NWPS";
+        uid = "nwps-infinity";
+        type = "yesoreyeram-infinity-datasource";
+        access = "proxy";
+        jsonData = {
+          # Restrict outbound URLs so this datasource can't be misused as a
+          # generic SSRF tool. NWPS only.
+          allowedHosts = [ "https://api.water.noaa.gov" ];
+          timeoutInSeconds = 30;
+        };
+      }
+        {
+          # The external watcher's verdict history, read off the lock3 VPS over
+          # Tailscale.
+          #
+          # Infinity rather than a SQLite datasource because SQLite has NO wire
+          # protocol: the plugin reads a local filesystem path, so a direct
+          # datasource would require the database to live on gromit — and the
+          # whole point of that database is that it is written while gromit is
+          # unreachable. Infinity is already installed here for NWPS, so this
+          # needs no new plugin.
+          #
+          # ⚠️ Pulls at query time, so a panel errors rather than showing cached
+          # history if lock3 is unreachable while you are looking. Accepted: the
+          # authoritative record is on lock3 regardless, and Prometheus carries
+          # the counters that survive a scrape gap.
+          name = "HomelabWatch";
+          uid = "homelab-watch-infinity";
+          type = "yesoreyeram-infinity-datasource";
+          access = "proxy";
+          jsonData = {
+            # Same SSRF fence as NWPS: this datasource can reach exactly one
+            # host and nothing else.
+            allowedHosts = [ "http://100.125.31.125:8650" ];
+            timeoutInSeconds = 20;
+          };
+        }
+    ];
+    extraPlugins = with pkgs.grafanaPlugins; [ yesoreyeram-infinity-datasource ];
+    grafanaOidcSecretFile = config.sops.secrets."grafana-oidc-secret".path;
+  };
+
+  # Receivers are a top-level key of the alertmanager `configuration` attrset,
+  # so a host definition REPLACES the library's list rather than appending —
+  # the two library receivers are restated here. (A library option
+  # `extraAlertmanagerReceivers` would be the tidy fix; noted on the board.)
+  services.prometheus.alertmanager.configuration.receivers = [
+    { name = "ntfy";           webhook_configs = [{ url = config.homelab.monitoring.alertWebhookUrl; send_resolved = true; }]; }
+    { name = "ntfy-noresolve"; webhook_configs = [{ url = config.homelab.monitoring.alertWebhookUrl; send_resolved = false; }]; }
+    { name = "switchboard-call";
+      webhook_configs = [{ url = "http://127.0.0.1:${toString config.services.switchboard.hookPort}/alert"; send_resolved = true; }]; }
+  ];
+
+  # Fire precursor as Prometheus rules (the Grafana rule of the same name
+  # only reaches ntfy). Thresholds from gromit-temp-monitoring: HDD crit 58,
+  # CPU crit 85, NVMe crit 75. `for` keeps a one-sample spike from ringing.
+  # Own file, not `services.prometheus.rules`: that option concatenates its
+  # entries into ONE file, and a second JSON document there is a multi-doc
+  # YAML Prometheus refuses ("Multiple document yaml rules files are not
+  # supported") — it loaded riverwatch and silently dropped this group.
+  services.prometheus.ruleFiles = [ (pkgs.writeText "physical-rules.json" (builtins.toJSON {
+    groups = [{
+      name = "physical";
+      rules = [
+        { alert = "DriveTemperatureCritical";
+          expr = "gromit_drive_temp_celsius{rotational=\"1\"} >= 58";
+          "for" = "10m";
+          labels = { severity = "critical"; tier = "physical"; };
+          annotations = { summary = "drive {{ $labels.device }} at {{ $value }} degrees, above the 58 degree critical line for ten minutes"; };
+        }
+        { alert = "CpuTemperatureCritical";
+          expr = "max(node_hwmon_temp_celsius{chip=~\"platform_coretemp.*\"}) >= 85";
+          "for" = "5m";
+          labels = { severity = "critical"; tier = "physical"; };
+          annotations = { summary = "CPU at {{ $value }} degrees, above the 85 degree critical line for five minutes"; };
+        }
+        { alert = "NvmeTemperatureCritical";
+          expr = "max(node_hwmon_temp_celsius{chip=~\"nvme.*\"}) >= 75";
+          "for" = "5m";
+          labels = { severity = "critical"; tier = "physical"; };
+          annotations = { summary = "NVMe at {{ $value }} degrees, above the 75 degree critical line for five minutes"; };
+        }
+      ];
+    }];
+  })) ];
+
+  # Prometheus site overrides: 110y retention covers the riverwatch USGS
+  # backfill to the gauge's 1925 install; the 16m lookback keeps a
+  # 15-min-cadence backfill sample queryable until the next would arrive.
+  services.prometheus.retentionTime = "40150d";
+  services.prometheus.extraFlags = [ "--query.lookback-delta=16m" ];
+
+  # ── Authelia SSO (wave 1) ──────────────────────────────────────────────────
+  homelab.authelia = {
+    enable = true;
+    displayName = "Gromit";   # WebAuthn enrolment name
+    # ONE list drives forward-auth AND the access rule (the old two-edit trap).
+    # notes.* (SilverBullet) deliberately NOT here: Chris wants notetaking
+    # frictionless (2026-07-09) — the shared grocery list especially (Mary, at
+    # the store, via Tailscale). The Tailscale/LAN source-gate is the perimeter.
+    protectedVhosts = [ "prometheus" "glances" "metube" "notebook" ];
+    # OIDC clients: secrets here are pbkdf2 HASHES (safe in the store); each
+    # matching plaintext lives in that app's sops secret.
+    oidcClients = [
+      {
+        client_id = "grafana";
+        client_name = "Grafana";
+        # hash of the secret in sops:grafana-oidc-secret (see monitoring.nix)
+        client_secret = "$pbkdf2-sha512$310000$h.XQqknlgymykM29CKxJ1A$zD3BTX23n0WXZbjoHN4V9Pg/9ET6H2FIPMOejCmHMnbe.gdvaQ6bWUvkIhPNZxx5WQ6sLYbPmHT8tYIxMJGIQw";
+        public = false;
+        authorization_policy = "two_factor";
+        redirect_uris = [ "https://grafana.rosemaryacres.com/login/generic_oauth" ];
+        scopes = [ "openid" "profile" "email" "groups" ];
+        userinfo_signed_response_alg = "none";
+        # Remember the consent grant instead of prompting on every login.
+        consent_mode = "pre-configured";
+        pre_configured_consent_duration = "1y";
+      }
+      {
+        client_id = "paperless";
+        client_name = "Paperless";
+        # hash of the secret in sops:paperless-oidc-env (see paperless.nix)
+        client_secret = "$pbkdf2-sha512$310000$LgpCpOKDW/t4QM8eUXeonA$hfWVb9HDQczx6WgLlhAMIasYanUcGD6f48S0bcJBjZ7HuOByN3Qxyy6b/qkCj8x/IXNZ2XEzyDKIv6tspOtqzw";
+        public = false;
+        authorization_policy = "two_factor";
+        # allauth openid_connect callback: /accounts/oidc/<provider_id>/login/callback/
+        redirect_uris = [ "https://paperless.rosemaryacres.com/accounts/oidc/authelia/login/callback/" ];
+        scopes = [ "openid" "profile" "email" "groups" ];
+        userinfo_signed_response_alg = "none";
+        consent_mode = "pre-configured";
+        pre_configured_consent_duration = "1y";
+      }
+      {
+        client_id = "forgejo";
+        client_name = "Forgejo";
+        # hash of sops:forgejo-oidc-secret (added to Forgejo by a oneshot)
+        client_secret = "$pbkdf2-sha512$310000$WZbMWTU2heGL4wBXuVyZuw$ntAra1S22bx7x1db22aY/DlEz3kDYgNoJCN2dlHPQhE6ZDaYPIh3D6OXIq7nFbVOSssM/ObQgBhhx2oLkLRuQw";
+        public = false;
+        authorization_policy = "two_factor";
+        redirect_uris = [ "https://git.rosemaryacres.com/user/oauth2/authelia/callback" ];
+        scopes = [ "openid" "profile" "email" "groups" ];
+        userinfo_signed_response_alg = "none";
+        consent_mode = "pre-configured";
+        pre_configured_consent_duration = "1y";
+      }
+      {
+        client_id = "nextcloud";
+        client_name = "Nextcloud";
+        # hash of sops:nextcloud-oidc-secret (added via occ user_oidc oneshot)
+        client_secret = "$pbkdf2-sha512$310000$nyWAbCd3XLd6/m2aw6rCsQ$X3jJPvIOjw7ZjT4jlUedbOy3.7BTcmJyY7mQMKIfE4uPpfQKlsWaJPCNQ5AM.3ufMqu41PTLj6tAqjTWQ5JUSg";
+        public = false;
+        authorization_policy = "two_factor";
+        redirect_uris = [ "https://cloud.rosemaryacres.com/apps/user_oidc/code" ];
+        scopes = [ "openid" "profile" "email" "groups" ];
+        userinfo_signed_response_alg = "none";
+        consent_mode = "pre-configured";
+        pre_configured_consent_duration = "1y";
+      }
+      {
+        client_id = "immich";
+        client_name = "Immich";
+        # hash of sops:immich-oidc-secret (enabled in Immich admin UI)
+        client_secret = "$pbkdf2-sha512$310000$27oes9TlfWsZP.q/Mi3RUQ$t0g3rYXOoqz5FKLiYp/4Lez/rLxIKK0kcusmaEbxMaynDcX6KOYntQKhjZZ8P9MeXCz2eq4VUW//.HOKtgjywA";
+        public = false;
+        authorization_policy = "two_factor";
+        redirect_uris = [
+          "https://photos.rosemaryacres.com/auth/login"
+          "https://photos.rosemaryacres.com/user-settings"
+          "app.immich:///oauth-callback"
+        ];
+        scopes = [ "openid" "profile" "email" "groups" ];
+        userinfo_signed_response_alg = "none";
+        consent_mode = "pre-configured";
+        pre_configured_consent_duration = "1y";
+      }
+    ];
+  };
   homelab.quietHours = { start = 22; end = 7; };   # no non-critical pages overnight
   homelab.arrMissingSweep.user = "claude";         # owns the arr-api sops secret
+  homelab.arrMissingSweep.apiEnvFile = config.sops.secrets."arr-api".path;   # declared in agent/arr-api-secret.nix
+
+  # ── per-service secret paths (the library reads these, never a sops name) ──
+  homelab.aurral.envFile     = config.sops.secrets."aurral-env".path;
+  homelab.unpackerr.envFile  = config.sops.secrets."unpackerr-env".path;
+  homelab.decluttarr.envFile = config.sops.secrets."decluttarr-env".path;
+  homelab.meshagent.mshFile  = config.sops.secrets."meshagent-msh".path;
+
+  # media-gate — verify finished downloads actually parse as media.
+  # /data is qBittorrent's view of /mnt/fusion/arr (see the container volume).
+  homelab.mediaGate = {
+    enable = true;
+    pathMap = [ "/data=/mnt/fusion/arr" ];
+    managedCategories = [ "tv-sonarr" "radarr" "lidarr" ];
+    ntfyUrl = "http://127.0.0.1:8090";
+    ntfyTopic = "gromit-alerts";
+  };
 
   # ── values that lived in the moved base modules ────────────────────────────
   # (was modules/system.nix)
@@ -26,14 +499,268 @@
   boot.kernelParams = [ "video=HDMI-A-1:1920x1080e" ];
 
   # ── sops declarations for library modules ──────────────────────────────────
+  # Cloudflare DNS-01 token for ACME (was 0644 plaintext once — closing that
+  # hole was the point of the sops move). owner=claude/0400 because the token
+  # is DUAL-USE: ACME (systemd reads the environmentFile as root) AND the
+  # agent's own DNS automation, which reads the file directly.
+  sops.secrets."cloudflare-dns-api" = {
+    sopsFile = ../secrets/cloudflare-dns-api.yaml;
+    key = "cloudflare-dns-api";
+    owner = "claude";
+    mode = "0400";
+  };
+  # Only read at first install (long since set up), kept wired to satisfy the
+  # module's required adminpassFile and to retire the old plaintext.
+  sops.secrets."nextcloud-admin-pass" = {
+    sopsFile = ../secrets/nextcloud-admin-pass.yaml;
+    key = "nextcloud-admin-pass";
+    owner = "nextcloud";
+    mode = "0400";
+  };
+  sops.secrets."nextcloud-oidc-secret" = {
+    sopsFile = ../secrets/nextcloud-oidc-secret.yaml;
+    key = "nextcloud-oidc-secret";
+    owner = "nextcloud";
+    mode = "0400";
+  };
+  sops.secrets."gluetun-wg" = {
+    sopsFile = ../secrets/gluetun-wg.yaml;
+    key = "gluetun-wg";
+  };
+  sops.secrets."aurral-env" = {
+    sopsFile = ../secrets/aurral-env.yaml;
+    key = "aurral-env";
+  };
+  sops.secrets."unpackerr-env" = {
+    sopsFile = ../secrets/unpackerr-env.yaml;
+    key = "unpackerr-env";
+  };
+  sops.secrets."forgejo-oidc-secret" = {
+    sopsFile = ../secrets/forgejo-oidc-secret.yaml;
+    key = "forgejo-oidc-secret";
+    owner = "forgejo";
+  };
+  sops.secrets."paperless-admin" = {
+    sopsFile = ../secrets/paperless-admin.yaml;
+    key = "paperless-admin";
+    owner = "paperless";
+  };
+  sops.secrets."paperless-oidc-env" = {
+    sopsFile = ../secrets/paperless-oidc-env.yaml;
+    key = "paperless-oidc-env";
+    owner = "paperless";
+  };
+  sops.secrets."vaultwarden-env" = {
+    sopsFile = ../secrets/vaultwarden-env.yaml;
+    key = "vaultwarden-env";
+  };
+  # Immich OIDC secret: not wired declaratively (see the library module's
+  # header); root-owned, read with sudo for the one-time admin-UI step.
+  sops.secrets."immich-oidc-secret" = {
+    sopsFile = ../secrets/immich-oidc-secret.yaml;
+    key = "immich-oidc-secret";
+    mode = "0400";
+  };
+  # Grafana's OIDC client secret (generic_oauth reads it via $__file as the
+  # grafana user). The matching pbkdf2 hash is in homelab.authelia.oidcClients.
+  sops.secrets."grafana-oidc-secret" = {
+    sopsFile = ../secrets/grafana-oidc-secret.yaml;
+    key = "grafana-oidc-secret";
+    owner = "grafana";
+  };
+
   # Library modules only ever reference config.sops.secrets.<name>.path; the
   # declarations (and the encrypted files) stay in this repo.
   sops.secrets."decluttarr-env" = {
     sopsFile = ../secrets/decluttarr-env.yaml;
     key = "decluttarr-env";
   };
+  # The same encrypted arr API keys decluttarr uses, exposed a second time to
+  # the sentinel's media checks and media-gate, which run as `claude` and
+  # cannot read the root-owned copy. One value, two readers — declaring it
+  # twice beats teaching those checks to scrape /var/lib/sonarr/config.xml,
+  # which works today only because of a group bit nobody meant as an interface.
+  sops.secrets."arr-api-keys" = {
+    sopsFile = ../secrets/decluttarr-env.yaml;
+    key = "decluttarr-env";
+    owner = "claude";
+    mode = "0400";
+  };
   sops.secrets."meshagent-msh" = {
     sopsFile = ../secrets/meshagent-msh.yaml;
     key = "msh";
+  };
+
+  # ── snapraid (library `snapraid`; moved from modules/services/snapraid.nix
+  #    2026-10-02) — INERT until the parity drive arrives ─────────────────────
+  # Data disks come from homelab.pools.fusion (memberDir + members above):
+  # sdf 7.3 TB Seagate Expansion, sdg 9.1 TB WD WD100EMAZ, 3× 2.7 TB Hitachi
+  # HUA723030 (ex-decom, 2026-05-25), sdk 3.6 TB WD My Book (ex-NTFS backup).
+  # Parity disk must be ≥ the largest member: sdg at 9.1 TB → 10 TB minimum.
+  # Activation = mount /mnt/parity1, flip enable, deploy, run the first
+  # `snapraid sync` by hand (hours), then the timers take over. Add a second
+  # parity file for two-disk fault tolerance once the array passes ~5 members.
+  homelab.snapraid = {
+    enable = false;
+    pool = "fusion";
+    parityFiles = [ "/mnt/parity1/snapraid.parity" ];
+    extraExclude = [ "/arr/downloads/incomplete/" ];   # transient *arr download chunks
+    # sync daily 04:00 (media-mirror's weekly run is Sun 08:00, well clear);
+    # scrub Mon 05:00, 12 %/run, 10-day minimum age = full coverage every ~8 weeks.
+    # All library defaults.
+  };
+
+  # ── backup — restic critical tier (library `backup`; moved from
+  #    modules/services/backup.nix 2026-10-02) ───────────────────────────────
+  # Scope: critical-tier data only — small, irreplaceable application state.
+  # Media lives on /mnt/fusion and is handled by the bub/media mirrors, not
+  # restic. Postgres is captured via the nightly pg_dump SQL files in
+  # /var/backup/postgresql, not the live data directory.
+  homelab.backup = {
+    paths = [
+      # Application state.
+      "/var/lib/nextcloud"
+      "/var/lib/audiobookshelf"
+      "/var/lib/tandoor-recipes"
+      "/var/lib/jellyfin"
+      "/var/lib/grafana"                 # dashboards + sqlite state DB
+      "/var/lib/homepage"                # container state (secrets moved to sops 2026-06-16)
+      "/var/lib/forgejo"                 # sqlite DB + bare repos + LFS objects + custom config
+      "/var/lib/bitwarden_rs"            # Vaultwarden SQLite vault (NixOS module name is legacy)
+      "/var/lib/paperless"               # OCR'd docs + sqlite index
+      "/var/lib/uptime-kuma"             # monitor history + sqlite
+      # SilverBullet space (~6 MB) — the declared source of truth for tasks,
+      # notes and planning (CONVENTIONS.md, 2026-07-09): 607 pages including the
+      # imported Google Keep archive. Its git repo is LOCAL-ONLY (an undo log, no
+      # remote), so until now the only copy of any of it lived on this one disk.
+      # The .git dir is ~3.7 MB of that and is kept deliberately — it IS the
+      # history. No attachments in the space, so nothing to exclude.
+      "/var/lib/silverbullet"
+      "/var/backup/postgresql"
+      # Stacks book catalog. The database (the only record of what the flood
+      # destroyed) rides /var/backup/postgresql above — "stacks" is in the
+      # postgresqlBackup.databases list in nextcloud.nix. This dir adds the
+      # cover cache + known-missing.txt: re-fetchable from Open Library in
+      # theory, but 2,100+ covers took real time to accumulate.
+      "/var/lib/stacks"
+      # DOW forum uploads mirrored from DO Spaces (modules/services/dow-uploads-backup.nix).
+      # ~46 GB / 194k objects: 12 years of user photos whose ONLY other copy is the
+      # Spaces bucket itself — the nightly Discourse backup is database-only, and
+      # that bucket has no versioning. Including it here is what gives the images
+      # version history and an offsite copy. The archive/ subdir (rclone's
+      # --backup-dir) is deliberately included: it holds anything deleted upstream.
+      # Authelia — without these, restic restores every app but not the SSO in
+      # front of them: TOTP/webauthn enrollments + OIDC consents (SQLite in
+      # authelia-main) and the on-box-generated storage-encryption key, OIDC
+      # issuer RSA key and users.yml (authelia-secrets). All must be
+      # re-bootstrapped by hand if lost.
+      "/var/lib/authelia-main"
+      "/var/lib/authelia-secrets"
+      # qBittorrent config tier: fastresume + .torrent files. Losing this kills
+      # every private-tracker seed at once — sentinel.nix documents DarkPeers
+      # turning ~3 days of seeding downtime into automated warnings→bans. This
+      # is the :config volume only (SQLite-sized); media lives on /mnt/fusion.
+      "/var/lib/qbittorrent"
+      # arr-family config: indexer credentials (private trackers), quality
+      # profiles, history DBs. Small SQLite state, painful to rebuild by hand.
+      "/var/lib/prowlarr"
+      "/var/lib/sonarr"
+      "/var/lib/radarr"
+      "/var/lib/jellyseerr"
+      "/var/lib/lidarr"
+      "/var/lib/lazylibrarian"
+      "/var/lib/aurral"                  # includes hand-placed secrets.env
+
+      # Nextcloud external storage (the /Bitcoin and /Fusion mounts). Live data
+      # not covered by /var/lib/nextcloud. /mnt/fusion/nextcloud is ~199 GB.
+      "/mnt/fusion/Bitcoin"
+      "/mnt/fusion/nextcloud"
+      "/mnt/fusion/immich"               # Immich photo library
+
+      # Home folder — irreplaceable personal data only. Caches, VM images, and
+      # downloaded media are deliberately left out; see exclude.
+      "/home/chris/projects"             # source repos + relocated personal files
+      "/home/chris/Pictures"
+      "/home/chris/Documents"
+      "/home/chris/Desktop"
+      "/home/chris/Videos"
+      "/home/chris/July 2025"            # homeschool materials
+      "/home/chris/Music/Recordings"     # personal recordings (not the whole Music dir)
+      "/home/chris/Downloads"            # catch-all; the big media item is excluded
+      "/home/chris/gyb"                  # GYB Gmail archive (both accounts)
+      # Wallets, keys and credentials — small, irreplaceable.
+      "/home/chris/.sparrow"             # Bitcoin wallets (IRA Funds, Multisig)
+      "/var/lib/albyhub"                 # Alby Hub Lightning data (privsep home since 2026-08-17)
+      "/home/chris/.local/share/albyhub" # pre-privsep copy — drop once the move is confirmed good
+      "/home/chris/.ssh"                 # SSH keys
+      "/home/chris/.gnupg"               # GPG keys
+      "/home/chris/.config/Element"      # Matrix end-to-end encryption keys
+
+      # Agent home — the claude agent's accumulated state (~70M): memory + task
+      # board, friction log, playbooks, guard + settings, session transcripts.
+      # Was in ZERO backup jobs until the 2026-07 harness review (docs repo,
+      # docs/harness-review-2026-07.md) flagged it. Everything else under
+      # /home/claude is regenerable (model weights, caches) or already on
+      # Forgejo, which /var/lib/forgejo above covers.
+      "/home/claude/.claude"
+      # Rick's WALLACE backup (~36G) — irreplaceable family data (profile,
+      # Scrivener manuscripts, videos) pulled 2026-06-14, until now parked on
+      # claude's non-redundant home. Covering it closes the standing "relocate
+      # to redundant storage" open item (B2 cost ≈ $0.25/mo).
+      "/home/claude/rick-wallace-backup"
+    ];
+
+    # Regenerable junk — transcode scratch, caches, logs — and large downloaded
+    # media that belongs on the media tier, not the offsite critical backup.
+    exclude = [
+      "/var/lib/jellyfin/transcodes"
+      "/var/lib/jellyfin/cache"
+      "/var/lib/jellyfin/log"
+      "/var/lib/forgejo/log"             # forgejo logs — regenerable
+      "/var/lib/forgejo/dump"            # manual admin dumps; would recursively grow the backup
+      "/home/chris/Downloads/timberframing" # 59 GB downloaded video course
+    ];
+
+    # Same passphrase for both repos (secrets/restic-password.yaml). For
+    # bare-metal DR the key is also in BACKUP-ARCHITECTURE.md's recovery notes.
+    passwordFile = config.sops.secrets."restic-password".path;
+    # Retention 7/4/6 and `check --with-cache` are the library defaults.
+
+    # Local repository on the backup drive pool — fast restores, survives an
+    # nvme failure. NOTE: the media mirrors MUST exclude /mnt/backup/all/restic
+    # so a --delete sync cannot wipe this repo (bub-mirror.nix does).
+    local = {
+      repository = "/mnt/backup/all/restic";
+      requiresMountsFor = [ "/mnt/backup/all" ];   # never write into a bare mountpoint
+    };
+
+    # Offsite repository on Backblaze B2 — survives fire / theft / ransomware.
+    remote = {
+      enable = true;
+      name = "critical-b2";                        # keeps the unit name restic-backups-critical-b2
+      repository = "b2:gromit-restic";
+      environmentFile = config.sops.secrets."restic-b2".path;
+    };
+
+    # bub tier-1 push target (Flow 2 in BACKUP-ARCHITECTURE.md): bub pushes its
+    # own restic snapshots over SFTP into the same local repo, tagged
+    # --host=bub. The primary-group/FUSE reasoning lives in the library module.
+    sftpPush = {
+      enable = true;
+      authorizedKeys = [
+        # bub's /etc/bub-restic/ssh-key.pub — locked to SFTP only, no
+        # forwarding, no shell, regardless of what the client requests.
+        ''restrict,command="internal-sftp" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO/llcItLigl8cl2ukc2vF/7v4TiiuTBl68Bb9gjscbP bub-restic@bub''
+      ];
+    };
+  };
+  # restic runs as root, so root:0400 defaults are right for both files.
+  sops.secrets."restic-password" = {
+    sopsFile = ../secrets/restic-password.yaml;
+    key = "restic-password";
+  };
+  sops.secrets."restic-b2" = {
+    sopsFile = ../secrets/restic-b2.yaml;
+    key = "restic-b2";
   };
 }

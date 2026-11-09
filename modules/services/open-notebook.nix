@@ -125,8 +125,11 @@ in
       # Do NOT re-add a mount at this path without first checking what the image
       # already puts there.
       #
-      # No host port: the app reaches Kokoro over the docker network at
-      # http://kokoro:8880 (network-alias below). Not needed on the host.
+      # The app reaches Kokoro over the docker network at http://kokoro:8880
+      # (network-alias below). The loopback port is for the switchboard
+      # (services/switchboard.nix), which runs on the host and would otherwise
+      # have to chase the container's bridge IP. Loopback only — not a vhost.
+      ports = [ "127.0.0.1:8880:8880" ];
       extraOptions = [ "--network=${netName}" "--network-alias=kokoro" ];
     };
   };

@@ -1,7 +1,45 @@
-# Filesystems and the MergerFS pools.
+# Physical drive mounts — the hardware half of storage. The mergerfs pools
+# these feed are assembled by the library's mergerfs-pools module from the
+# homelab.pools values in ./homelab-values.nix.
 { config, lib, pkgs, ... }:
 
 {
+  # Emergency headroom added by hand on 2026-10-23 (root disk / swap near-full
+  # incident, sentinel incident swap-headroom-1792792408) via `swapon
+  # /var/swapfile`. Persisted here so it survives a reboot instead of
+  # silently dropping back to just the 8.8G nvme0n1p3 partition.
+  swapDevices = [
+    { device = "/var/swapfile"; size = 8192; }
+  ];
+
+  # Why the emergency file was needed at all: gromit over-commits swap and never
+  # gets it back. Same finding in the sentinel's Sep 25, Oct 6 and Oct 23
+  # incidents, and again on 2026-10-24 when swap hit 16/16 GiB with 84 KiB free
+  # and the box started killing background work. It is not a leak — it is idle
+  # tenants parking anon pages that are never faulted back in (Kokoro TTS held
+  # 2.6 GiB on 14 MB RSS, idle since Sep 11; jellyfin 2.3 GiB; whisper 0.8 GiB).
+  #
+  # Two changes, both recommended by the Oct 6 incident and never applied:
+  #
+  # 1. swappiness 60 -> 10. The default is tuned for machines that want to trade
+  #    RAM for page cache. This box has 30 GiB and a working set that fits; it
+  #    should evict cache before it swaps anonymous pages out of a live service.
+  # 2. zram. A compressed in-RAM swap device takes the first swap writes, so the
+  #    idle-tenant pages that currently land on disk (and stay there) cost a few
+  #    hundred MB of RAM instead of GiB of a full partition. NixOS gives zram a
+  #    higher priority than disk swap by default, which is the order we want:
+  #    zram absorbs the churn, the disk devices stay as the deep backstop.
+  #
+  # Deliberately NOT doing `swapoff -a` to reclaim — with 15 GiB committed and
+  # 13 GiB available that is the one move that turns this into an outage.
+  boot.kernel.sysctl."vm.swappiness" = 10;
+
+  zramSwap = {
+    enable = true;
+    algorithm = "zstd";
+    memoryPercent = 25;   # ~7.5 GiB of compressed swap on 30 GiB of RAM
+  };
+
   fileSystems = {
   # Physical drives
       # Reclaimed from /mnt/decom (3× Hitachi HUA723030 + 1× WD Green) on
@@ -93,60 +131,5 @@
         fsType = "ext4";
         options = [ "nofail" ];   # don't block boot on different hardware
       };
-
-  # mergerfs: two buckets — primary working pool + replica backup pool.
-  # (Decom bucket retired 2026-05-25; its disks were reformatted and
-  # rejoined fusion as D3-D5, with the WD Green as /mnt/scratch.)
-
-    "/mnt/fusion" = {   # Primary Bucket - 28.3 TB (sdf 7.3T + sdg 9.1T + 3× 2.7T Hitachis + sdk 3.6T)
-      device = "/mnt/primary/D*";
-      fsType = "fuse.mergerfs";
-      options = [
-        "defaults"
-        "allow_other"
-        "use_ino"
-        "cache.files=off"
-        "moveonenospc=true"
-        "dropcacheonclose=true"
-        "category.create=mfs"
-        "func.getattr=newest"
-        "fsname=mergerfs"
-      ];
-    };
-
-     "/mnt/backup/all" = {   # Backup Bucket - 22 TB (contains 4x 6TB drives)
-      device = "/mnt/backup/D*";
-      fsType = "fuse.mergerfs";
-      options = [
-        "defaults"
-        "allow_other"
-        "use_ino"
-        "cache.files=off"
-        "moveonenospc=true"
-        "dropcacheonclose=true"
-        # epmfs (Existing-Path Most-Free-Space): when writing a new file,
-        # prefer the branch that already contains the parent directory.
-        # gromit's media-mirror lives at the root of /mnt/backup/all (e.g.
-        # /mnt/backup/all/Movies/X). bub-mirror writes the parallel copy
-        # under /mnt/backup/all/rick-offsite/Movies/X. epmfs keeps
-        # Movies/X on whatever branch already holds the gromit copy, so
-        # rsync --link-dest=/mnt/backup/all can hardlink between them —
-        # mergerfs hardlinks only function within a single branch.
-        "category.create=epmfs"
-        # Reserve headroom: mergerfs won't place a NEW file on a branch with
-        # less than this much free. Hardlinks to existing files and growth of
-        # existing files are unaffected (link() co-locates with its target
-        # regardless of free space). Must exceed the largest single file so a
-        # create never hits ENOSPC mid-write — the 4 GiB default let bub-mirror
-        # fill D1 until a movie temp file no longer fit.
-        "minfreespace=100G"
-        # Match fusion's getattr behavior so stat() returns the newest
-        # branch's metadata when a path exists in multiple branches.
-        "func.getattr=newest"
-      ];
-    };
   };
-
-  # Needed for MergerFS (allow_other).
-  programs.fuse.userAllowOther = true;
 }

@@ -247,11 +247,23 @@ def publish(con: sqlite3.Connection, kind: str, judged_md: str, *,
 
     judged_md = (judged_md or "").strip()
     fell_back = False
-    if not judged_md:
+    if not judged_md or not TOKEN.search(judged_md):
         # The reader failed or came back empty. Publish the ranked shortlist
         # with a banner rather than an empty page — a silent blank edition is
         # indistinguishable from "no news", which is the failure this whole
         # design is organised against.
+        #
+        # `not TOKEN.search(...)` added 2026-09-06, and the emptiness test alone
+        # is why this did not fire when it was needed. On 09-04 and 09-05
+        # `claude -p` printed
+        #     Failed to authenticate: OAuth session expired and could not be refreshed
+        # to STDOUT, which the caller had redirected into the edition body. The
+        # input was therefore NOT empty, this branch declined, and a 73-byte auth
+        # error was published as the edition: 0 items, no notification, no trace.
+        #
+        # An edition with no [nd:N] citations cites nothing, whatever it contains.
+        # That is the real test — "is there anything here" was a proxy for it, and
+        # a proxy that an error message satisfies.
         fell_back = True
         judged_md = _fallback_markdown(short)
 

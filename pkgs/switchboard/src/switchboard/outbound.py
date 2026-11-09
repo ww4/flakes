@@ -1,0 +1,65 @@
+"""Outbound: make a handset ring and speak a message.
+
+Asterisk call files — drop a text file into /var/spool/asterisk/outgoing and
+Asterisk originates the call. Written to a temp name in the same directory
+and renamed in, because the spool is polled and a half-written file would be
+picked up. This is the mechanism behind both "I'll call you back" from the
+agent path and any future escalation (the sentinel's fire/flood/electrical
+tier is the only thing allowed to ring a phone overnight — nothing network).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import tempfile
+import time
+from pathlib import Path
+
+from . import audio
+from .config import Settings
+
+log = logging.getLogger(__name__)
+
+
+def call_file(channel: str, prompt: Path, *, retries: int = 2, wait_s: int = 30, alert_id: str = "") -> str:
+    """Contents of a call file that rings `channel` and plays `prompt`
+    (a path WITHOUT extension, as Asterisk's Playback wants it). With an
+    alert_id the announce context offers "press 1 to acknowledge"."""
+    return (
+        f"Channel: {channel}\n"
+        f"MaxRetries: {retries}\n"
+        f"RetryTime: 60\n"
+        f"WaitTime: {wait_s}\n"
+        f"Context: switchboard-announce\n"
+        f"Extension: s\n"
+        f"Priority: 1\n"
+        f"Setvar: MESSAGE={prompt}\n"
+        f"Setvar: ALERTID={alert_id}\n"
+    )
+
+
+def spool(settings: Settings, contents: str) -> Path:
+    outgoing = settings.asterisk_outgoing
+    if not outgoing.is_dir():
+        raise FileNotFoundError(f"asterisk outgoing spool missing: {outgoing}")
+    fd, tmp = tempfile.mkstemp(prefix=".call-", dir=outgoing)
+    # mkstemp gives 0600 and Asterisk is another user: it saw "Permission
+    # denied" and DELETED the first real escalation call file (2026-09-13).
+    # The spool is setgid asterisk; group-writable so Asterisk can append its
+    # StartRetry/EndRetry lines — read-only ignored MaxRetries and retried forever.
+    os.fchmod(fd, 0o660)   # group-WRITABLE: Asterisk appends retry state to the file (MaxRetries was ignored at 0640)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(contents)
+    final = outgoing / f"switchboard-{int(time.time() * 1000)}.call"
+    os.rename(tmp, final)
+    log.info("spooled %s", final)
+    return final
+
+
+async def call_and_say(settings: Settings, text: str, channel: str | None = None, *, alert_id: str = "") -> Path:
+    """Render `text` and ring `channel` (default: the callback handset)."""
+    stamp = int(time.time() * 1000)
+    out = await audio.say(settings, text, settings.outbox / f"announce-{stamp}", style="announce")
+    prompt = out.with_name(out.name.removesuffix(out.suffix))   # Asterisk adds the extension itself
+    return spool(settings, call_file(channel or settings.callback_channel, prompt, alert_id=alert_id))

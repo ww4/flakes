@@ -1,0 +1,187 @@
+"""switchboard <command>
+
+  ask "text"               text in, spoken-style text out (fast path or agent)
+  say "text" OUT           render text to an Asterisk-rate wav
+  hear IN.wav              transcribe a wav (any rate) via whisper-server
+  turn IN.wav OUT          the full round trip: hear -> ask -> say
+  call "text" [CHANNEL]    ring a handset and speak the text (call file)
+  render-prompts           (re)render the static prompt set into <state>/prompts
+  prewarm [--live]         render the fast path's fixed sentences into the TTS cache;
+                           --live also runs the live intents (status/temps/disk/
+                           incidents) so today's numbers are rendered before anyone asks
+  audition-kokoro          render the dial-8 Kokoro voice samples into <state>/audition-kokoro
+  standing [--force]       refresh the standing questions whose sources changed (the timer)
+  slowlog [--days N]       repeated slow-path questions — candidates for a standing question
+  agi                      run the FastAGI server (the systemd unit)
+  btc-watch                one bitcoin spike-watch tick (the switchboard-btcwatch timer)
+  hook                     run the escalation webhook (Alertmanager -> phone call; systemd unit)
+  alert-test               ring the callback handset with a test alert through the hook path
+
+Every stage that a call goes through can be exercised here without a phone;
+`turn` is the bench test for the whole pipeline.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import asyncio
+import logging
+import sys
+from pathlib import Path
+
+import httpx
+
+from . import agent, agi, audio, escalation, intents, newsdesk, outbound, recipes, standing
+from .config import Settings
+
+
+async def ask_text(settings: Settings, text: str, *, allow_agent: bool = True) -> intents.Reply:
+    """Same decision the AGI makes, for the bench (`ask` / `turn`)."""
+    intent = intents.route(text)
+    if intent is not None and intent.startswith("standing:"):
+        q = next(q for q in intents.standing_questions() if q.name == intent.split(":", 1)[1])
+        stored = standing.load(settings, q.name)
+        if stored is not None and standing.needs_refresh(q, stored) != "sources changed":
+            return intents.Reply(text=standing.spoken(stored))
+        if not allow_agent:
+            return intents.Reply(text=f"(standing question {q.name!r} has no stored answer; agent disabled)")
+        text = q.ask
+        answer = await agent.ask(settings, text)
+        standing.store(settings, q.name, answer, standing.fingerprint(q))
+        return intents.Reply(text=answer)
+    if intent is not None:
+        return await intents.answer(settings, intent)
+    if not allow_agent:
+        return intents.Reply(text="(no fast-path intent matched; agent disabled)")
+    return intents.Reply(text=await agent.ask(settings, text))
+
+
+async def _main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="switchboard", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("-v", "--verbose", action="store_true")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    a = sub.add_parser("ask"); a.add_argument("text"); a.add_argument("--no-agent", action="store_true")
+    s = sub.add_parser("say"); s.add_argument("text"); s.add_argument("out", type=Path)
+    h = sub.add_parser("hear"); h.add_argument("wav", type=Path)
+    t = sub.add_parser("turn"); t.add_argument("wav", type=Path); t.add_argument("out", type=Path); t.add_argument("--no-agent", action="store_true")
+    c = sub.add_parser("call"); c.add_argument("text"); c.add_argument("channel", nargs="?")
+    sub.add_parser("render-prompts")
+    pw = sub.add_parser("prewarm"); pw.add_argument("--live", action="store_true")
+    sub.add_parser("audition-kokoro")
+    st = sub.add_parser("standing"); st.add_argument("--force", action="store_true")
+    sl = sub.add_parser("slowlog"); sl.add_argument("--days", type=float, default=7.0)
+    sub.add_parser("agi")
+    sub.add_parser("btc-watch")
+    sub.add_parser("hook")
+    sub.add_parser("alert-test")
+
+    args = p.parse_args(argv)
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    settings = Settings()
+
+    if args.cmd == "ask":
+        reply = await ask_text(settings, args.text, allow_agent=not args.no_agent)
+        print(reply.text)
+    elif args.cmd == "say":
+        print(await audio.say(settings, args.text, args.out))
+    elif args.cmd == "hear":
+        print(await audio.transcribe(settings, args.wav))
+    elif args.cmd == "turn":
+        text = await audio.transcribe(settings, args.wav)
+        print(f"heard: {text}", file=sys.stderr)
+        reply = await ask_text(settings, text, allow_agent=not args.no_agent)
+        print(f"reply: {reply.text}", file=sys.stderr)
+        print(await audio.say(settings, reply.text, args.out))
+    elif args.cmd == "call":
+        print(await outbound.call_and_say(settings, args.text, args.channel))
+    elif args.cmd == "render-prompts":
+        settings.prompts.mkdir(parents=True, exist_ok=True)
+        prompts = {"greeting": settings.greeting, **agi.PROMPTS, **{f"glue-{i}": t for i, t in enumerate(agi.GLUE)}}
+        for name, text in prompts.items():
+            # Asterisk picks among <name>.* by transcoding cost, so a leftover
+            # from an earlier format (8 kHz .wav) could win over the new render.
+            for stale in settings.prompts.glob(f"{name}.*"):
+                stale.unlink()
+            print(await audio.say(settings, text, settings.prompts / name))
+    elif args.cmd == "prewarm":
+        scratch = settings.outbox / "prewarm"   # NOT under cache_dir: the count below globs it
+        phrases = list(intents.FIXED_PHRASES)
+        if args.live:
+            # The answers a caller would get RIGHT NOW. Only sentences that
+            # changed since the last run actually render (cache misses), so a
+            # 3-minute timer keeps call-time rendering near zero without ever
+            # serving a stale answer — the lookup at call time is still live.
+            for intent in intents.LIVE_INTENTS:
+                phrases.append((await intents.answer(settings, intent)).text)
+            for q in intents.standing_questions():
+                stored = standing.load(settings, q.name)
+                if stored is not None:
+                    phrases.append(standing.spoken(stored))
+            # The newsletter: every story's paragraph, so "more about" and
+            # "next" are instant. Only a new edition costs anything.
+            ed = newsdesk.load(settings)
+            if ed is not None:
+                phrases.extend(it.spoken_detail for it in ed.items)
+            # The recipe index (names/keywords/foods): refreshed here when its
+            # hour is up, so a call never pays the ~250 GETs.
+            if settings.tandoor_token:
+                try:
+                    await recipes.index(settings, allow_stale=False)
+                except Exception as exc:  # noqa: BLE001 — never let the recipe book block the pre-warm
+                    print(f"recipes index: {exc}", file=sys.stderr)
+        rendered = 0
+        for i, phrase in enumerate(phrases):
+            before = sum(1 for _ in settings.cache_dir.rglob("*.sln16"))
+            await audio.say(settings, phrase, scratch / f"p{i}")
+            rendered += sum(1 for _ in settings.cache_dir.rglob("*.sln16")) - before
+        for f in scratch.glob("*"):
+            f.unlink()
+        print(f"prewarm: {len(phrases)} phrases, {rendered} new sentences rendered")
+    elif args.cmd == "standing":
+        qs = intents.standing_questions()
+        done = await standing.refresh(settings, qs, force=args.force)
+        print(f"standing: {len(qs)} questions, refreshed {done or 'none'}")
+        for key, n, example in standing.candidates(settings, qs):
+            print(f"candidate for a standing question ({n} slow-path hits this week): {example!r}")
+    elif args.cmd == "slowlog":
+        rows = standing.slow_report(settings, args.days)
+        if not rows:
+            print("no slow-path questions logged")
+        for key, n, mean_s, example in rows:
+            print(f"{n:3d}x  {mean_s:5.1f}s  {example}")
+    elif args.cmd == "audition-kokoro":
+        d = settings.kokoro_audition_dir
+        d.mkdir(parents=True, exist_ok=True)
+        for n, voice in enumerate(settings.kokoro_audition, start=1):
+            for stale in d.glob(f"sample{n}.*"):
+                stale.unlink()
+            print(await audio.say_kokoro_voice(settings, audio.kokoro_audition_script(voice, n), voice, d / f"sample{n}"))
+    elif args.cmd == "hook":
+        await escalation.serve(settings)
+    elif args.cmd == "alert-test":
+        # The same shape Alertmanager posts, so the whole path is exercised.
+        payload = {"alerts": [{"status": "firing", "fingerprint": f"test-{int(asyncio.get_event_loop().time())}",
+                               "labels": {"alertname": "SwitchboardCallTest", "severity": "test", "tier": "physical"},
+                               "annotations": {"summary": "This is a test of the emergency call path. Nothing is wrong."}}]}
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"http://{settings.hook_host}:{settings.hook_port}/alert", json=payload)
+        print(resp.status_code, resp.text.strip())
+    elif args.cmd == "btc-watch":
+        from . import btcwatch
+        r = await btcwatch.run(settings)
+        print(json.dumps(r))
+    elif args.cmd == "agi":
+        await agi.serve(settings)
+    return 0
+
+
+def main() -> None:
+    try:
+        sys.exit(asyncio.run(_main(sys.argv[1:])))
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except (audio.AudioError, agent.AgentError, FileNotFoundError) as exc:
+        print(f"switchboard: {exc}", file=sys.stderr)
+        sys.exit(1)

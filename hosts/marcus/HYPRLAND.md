@@ -42,6 +42,8 @@ session menu (bottom-left) and pick **Hyprland** or **Plasma** anytime.
 | `Print` | Screenshot a region → edit (swappy) |
 | `Super` + `Print` | Screenshot whole screen → edit |
 | `Super` + `C` | Clipboard history picker |
+| `Super` + `Shift` + `M` | Display arrangement GUI (nwg-displays) |
+| `Super` + `Shift` + `D` | **Reset displays** — re-enable the laptop panel (works blind) |
 
 ## Monitors & docking
 Press **`Super` + `Shift` + `M`** (or launch **Displays** from wofi) to open
@@ -55,6 +57,32 @@ effect immediately.
   1.25× scale; a never-configured external comes up at native resolution, 1×).
 - The GUI can also pin workspaces to specific monitors (saved to
   `~/.config/hypr/workspaces.conf`).
+
+### The laptop panel can never be left dark
+
+**`Super` + `Shift` + `D`** resets the display: it moves `monitors.conf` aside
+(timestamped, never deleted) and re-enables the laptop panel immediately. It is a
+plain keybind with no menu and no confirmation **so that it works when you cannot
+see anything** — that is the entire point of it.
+
+You should rarely need it, because `hypr-display-guard` runs for the whole session
+and enforces one rule:
+
+> **No external display connected ⇒ the laptop panel is on, whatever
+> `monitors.conf` says.** With an external connected your saved layout is
+> honoured, including switching the panel off.
+
+It reacts to dock, undock, and to hitting **Apply** in nwg-displays, so turning the
+panel off while undocked simply will not stick. Your docked layout is *overridden*,
+never edited, so it comes back as soon as you dock again.
+
+**Why this exists.** On 2026-10-21 nwg-displays saved `monitor=eDP-1,disable`
+alongside a 1360x768 HDMI display — correct while docked. Six days later Hyprland
+started with nothing on HDMI: panel off, HDMI-A-2 absent, **zero enabled outputs**.
+Hyprland was entirely healthy — it started, logged nothing, accepted keyboard
+input and ran for five minutes — and drew to nowhere. Plasma was unaffected
+because Plasma never reads that file, which is what made it look like a hardware
+or BIOS fault. It cost a working day.
 
 ## Top bar (Waybar) — clickable bits
 The items along the top respond to clicks:
@@ -96,6 +124,6 @@ your own go in the user file above.
 ## Tweaking
 Everything is declarative. Edit `hosts/marcus/hyprland.nix`, open a flake PR,
 and after merge comin applies it. Common first tweaks:
-- **Monitor layout/resolution/scale:** no editing needed — use `Super` + `Shift` + `M` (nwg-displays).
+- **Monitor layout/resolution/scale:** no editing needed — use `Super` + `Shift` + `M` (nwg-displays); `Super` + `Shift` + `D` resets it if the screen goes dark.
 - **Idle timeouts:** the `listener` blocks in `services.hypridle.settings`.
 - **Bar contents:** `programs.waybar.settings.mainBar.modules-*`.

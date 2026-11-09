@@ -52,8 +52,86 @@ the fault that cost an afternoon at Craigmyle on 2026-08-18.
 | `exposure` | UPnP/NAT-PMP holes, WAN IP, double-NAT vs CGNAT |
 | `audit <ip>` | service exposure on one host |
 | `hop <cidr>` / `hop-clear` | temporarily join a foreign subnet |
+| `legs <targets...>` | **which LEG is failing** — groups devices that fail *together* |
+| `plc [iface] [n]` | **powerline (HomePlug) adapters** + per-link PHY rate |
+
+## Which leg is failing?
+
+When several devices drop, the first question is not *which device* but *how
+many faults*. Devices sharing a switch, an uplink, a PoE budget or a powerline
+adapter fail **in the same instant**; devices that are merely each unwell fail at
+their own separate times.
+
+```
+netdiag legs cams=192.168.1.10,192.168.1.11,192.168.1.12 office=192.168.1.249 -m 30
+```
+
+Probes every target once per round for 30 minutes, then groups the ones that
+failed together. That grouping IS the diagnosis: five cameras in one group means
+one upstream to go and look at, not five cameras to replace.
+
+- TCP connect, not ping — no privilege needed, and it tests the *service* rather
+  than just the IP stack. A refused port counts as alive, which is correct: a
+  reset proves the host is there.
+- Simultaneity is only resolved to `--interval` (default 5 s). Shorten it when
+  two candidate legs need separating.
+- **No failures is not an all-clear** for an intermittent fault — it means the
+  window missed it. Run longer, or run it while the fault is happening.
+- The clustering is gated by its own tests in the build, because it emits a
+  *conclusion* rather than a reading. It had two bugs that both looked plausible.
+
+Then narrow it: `netdiag switchport <mac> <switch-ip>` for the physical port, or
+`netdiag plc` if a powerline adapter might be in the shared path.
+
+## Powerline: the leg that no IP tool can see
+
+A HomePlug powerline adapter is a **transparent layer-2 bridge**. It has no IP,
+no ARP entry of its own, and answers no ping — so it is invisible to every other
+probe here, while being one of the least reliable things on a site. A powerline
+leg presents exactly as "the devices behind it drop together for no reason",
+which is why it is worth ruling in or out early.
+
+```
+netdiag plc enp0s31f6 5
+```
+
+Membership (which adapters exist), topology, and **the number that matters — the
+negotiated PHY rate**:
+
+| PHY rate | Meaning |
+|---|---|
+| 80–200 Mbit/s | healthy HomePlug AV |
+| under ~30 | degraded; will stutter a camera stream |
+| under ~10 | drops streams outright, while still answering ping perfectly |
+| swinging between samples | electrical noise — a motor, compressor, welder or HVAC on the same circuit |
+
+That last row is the one that explains a fault which comes and goes with the
+working day.
+
+⚠️ **Wired ports only.** These are raw `0x88E1` frames on the local segment; they
+do not route and they find nothing over wifi. `netdiag plc` refuses a wireless
+interface rather than hand back a false negative — because "no adapters
+answered" and "wrong interface" would otherwise look identical.
+
+⚠️ **No reply does not prove there is no powerline leg.** It can also mean the
+port is on a different segment from the adapters, or that they use HomePlug AV2
+or **G.hn** silicon, which ignores these frames entirely (G.hn is a different
+standard and these tools cannot see it).
 
 ## The things worth knowing
+
+**⚠️ If a privileged subcommand fails, read the error — it now tells you which
+of three things went wrong.** Until 2026-10-27 `priv()` swallowed stderr and
+reported every failure as `was refused … the sudo allowlist entry is in
+modules/agent/sudo.nix`. That sentence was wrong in the only case anyone ever
+hit: `sudo` was in netdiag's `runtimeInputs`, so the **non-setuid Nix store sudo
+shadowed `/run/wrappers/bin/sudo`** and could not elevate at all. The allowlist
+was correct the whole time. `netdiag survey` blanked five of its six sections
+behind that confident wrong diagnosis — on both hosts, until a real service call
+needed it. The tool now names a cause only when it can see one in the error
+text, and distinguishes **a non-setuid sudo** (packaging bug) from **sudo
+denying the command** (allowlist) from **exit 2** (bad arguments, not privilege).
+Adding `sudo` back to `runtimeInputs` reintroduces the whole thing.
 
 **`switchport` is the one that closes the old wound.** "Which switch port is
 this camera on" was unanswerable all afternoon at Craigmyle, because the switch

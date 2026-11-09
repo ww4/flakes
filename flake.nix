@@ -65,6 +65,15 @@
     # phone. Bump with `nix flake update nixpkgs-silverbullet`.
     nixpkgs-silverbullet.url = "github:nixos/nixpkgs/nixos-unstable";
 
+    # CURRENT nixos-26.05 — ONLY for php (CVE-2026-109618/109619; see
+    # modules/php-security-pin.nix). Same release branch as the main pin above,
+    # just current rather than our Aug-14 rev, so php 8.4.27 comes PREBUILT from
+    # cache.nixos.org with the security release's own oom_* regression tests
+    # passing. Rebuilding 8.4.27 against our own pinned deps instead fails three
+    # of those tests. Imported as plain pkgs, no module eval.
+    # Bump with `nix flake update nixpkgs-php`.
+    nixpkgs-php.url = "github:nixos/nixpkgs/nixos-26.05";
+
     # Pinned 25.05 nixpkgs — ONLY for the T480 fingerprint flake below. Its
     # python-validity daemon predates the nixpkgs Python "pyproject" change and
     # won't build against unstable's stricter Python builder. Building that one
@@ -82,7 +91,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-2505, nixpkgs-silverbullet, vscode-server, home-manager, comin, homelab-modules, agent-modules, sops-nix, disko, nixos-06cb-009a-fingerprint-sensor }:
+  outputs = { self, nixpkgs, nixpkgs-2505, nixpkgs-silverbullet, nixpkgs-php, vscode-server, home-manager, comin, homelab-modules, agent-modules, sops-nix, disko, nixos-06cb-009a-fingerprint-sensor }:
     let
       system = "x86_64-linux";
       lib = nixpkgs.lib;
@@ -93,14 +102,18 @@
         gromit = lib.nixosSystem {
           inherit system;
           # nixpkgs-silverbullet: consumed only by modules/services/silverbullet.nix.
+          # nixpkgs-php: consumed only by modules/php-security-pin.nix (CVE-2026-109618).
           # homelab-modules: the public library — configuration.nix imports from it.
-          specialArgs = { inherit nixpkgs-silverbullet homelab-modules; };
+          # agent-modules is in specialArgs so modules/agent/skills.nix can call
+          # its lib.mkSkills. nixosModules.agent is passed separately below.
+          specialArgs = { inherit nixpkgs-silverbullet nixpkgs-php homelab-modules agent-modules; };
           modules = [
             ./configuration.nix
             vscode-server.nixosModules.default
             home-manager.nixosModules.home-manager
             comin.nixosModules.comin
             agent-modules.nixosModules.agent
+            agent-modules.nixosModules.secret-put
             sops-nix.nixosModules.sops
           ];
         };
@@ -110,6 +123,7 @@
         # the wallace/gromit split. No media pool yet — drives stay on gromit.
         wallace = lib.nixosSystem {
           inherit system;
+          specialArgs = { inherit agent-modules; };
           modules = [
             disko.nixosModules.disko
             comin.nixosModules.comin
@@ -118,6 +132,18 @@
             ./hosts/wallace/hardware-configuration.nix
             ./hosts/wallace/configuration.nix
             ./modules/agent/comin.nix   # GitOps applier — builds nixosConfigurations.wallace
+            # sops on wallace, added 2026-11-02 for the homelab-watch heartbeat
+            # key. wallace decrypts with its OWN SSH host key (modules/sops.nix
+            # is host-agnostic), and is a recipient of exactly one secret — see
+            # the scoped creation rule in .sops.yaml.
+            sops-nix.nixosModules.sops
+            ./modules/sops.nix
+            ./modules/agent/homelab-watch-secret.nix
+            ./modules/services/homelab-heartbeat.nix
+            # secret-put: the one sanctioned way to hand a secret to a host.
+            # Separate from nixosModules.agent on purpose, so importing it does
+            # not drag the guard onto a host that should not have it.
+            agent-modules.nixosModules.secret-put
           ];
         };
 

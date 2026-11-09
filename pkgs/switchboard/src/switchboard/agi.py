@@ -1,0 +1,539 @@
+"""FastAGI server — Asterisk hands the call to us over TCP and we drive it.
+
+Protocol (Asterisk -> us): a block of `agi_key: value` lines then a blank
+line. Then we send one command per line and read one `NNN result=...` reply
+per command. A hangup shows up as a `HANGUP` line, a -1 result, or a 511.
+We do the minimum: ANSWER, STREAM FILE, RECORD FILE, HANGUP. Asterisk does
+the endpointing for us (RECORD FILE's silence parameter), which is why there
+is no VAD in this package; AudioSocket + a VAD is the upgrade path if
+barge-in ever matters.
+
+Per turn: record -> transcribe -> route -> (fast answer | agent with fillers)
+-> render -> play. The whole thing is one coroutine per call.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import random
+import re
+import time
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import datetime as dt
+
+from . import agent, audio, intents, issues, newsdesk, notes, outbound, recipes, standing
+from .sources import SourceError
+from .config import Settings
+
+log = logging.getLogger(__name__)
+
+_RESULT = re.compile(r"^(\d{3}) result=(-?\d+)(.*)$")
+_WHY = re.compile(r"\((\w+)\)")
+
+
+class Hangup(Exception):
+    """The far end went away; stop talking."""
+
+
+@dataclass
+class AgiReply:
+    code: int
+    result: int
+    rest: str = ""
+
+
+@dataclass
+class Call:
+    reader: asyncio.StreamReader
+    writer: asyncio.StreamWriter
+    env: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def id(self) -> str:
+        # Asterisk ids look like "1789154049.9" — the dot would make
+        # Path.with_suffix() eat ".9-0" instead of appending, so it goes.
+        return self.env.get("agi_uniqueid", uuid.uuid4().hex).replace(".", "-")
+
+    @property
+    def caller(self) -> str:
+        return self.env.get("agi_callerid", "unknown")
+
+    async def handshake(self) -> None:
+        while True:
+            line = (await self.reader.readline()).decode(errors="replace").rstrip("\r\n")
+            if not line:
+                break
+            key, _, value = line.partition(":")
+            self.env[key.strip()] = value.strip()
+
+    async def command(self, *parts: str) -> AgiReply:
+        line = " ".join(parts)
+        log.debug("-> %s", line)
+        self.writer.write((line + "\n").encode())
+        await self.writer.drain()
+        while True:
+            raw = (await self.reader.readline()).decode(errors="replace").rstrip("\r\n")
+            log.debug("<- %s", raw)
+            if raw == "":
+                raise Hangup("connection closed")
+            if raw == "HANGUP":
+                raise Hangup("HANGUP")
+            m = _RESULT.match(raw)
+            if not m:
+                continue   # multi-line 520 usage text etc.
+            reply = AgiReply(int(m.group(1)), int(m.group(2)), m.group(3).strip())
+            if reply.code == 511 or reply.result == -1:
+                raise Hangup(raw)
+            if reply.code != 200:
+                log.warning("agi %r -> %s", line, raw)
+            return reply
+
+    async def answer(self) -> None:
+        await self.command("ANSWER")
+
+    ANY_KEY = "0123456789*#"
+
+    async def play(self, prompt_no_ext: str, escape: str = "") -> str | None:
+        """Play a file; with `escape` digits, return the digit that interrupted
+        it (or None if it played through). Chris, 2026-09-13: any key stops an
+        answer — a long one otherwise has to be hung up on."""
+        r = await self.command("STREAM FILE", prompt_no_ext, f'"{escape}"')
+        return chr(r.result) if r.result > 0 else None
+
+    # Asterisk names the file <path>.<format>: "wav16" -> ".wav16", not ".wav".
+    # (2026-09-12: three calls hung up after the beep because converse()
+    # looked for .wav and read "no file" as "caller gone".)
+    RECORD_FORMAT = "wav16"
+
+    async def record(self, path_no_ext: str, *, max_ms: int = 15000, silence_s: int = 2) -> str:
+        """Returns why recording stopped: timeout | dtmf | hangup | writefile | silence."""
+        r = await self.command("RECORD FILE", path_no_ext, self.RECORD_FORMAT, '"#"', str(max_ms), "0", "BEEP", f"s={silence_s}")
+        m = _WHY.search(r.rest)   # e.g. "(timeout) endpos=12345"
+        return m.group(1) if m else "unknown"
+
+    async def hangup(self) -> None:
+        try:
+            await self.command("HANGUP")
+        except Hangup:
+            pass
+
+
+# ---------------------------------------------------------------- the call
+
+class Switchboard:
+    def __init__(self, settings: Settings) -> None:
+        self.s = settings
+        self.background: set[asyncio.Task[None]] = set()
+        self.news_pos: dict[str, int] = {}   # call id -> index of the last story read
+        self.recipe_state: dict[str, dict] = {}   # call id -> {hits, recipe, step, mode}
+
+    def prompt(self, name: str) -> str:
+        return str(self.s.prompts / name)
+
+    async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        call = Call(reader, writer)
+        try:
+            await call.handshake()
+            script = call.env.get("agi_network_script", "")
+            log.info("call %s from %s%s", call.id, call.caller, f" ({script})" if script else "")
+            # Start the "anything wrong?" check now; it usually finishes
+            # before the greeting is due (Chris: hear the warnings first).
+            issues_task = asyncio.create_task(issues.current(self.s))
+            await call.answer()
+            if script == "note":
+                issues_task.cancel()
+                await self.notes(call)
+                return
+            await self.greet(call, issues_task)
+            await self.converse(call)
+        except Hangup as exc:
+            log.info("call %s: hangup (%s)", call.id, exc)
+        except Exception:
+            log.exception("call %s: unhandled", call.id)
+            try:
+                await call.play(self.prompt("sorry"))
+            except Hangup:
+                pass
+        finally:
+            self.news_pos.pop(call.id, None)
+            self.recipe_state.pop(call.id, None)
+            await call.hangup()
+            writer.close()
+
+    async def greet(self, call: Call, issues_task: "asyncio.Task[list[issues.Issue]]") -> None:
+        """'This is the Gromit switchboard. There are some issues. <issues> What
+        would you like to know?' — or the plain greeting when nothing is wrong
+        (or the check is slow: the caller never waits on it)."""
+        try:
+            found = await asyncio.wait_for(asyncio.shield(issues_task), timeout=self.s.issues_timeout_s)
+        except asyncio.TimeoutError:
+            log.warning("issues check exceeded %.1fs; plain greeting", self.s.issues_timeout_s)
+            found = []
+        except Exception:
+            log.exception("issues check failed; plain greeting")
+            found = []
+        if not found:
+            await call.play(self.prompt("greeting"))
+            return
+        log.info("greeting with %d issue(s): %s", len(found), "; ".join(i.text for i in found)[:200])
+        await call.play(self.prompt("greeting-issues"))
+        out = await audio.say(self.s, issues.spoken(found), self.s.outbox / f"{call.id}-issues")
+        await call.play(str(out.with_name(out.name.removesuffix(out.suffix))))
+        await call.play(self.prompt("ask"))
+
+    async def converse(self, call: Call) -> None:
+        empty = 0
+        for turn in range(50):
+            rec = self.s.inbox / f"{call.id}-{turn}"
+            why = await call.record(str(rec))
+            wav = rec.with_name(f"{rec.name}.{call.RECORD_FORMAT}")
+            if why == "hangup":
+                return
+            if not wav.exists():
+                # Never treat this as "caller gone": it is a bug or a permissions
+                # problem, and a silent goodbye is how it hid twice.
+                raise RuntimeError(f"RECORD FILE reported {why!r} but {wav} does not exist")
+            text = await audio.transcribe(self.s, wav)
+            intent = intents.route(text)
+            if intent != "note":
+                wav.unlink(missing_ok=True)
+            if intent == "empty":
+                empty += 1
+                if empty >= self.s.max_empty_turns:
+                    await call.play(self.prompt("goodbye"))
+                    return
+                # First silence: maybe we missed it. Second: they're thinking —
+                # say so, don't nag.
+                await call.play(self.prompt("didnt-catch" if empty == 1 else "still-here"))
+                continue
+            empty = 0
+            # A recipe conversation in progress owns "number three", "steps",
+            # "three, ingredients" etc. — the generic router doesn't know them
+            # (2026-09-15: "Number three." went to the agent confirm instead).
+            rs = self.recipe_state.get(call.id)
+            if rs and (rs["hits"] or rs["recipe"]) and intent not in ("goodbye", "help", "recipe") \
+                    and recipes.parse(text) is not None and not (intent == "news:next" and rs.get("mode") != "steps"):
+                intent = "recipe"
+            if intent is not None and intent.startswith("standing:"):
+                q = next(q for q in intents.standing_questions() if q.name == intent.split(":", 1)[1])
+                stored = standing.load(self.s, q.name)
+                if stored is not None and standing.needs_refresh(q, stored) != "sources changed":
+                    reply = intents.Reply(text=standing.spoken(stored))
+                else:
+                    # Nothing stored (or the sources moved): ask now with the
+                    # curated question, and keep the answer for next time.
+                    reply = await self.slow(call, q.ask, store_as=q, heard=text, turn=turn)
+                    if reply is None:
+                        return
+            elif intent == "news":
+                reply = await self.news_headlines(call)
+                if reply is None:
+                    continue      # played through (or stopped and announced); glue already handled
+            elif intent in ("news:more", "news:next", "news:this"):
+                # "next" is ambiguous between the newsletter and recipe steps:
+                # it belongs to whichever the caller was last in.
+                if intent == "news:next" and self.recipe_state.get(call.id, {}).get("mode") == "steps":
+                    reply = await self.recipe_turn(call, "next step")
+                else:
+                    reply = self.news_detail(call, intent, text)
+            elif intent == "recipe":
+                reply = await self.recipe_turn(call, text)
+            elif intent == "note":
+                # Note said in the same breath ("take a note: ...")? Use it.
+                # Otherwise prompt and record one with the note's longer window.
+                note = notes.parse(text) if notes.body_after_trigger(text) else None
+                if note is None:
+                    await call.play(self.prompt("note-go-ahead"))
+                    note, rec_path = await self.take_note(call, f"{call.id}-{turn}n")
+                    if note is None:
+                        await call.play(self.prompt("note-empty"))
+                        continue
+                else:
+                    rec_path = wav
+                reply = intents.Reply(text=self.save_note(note, rec_path))
+            elif intent is not None:
+                reply = await intents.answer(self.s, intent)
+            else:
+                reply = await self.slow(call, text, heard=text, turn=turn)
+                if reply is None:
+                    return   # went to call-back mode; the line has been released
+            if not reply.silent:
+                out = await audio.say(self.s, reply.text, self.s.outbox / f"{call.id}-{turn}", style=reply.style)  # type: ignore[arg-type]
+                await call.play(str(out.with_name(out.name.removesuffix(out.suffix))), escape=Call.ANY_KEY)
+            if reply.hangup:
+                return
+            await call.play(self.prompt(f"glue-{random.randrange(len(GLUE))}"))
+        await call.play(self.prompt("goodbye"))
+
+    # ------------------------------------------------------------ recipes
+
+    async def recipe_turn(self, call: Call, text: str) -> intents.Reply:
+        """Per-call state: the last search's hits, the chosen recipe, the step
+        position. Any lookup failure is spoken, never silently empty."""
+        st = self.recipe_state.setdefault(call.id, {"hits": [], "recipe": None, "step": -1, "mode": ""})
+        parsed = recipes.parse(text)
+        if parsed is None:
+            return intents.Reply(text="Say do I have a recipe for, and a dish. Then ingredients or steps.")
+        kind, arg = parsed
+        try:
+            if kind in ("search", "search-ingredient"):
+                all_hits = await recipes.search(self.s, arg, limit=50, by_ingredient=(kind == "search-ingredient"))
+                hits = all_hits[:5]
+                st.update(hits=hits, recipe=None, step=-1, mode="search")
+                if len(hits) == 1:
+                    st["recipe"] = await recipes.get(self.s, hits[0].id)
+                return intents.Reply(text=recipes.hits_text(hits, arg, total=len(all_hits)))
+            if kind in ("pick", "pick-then"):
+                n_s, _, then = arg.partition(":")
+                n = int(n_s)
+                if not st["hits"] or n < 1 or n > len(st["hits"]):
+                    return intents.Reply(text="Search for a recipe first, then pick a number.")
+                st["recipe"] = await recipes.get(self.s, st["hits"][n - 1].id)
+                st["step"] = -1
+                if not then:
+                    return intents.Reply(text=f"{st['recipe'].name}. Say ingredients or steps.")
+                kind, arg = then, ""      # fall through to ingredients / steps
+            # ingredients / steps with a name: the current hits first (whisper
+            # mangles names — "Killy" for chili), then a fresh search.
+            if arg:
+                pick = recipes.closest(st["hits"], arg)
+                if pick is not None:
+                    st.update(recipe=await recipes.get(self.s, pick.id), step=-1)
+                else:
+                    hits = await recipes.search(self.s, arg)
+                    if not hits:
+                        return intents.Reply(text=recipes.hits_text(hits, arg))
+                    st.update(hits=hits, recipe=await recipes.get(self.s, hits[0].id), step=-1)
+            r = st["recipe"]
+            if r is None:
+                return intents.Reply(text="Which recipe? Say do I have a recipe for, and a dish.")
+            if kind == "ingredients":
+                st["mode"] = "ingredients"
+                return intents.Reply(text=recipes.ingredients_text(r))
+            if kind == "steps":
+                st.update(step=0, mode="steps")
+                t = recipes.step_text(r, 0)
+                return intents.Reply(text=t or f"{r.name} has no steps in Tandoor.")
+            if kind == "next-step":
+                if st["mode"] != "steps":
+                    st["mode"] = "steps"
+                st["step"] += 1
+                t = recipes.step_text(r, st["step"])
+                if t is None:
+                    st["step"] = -1
+                    return intents.Reply(text=f"That was the last step of {r.name}.")
+                return intents.Reply(text=t)
+        except SourceError as exc:
+            log.warning("recipes: %s", exc)
+            return intents.Reply(text="I couldn't reach the recipe book right now.")
+        return intents.Reply(text="I didn't follow that.")
+
+    # ------------------------------------------------------------ the newsletter
+
+    async def news_headlines(self, call: Call) -> intents.Reply | None:
+        """The headline pass, one story per file, so a key press stops it AT
+        that story: 'Stopped at: <headline>.' — a bare 'more' then reads it."""
+        ed = newsdesk.load(self.s)
+        if ed is None or not ed.items:
+            return intents.Reply(text="I couldn't find a newsdesk edition.")
+        for k, (idx, text) in enumerate(newsdesk.segments(ed)):
+            out = await audio.say(self.s, text, self.s.outbox / f"{call.id}-news{k}")
+            key = await call.play(str(out.with_name(out.name.removesuffix(out.suffix))), escape=Call.ANY_KEY)
+            if key is not None:
+                if idx is not None:
+                    self.news_pos[call.id] = idx
+                    stop = await audio.say(self.s, f"Stopped at: {ed.items[idx].headline} Say more for the detail, or next.", self.s.outbox / f"{call.id}-newsstop")
+                    await call.play(str(stop.with_name(stop.name.removesuffix(stop.suffix))))
+                else:
+                    await call.play(self.prompt(f"glue-{random.randrange(len(GLUE))}"))
+                return None
+        self.news_pos[call.id] = -1
+        await call.play(self.prompt(f"glue-{random.randrange(len(GLUE))}"))
+        return None
+
+    def news_detail(self, call: Call, intent: str, text: str) -> intents.Reply:
+        """'more about X' finds the item; 'next' steps from the last one read.
+        Position is per call (self.news_pos[call.id])."""
+        ed = newsdesk.load(self.s)
+        if ed is None or not ed.items:
+            return intents.Reply(text="I couldn't find a newsdesk edition.")
+        pos = self.news_pos.get(call.id, -1)
+        if intent == "news:next":
+            pos += 1
+            if pos >= len(ed.items):
+                self.news_pos[call.id] = -1
+                return intents.Reply(text="That was the last story.")
+            item = ed.items[pos]
+        elif intent == "news:this":
+            if pos < 0:
+                return intents.Reply(text="Which story? Say more about and a topic, or what's new for the headlines.")
+            item = ed.items[pos]
+        else:
+            query = newsdesk.more_query(text) or text
+            item, close = newsdesk.find(ed, query)
+            if item is None:
+                return intents.Reply(text="I don't have a story about that in this edition.")
+            if close:
+                # Ambiguous: name the contenders and let the caller pick (their next "more about" narrows it).
+                names = " Or: ".join([item.headline] + [c.headline for c in close])
+                return intents.Reply(text=f"A couple of stories match. {names} Which one?")
+            pos = ed.items.index(item)
+        self.news_pos[call.id] = pos
+        lane = f"{item.lane}. " if intent == "news:next" else ""
+        return intents.Reply(text=f"{lane}{item.spoken_detail}")
+
+    # ------------------------------------------------------------ notes
+
+    async def take_note(self, call: Call, stem: str) -> tuple["notes.Note | None", Path | None]:
+        """Record with the note window, transcribe, parse. Recording is kept for save_note."""
+        rec = self.s.inbox / stem
+        why = await call.record(str(rec), max_ms=self.s.note_max_ms, silence_s=self.s.note_silence_s)
+        wav = rec.with_name(f"{rec.name}.{call.RECORD_FORMAT}")
+        if why == "hangup" or not wav.exists():
+            return None, None
+        text = await audio.transcribe(self.s, wav)
+        return notes.parse(text), wav
+
+    def save_note(self, note: "notes.Note", recording: Path | None) -> str:
+        now = dt.datetime.now()
+        audio_path = notes.keep_audio(self.s, recording, now) if recording else None
+        if recording:
+            recording.unlink(missing_ok=True)
+        notes.save(self.s, note, audio=audio_path, now=now)
+        return f"Saved for {note.recipient}: {note.text}"
+
+    async def notes(self, call: Call) -> None:
+        """Dial 7: tone, note, read-back, repeat until silence or hangup."""
+        await call.play(self.prompt("note-prompt"))
+        for n in range(10):
+            note, rec = await self.take_note(call, f"{call.id}-note{n}")
+            if rec is None:
+                return                      # hung up
+            if note is None:
+                await call.play(self.prompt("note-empty" if n == 0 else "goodbye"))
+                return
+            out = await audio.say(self.s, self.save_note(note, rec), self.s.outbox / f"{call.id}-note{n}")
+            await call.play(str(out.with_name(out.name.removesuffix(out.suffix))))
+            await call.play(self.prompt("note-again"))
+        await call.play(self.prompt("goodbye"))
+
+    _YES = re.compile(r"\b(yes|yeah|yep|yup|sure|go ahead|do it|please|okay|ok|find out|look it up)\b", re.IGNORECASE)
+
+    async def confirm_agent(self, call: Call, heard: str, turn: int) -> bool:
+        """Read back what was heard and ask before spending an agent call
+        (Chris, 2026-09-13: mishears were re-triggering model calls). Yes or
+        a 1 proceeds; no, silence, or anything else drops it."""
+        ask = await audio.say(self.s, f"I heard: {heard}", self.s.outbox / f"{call.id}-{turn}c")
+        key = await call.play(str(ask.with_name(ask.name.removesuffix(ask.suffix))), escape="1")
+        if key is None:
+            key = await call.play(self.prompt("confirm-agent"), escape="1")
+        if key == "1":
+            return True
+        rec = self.s.inbox / f"{call.id}-{turn}y"
+        why = await call.record(str(rec), max_ms=4000, silence_s=1)
+        wav = rec.with_name(f"{rec.name}.{call.RECORD_FORMAT}")
+        if why == "dtmf":            # a 1 pressed during the recording window
+            wav.unlink(missing_ok=True)
+            return True
+        answer = await audio.transcribe(self.s, wav) if wav.exists() else ""
+        wav.unlink(missing_ok=True)
+        yes = bool(self._YES.search(answer)) and not re.search(r"\b(no|nope|don't|never mind|cancel)\b", answer, re.IGNORECASE)
+        log.info("confirm: %r -> %s", answer, "yes" if yes else "no")
+        return yes
+
+    async def slow(self, call: Call, question: str, store_as: "standing.StandingQuestion | None" = None,
+                   heard: str | None = None, turn: int = 0) -> intents.Reply | None:
+        """Ask the agent while keeping the caller company. Past hold_max_s,
+        release the line and deliver the answer by calling back. Every slow
+        answer is logged (standing.log_slow) so repeat questions surface as
+        candidates for pre-answering. Always confirmed first (confirm_agent)."""
+        if not await self.confirm_agent(call, heard or question, turn):
+            await call.play(self.prompt("okay-dropped"))
+            return intents.Reply(text="", hangup=False, style="conversational", silent=True)
+        # Kick the agent off FIRST; the filler plays while it is already working.
+        task = asyncio.create_task(agent.ask(self.s, question))
+        started = time.monotonic()
+        await call.play(self.prompt("one-moment"))
+        while True:
+            try:
+                text = await asyncio.wait_for(asyncio.shield(task), timeout=self.s.filler_every_s)
+                standing.log_slow(self.s, question, time.monotonic() - started)
+                if store_as is not None:
+                    standing.store(self.s, store_as.name, text, standing.fingerprint(store_as))
+                return intents.Reply(text=text)
+            except asyncio.TimeoutError:
+                pass
+            except agent.AgentError as exc:
+                log.warning("agent: %s", exc)
+                return intents.Reply(text="The agent couldn't answer that just now.")
+            if time.monotonic() - started >= self.s.hold_max_s:
+                await call.play(self.prompt("callback"))
+                self._later(self._callback(task, question))
+                return None
+            await call.play(self.prompt("still-working"))
+
+    async def _callback(self, task: asyncio.Task[str], question: str) -> None:
+        try:
+            text = await task
+        except agent.AgentError as exc:
+            text = f"Sorry, the agent couldn't answer your question. {exc}"
+        await outbound.call_and_say(self.s, f"You asked: {question}. {text}")
+
+    def _later(self, coro: "asyncio.coroutines.Coroutine[None, None, None]") -> None:
+        t = asyncio.create_task(coro)
+        self.background.add(t)
+        t.add_done_callback(self.background.discard)
+
+
+# Verbal glue after each answer, before the next turn (Chris, 2026-09-13:
+# "say something nice like is there anything else"). Rotated at random;
+# rendered once as prompts glue-0..N.
+GLUE: list[str] = [
+    "Anything else?",
+    "What else would you like to know?",
+    "Is there anything else I can look up?",
+    "What else can I help with?",
+    "Anything else on your mind?",
+    "What's next?",
+    "Anything more?",
+    "Is there something else?",
+    "What else?",
+    "Anything else you'd like to check?",
+    "What else can I tell you?",
+    "Is there anything else you need?",
+]
+
+# The static prompt set, rendered once at service start (cli render-prompts).
+# The greeting comes from Settings (see cli.render_prompts).
+PROMPTS: dict[str, str] = {
+    "didnt-catch":   "Sorry, I didn't catch that. Try again after the tone.",
+    "still-here":    "Still here. Go ahead whenever you're ready.",
+    "one-moment":    "Let me look into that. One moment.",
+    "still-working": "Still working on it.",
+    "callback":      "This is taking a while. I'll call you back with the answer. Goodbye.",
+    "sorry":         "Something went wrong on my end. Goodbye.",
+    "goodbye":       "Goodbye.",
+    "greeting-issues": "This is the Gromit switchboard. There are some issues.",
+    "ask":           "What would you like to know?",
+    "note-prompt":   "Leave your note after the tone. Start with 'for Claude' if it's for me.",
+    "note-go-ahead": "Go ahead.",
+    "note-again":    "Another note? Say it after the tone, or just hang up.",
+    "note-empty":    "I didn't get a note. Goodbye.",
+    "acknowledged":  "Acknowledged. I won't call again about this one. Goodbye.",
+    "confirm-agent": "I'm not sure about that one. Should I find out? Say yes, or press 1.",
+    "okay-dropped":  "Okay, I'll leave it.",
+}
+
+
+async def serve(settings: Settings) -> None:
+    settings.inbox.mkdir(parents=True, exist_ok=True)
+    settings.outbox.mkdir(parents=True, exist_ok=True)
+    board = Switchboard(settings)
+    server = await asyncio.start_server(board.handle, settings.agi_host, settings.agi_port)
+    log.info("fastagi listening on %s:%d", settings.agi_host, settings.agi_port)
+    async with server:
+        await server.serve_forever()

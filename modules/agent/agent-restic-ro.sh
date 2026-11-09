@@ -31,6 +31,6 @@ done
 
 export RESTIC_REPOSITORY=/mnt/backup/all/restic
 # sops-nix default rendered path for sops.secrets."restic-password"
-# (defined in modules/services/backup.nix).
+# (declared in modules/homelab-values.nix; the library's backup module reads it).
 export RESTIC_PASSWORD_FILE=/run/secrets/restic-password
 exec /run/current-system/sw/bin/restic "$sub" "$@"
