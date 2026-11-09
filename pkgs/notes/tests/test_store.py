@@ -73,7 +73,7 @@ def test_no_frontmatter_no_h1_survives_a_write(space):
     before = (space / "Grocery List.md").read_text()
     store.write(space, "Grocery List.md", pinned=True)
     after = (space / "Grocery List.md").read_text()
-    assert after.startswith("---\npinned: true\n---\n")
+    assert after.startswith("---\npinned_by: chris\n---\n")
     assert "## Walmart" in after and "## Frankfort house" in after
     assert "# Grocery List" not in after          # no invented heading
     assert before.strip() in after                # body untouched
@@ -86,7 +86,7 @@ def test_unknown_frontmatter_keys_are_preserved_verbatim(space):
     for line in ("date: 2017-03-04", "category: logistics",
                  "source: Keep.json", "tags: keep-import"):
         assert line in text, line
-    assert "pinned: true" in text
+    assert "pinned_by: chris" in text
 
 
 def test_unpinning_drops_the_key_rather_than_writing_false(space):
@@ -737,36 +737,63 @@ def test_trash_is_global_and_that_is_deliberate(space):
     assert not (space / n.id).exists()          # gone for everyone
     assert (space / trashed).exists()           # and recoverable by anyone
 
+# --- pins and their order are personal ---------------------------------------
+# Chris asked whether pins are individual "as they should be". They were not:
+# a pin was one flag on the one file, so pinning a SHARED note pinned it for
+# Mary too — and a manual order would have rearranged her row as well as his.
 
-# --- manual order, pinned notes only -----------------------------------------
-# Chris scoped drag-to-reorder to pinned notes: ordering 1382 notes by hand is
-# not a thing anyone does, ordering the handful you pinned is.
-
-def test_order_round_trips(space):
-    n = store.create(space, "a", "x")
-    assert store.read(space, n.id).order is None
-    store.write(space, n.id, order=20)
-    assert store.read(space, n.id).order == 20
-    assert "order: 20" in (space / n.id).read_text()
-
-
-def test_a_negative_order_clears_it(space):
-    n = store.create(space, "a", "x")
-    store.write(space, n.id, order=20)
-    store.write(space, n.id, order=-1)
-    assert store.read(space, n.id).order is None
-    assert "order:" not in (space / n.id).read_text()
-
-
-def test_order_survives_edits_and_pins(space):
-    n = store.create(space, "a", "x")
-    store.write(space, n.id, order=30)
-    store.write(space, n.id, body="y", pinned=True)
+def test_pinning_names_who_did_it(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True)
+    store.write(space, n.id, pinned=True, actor="chris")
     got = store.read(space, n.id)
-    assert got.order == 30 and got.pinned is True
+    assert got.pinned_by == ["chris"] and got.pinned is True
+    assert "pinned_by: chris" in (space / n.id).read_text()
 
 
-def test_a_junk_order_value_reads_as_unset(space):
-    rel = "Keep/2017-03-04 Bring from Kentucky.md"
-    (space / rel).write_text("---\norder: banana\n---\n\n# x\n\ny\n")
-    assert store.read(space, rel).order is None
+def test_one_person_pinning_leaves_the_other_alone(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True)
+    store.write(space, n.id, pinned=True, actor="chris")
+    store.write(space, n.id, pinned=True, actor="mary")
+    assert store.read(space, n.id).pinned_by == ["chris", "mary"]
+    store.write(space, n.id, pinned=False, actor="chris")
+    assert store.read(space, n.id).pinned_by == ["mary"]
+
+
+def test_pin_order_is_per_person(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, pinned=True, actor="chris")
+    store.write(space, n.id, pinned=True, actor="mary")
+    store.write(space, n.id, order=10, actor="chris")
+    store.write(space, n.id, order=70, actor="mary")
+    got = store.read(space, n.id)
+    assert got.pin_order == {"chris": 10, "mary": 70}
+    # one person rearranging must not move the other
+    store.write(space, n.id, order=50, actor="chris")
+    assert store.read(space, n.id).pin_order == {"chris": 50, "mary": 70}
+
+
+def test_unpinning_drops_only_that_persons_position(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, pinned=True, actor="chris")
+    store.write(space, n.id, pinned=True, actor="mary")
+    store.write(space, n.id, order=10, actor="chris")
+    store.write(space, n.id, order=70, actor="mary")
+    store.write(space, n.id, pinned=False, actor="chris")
+    got = store.read(space, n.id)
+    assert got.pinned_by == ["mary"] and got.pin_order == {"mary": 70}
+
+
+def test_a_legacy_global_pin_is_kept_for_the_other_party(space):
+    rel = "Notes/old.md"
+    (space / rel).write_text("---\npinned: true\nauthor: mary\n---\n\n# old\n\nx\n")
+    assert store.read(space, rel).pinned is True
+    store.write(space, rel, pinned=False, actor="chris")
+    assert store.read(space, rel).pinned_by == ["mary"]
+
+
+def test_a_junk_pin_order_reads_as_empty(space):
+    rel = "Notes/odd.md"
+    (space / rel).write_text("---\npin_order: banana, chris=x, mary=20\n---\n\n# odd\n\ny\n")
+    assert store.read(space, rel).pin_order == {"mary": 20}

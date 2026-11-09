@@ -722,7 +722,7 @@ body.selecting .pin{display:none}
   // The wall is sent previews, not bodies, so the SERVER does the matching --
   // see /api/notes. Searching the preview here would miss hits inside long
   // notes and look like "no results".
-  var searchT = null, searchSeq = 0, onlyQueued = false;
+  var searchT = null, searchSeq = 0, onlyQueued = false, LOADING = true;
 
   // in: picks a VIEW, by: picks a SCOPE — neither is text to search for, so
   // both are read here and stripped before the query reaches the server.
@@ -752,6 +752,17 @@ body.selecting .pin{display:none}
     return terms.join(" ");
   }
 
+  function applyListing(d){
+    NOTES = d.notes.map(function(n){
+      if (view === "trash") n.trashed = true;
+      return n;
+    });
+    if (d.cats) CATS = d.cats;          // full census, never filtered by q
+    if (d.authors) AUTHORS = d.authors;
+    shownCount = PAGE;
+    render();
+  }
+
   function refresh(){
     var mine = ++searchSeq;
     var sent = applyTokens(q);
@@ -760,14 +771,12 @@ body.selecting .pin{display:none}
       : "/api/notes?me=" + encodeURIComponent(meName()) + "&scope=" + who + "&shared=" + (SHOW_SHARED ? 1 : 0)
         + (sent ? "&q=" + encodeURIComponent(sent) : "");
     return api("GET", url).then(function(d){
+      LOADING = false;
       if (mine !== searchSeq) return;   // a newer keystroke already won
-      NOTES = d.notes.map(function(n){
-        if (view === "trash") n.trashed = true;
-        return n;
-      });
-      if (d.cats) CATS = d.cats;        // full census, never filtered by q
-      if (d.authors) AUTHORS = d.authors;
-      shownCount = PAGE; render();
+      applyListing(d);
+      // Only the plain wall is worth keeping: a snapshot of a search result
+      // would open the app next time showing someone's old query.
+      if (!q && view === "wall") snapSave(d);
     });
   }
 
@@ -973,7 +982,7 @@ body.selecting .pin{display:none}
   }
 
   function card(n){
-    var c = node("div", "card" + (n.shared ? " shared" : "") + (n.pinned ? " pinned" : "") + (n.pending ? " pending" : "") + (SEL[n.id] ? " sel" : ""));
+    var c = node("div", "card" + (n.shared ? " shared" : "") + (pinnedForMe(n) ? " pinned" : "") + (n.pending ? " pending" : "") + (SEL[n.id] ? " sel" : ""));
     if (SEL[n.id]) {
       var tick = node("div", "tick");
       tick.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"><path d="m5 13 4.5 4.5L19 7"/></svg>';
@@ -986,10 +995,10 @@ body.selecting .pin{display:none}
     else c.classList.add("untitled");
 
     var pin = node("button", "pin");
-    pin.setAttribute("aria-label", (n.pinned ? "Unpin " : "Pin ") + n.title);
-    pin.setAttribute("title", n.pinned ? "Unpin" : "Pin");
-    pin.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="' + (n.pinned ? "currentColor" : "none") + '" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M7 4h10l-1.5 7 2.5 3H5.5L8 11z"/></svg>';
-    pin.addEventListener("click", function(ev){ ev.stopPropagation(); persist(n, {pinned:!n.pinned}, "Couldn't pin that").catch(function(){}); });
+    pin.setAttribute("aria-label", (pinnedForMe(n) ? "Unpin " : "Pin ") + (n.title || "note"));
+    pin.setAttribute("title", pinnedForMe(n) ? "Unpin" : "Pin");
+    pin.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="' + (pinnedForMe(n) ? "currentColor" : "none") + '" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M7 4h10l-1.5 7 2.5 3H5.5L8 11z"/></svg>';
+    pin.addEventListener("click", function(ev){ ev.stopPropagation(); persist(n, {pinned:!pinnedForMe(n)}, "Couldn't pin that").catch(function(){}); });
     c.appendChild(pin);
 
     var box = node("div", "body");
@@ -1088,7 +1097,7 @@ body.selecting .pin{display:none}
     var n = selCount();
     el.selCount.textContent = n + " selected";
     var any = selected();
-    var allPinned = any.length && any.every(function(x){ return x.pinned; });
+    var allPinned = any.length && any.every(pinnedForMe);
     el.selPin.setAttribute("aria-pressed", allPinned ? "true" : "false");
     el.selPin.title = allPinned ? "Unpin" : "Pin";
   }
@@ -1121,7 +1130,7 @@ body.selecting .pin{display:none}
 
   el.selClose.addEventListener("click", function(){ exitSel(); });
   el.selPin.addEventListener("click", function(){
-    var any = selected(), allPinned = any.length && any.every(function(x){ return x.pinned; });
+    var any = selected(), allPinned = any.length && any.every(pinnedForMe);
     bulk({pinned: !allPinned}, allPinned ? "Unpinned" : "Pinned", {pinned: allPinned});
   });
   el.selShare.addEventListener("click", function(){
@@ -1189,7 +1198,7 @@ body.selecting .pin{display:none}
         // Keep's model: the hold LIFTS the note. Move from here and you are
         // dragging it; let go without moving and you are selecting it. Only
         // pinned notes can be dragged, so everything else selects at once.
-        if (n.pinned && view === "wall" && !selMode) { lift(wrap, cardEl, n); }
+        if (pinnedForMe(n) && view === "wall" && !selMode) { lift(wrap, cardEl, n); }
         else if (selMode) toggleSel(n.id);
         else enterSel(n.id);
       }, PRESS_MS);
@@ -1302,8 +1311,8 @@ body.selecting .pin{display:none}
     }
     if (d.target === undefined) return;
 
-    var pins = NOTES.filter(function(x){ return x.pinned; }).sort(function(a, b){
-      var ao = (a.order == null) ? Infinity : a.order, bo = (b.order == null) ? Infinity : b.order;
+    var pins = NOTES.filter(pinnedForMe).sort(function(a, b){
+      var ao = orderForMe(a), bo = orderForMe(b);
       if (ao !== bo) return ao - bo;
       return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
     });
@@ -1314,7 +1323,11 @@ body.selecting .pin{display:none}
     var writes = [];
     pins.forEach(function(x, i){
       var want = (i + 1) * 10;
-      if (x.order !== want) { x.order = want; writes.push({id: x.id, order: want}); }
+      if (orderForMe(x) !== want) {
+        x.pin_order = x.pin_order || {};
+        x.pin_order[meName()] = want;          // optimistic, for this viewer
+        writes.push({id: x.id, order: want});
+      }
     });
     render();
     writes.reduce(function(chain, w){
@@ -1329,6 +1342,57 @@ body.selecting .pin{display:none}
   }, {passive: false});
   document.addEventListener("touchend", function(){ if (DRAG) dragEnd(); }, {passive: true});
   document.addEventListener("touchcancel", function(){ if (DRAG) dragEnd(); }, {passive: true});
+
+  // ---- swipe in from the left edge to open the drawer ----
+  // The same reach as the hamburger without aiming for it, which is the whole
+  // point one-handed. Only from the outer 22px, so it cannot be confused with
+  // a swipe on a card.
+  (function(){
+    if (!("ontouchstart" in window)) return;
+    var EDGE = 22, W = function(){ return Math.min(300, window.innerWidth * 0.84); };
+    var x0 = 0, y0 = 0, active = false, decided = false;
+    document.addEventListener("touchstart", function(ev){
+      if (ed || !el.scrim.hidden || DRAG) return;
+      if (el.drawer.classList.contains("open")) return;
+      if (ev.touches.length !== 1) return;
+      var t = ev.touches[0];
+      if (t.clientX > EDGE) return;
+      x0 = t.clientX; y0 = t.clientY; active = true; decided = false;
+    }, {passive: true});
+    document.addEventListener("touchmove", function(ev){
+      if (!active) return;
+      var t = ev.touches[0], dx = t.clientX - x0, dy = t.clientY - y0;
+      if (!decided) {
+        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 10) { active = false; return; }
+        if (dx < 10) return;
+        decided = true;
+        fillDrawer();
+        el.drawer.style.transition = "none";
+        el.drawerScrim.classList.add("open");
+      }
+      ev.preventDefault();
+      var d = Math.min(dx, W());
+      el.drawer.classList.add("open");
+      el.drawer.style.transform = "translateX(" + (d - W()) + "px)";
+      el.drawerScrim.style.opacity = d / W();
+    }, {passive: false});
+    document.addEventListener("touchend", function(ev){
+      if (!active) return;
+      active = false;
+      if (!decided) return;
+      el.drawer.style.transition = "";
+      el.drawerScrim.style.opacity = "";
+      var dx = (ev.changedTouches[0] || {}).clientX - x0;
+      el.drawer.style.transform = "";
+      if (dx > W() * 0.4) {
+        el.menuBtn.setAttribute("aria-expanded", "true");
+        enterLayer("drawer");             // opened by gesture: back still closes it
+      } else {
+        el.drawer.classList.remove("open");
+        el.drawerScrim.classList.remove("open");
+      }
+    }, {passive: true});
+  })();
 
   // ---- pull down to sync ----
   // Only from the very top, only when nothing is layered over the wall.
@@ -1409,15 +1473,14 @@ body.selecting .pin{display:none}
     // With a query the server returns them RANKED; re-sorting by date here
     // would throw that away and bury the best match.
     if (!q) shown.sort(function(a, b){ return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
-    var pinned = shown.filter(function(n){ return n.pinned; }).sort(function(a, b){
-      // Manual position wins; anything never dragged keeps its date place
-      // behind the ones that were.
-      var ao = (a.order === null || a.order === undefined) ? Infinity : a.order;
-      var bo = (b.order === null || b.order === undefined) ? Infinity : b.order;
+    var pinned = shown.filter(pinnedForMe).sort(function(a, b){
+      // My manual position wins; anything I never dragged keeps its date
+      // place behind the ones I did.
+      var ao = orderForMe(a), bo = orderForMe(b);
       if (ao !== bo) return ao - bo;
       return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
     });
-    var rest = shown.filter(function(n){ return !n.pinned; });
+    var rest = shown.filter(function(n){ return !pinnedForMe(n); });
 
     // Pinned always render in full -- there are a handful, and they are the
     // ones you came for. The page budget applies to everything else.
@@ -1430,7 +1493,8 @@ body.selecting .pin{display:none}
     if (!shown.length) {
       var em = node("div", "empty");
       em.appendChild(node("div", null,
-        view === "trash" ? "Nothing deleted. Notes you delete land here and can be put back."
+        LOADING ? "Loading…"
+          : view === "trash" ? "Nothing deleted. Notes you delete land here and can be put back."
           : showArchive() ? "Nothing archived yet."
           : "No notes match " + (q ? '"' + q + '"' : "that filter") + "."));
       el.wall.appendChild(em);
@@ -1692,6 +1756,19 @@ body.selecting .pin{display:none}
   // vice versa — archive is "I am done with this", not a claim about anyone
   // else. A note with no named archiver falls back to the old global flag,
   // which is what the 764 imported from Keep carry.
+  // Pinned FOR ME, and MY position in the pinned row. A pin means "keep this
+  // at the top for me" — Mary pinning the grocery list should not pin it for
+  // Chris, and his arrangement of his pinned row is not hers.
+  function pinnedForMe(n){
+    if (n.pinned_by && n.pinned_by.length) return n.pinned_by.indexOf(meName()) >= 0;
+    return !!n.pinned;
+  }
+  function orderForMe(n){
+    var m = n.pin_order || {};
+    var v = m[meName()];
+    return (v === undefined || v === null) ? Infinity : v;
+  }
+
   function archivedForMe(n){
     if (n.archived_by && n.archived_by.length) return n.archived_by.indexOf(meName()) >= 0;
     return !!n.archived;
@@ -2323,11 +2400,16 @@ body.selecting .pin{display:none}
     el.drawer.classList.add("open");
     el.drawerScrim.classList.add("open");
     el.menuBtn.setAttribute("aria-expanded", "true");
+    // The drawer covers the wall, so back must close it rather than leave the
+    // app — it was the one layer that never pushed a history entry.
+    enterLayer("drawer");
   }
-  function closeDrawer(){
+  function closeDrawer(fromHistory){
     el.drawer.classList.remove("open");
     el.drawerScrim.classList.remove("open");
+    el.drawer.style.transform = "";
     el.menuBtn.setAttribute("aria-expanded", "false");
+    if (!fromHistory) exitLayer();
   }
   el.menuBtn.addEventListener("click", function(){
     if (el.drawer.classList.contains("open")) closeDrawer(); else openDrawer();
@@ -2396,8 +2478,16 @@ body.selecting .pin{display:none}
     if (DB) return Promise.resolve(DB);
     return new Promise(function(res, rej){
       if (!window.indexedDB) { rej(new Error("no indexedDB")); return; }
-      var rq = indexedDB.open("notes-outbox", 1);
-      rq.onupgradeneeded = function(){ rq.result.createObjectStore("queue", {autoIncrement:true}); };
+      var rq = indexedDB.open("notes-outbox", 2);
+      rq.onupgradeneeded = function(){
+        var d = rq.result;
+        if (!d.objectStoreNames.contains("queue")) d.createObjectStore("queue", {autoIncrement:true});
+        // The last listing we successfully loaded. The app owns its offline
+        // copy rather than relying on HTTP cache semantics: "if we have ever
+        // loaded the app before it should have something to start with and
+        // then sync from there" (Chris, 2026-11-09).
+        if (!d.objectStoreNames.contains("snap")) d.createObjectStore("snap");
+      };
       rq.onsuccess = function(){ DB = rq.result; res(DB); };
       rq.onerror = function(){ rej(rq.error); };
     });
@@ -2418,6 +2508,27 @@ body.selecting .pin{display:none}
   // autosave queues the note and then closing queues it again — the same
   // thought lands twice, which is exactly the failure a capture tool must not
   // have.
+  function snapSave(d){
+    return db().then(function(dbh){
+      return new Promise(function(res){
+        var t = dbh.transaction("snap", "readwrite");
+        t.objectStore("snap").put({at: Date.now(), data: d}, "listing");
+        t.oncomplete = function(){ res(); };
+        t.onerror = function(){ res(); };
+      });
+    }).catch(function(){});
+  }
+
+  function snapLoad(){
+    return db().then(function(dbh){
+      return new Promise(function(res){
+        var rq = dbh.transaction("snap").objectStore("snap").get("listing");
+        rq.onsuccess = function(){ res(rq.result || null); };
+        rq.onerror = function(){ res(null); };
+      });
+    }).catch(function(){ return null; });
+  }
+
   function enqueue(title, body, key){
     var rec = {title:title, body:body, at:Date.now()};
     return tx("readwrite", function(s){
@@ -2493,6 +2604,18 @@ body.selecting .pin{display:none}
 
   el.wall.appendChild(node("div", "empty", "Loading notes…"));
   loadPending().then(drain);
+
+  // Paint whatever we had last time BEFORE waiting on the network. A fresh
+  // reload used to sit blank for as long as the listing took — and on a bad
+  // link, indefinitely. Now the wall is there instantly and the network just
+  // updates it.
+  snapLoad().then(function(snap){
+    if (snap && snap.data && !NOTES.length) {
+      applyListing(snap.data);
+      setNet(ONLINE);
+    }
+  }).catch(function(){});
+
   refresh().then(function(){
     // Ask once, on a device that has never said who it is. Everything works
     // without answering — the note is simply attributed to Chris, which is
