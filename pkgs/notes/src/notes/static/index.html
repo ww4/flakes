@@ -7,13 +7,15 @@
 <title>Notes</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
 <style>
-*{box-sizing:border-box}html,body{margin:0}img{max-width:100%}[hidden]{display:none!important}
+*{box-sizing:border-box}
+mark{background:var(--mark-bg); color:var(--mark-ink); border-radius:2px; padding:0 1px}html,body{margin:0}img{max-width:100%}[hidden]{display:none!important}
 :root{
   --ground:#eef1f0; --surface:#fdfdfc; --surface-2:#e7ebe9;
   --ink:#16211f; --ink-soft:#5a6a66; --ink-faint:#8697924d;
   --line:#d5dcd9; --line-strong:#bfc9c5;
   --accent:#136b63; --accent-ink:#ffffff; --accent-wash:#136b6314;
   --brass:#8d620f; --brass-wash:#8d620f17;
+  --mark-bg:#f8e3a4; --mark-ink:#2b2005;
   --shadow:0 1px 2px #16211f0f, 0 0 0 1px #16211f0a;
   --shadow-lift:0 4px 14px #16211f1f, 0 0 0 1px #16211f14;
   --r:10px;
@@ -25,6 +27,7 @@
     --line:#2a3331; --line-strong:#3a4542;
     --accent:#55b9ad; --accent-ink:#07211f; --accent-wash:#55b9ad1f;
     --brass:#d4a13f; --brass-wash:#d4a13f1f;
+    --mark-bg:#6d5518; --mark-ink:#f8ecd0;
     --shadow:0 1px 2px #0006, 0 0 0 1px #ffffff0d;
     --shadow-lift:0 6px 18px #0008, 0 0 0 1px #ffffff14;
   }
@@ -35,6 +38,7 @@
   --line:#2a3331; --line-strong:#3a4542;
   --accent:#55b9ad; --accent-ink:#07211f; --accent-wash:#55b9ad1f;
   --brass:#d4a13f; --brass-wash:#d4a13f1f;
+  --mark-bg:#6d5518; --mark-ink:#f8ecd0;
   --shadow:0 1px 2px #0006, 0 0 0 1px #ffffff0d;
   --shadow-lift:0 6px 18px #0008, 0 0 0 1px #ffffff14;
 }
@@ -91,7 +95,9 @@ body{
 .filters .chips{border-left:1px solid var(--line); padding-left:10px}
 .seg button:hover{color:var(--ink); background:var(--surface-2)}
 .seg button[aria-pressed="true"]{background:var(--accent); color:var(--accent-ink)}
-.chips{display:flex; gap:6px; overflow-x:auto; min-width:0; scrollbar-width:thin}
+/* No scrollbar: show the categories that fit and drop the rest. Search is the
+   way to reach the long tail. */
+.chips{display:flex; gap:6px; min-width:0; flex:1 1 auto; overflow:hidden; flex-wrap:nowrap}
 .chip{
   flex:none; cursor:pointer; border:1px solid var(--line); background:var(--surface);
   color:var(--ink-soft); border-radius:999px; padding:5px 11px;
@@ -112,16 +118,18 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 }
 .eyebrow::after{content:""; flex:1; height:1px; background:var(--line)}
 .eyebrow.brass{color:var(--brass)}
-.wall{column-gap:14px; column-count:4}
-@media (max-width:1180px){.wall{column-count:3}}
-@media (max-width:860px){.wall{column-count:2}}
-@media (max-width:560px){.wall{column-count:1}}
+/* Columns are built in JS, not by CSS multicol. Multicol fills column 1 top to
+   bottom before starting column 2, so on a newest-first wall the third column
+   showed 2016 beside 2026 — reading ACROSS a row was meaningless. Cards are
+   now dealt round-robin into these columns, so row 1 is the four newest. */
+.wall{display:flex; align-items:flex-start; gap:14px}
+.col{flex:1 1 0; min-width:0; display:flex; flex-direction:column; gap:14px}
 .section{margin-bottom:26px}
 
 .card{
   break-inside:avoid; -webkit-column-break-inside:avoid;
   background:var(--surface); border-radius:var(--r); box-shadow:var(--shadow);
-  margin:0 0 14px; padding:13px 14px 10px; cursor:pointer; position:relative;
+  margin:0; padding:13px 14px 10px; cursor:pointer; position:relative;
   transition:box-shadow .14s ease, transform .14s ease;
 }
 .card:hover{box-shadow:var(--shadow-lift)}
@@ -178,6 +186,52 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 .pin:hover{background:var(--surface-2); color:var(--ink)}
 .card.pinned .pin{color:var(--brass)}
 
+/* search suggestions */
+.sug{
+  position:absolute; left:0; right:0; top:100%; z-index:30; margin-top:6px;
+  background:var(--surface); border:1px solid var(--line); border-radius:12px;
+  box-shadow:var(--shadow-lift); overflow:hidden; max-height:60vh; overflow-y:auto;
+}
+.sug[hidden]{display:none}
+.sug-head{
+  padding:8px 13px 5px; font:500 9.5px/1 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--ink-soft);
+}
+.sug button{
+  display:flex; align-items:center; gap:9px; width:100%; text-align:left;
+  border:0; background:none; cursor:pointer; color:var(--ink);
+  padding:9px 13px; font:400 14px/1.3 "IBM Plex Sans",system-ui,sans-serif;
+}
+.sug button:hover, .sug button:focus-visible{background:var(--surface-2); outline:none}
+.sug .tag{
+  flex:none; font:500 9.5px/1 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.08em; text-transform:uppercase; color:var(--accent);
+  border:1px solid var(--accent); border-radius:999px; padding:3px 7px;
+}
+.sug .n{margin-left:auto; color:var(--ink-faint); font:400 10px/1 "IBM Plex Mono",monospace}
+.sug .t{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.search-wrap{position:relative; flex:1 1 auto; min-width:0; display:flex}
+
+/* category control in the editor */
+.ed-cat{display:flex; align-items:center; gap:8px; padding:4px 14px 2px}
+.ed-cat label{
+  font:500 9.5px/1 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.12em; text-transform:uppercase; color:var(--ink-soft);
+}
+.ed-cat input{
+  flex:1; min-width:0; border:1px solid var(--line); border-radius:999px;
+  background:var(--ground); color:var(--ink); padding:5px 11px; outline:none;
+  font:500 11px/1.4 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.04em;
+}
+.ed-cat input:focus{border-color:var(--accent)}
+.more-btn{
+  display:block; width:100%; margin:4px 0 18px; padding:13px 16px;
+  border:1px dashed var(--line-strong); border-radius:var(--r);
+  background:none; color:var(--ink-soft); cursor:pointer;
+  font:500 11px/1 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.08em; text-transform:uppercase;
+}
+.more-btn:hover{border-color:var(--accent); color:var(--accent)}
 .empty{
   text-align:center; padding:56px 20px; color:var(--ink-soft);
   font:400 14px/1.6 "IBM Plex Sans",system-ui,sans-serif;
@@ -301,10 +355,15 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 <div class="bar">
   <div class="bar-row">
     <div class="brand">Notes <span class="count" id="count"></span></div>
-    <label class="search">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input id="q" type="search" placeholder="Search notes" aria-label="Search notes">
-    </label>
+    <div class="search-wrap">
+      <label class="search">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" type="search" placeholder="Search notes and categories" aria-label="Search notes and categories"
+               autocomplete="off" role="combobox" aria-expanded="false" aria-controls="sug"
+               title="Type words to search, or cat:woodgas to filter to a category">
+      </label>
+      <div class="sug" id="sug" role="listbox" aria-label="Suggestions" hidden></div>
+    </div>
     <button class="iconbtn" id="archBtn" aria-pressed="false" title="Show archive" aria-label="Show archive">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h18v3H3zM5 10v10h14V10M9.5 14h5"/></svg>
     </button>
@@ -337,6 +396,11 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       </button>
     </div>
     <div class="ed-scroll" id="edScroll"></div>
+    <div class="ed-cat">
+      <label for="edCat">Category</label>
+      <input id="edCat" list="catlist" placeholder="none" autocomplete="off" spellcheck="false">
+      <datalist id="catlist"></datalist>
+    </div>
     <div class="ed-path" id="edPath"></div>
     <div class="ed-bar">
       <button class="tool" id="edCheck" aria-pressed="false" aria-label="Show checkboxes" title="Show checkboxes">
@@ -366,7 +430,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   // go stale against four other writers of this space (SilverBullet, the
   // daybook, the agent, a git restore). Every mutation is a request; the
   // reply is what we render.
-  var NOTES = [];
+  var NOTES = [], CATS = {};
 
   function api(method, url, body){
     return fetch(url, {
@@ -383,10 +447,32 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     });
   }
 
+  // The wall is sent previews, not bodies, so the SERVER does the matching --
+  // see /api/notes. Searching the preview here would miss hits inside long
+  // notes and look like "no results".
+  var searchT = null, searchSeq = 0;
+
   function refresh(){
-    return api("GET", "/api/notes").then(function(d){
-      NOTES = d.notes; render();
+    var mine = ++searchSeq;
+    var url = "/api/notes" + (q ? "?q=" + encodeURIComponent(q) : "");
+    return api("GET", url).then(function(d){
+      if (mine !== searchSeq) return;   // a newer keystroke already won
+      NOTES = d.notes;
+      if (d.cats) CATS = d.cats;        // full census, never filtered by q
+      shownCount = PAGE; render();
     });
+  }
+
+  function search(){
+    clearTimeout(searchT);
+    searchT = setTimeout(function(){
+      refresh().catch(function(e){ fail("Search failed", e); });
+    }, 160);
+  }
+
+  // One note's real body, for the editor and for any write that rewrites it.
+  function fullBody(id){
+    return api("GET", "/api/note?id=" + encodeURIComponent(id)).then(function(n){ return n.body; });
   }
 
   function fail(what, e){
@@ -416,10 +502,11 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   // Default to Chris's own notes. The agent has written into this space for
   // months, and on first open the wall was almost entirely agent pages — his
   // actual notes were buried (Chris, 2026-11-09).
-  var q = "", cat = "", showArch = false, openId = null, who = "mine";
+  var q = "", showArch = false, openId = null, who = "mine";
   var el = {
     q:document.getElementById("q"), chips:document.getElementById("chips"),
-    who:document.getElementById("who"),
+    who:document.getElementById("who"), sug:document.getElementById("sug"),
+    edCat:document.getElementById("edCat"), catlist:document.getElementById("catlist"),
     wall:document.getElementById("wall"), count:document.getElementById("count"),
     archBtn:document.getElementById("archBtn"), scrim:document.getElementById("scrim"),
     edClose:document.getElementById("edClose"), edTitle:document.getElementById("edTitle"),
@@ -435,9 +522,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   function matches(n){
     if (who !== "all" && n.author !== (who === "mine" ? "chris" : "claude")) return false;
     if (!!n.archived !== showArch) return false;
-    if (cat && n.cat !== cat) return false;
-    if (q && (n.title + "\n" + n.body).toLowerCase().indexOf(q) < 0) return false;
-    return true;
+    return true;   // text AND category matching happen server-side
   }
 
   var INL = /\*\*([^*]+)\*\*|`([^`]+)`|\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]|\[([^\]]+)\]\(([^)]+)\)/g;
@@ -456,6 +541,50 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     return parent;
   }
 
+  // ---- search term highlighting ----
+  // Runs over a finished subtree rather than during construction, so it
+  // composes with the markdown renderer: bold, code and link text all get
+  // highlighted without inline() needing to know about search at all.
+  function terms(){
+    // cat: tokens are filters, not text to look for — highlighting them would
+    // paint nothing and look broken.
+    var t = (q || "").toLowerCase().split(/\s+/).filter(function(x){
+      return x && x.indexOf("cat:") !== 0;
+    });
+    // longest first, so "food lion" marks the longer run before its pieces
+    return t.sort(function(a, b){ return b.length - a.length; });
+  }
+
+  function highlight(root){
+    var ts = terms();
+    if (!ts.length || !root) return root;
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var texts = [], n;
+    while ((n = walker.nextNode())) texts.push(n);
+    texts.forEach(function(tn){
+      var s = tn.nodeValue, low = s.toLowerCase(), out = null, i = 0;
+      while (i < s.length) {
+        var at = -1, len = 0;
+        for (var k = 0; k < ts.length; k++) {
+          var p = low.indexOf(ts[k], i);
+          if (p >= 0 && (at < 0 || p < at || (p === at && ts[k].length > len))) { at = p; len = ts[k].length; }
+        }
+        if (at < 0) break;
+        out = out || document.createDocumentFragment();
+        if (at > i) out.appendChild(document.createTextNode(s.slice(i, at)));
+        var m = document.createElement("mark");
+        m.textContent = s.slice(at, at + len);
+        out.appendChild(m);
+        i = at + len;
+      }
+      if (out) {
+        if (i < s.length) out.appendChild(document.createTextNode(s.slice(i)));
+        tn.parentNode.replaceChild(out, tn);
+      }
+    });
+    return root;
+  }
+
   function node(tag, cls, text){
     var d = document.createElement(tag);
     if (cls) d.className = cls;
@@ -465,7 +594,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 
   // --- markdown-lite preview: checkboxes, bullets, headings, prose ---
   function renderBody(n, box){
-    var lines = n.body.split("\n"), para = [], nLines = 0;
+    var lines = (n.preview !== undefined ? n.preview : n.body).split("\n"), para = [], nLines = 0;
     function flush(){
       if (!para.length) return;
       box.appendChild(inline(para.join("\n"), node("p", null)));
@@ -500,16 +629,26 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     return nLines;
   }
 
+  // A card shows a PREVIEW. Toggling from the card must rewrite the whole
+  // file, so fetch the real body first -- writing back the preview would
+  // silently truncate the note to its first 700 characters.
+  // The preview starts at byte 0, so the line index is the same in both.
   function toggleCheck(n, idx){
-    var lines = n.body.split("\n");
-    lines[idx] = lines[idx].replace(/\[([ xX])\]/, function(_, c){ return c.toLowerCase() === "x" ? "[ ]" : "[x]"; });
-    persist(n, {body:lines.join("\n")}, "Couldn't tick that off").catch(function(){});
+    fullBody(n.id).then(function(body){
+      var lines = body.split("\n");
+      if (!/\[([ xX])\]/.test(lines[idx] || "")) throw new Error("that line moved — reopen the note");
+      lines[idx] = lines[idx].replace(/\[([ xX])\]/, function(_, c){ return c.toLowerCase() === "x" ? "[ ]" : "[x]"; });
+      return api("PUT", "/api/notes", {id:n.id, body:lines.join("\n")});
+    }).then(function(saved){
+      for (var k in saved) n[k] = saved[k];
+      render();
+    }).catch(function(e){ fail("Couldn't tick that off", e); refresh(); });
   }
 
   function card(n){
     var c = node("div", "card" + (n.pinned ? " pinned" : ""));
     c.tabIndex = 0;
-    c.appendChild(node("h3", null, n.title));
+    c.appendChild(highlight(node("h3", null, n.title)));
 
     var pin = node("button", "pin");
     pin.setAttribute("aria-label", (n.pinned ? "Unpin " : "Pin ") + n.title);
@@ -520,6 +659,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 
     var box = node("div", "body");
     var nLines = renderBody(n, box);
+    highlight(box);
     c.appendChild(box);
 
     var meta = node("div", "meta");
@@ -532,33 +672,59 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     c.addEventListener("click", act);
     c.addEventListener("keydown", function(ev){ if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); act(); } });
 
-    // explicit truncation marker, measured after layout
-    requestAnimationFrame(function(){
-      if (box.scrollHeight > box.clientHeight + 2) {
-        box.classList.add("clipped");
-        var m = node("div", "more", nLines + " lines — tap to open");
-        box.parentNode.insertBefore(m, meta);
-      }
-    });
+    // Truncation marker decided from the CONTENT, not from layout. This used
+    // to be a per-card requestAnimationFrame that read scrollHeight and then
+    // inserted a node -- read, write, read, write, 545 times -- which is
+    // layout thrash and was a large part of why the wall felt slow.
+    if (n.truncated || nLines > CLIP_LINES) {
+      box.classList.add("clipped");
+      c.insertBefore(node("div", "more", n.lines + " lines — tap to open"), meta);
+    }
     return c;
   }
 
+  function columnCount(){
+    var w = el.wall.clientWidth || window.innerWidth || 1280;
+    if (w < 560) return 1;
+    if (w < 860) return 2;
+    if (w < 1180) return 3;
+    return 4;
+  }
+
+  // Deal round-robin: card i goes to column i % cols. That makes the FIRST ROW
+  // the newest cards reading left to right. CSS multicol filled each column
+  // top to bottom instead, so column 3 held 2016 notes next to 2026 ones.
   function section(label, items, brass){
     var s = node("div", "section");
-    var e = node("div", "eyebrow" + (brass ? " brass" : ""), label);
-    s.appendChild(e);
+    s.appendChild(node("div", "eyebrow" + (brass ? " brass" : ""), label));
     var w = node("div", "wall");
-    items.forEach(function(n){ w.appendChild(card(n)); });
+    var cols = columnCount(), boxes = [];
+    for (var i = 0; i < cols; i++) { boxes.push(node("div", "col")); w.appendChild(boxes[i]); }
+    items.forEach(function(n, i){ boxes[i % cols].appendChild(card(n)); });
     s.appendChild(w);
     return s;
   }
 
+  // Build the wall a page at a time and grow it as you scroll. Rendering all
+  // 545 cards up front was ~12,600 DOM nodes, and every keystroke rebuilt the
+  // lot: 67 ms per character on a desktop over loopback, far worse on a phone.
+  var PAGE = 60, CLIP_LINES = 9, shownCount = PAGE, io = null;
+
   function render(){
     var shown = NOTES.filter(matches);
-    shown.sort(function(a, b){ return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
+    // With a query the server returns them RANKED; re-sorting by date here
+    // would throw that away and bury the best match.
+    if (!q) shown.sort(function(a, b){ return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
     var pinned = shown.filter(function(n){ return n.pinned; });
     var rest = shown.filter(function(n){ return !n.pinned; });
 
+    // Pinned always render in full -- there are a handful, and they are the
+    // ones you came for. The page budget applies to everything else.
+    var budget = Math.max(0, shownCount - pinned.length);
+    var slice = rest.slice(0, budget);
+    var more = rest.length - slice.length;
+
+    if (io) { io.disconnect(); io = null; }
     el.wall.textContent = "";
     if (!shown.length) {
       var em = node("div", "empty");
@@ -566,16 +732,83 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       el.wall.appendChild(em);
     } else {
       if (pinned.length) el.wall.appendChild(section("Pinned", pinned, true));
-      if (rest.length) el.wall.appendChild(section(
+      if (slice.length) el.wall.appendChild(section(
         showArch ? "Archived"
-          : (cat || q) ? shown.length + " matching"
-          : pinned.length ? "Everything else" : "All notes", rest, false));
+          : q ? shown.length + " matching"
+          : pinned.length ? "Everything else" : "All notes", slice, false));
+      if (more > 0) el.wall.appendChild(sentinel(more));
     }
     el.count.textContent = shown.length === NOTES.length
       ? NOTES.length + " notes"
       : shown.length + " / " + NOTES.length;
     chips();
     drawWho();
+  }
+
+  // Grows the wall when it scrolls into view; also a real button, so the page
+  // still works if IntersectionObserver is unavailable or never fires.
+  function sentinel(more){
+    var b = node("button", "more-btn", "Show " + Math.min(PAGE, more) + " more  (" + more + " left)");
+    b.addEventListener("click", function(){ shownCount += PAGE; render(); });
+    if (window.IntersectionObserver) {
+      io = new IntersectionObserver(function(es){
+        if (es.some(function(e){ return e.isIntersecting; })) { shownCount += PAGE; render(); }
+      }, {rootMargin: "600px"});
+      io.observe(b);
+    }
+    return b;
+  }
+
+  // ---- search suggestions: categories AND note titles ----
+  // Categories come from the full census so they stay suggestible while the
+  // typed text is narrowing the notes; titles come from whatever the server
+  // last matched.
+  function closeSug(){
+    el.sug.hidden = true;
+    el.q.setAttribute("aria-expanded", "false");
+  }
+
+  function suggest(){
+    var t = el.q.value.trim().toLowerCase();
+    el.sug.textContent = "";
+    if (!t) { closeSug(); return; }
+
+    var cats = Object.keys(CATS).filter(function(c){ return c.indexOf(t) >= 0; })
+      .sort(function(a, b){ return CATS[b] - CATS[a]; }).slice(0, 5);
+    var titles = NOTES.filter(function(n){ return n.title.toLowerCase().indexOf(t) >= 0; }).slice(0, 6);
+    if (!cats.length && !titles.length) { closeSug(); return; }
+
+    if (cats.length) {
+      el.sug.appendChild(node("div", "sug-head", "Categories — filters with cat:"));
+      cats.forEach(function(c){
+        var b = node("button");
+        b.setAttribute("role", "option");
+        b.appendChild(highlight(node("span", "tag", c.replace(/-/g, " "))));
+        b.appendChild(node("span", "n", CATS[c]));
+        b.addEventListener("click", function(){ setCat(c); el.q.focus(); });
+        el.sug.appendChild(b);
+      });
+    }
+    if (titles.length) {
+      el.sug.appendChild(node("div", "sug-head", "Notes"));
+      titles.forEach(function(n){
+        var b = node("button");
+        b.setAttribute("role", "option");
+        b.appendChild(highlight(node("span", "t", n.title)));
+        b.appendChild(node("span", "n", n.date));
+        b.addEventListener("click", function(){ closeSug(); open(n.id); });
+        el.sug.appendChild(b);
+      });
+    }
+    el.sug.hidden = false;
+    el.q.setAttribute("aria-expanded", "true");
+  }
+
+  function drawCatList(){
+    el.catlist.textContent = "";
+    Object.keys(CATS).forEach(function(c){
+      var o = document.createElement("option"); o.value = c; el.catlist.appendChild(o);
+    });
   }
 
   function drawWho(){
@@ -588,29 +821,63 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       var b = node("button", null, o[1]);
       b.setAttribute("aria-pressed", who === o[0] ? "true" : "false");
       b.setAttribute("title", n + (n === 1 ? " note" : " notes"));
-      b.addEventListener("click", function(){ who = o[0]; cat = ""; render(); });
+      b.addEventListener("click", function(){ who = o[0]; render(); });
       el.who.appendChild(b);
     });
   }
 
-  function chips(){
-    var counts = {}, live = NOTES.filter(function(n){
-      if (who !== "all" && n.author !== (who === "mine" ? "chris" : "claude")) return false;
-      return !!n.archived === showArch;
+  // The ONE way to filter by category is the cat: token in the search box.
+  // A chip writes that token rather than flipping hidden state, so the chip
+  // and the typed syntax are the same mechanism and clicking one teaches the
+  // other. There is no separate filter variable to drift out of sync.
+  function activeCat(){
+    var m = (q || "").toLowerCase().match(/(?:^|\s)cat:(\S+)/);
+    return m ? m[1] : "";
+  }
+
+  function setCat(value){
+    // Keep any ordinary search terms; swap only the cat: token.
+    var rest = (q || "").split(/\s+/).filter(function(t){
+      return t && t.toLowerCase().indexOf("cat:") !== 0;
     });
-    live.forEach(function(n){ counts[n.cat] = (counts[n.cat] || 0) + 1; });
-    var keys = Object.keys(counts).sort();
+    if (value) rest.unshift("cat:" + value);
+    q = rest.join(" ");
+    el.q.value = q ? q + " " : "";
+    closeSug();
+    refresh().catch(function(e){ fail("Couldn't filter", e); });
+  }
+
+  function chips(){
+    // Counts come from the server's full census, not from NOTES — once a
+    // cat: filter is applied NOTES holds only that category, and chips built
+    // from it would collapse to a single entry.
+    var counts = CATS, active = activeCat();
+    var keys = Object.keys(counts).sort(function(a, b){
+      return counts[b] - counts[a] || (a < b ? -1 : 1);
+    });
+    // Measure the viewport, not el.chips: the chip row is content-sized, so
+    // its own clientWidth is whatever the LAST render put in it — a feedback
+    // loop that settles on two chips no matter how wide the window is.
+    var avail = (window.innerWidth || 900) - 300;   // brand + the Mine/Claude/Both control
+    var room = Math.max(2, Math.floor(avail / 150));
+    if (active && keys.indexOf(active) >= room) {       // keep the active one visible
+      keys.splice(room - 1, 0, keys.splice(keys.indexOf(active), 1)[0]);
+    }
+    keys = keys.slice(0, room);
+
+    var total = 0;
+    Object.keys(counts).forEach(function(k){ total += counts[k]; });
+
     el.chips.textContent = "";
     function mk(label, value, n){
       var b = node("button", "chip");
-      b.setAttribute("aria-pressed", cat === value ? "true" : "false");
+      b.setAttribute("aria-pressed", active === value ? "true" : "false");
       b.appendChild(document.createTextNode(label));
-      var s = node("b", null, n);
-      b.appendChild(s);
-      b.addEventListener("click", function(){ cat = (cat === value ? "" : value); render(); });
+      b.appendChild(node("b", null, n));
+      b.addEventListener("click", function(){ setCat(active === value ? "" : value); });
       return b;
     }
-    el.chips.appendChild(mk("All", "", live.length));
+    el.chips.appendChild(mk("All", "", total));
     keys.forEach(function(k){ el.chips.appendChild(mk(k.replace(/-/g, " "), k, counts[k])); });
   }
 
@@ -672,9 +939,11 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     saveT = setTimeout(commit, 350);
   }
   function commit(){
-    if (!ed || ed.busy) return Promise.resolve();
+    // Never write while the real body is still in flight: bodyNow() would be
+    // the empty placeholder and would overwrite the note with nothing.
+    if (!ed || ed.busy || ed.loading) return Promise.resolve();
     var t = el.edTitle.value.trim(), b = bodyNow();
-    if (ed.note && t === ed.note.title && b === ed.note.body) return Promise.resolve();
+    if (ed.note && t === ed.note.title && b === ed.base) return Promise.resolve();
     if (!ed.id && !t && !b.trim()) return Promise.resolve();   // nothing typed yet
     ed.busy = true;
     var p = ed.id
@@ -803,13 +1072,34 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   function open(id){
     var n = null;
     for (var i = 0; i < NOTES.length; i++) if (NOTES[i].id === id) n = NOTES[i];
-    ed = {id:id || null, note:n, busy:false, blocks:parseBlocks(n ? n.body : ""), raw:null};
+    // The wall holds previews, so the editor fetches the real body. Until it
+    // lands the note is NOT editable -- typing into a preview and saving it
+    // would truncate the file.
+    ed = {id:id || null, note:n, base:"", busy:false, loading:!!n, blocks:parseBlocks(""), raw:null};
     el.edTitle.value = n ? n.title : "";
-    el.edPath.textContent = n ? n.path : "Inbox/" + new Date().toISOString().slice(0, 10) + "-new-note.md";
+    el.edPath.textContent = n ? n.id : "Inbox/" + new Date().toISOString().slice(0, 10) + "-new-note.md";
     el.edSaved.textContent = n ? "Edited " + n.date : "";
+    el.edCat.value = n ? (n.cat || "") : "";
+    el.edCat.disabled = !n;          // a new note gets its category on first save
+    drawCatList();
     el.scrim.hidden = false;
-    syncBar(); draw();
-    if (!n) el.edTitle.focus();
+    syncBar();
+    if (!n) { draw(); el.edTitle.focus(); return; }
+
+    el.edScroll.textContent = "";
+    el.edScroll.appendChild(node("div", "empty", "Loading…"));
+    var mine = ed;
+    fullBody(id).then(function(body){
+      if (mine !== ed) return;              // closed or switched while loading
+      ed.base = body; ed.loading = false;
+      ed.blocks = parseBlocks(body);
+      draw();
+    }).catch(function(e){
+      if (mine !== ed) return;
+      el.edScroll.textContent = "";
+      el.edScroll.appendChild(node("div", "empty", "Couldn't load this note — " + ((e && e.message) || "unknown error")));
+      fail("Couldn't open that note", e);
+    });
   }
   function close(){
     if (!ed) return;
@@ -819,6 +1109,18 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   }
 
   el.edTitle.addEventListener("input", touch);
+
+  // Category is its own write — it is frontmatter, not body text, and it
+  // should land even if nothing else in the note changed.
+  el.edCat.addEventListener("change", function(){
+    if (!ed || !ed.note) return;
+    var want = el.edCat.value.trim();
+    if (want === (ed.note.cat || "")) return;
+    persist(ed.note, {category:want}, "Couldn't set the category").then(function(){
+      if (ed) el.edCat.value = ed.note.cat || "";
+      return refresh();                 // the census changed
+    }).catch(function(){});
+  });
   el.edClose.addEventListener("click", close);
   el.scrim.addEventListener("click", function(ev){ if (ev.target === el.scrim) close(); });
   document.addEventListener("keydown", function(ev){ if (ev.key === "Escape" && ed) close(); });
@@ -890,11 +1192,29 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 
   el.newBtn.addEventListener("click", function(){ open(null); });
   el.archBtn.addEventListener("click", function(){
-    showArch = !showArch; cat = "";
+    showArch = !showArch;
     el.archBtn.setAttribute("aria-pressed", showArch ? "true" : "false");
     render();
   });
-  el.q.addEventListener("input", function(){ q = el.q.value.trim().toLowerCase(); render(); });
+  el.q.addEventListener("input", function(){ q = el.q.value.trim(); suggest(); search(); });
+  el.q.addEventListener("focus", suggest);
+  el.q.addEventListener("keydown", function(ev){
+    if (ev.key === "Escape") { closeSug(); el.q.blur(); }
+    else if (ev.key === "ArrowDown") {
+      var first = el.sug.querySelector("button");
+      if (first) { ev.preventDefault(); first.focus(); }
+    }
+  });
+  document.addEventListener("click", function(ev){
+    if (!el.sug.hidden && !el.sug.contains(ev.target) && ev.target !== el.q) closeSug();
+  });
+
+  // Column count is width-derived, so a rotation or a resize has to re-deal.
+  var rsT = null;
+  window.addEventListener("resize", function(){
+    clearTimeout(rsT);
+    rsT = setTimeout(function(){ if (!ed) render(); }, 150);
+  });
 
   el.wall.appendChild(node("div", "empty", "Loading notes…"));
   refresh().catch(function(e){

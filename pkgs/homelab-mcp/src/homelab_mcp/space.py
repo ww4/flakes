@@ -297,14 +297,24 @@ def render_note(
     tags: list[str] | None = None,
     source_url: str | None = None,
     now: datetime | None = None,
+    author: str | None = None,
 ) -> str:
     """Render a capture in the space's own style.
 
-    Deliberately NOT YAML frontmatter: real pages in this space carry none
-    (CONVENTIONS.md reserves it for imported Keep pages), and SilverBullet
-    renders a frontmatter block as a visible metadata header. The house style
-    is a `# Title` heading followed by an italic provenance line — see
-    `Notes/Asterisk PBX.md`.
+    The body stays frontmatter-free: the house style is a `# Title` heading
+    followed by an italic provenance line (see `Notes/Asterisk PBX.md`), and
+    SilverBullet renders a frontmatter block as a visible metadata header.
+
+    The ONE exception is `author`, and only when it is set. The notes app at
+    notes.rosemaryacres.com defaults its wall to Chris's own notes and treats
+    an unlabelled note as his, so the agent's own working material has to
+    declare itself or it buries his notes. It parses frontmatter and does not
+    display it.
+
+    `author` is deliberately NOT defaulted to the agent. Most notes saved
+    through this connector are things CHRIS dictated or asked to keep — those
+    are his, and stamping every capture would hide exactly the notes he wants
+    to see. Pass "claude" only when filing the agent's own reference material.
 
     No hard wrapping: SilverBullet renders every newline as a real line break,
     so the body is passed through untouched.
@@ -315,7 +325,14 @@ def render_note(
         provenance += f" Source: {source_url}"
     provenance += "*"
 
-    parts = [f"# {title.strip()}", "", provenance, "", body.rstrip()]
+    parts: list[str] = []
+    if author:
+        # Only ever a bare key; the value is slugged so a crafted author can
+        # not inject extra frontmatter lines.
+        safe = re.sub(r"[^A-Za-z0-9_-]+", "", author).strip().lower()[:32]
+        if safe:
+            parts += ["---", f"author: {safe}", "---", ""]
+    parts += [f"# {title.strip()}", "", provenance, "", body.rstrip()]
     if tags:
         cleaned = [f"#{t.lstrip('#').strip()}" for t in tags if t and t.strip()]
         if cleaned:
@@ -331,6 +348,7 @@ def save_note(
     tags: list[str] | None = None,
     source_url: str | None = None,
     now: datetime | None = None,
+    author: str | None = None,
 ) -> SavedNote:
     """Write a NEW note to the inbox. Never overwrites — there is no such option.
 
@@ -343,7 +361,9 @@ def save_note(
 
     date_prefix = (now or datetime.now()).strftime("%Y-%m-%d")
     slug = slugify(title)
-    content = render_note(title, body, tags=tags, source_url=source_url, now=now)
+    content = render_note(
+        title, body, tags=tags, source_url=source_url, now=now, author=author
+    )
     encoded = content.encode("utf-8")
 
     inbox_path = space_root / inbox_dir

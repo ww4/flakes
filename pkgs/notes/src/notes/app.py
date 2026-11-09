@@ -37,6 +37,7 @@ class NoteWrite(NoteRef):
     body: str | None = Field(default=None, max_length=1_000_000)
     pinned: bool | None = None
     archived: bool | None = None
+    category: str | None = Field(default=None, max_length=60)
 
 
 class NoteNew(BaseModel):
@@ -57,14 +58,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse({"error": "no such note"}, status_code=404)
 
     @app.get("/api/notes")
-    async def list_notes():
-        return {"notes": [n.public() for n in store.listing(space)]}
+    async def list_notes(q: str | None = None):
+        """The wall: summaries only, and the search runs here.
+
+        Sending whole notes was 546 KB for 586 cards. Previews cut that to a
+        fraction, but they also mean the client CANNOT do the matching -- a
+        hit inside a long note would silently not be found -- so q is handled
+        server-side against the full text.
+        """
+        return {
+            "notes": [n.summary() for n in store.listing(space, q)],
+            "cats": store.census(space),
+        }
+
+    @app.get("/api/note")
+    async def get_note(id: str):
+        """One note, with its real body. The editor calls this on open."""
+        if not paths.resolve(space, id).exists():
+            raise HTTPException(404, "no such note")
+        return store.read(space, id).public()
 
     @app.post("/api/notes")
     async def new_note(req: NoteNew):
         if not req.title.strip() and not req.body.strip():
             raise HTTPException(400, "an empty note is not saved")
-        return store.create(space, req.title, req.body).public()
+        return store.create(space, req.title, req.body).summary()
 
     @app.put("/api/notes")
     async def update_note(req: NoteWrite):
@@ -73,8 +91,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return store.write(
             space, req.id,
             title=req.title, body=req.body,
-            pinned=req.pinned, archived=req.archived,
-        ).public()
+            pinned=req.pinned, archived=req.archived, category=req.category,
+        ).summary()
 
     @app.post("/api/notes/trash")
     async def trash_note(req: NoteRef):

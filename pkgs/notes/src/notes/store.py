@@ -42,6 +42,9 @@ TRUE = {"true", "yes", "1", "on"}
 AGENT = "claude"
 HUMAN = "chris"
 
+# Enough to overflow a card at the widest column; the wall clips at ~184px.
+PREVIEW_CHARS = 700
+
 
 @dataclass
 class Note:
@@ -58,6 +61,21 @@ class Note:
     def public(self) -> dict:
         d = asdict(self)
         d.pop("had_h1")
+        return d
+
+    def summary(self) -> dict:
+        """What the wall needs: enough body to fill a card, and nothing more.
+
+        A card clips at a fixed height, so shipping whole notes just to render
+        previews cost 546 KB for 586 notes -- 422 KB of it body text the wall
+        never shows, including one 49 KB page. The editor fetches the real body
+        when a note is actually opened.
+        """
+        d = self.public()
+        body = d.pop("body")
+        d["preview"] = body[:PREVIEW_CHARS]
+        d["lines"] = sum(1 for line in body.split("\n") if line.strip())
+        d["truncated"] = len(body) > PREVIEW_CHARS
         return d
 
 
@@ -168,6 +186,7 @@ def write(
     body: str | None = None,
     pinned: bool | None = None,
     archived: bool | None = None,
+    category: str | None = None,
 ) -> Note:
     path = paths.resolve(space, rel)
     raw = path.read_text(encoding="utf-8", errors="replace")
@@ -181,6 +200,11 @@ def write(
         fm = _fm_set(fm, "pinned", "true" if pinned else None)
     if archived is not None:
         fm = _fm_set(fm, "archived", "true" if archived else None)
+    if category is not None:
+        # Empty string clears it, which falls the note back to the directory
+        # default rather than writing an empty key.
+        clean = re.sub(r"[^A-Za-z0-9 _-]+", "", category).strip().lower()[:40]
+        fm = _fm_set(fm, "category", clean.replace(" ", "-") or None)
 
     out: list[str] = []
     if fm:
@@ -248,8 +272,24 @@ def restore(space: Path, trash_rel: str) -> str:
     return dest_rel
 
 
-def listing(space: Path) -> list[Note]:
-    out: list[Note] = []
+# Parsed notes, keyed by path and invalidated by (mtime_ns, size). FOUR parties
+# write this space -- this service, SilverBullet, the daybook and interactive
+# agent sessions -- so the key is the file's own identity rather than a
+# timestamp of our own. A change by any of them invalidates the entry exactly
+# as a change by this service does.
+_CACHE: dict[str, tuple[int, int, Note]] = {}
+
+
+def _cached(space: Path, rel: str, st: os.stat_result) -> Note:
+    hit = _CACHE.get(rel)
+    if hit and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
+        return hit[2]
+    note = read(space, rel)
+    _CACHE[rel] = (st.st_mtime_ns, st.st_size, note)
+    return note
+
+
+def _walk(space: Path):
     for d in paths.CARD_DIRS:
         root = space / d
         if not root.is_dir():
@@ -257,9 +297,138 @@ def listing(space: Path) -> list[Note]:
         for p in root.rglob("*.md"):
             rel = paths.relative(space, p)
             if paths.in_scope(rel):
-                out.append(read(space, rel))
+                yield rel, p
     for f in paths.CARD_FILES:
-        if (space / f).is_file():
-            out.append(read(space, f))
-    out.sort(key=lambda n: (n.date, n.id), reverse=True)
+        p = space / f
+        if p.is_file():
+            yield f, p
+
+
+def _word(hay: str, term: str) -> bool:
+    return re.search(r"\b" + re.escape(term) + r"\b", hay) is not None
+
+
+# A term long enough that matching the FRONT of a category name is meaningful.
+# "wood" -> woodgas is a real intent; "gas" -> gasket-anything is not, and a
+# 3-letter prefix would drag whole categories in by accident.
+CAT_PREFIX_MIN = 4
+
+
+def split_query(query: str | None) -> tuple[list[str], list[str]]:
+    """Split a raw query into (cat: filters, ordinary terms).
+
+    ``cat:woodgas truck`` means "inside the woodgas category, anything about
+    trucks" -- the cat: part is a filter, the rest is the usual ranked OR.
+    """
+    cats: list[str] = []
+    terms: list[str] = []
+    for tok in (query or "").lower().split():
+        if tok.startswith("cat:") and len(tok) > 4:
+            cats.append(tok[4:].strip())
+        elif tok:
+            terms.append(tok)
+    return cats, terms
+
+
+def _cat_terms(note: Note, needles: list[str]) -> set[str]:
+    """Which query terms this note's CATEGORY answers.
+
+    Chris: "if the category name is a high grade match for the search term you
+    should pull in the whole category." So a term that names a category counts
+    as satisfied for every note in it, even one whose text never says the word
+    -- searching woodgas should return the woodgas notes, not just the ones
+    that happen to spell it out.
+    """
+    cat = (note.cat or "").lower()
+    if not cat:
+        return set()
+    parts = set(cat.split("-"))
+    out = set()
+    for t in needles:
+        if t == cat or t in parts or (len(t) >= CAT_PREFIX_MIN and cat.startswith(t)):
+            out.add(t)
+    return out
+
+
+def _score(note: Note, needles: list[str]) -> tuple[int, int, int]:
+    """How well a note answers the query. Bigger is better.
+
+    (terms matched anywhere, terms matched as whole words, terms in the title)
+
+    Substring matching is kept -- it is what Keep does, and dropping it would
+    lose real hits -- but on this corpus "gas" also matches gasket, gasoline
+    and gasbuddy, and "wood" matches plywood, firewood and Woodstock. Measured
+    on the live space, "wood gas" is 90 notes by substring and 41 by whole
+    word. Rather than choose, rank: whole-word hits rise to the top and the
+    in-word ones become a tail you never scroll to.
+    """
+    title = note.title.lower()
+    hay = title + "\n" + note.body.lower()
+    cats = _cat_terms(note, needles)
+    # A category match is high-grade by definition, so it counts as a
+    # whole-word hit rather than a weak substring one.
+    anywhere = sum(1 for t in needles if t in hay or t in cats)
+    whole = sum(1 for t in needles if _word(hay, t) or t in cats)
+    in_title = sum(1 for t in needles if t in title)
+    return anywhere, whole, in_title
+
+
+def census(space: Path) -> dict[str, int]:
+    """Every category and how many notes carry it, ignoring any filter.
+
+    The chip row and the search suggestions both need the full set: filtering
+    the census by the current query would make a category vanish from the
+    suggestions exactly when you start typing its name.
+    """
+    out: dict[str, int] = {}
+    for n in listing(space):
+        out[n.cat] = out.get(n.cat, 0) + 1
+    return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def listing(space: Path, query: str | None = None) -> list[Note]:
+    """All cards, newest first; with a query, only those that match.
+
+    Search runs HERE, over the whole body, because the wall is only sent
+    previews. Matching client-side against a truncated preview would miss hits
+    inside long notes and present as "no results" -- a silent wrong answer
+    rather than a slow one.
+    """
+    # ANY term, substring, ranked -- which is what Keep does, and what Chris
+    # expects from it. Two earlier attempts were both wrong:
+    #   literal phrase : "wood gas" found nothing, because no note contains
+    #                    that exact run -- they say "woodgas", or have "wood"
+    #                    on one line and "gas" on another;
+    #   AND of terms   : still missed notes that say only "wood", or only
+    #                    "gas", which Keep returns.
+    # Keep's own behaviour is visible in a screenshot of it searching
+    # "food lion": a note with neither word in full came back because "lion"
+    # appears inside "million". So: substring, OR, and let the ranking decide
+    # what rises -- a note matching both terms outranks one matching either.
+    cat_filters, needles = split_query(query)
+    out: list[Note] = []
+    seen: set[str] = set()
+    for rel, p in _walk(space):
+        if rel in seen:
+            continue
+        seen.add(rel)
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        note = _cached(space, rel, st)
+        if cat_filters and (note.cat or "").lower() not in cat_filters:
+            continue
+        if needles and not _score(note, needles)[0]:
+            continue
+        out.append(note)
+    for gone in set(_CACHE) - seen:
+        _CACHE.pop(gone, None)
+    if needles:  # cat:-only queries keep plain newest-first order
+        # Most terms matched first, title hits ahead of body-only hits, then
+        # newest. Without this, OR puts a note mentioning "gas" once above the
+        # note actually called "Wood gas truck front end parts".
+        out.sort(key=lambda n: (_score(n, needles), n.date, n.id), reverse=True)
+    else:
+        out.sort(key=lambda n: (n.date, n.id), reverse=True)
     return out

@@ -174,12 +174,21 @@ def build_server(settings: Settings) -> FastMCP:
         body: str,
         tags: list[str] | None = None,
         source_url: str | None = None,
+        author: str | None = None,
     ) -> dict[str, Any]:
         """Save a NEW note to the inbox for Chris to triage later.
 
         Use this to capture an idea, a research result, or a conclusion worth
         keeping. Never overwrites: on a name collision a numeric suffix is
         added. Returns the final path so you can tell Chris where it landed.
+
+        author: leave unset for anything Chris said, dictated, or asked to be
+        kept — that note is HIS, and his notes app shows unlabelled notes in
+        his own default view. Pass "claude" ONLY when filing the agent's own
+        working material (a procedure written for another agent, a reference
+        page for later sessions, a capture of the agent's own research that
+        Chris did not ask for). Getting this wrong in the generous direction
+        buries his notes among the agent's.
         """
         try:
             saved = space_save(
@@ -189,6 +198,7 @@ def build_server(settings: Settings) -> FastMCP:
                 body=body,
                 tags=tags,
                 source_url=source_url,
+                author=author,
             )
         except PathRejected as exc:
             audit.record_rejection("save_note", str(exc))
