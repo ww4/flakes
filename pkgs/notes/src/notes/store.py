@@ -434,16 +434,39 @@ def trash_listing(space: Path) -> list[Note]:
     return out
 
 
-def census(space: Path) -> dict[str, int]:
-    """Every category and how many notes carry it, ignoring any filter.
+def in_feed(n: Note, scope: str, me: str, show_shared: bool) -> bool:
+    """Is this note in the given feed? One definition, used by chips and wall.
 
-    The chip row and the search suggestions both need the full set: filtering
-    the census by the current query would make a category vanish from the
-    suggestions exactly when you start typing its name.
+    "mine"   your own notes, plus the shared space if you keep it in your feed
+    "shared" the shared space itself
+    "all"    literally everything, agent notes included
+    """
+    if scope == "all":
+        return True
+    if scope == "shared":
+        return n.shared
+    return n.author == me or (show_shared and n.shared)
+
+
+def census(
+    space: Path,
+    scope: str = "all",
+    me: str = HUMAN,
+    show_shared: bool = True,
+) -> dict[str, int]:
+    """Categories and counts FOR THE CURRENT FEED.
+
+    Scoped rather than global because a count that includes notes you are not
+    looking at is a lie: with the wall set to "mine", a chip reading 83 that
+    yields 4 notes is worse than no chip at all (Chris, 2026-11-09).
+
+    Deliberately NOT narrowed by the search query — a category has to stay
+    suggestible while you are typing its name.
     """
     out: dict[str, int] = {}
     for n in listing(space):
-        out[n.cat] = out.get(n.cat, 0) + 1
+        if in_feed(n, scope, me, show_shared):
+            out[n.cat] = out.get(n.cat, 0) + 1
     return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))
 
 

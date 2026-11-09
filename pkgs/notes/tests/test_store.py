@@ -563,3 +563,40 @@ def test_trashed_notes_stay_out_of_the_normal_listing(space):
     store.trash(space, rel)
     assert not any(n.id.startswith("Trash/") for n in store.listing(space))
     assert not store.listing(space, "Spices")
+
+
+# --- the census follows the feed --------------------------------------------
+# A chip counting notes you are not looking at is a lie: with the wall on
+# "mine", a chip reading 83 that yields 4 notes is worse than no chip.
+
+def test_census_scoped_to_mine_counts_only_my_notes(space):
+    store.create(space, "hers", "x", author="mary")
+    store.write(space, "Keep/2017-03-04 Bring from Kentucky.md", category="travel")
+    mine = store.census(space, scope="mine", me="chris", show_shared=False)
+    theirs = store.census(space, scope="mine", me="mary", show_shared=False)
+    assert theirs == {"inbox": 1}
+    assert "inbox" not in mine or mine.get("inbox", 0) == 0
+    assert mine.get("travel") == 1
+
+
+def test_mine_includes_the_shared_space_when_asked(space):
+    n = store.create(space, "hers", "x", author="mary")
+    store.write(space, n.id, shared=True)
+    with_shared = store.census(space, scope="mine", me="chris", show_shared=True)
+    without = store.census(space, scope="mine", me="chris", show_shared=False)
+    assert with_shared.get("inbox") == 1
+    assert without.get("inbox") is None
+
+
+def test_census_all_counts_everything_including_the_agent(space):
+    store.create(space, "hers", "x", author="mary")
+    (space / "Notes/agent.md").write_text("---\nauthor: claude\n---\n\n# a\n\nx\n")
+    everything = store.census(space, scope="all")
+    assert sum(everything.values()) == len(store.listing(space))
+
+
+def test_census_shared_counts_only_the_shared_space(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True)
+    store.create(space, "private", "x")
+    assert sum(store.census(space, scope="shared").values()) == 1
