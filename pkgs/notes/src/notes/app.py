@@ -80,6 +80,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         q: str | None = None,
         scope: str = "all",
         shared: int = 1,
+        me: str | None = None,
     ):
         """The wall: summaries only, and the search runs here.
 
@@ -93,7 +94,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "cats": store.census(
                 space,
                 scope=scope if scope in ("mine", "shared", "all") else "all",
-                me=who(request) or store.HUMAN,
+                # The query param keeps the CACHE key honest — the service
+                # worker stores this response, and two people on one box must
+                # not share an entry. The cookie remains authoritative for
+                # writes, which are never cached.
+                me=(me if me and WHO_RE.match(me) else who(request)) or store.HUMAN,
                 show_shared=bool(shared),
             ),
             "authors": store.authors(space),
