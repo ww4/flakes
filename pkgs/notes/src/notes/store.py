@@ -228,7 +228,7 @@ def _slug(title: str) -> str:
     return s[:60] or "note"
 
 
-def create(space: Path, title: str, body: str) -> Note:
+def create(space: Path, title: str, body: str, author: str | None = None) -> Note:
     stamp = datetime.now().strftime("%Y-%m-%d")
     base = f"Inbox/{stamp} {_slug(title or 'note')}"
     rel = f"{base}.md"
@@ -237,7 +237,12 @@ def create(space: Path, title: str, body: str) -> Note:
         rel = f"{base} ({n}).md"
         n += 1
     path = paths.resolve(space, rel)
-    out = [f"# {title.strip() or 'Untitled'}", "", body.strip("\n")]
+    out: list[str] = []
+    # Only write the key when the device said who it is. No key reads as Chris,
+    # which is what every note predating device identity is.
+    if author and author != HUMAN:
+        out += ["---", f"author: {author}", "---", ""]
+    out += [f"# {title.strip() or 'Untitled'}", "", body.strip("\n")]
     _atomic_write(path, "\n".join(out).rstrip("\n") + "\n")
     return read(space, rel)
 
@@ -314,20 +319,24 @@ def _word(hay: str, term: str) -> bool:
 CAT_PREFIX_MIN = 4
 
 
-def split_query(query: str | None) -> tuple[list[str], list[str]]:
-    """Split a raw query into (cat: filters, ordinary terms).
+def split_query(query: str | None) -> tuple[list[str], list[str], list[str]]:
+    """Split a raw query into (cat: filters, by: filters, ordinary terms).
 
     ``cat:woodgas truck`` means "inside the woodgas category, anything about
-    trucks" -- the cat: part is a filter, the rest is the usual ranked OR.
+    trucks", and ``by:mary`` narrows to what Mary wrote -- the prefixed parts
+    are filters, the rest is the usual ranked OR.
     """
     cats: list[str] = []
+    whos: list[str] = []
     terms: list[str] = []
     for tok in (query or "").lower().split():
         if tok.startswith("cat:") and len(tok) > 4:
             cats.append(tok[4:].strip())
+        elif tok.startswith("by:") and len(tok) > 3:
+            whos.append(tok[3:].strip())
         elif tok:
             terms.append(tok)
-    return cats, terms
+    return cats, whos, terms
 
 
 def _cat_terms(note: Note, needles: list[str]) -> set[str]:
@@ -373,6 +382,18 @@ def _score(note: Note, needles: list[str]) -> tuple[int, int, int]:
     return anywhere, whole, in_title
 
 
+def authors(space: Path) -> dict[str, int]:
+    """Who has written in this space, and how much.
+
+    Drives the by: suggestions and the Mine/Ours/Claude control, so it has to
+    be the real set rather than a hardcoded list of people.
+    """
+    out: dict[str, int] = {}
+    for n in listing(space):
+        out[n.author] = out.get(n.author, 0) + 1
+    return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
 def census(space: Path) -> dict[str, int]:
     """Every category and how many notes carry it, ignoring any filter.
 
@@ -405,7 +426,7 @@ def listing(space: Path, query: str | None = None) -> list[Note]:
     # "food lion": a note with neither word in full came back because "lion"
     # appears inside "million". So: substring, OR, and let the ranking decide
     # what rises -- a note matching both terms outranks one matching either.
-    cat_filters, needles = split_query(query)
+    cat_filters, who_filters, needles = split_query(query)
     out: list[Note] = []
     seen: set[str] = set()
     for rel, p in _walk(space):
@@ -418,6 +439,8 @@ def listing(space: Path, query: str | None = None) -> list[Note]:
             continue
         note = _cached(space, rel, st)
         if cat_filters and (note.cat or "").lower() not in cat_filters:
+            continue
+        if who_filters and (note.author or HUMAN).lower() not in who_filters:
             continue
         if needles and not _score(note, needles)[0]:
             continue

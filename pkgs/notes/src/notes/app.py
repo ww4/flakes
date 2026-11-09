@@ -14,9 +14,10 @@ mismatched-decoding bugs, and nothing here needs REST-shaped URLs.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -24,6 +25,20 @@ from . import paths, store
 from .config import Settings
 
 log = logging.getLogger("notes")
+
+# Who is using this browser. Not authentication -- there is nothing here to
+# protect, and Chris explicitly did not want accounts. It replaces Google
+# Keep's "add collaborator", which he has found annoying for years: the point
+# is attribution between two people who already trust each other, so a cookie
+# the browser sets for itself is the right weight. An unknown device stays
+# unlabelled, which reads as Chris and preserves the 545 notes predating this.
+WHO_COOKIE = "notes_who"
+WHO_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+
+
+def who(request: Request) -> str | None:
+    raw = (request.cookies.get(WHO_COOKIE) or "").strip().lower()
+    return raw if WHO_RE.match(raw) else None
 
 STATIC = Path(__file__).parent / "static"
 
@@ -58,7 +73,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse({"error": "no such note"}, status_code=404)
 
     @app.get("/api/notes")
-    async def list_notes(q: str | None = None):
+    async def list_notes(request: Request, q: str | None = None):
         """The wall: summaries only, and the search runs here.
 
         Sending whole notes was 546 KB for 586 cards. Previews cut that to a
@@ -69,6 +84,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "notes": [n.summary() for n in store.listing(space, q)],
             "cats": store.census(space),
+            "authors": store.authors(space),
+            "me": who(request),
         }
 
     @app.get("/api/note")
@@ -79,10 +96,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return store.read(space, id).public()
 
     @app.post("/api/notes")
-    async def new_note(req: NoteNew):
+    async def new_note(req: NoteNew, request: Request):
         if not req.title.strip() and not req.body.strip():
             raise HTTPException(400, "an empty note is not saved")
-        return store.create(space, req.title, req.body).summary()
+        # Attribution comes from the DEVICE, not from the client asking nicely:
+        # the cookie is read here so a note is stamped the same way whichever
+        # code path created it.
+        return store.create(space, req.title, req.body, author=who(request)).summary()
 
     @app.put("/api/notes")
     async def update_note(req: NoteWrite):

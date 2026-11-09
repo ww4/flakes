@@ -404,7 +404,58 @@ def test_cat_prefix_filters_hard(space):
 
 
 def test_split_query_separates_filters_from_terms(space):
-    assert store.split_query("cat:woodgas truck parts") == (["woodgas"], ["truck", "parts"])
-    assert store.split_query("plain words") == ([], ["plain", "words"])
-    assert store.split_query("cat:") == ([], ["cat:"])     # not a filter, just text
-    assert store.split_query(None) == ([], [])
+    assert store.split_query("cat:woodgas truck parts") == (["woodgas"], [], ["truck", "parts"])
+    assert store.split_query("plain words") == ([], [], ["plain", "words"])
+    assert store.split_query("cat:") == ([], [], ["cat:"])   # not a filter, just text
+    assert store.split_query(None) == ([], [], [])
+
+
+# --- who wrote it ------------------------------------------------------------
+# Attribution between two people who trust each other, not authentication.
+# Chris: "There's no secrets here to protect."
+
+def test_create_stamps_a_named_author(space):
+    n = store.create(space, "milk", "2%", author="mary")
+    assert n.author == "mary"
+    assert "author: mary" in (space / n.id).read_text()
+
+
+def test_create_without_a_device_identity_stays_unlabelled(space):
+    """545 notes predate this; unlabelled must keep reading as Chris."""
+    n = store.create(space, "milk", "2%")
+    assert n.author == "chris"
+    assert "author:" not in (space / n.id).read_text()
+
+
+def test_chris_is_not_written_redundantly(space):
+    n = store.create(space, "milk", "2%", author="chris")
+    assert n.author == "chris"
+    assert "author:" not in (space / n.id).read_text()
+
+
+def test_by_filter_selects_one_persons_notes(space):
+    store.create(space, "hers", "x", author="mary")
+    store.create(space, "his", "y")
+    mary = [n.title for n in store.listing(space, "by:mary")]
+    assert mary == ["hers"]
+    his = [n.title for n in store.listing(space, "by:chris")]
+    assert "his" in his and "hers" not in his
+
+
+def test_by_composes_with_terms_and_categories(space):
+    store.create(space, "hers bread", "bread", author="mary")
+    store.create(space, "hers paint", "paint", author="mary")
+    assert [n.title for n in store.listing(space, "by:mary bread")] == ["hers bread"]
+
+
+def test_split_query_separates_all_three(space):
+    assert store.split_query("cat:woodgas by:mary truck") == (["woodgas"], ["mary"], ["truck"])
+    assert store.split_query("by:") == ([], [], ["by:"])
+
+
+def test_authors_census_counts_everyone(space):
+    store.create(space, "hers", "x", author="mary")
+    a = store.authors(space)
+    assert a["mary"] == 1
+    assert a["chris"] >= 1
+    assert sum(a.values()) == len(store.listing(space))

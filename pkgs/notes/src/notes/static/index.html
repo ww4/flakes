@@ -248,6 +248,33 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   text-transform:uppercase; color:var(--ink-soft); padding-left:2px;
 }
 
+/* who is on this device */
+.me-btn{
+  flex:none; width:30px; height:30px; border-radius:999px; cursor:pointer;
+  border:1px solid var(--line); background:var(--surface); color:var(--ink);
+  font:600 12px/1 Archivo,system-ui,sans-serif; letter-spacing:.02em;
+  display:grid; place-items:center;
+}
+.me-btn:hover{border-color:var(--accent); color:var(--accent)}
+.me-btn.unset{border-style:dashed; color:var(--ink-soft)}
+.whobar{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  max-width:1280px; margin:0 auto; padding:0 0 10px;
+}
+.whobar[hidden]{display:none}
+.whobar span{
+  font:500 10px/1.6 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--ink-soft);
+}
+.whobar button{
+  border:1px solid var(--line); background:var(--surface); color:var(--ink);
+  border-radius:999px; padding:5px 13px; cursor:pointer;
+  font:500 11px/1.3 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.05em; text-transform:uppercase;
+}
+.whobar button:hover{border-color:var(--accent); color:var(--accent)}
+.meta .by{color:var(--brass); text-transform:uppercase; letter-spacing:.08em; font-weight:500}
+
 /* online / offline */
 .net{
   flex:none; display:grid; place-items:center; width:30px; height:30px;
@@ -395,10 +422,12 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       <div class="sug" id="sug" role="listbox" aria-label="Suggestions" hidden></div>
     </div>
     <span class="net" id="net" title="Online" aria-live="polite"></span>
+    <button class="me-btn unset" id="meBtn" title="Who's using this device?" aria-label="Who's using this device?">?</button>
     <button class="iconbtn" id="archBtn" aria-pressed="false" title="Show archive" aria-label="Show archive">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h18v3H3zM5 10v10h14V10M9.5 14h5"/></svg>
     </button>
   </div>
+  <div class="whobar" id="whobar" hidden></div>
   <div class="filters">
     <div class="seg" id="who" role="group" aria-label="Whose notes"></div>
     <div class="chips" id="chips"></div>
@@ -464,7 +493,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   // go stale against four other writers of this space (SilverBullet, the
   // daybook, the agent, a git restore). Every mutation is a request; the
   // reply is what we render.
-  var NOTES = [], CATS = {};
+  var NOTES = [], CATS = {}, AUTHORS = {}, ME = null;
 
   function api(method, url, body){
     return fetch(url, {
@@ -497,6 +526,8 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       if (mine !== searchSeq) return;   // a newer keystroke already won
       NOTES = d.notes;
       if (d.cats) CATS = d.cats;        // full census, never filtered by q
+      if (d.authors) AUTHORS = d.authors;
+      ME = d.me || null;                // the server read it from the cookie
       shownCount = PAGE; render();
     });
   }
@@ -544,6 +575,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   var el = {
     q:document.getElementById("q"), chips:document.getElementById("chips"),
     who:document.getElementById("who"), sug:document.getElementById("sug"),
+    meBtn:document.getElementById("meBtn"), whobar:document.getElementById("whobar"),
     edCat:document.getElementById("edCat"), catpop:document.getElementById("catpop"),
     edCatBtn:document.getElementById("edCatBtn"), edCatNow:document.getElementById("edCatNow"),
     catlistBox:document.getElementById("catlistBox"), net:document.getElementById("net"),
@@ -560,7 +592,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   el.q.placeholder = "Search notes";
 
   function matches(n){
-    if (who !== "all" && n.author !== (who === "mine" ? "chris" : "claude")) return false;
+    if (!inScope(n, who)) return false;
     if (!!n.archived !== showArch) return false;
     return true;   // text AND category matching happen server-side
   }
@@ -704,6 +736,9 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 
     var meta = node("div", "meta");
     meta.appendChild(node("span", "cat", n.pending ? "queued" : n.cat));
+    // Say who wrote it only when that is not you — otherwise every card on
+    // your own wall carries your own name, which is noise.
+    if (!n.pending && n.author !== meName()) meta.appendChild(node("span", "by", n.author));
     meta.appendChild(node("span", "sp"));
     meta.appendChild(node("span", "yr", n.date));
     c.appendChild(meta);
@@ -833,7 +868,8 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     var cats = Object.keys(CATS).filter(function(c){ return c.indexOf(t) >= 0; })
       .sort(function(a, b){ return CATS[b] - CATS[a]; }).slice(0, 5);
     var titles = NOTES.filter(function(n){ return n.title.toLowerCase().indexOf(t) >= 0; }).slice(0, 6);
-    if (!cats.length && !titles.length) { closeSug(); return; }
+    var anyPerson = Object.keys(AUTHORS).some(function(a){ return a.indexOf(t) >= 0; });
+    if (!cats.length && !titles.length && !anyPerson) { closeSug(); return; }
 
     if (cats.length) {
       el.sug.appendChild(node("div", "sug-head", "Categories — filters with cat:"));
@@ -843,6 +879,25 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
         b.appendChild(highlight(node("span", "tag", c.replace(/-/g, " "))));
         b.appendChild(node("span", "n", CATS[c]));
         b.addEventListener("click", function(){ setCat(c); el.q.focus(); });
+        el.sug.appendChild(b);
+      });
+    }
+    var people = Object.keys(AUTHORS).filter(function(a){ return a.indexOf(t) >= 0; }).slice(0, 4);
+    if (people.length) {
+      el.sug.appendChild(node("div", "sug-head", "People — filters with by:"));
+      people.forEach(function(p){
+        var b = node("button");
+        b.setAttribute("role", "option");
+        b.appendChild(highlight(node("span", "tag", p)));
+        b.appendChild(node("span", "n", AUTHORS[p]));
+        b.addEventListener("click", function(){
+          var rest = (q || "").split(/\s+/).filter(function(x){
+            return x && x.toLowerCase().indexOf("by:") !== 0;
+          });
+          rest.unshift("by:" + p);
+          q = rest.join(" "); el.q.value = q + " "; closeSug(); el.q.focus();
+          refresh().catch(function(e){ fail("Couldn't filter", e); });
+        });
         el.sug.appendChild(b);
       });
     }
@@ -903,20 +958,74 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     }).catch(function(){});
   }
 
+  // "Mine" needs to know who you are. Without a device identity everyone is
+  // Chris, which is exactly what the 545 notes predating this assume.
+  function meName(){ return ME || "chris"; }
+
+  function inScope(n, scope){
+    if (scope === "claude") return n.author === "claude";
+    if (scope === "ours") return n.author !== "claude";
+    return n.author === meName();                  // "mine"
+  }
+
   function drawWho(){
-    var opts = [["mine", "Mine"], ["claude", "Claude"], ["all", "Both"]];
+    var opts = [["mine", "Mine"], ["ours", "Ours"], ["claude", "Claude"]];
     el.who.textContent = "";
     opts.forEach(function(o){
-      var n = NOTES.filter(function(x){
-        return o[0] === "all" || x.author === (o[0] === "mine" ? "chris" : "claude");
-      }).length;
+      var n = NOTES.filter(function(x){ return inScope(x, o[0]); }).length;
       var b = node("button", null, o[1]);
       b.setAttribute("aria-pressed", who === o[0] ? "true" : "false");
       b.setAttribute("title", n + (n === 1 ? " note" : " notes"));
       b.addEventListener("click", function(){ who = o[0]; render(); });
       el.who.appendChild(b);
     });
+    drawMe();
   }
+
+  // ---- who is on this device ----
+  // A cookie, not an account. Chris: "I don't want to set up auth or accounts
+  // really... There's no secrets here to protect." It replaces Keep's
+  // add-collaborator dance; the server reads the same cookie when stamping a
+  // new note, so attribution does not depend on the client asking nicely.
+  function setMe(name){
+    var v = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
+    if (!v) return;
+    try {
+      document.cookie = "notes_who=" + v + "; path=/; max-age=" + (10 * 365 * 24 * 3600) + "; SameSite=Lax";
+    } catch (e) {}
+    ME = v;
+    el.whobar.hidden = true;
+    refresh().catch(function(){});
+  }
+
+  function drawMe(){
+    el.meBtn.textContent = ME ? ME.charAt(0).toUpperCase() : "?";
+    el.meBtn.className = "me-btn" + (ME ? "" : " unset");
+    el.meBtn.title = ME ? ("This device is " + ME + " — tap to change") : "Who's using this device?";
+  }
+
+  function openWhoBar(){
+    el.whobar.textContent = "";
+    el.whobar.appendChild(node("span", null, "Who's using this device?"));
+    // Offer whoever already writes here, so the second person appears on the
+    // first device that names them rather than being hardcoded.
+    var names = Object.keys(AUTHORS).filter(function(a){ return a !== "claude"; });
+    if (names.indexOf("chris") < 0) names.unshift("chris");
+    names.forEach(function(nm){
+      var b = node("button", null, nm);
+      b.addEventListener("click", function(){ setMe(nm); });
+      el.whobar.appendChild(b);
+    });
+    var other = node("button", null, "someone else…");
+    other.addEventListener("click", function(){
+      var nm = window.prompt("First name (lowercase, no spaces):", "");
+      if (nm) setMe(nm);
+    });
+    el.whobar.appendChild(other);
+    el.whobar.hidden = false;
+  }
+
+  el.meBtn.addEventListener("click", openWhoBar);
 
   // The ONE way to filter by category is the cat: token in the search box.
   // A chip writes that token rather than flipping hidden state, so the chip
@@ -1489,7 +1598,16 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 
   el.wall.appendChild(node("div", "empty", "Loading notes…"));
   loadPending().then(drain);
-  refresh().catch(function(e){
+  refresh().then(function(){
+    // Ask once, on a device that has never said who it is. Everything works
+    // without answering — the note is simply attributed to Chris, which is
+    // what every note before this was.
+    if (!ME) { openWhoBar(); return; }
+    // A second person's first visit would otherwise land on an empty wall,
+    // because "Mine" is empty until they write something.
+    var mine = NOTES.filter(function(n){ return inScope(n, "mine"); }).length;
+    if (!mine) { who = "ours"; render(); }
+  }).catch(function(e){
     el.wall.textContent = "";
     var em = node("div", "empty");
     em.appendChild(node("div", null, "Couldn't reach the notes service."));
