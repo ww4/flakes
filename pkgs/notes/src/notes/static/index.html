@@ -141,6 +141,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 .card.pending .meta .cat{color:var(--brass)}
 .card.pinned{box-shadow:var(--shadow), inset 3px 0 0 var(--brass)}
 .card.pinned:hover{box-shadow:var(--shadow-lift), inset 3px 0 0 var(--brass)}
+.card.untitled .body{padding-top:2px}
 .card h3{
   margin:0 26px 7px 0;
   font:600 15px/1.3 Archivo,system-ui,sans-serif; letter-spacing:-.005em;
@@ -278,6 +279,102 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   width:100%; border:0; border-bottom:1px solid var(--line); background:none;
   color:var(--ink); padding:10px 14px; outline:none; margin-bottom:4px;
   font:500 12px/1.3 "IBM Plex Mono",ui-monospace,monospace;
+}
+
+/* ---------- phone ----------
+   The chip row and the Mine/Ours/All control are desktop furniture: on a
+   390px screen they eat a third of the first card. Keep's answer is a drawer,
+   and that is the right one — every filter moves there, the wall gets the
+   whole screen, and the actions you actually use at the store (archive, bin,
+   pin) move onto the card itself as gestures. */
+.hamburger{
+  flex:none; display:none; width:38px; height:38px; place-items:center;
+  border:1px solid var(--line); border-radius:999px; background:var(--surface);
+  color:var(--ink-soft); cursor:pointer; box-shadow:var(--shadow);
+}
+.scrim-left{
+  position:fixed; inset:0; z-index:45; background:#0b100f80; display:none;
+  -webkit-backdrop-filter:blur(1px); backdrop-filter:blur(1px);
+}
+.scrim-left.open{display:block}
+.drawer{
+  position:fixed; top:0; bottom:0; left:0; z-index:46; width:min(300px, 84vw);
+  background:var(--surface); border-right:1px solid var(--line);
+  box-shadow:6px 0 28px #0000002e; overflow-y:auto; padding:14px 0 24px;
+  transform:translateX(-102%); transition:transform .18s ease;
+}
+.drawer.open{transform:translateX(0)}
+@media (prefers-reduced-motion:reduce){.drawer{transition:none}}
+.drawer h2{
+  margin:0; padding:10px 18px 6px;
+  font:500 9.5px/1 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.16em; text-transform:uppercase; color:var(--ink-soft);
+}
+.drawer button{
+  display:flex; align-items:center; gap:12px; width:100%; text-align:left;
+  border:0; background:none; cursor:pointer; color:var(--ink);
+  padding:11px 18px; font:500 13px/1.3 Archivo,system-ui,sans-serif;
+}
+.drawer button:hover, .drawer button:focus-visible{background:var(--surface-2); outline:none}
+.drawer button[aria-pressed="true"]{background:var(--accent-wash); color:var(--accent)}
+.drawer button .n{margin-left:auto; color:var(--ink-faint); font:400 11px/1 "IBM Plex Mono",monospace}
+.drawer .sep{height:1px; background:var(--line); margin:8px 0}
+.drawer svg{flex:none}
+
+/* drag to reorder, pinned only */
+.card.lifted{
+  box-shadow:0 10px 26px #00000038, 0 0 0 2px var(--brass);
+  transform:scale(1.03); opacity:.97; position:relative; z-index:5;
+}
+.swipe.lifting{touch-action:none}
+.swipe.ghost .card{opacity:.28}
+
+/* selection mode — long press to enter, then tap to add, like Keep */
+.selbar{
+  position:absolute; inset:0; z-index:22; display:flex; align-items:center; gap:4px;
+  background:var(--ground); padding:10px 14px 0;
+}
+.selbar[hidden]{display:none}
+.selcount{
+  font:600 14px/1 Archivo,system-ui,sans-serif; color:var(--ink);
+  margin-right:6px; min-width:84px;
+}
+.selbar .sp{flex:1}
+.card.sel{box-shadow:0 0 0 2px var(--accent), var(--shadow-lift)}
+.card .tick{
+  position:absolute; top:8px; left:8px; width:21px; height:21px; border-radius:999px;
+  background:var(--accent); color:var(--accent-ink); display:grid; place-items:center;
+  box-shadow:0 0 0 2px var(--surface);
+}
+body.selecting .card{cursor:pointer}
+body.selecting .pin{display:none}
+
+/* swipe + pull-to-refresh */
+.swipe{position:relative; overflow:hidden; border-radius:var(--r)}
+.swipe-bg{
+  position:absolute; inset:0; display:flex; align-items:center;
+  justify-content:space-between; padding:0 22px; border-radius:var(--r);
+  color:#fff; opacity:0;
+}
+.swipe-bg.arch{background:var(--accent)}
+.swipe-bg.del{background:#9a3412}
+.swipe .card{position:relative; z-index:1; transition:transform .16s ease}
+.swipe.dragging .card{transition:none}
+.ptr{
+  position:fixed; left:50%; top:4px; z-index:25; transform:translate(-50%, -48px);
+  width:34px; height:34px; border-radius:999px; background:var(--surface);
+  border:1px solid var(--line); box-shadow:var(--shadow-lift);
+  display:grid; place-items:center; color:var(--accent); pointer-events:none;
+}
+.ptr.spin svg{animation:ptrspin .8s linear infinite}
+@keyframes ptrspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.ptr.spin svg{animation:none}}
+
+@media (max-width:700px){
+  .hamburger{display:grid}
+  .filters{display:none}            /* chips + view toggles live in the drawer */
+  .brand{display:none}              /* the search box gets the width instead */
+  main{padding-top:14px}
 }
 
 /* view toggles live at the end of the chip row */
@@ -443,6 +540,9 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 
 <div class="bar">
   <div class="bar-row">
+    <button class="hamburger" id="menuBtn" aria-label="Menu" aria-expanded="false">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+    </button>
     <div class="brand">Notes <span class="count" id="count"></span></div>
     <div class="search-wrap">
       <label class="search">
@@ -467,6 +567,31 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     <button class="viewchip" id="trashBtn" aria-pressed="false" title="Show deleted notes" aria-label="Show deleted notes">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>Trash</button>
   </div>
+  <div class="selbar" id="selbar" hidden>
+    <button class="iconbtn" id="selClose" aria-label="Leave selection">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+    <span class="selcount" id="selCount"></span>
+    <span class="sp"></span>
+    <button class="iconbtn" id="selPin" aria-label="Pin or unpin" title="Pin / unpin">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M7 4h10l-1.5 7 2.5 3H5.5L8 11z"/></svg>
+    </button>
+    <button class="iconbtn" id="selShare" aria-label="Add to Ours" title="Add to Ours">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 19a6 6 0 0 1 12 0M18 7v6M21 10h-6"/></svg>
+    </button>
+    <button class="iconbtn" id="selArch" aria-label="Archive" title="Archive">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h18v3H3zM5 10v10h14V10M9.5 14h5"/></svg>
+    </button>
+    <button class="iconbtn" id="selDel" aria-label="Delete" title="Delete">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>
+    </button>
+  </div>
+</div>
+
+<div class="scrim-left" id="drawerScrim"></div>
+<nav class="drawer" id="drawer" aria-label="Filters"></nav>
+<div class="ptr" id="ptr" hidden>
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3.3-6.9"/><path d="M21 4v5h-5"/></svg>
 </div>
 
 <main>
@@ -485,7 +610,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       <button class="tool" id="edClose" aria-label="Close and save" title="Close">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
       </button>
-      <input id="edTitle" placeholder="Title">
+      <input id="edTitle" placeholder="Title (optional)">
       <button class="tool brass" id="edPin" aria-pressed="false" aria-label="Pin note" title="Pin">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M7 4h10l-1.5 7 2.5 3H5.5L8 11z"/></svg>
       </button>
@@ -538,7 +663,34 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   // go stale against four other writers of this space (SilverBullet, the
   // daybook, the agent, a git restore). Every mutation is a request; the
   // reply is what we render.
-  var NOTES = [], CATS = {}, AUTHORS = {}, ME = null;
+  var NOTES = [], CATS = {}, AUTHORS = {};
+
+  // WHO THIS DEVICE IS, read from the cookie we set — never from the listing
+  // response. The service worker caches /api/notes, so a cached body carries
+  // whatever "me" was true when it was stored: after a reload the PWA got
+  // me:null out of the cache and asked who you were all over again. Identity
+  // does not belong in a cacheable body.
+  //
+  // localStorage is a mirror, not the source: the SERVER reads the cookie when
+  // stamping a note, so the cookie has to exist — but if it is evicted while
+  // the mirror survives, this puts it back instead of forgetting you.
+  function readCookieMe(){
+    var m = (document.cookie || "").match(/(?:^|;\s*)notes_who=([^;]*)/);
+    var v = m ? decodeURIComponent(m[1]).trim().toLowerCase() : "";
+    return /^[a-z][a-z0-9_-]{0,31}$/.test(v) ? v : null;
+  }
+  function writeCookieMe(v){
+    try {
+      document.cookie = "notes_who=" + v + "; path=/; max-age=" + (10 * 365 * 24 * 3600) + "; SameSite=Lax";
+    } catch (e) {}
+    try { localStorage.setItem("notes-who", v); } catch (e) {}
+  }
+  var ME = readCookieMe();
+  if (!ME) {
+    var mirror = null;
+    try { mirror = localStorage.getItem("notes-who"); } catch (e) {}
+    if (mirror && /^[a-z][a-z0-9_-]{0,31}$/.test(mirror)) { writeCookieMe(mirror); ME = mirror; }
+  }
 
   // Whether the shared space shows up in your own feed. Per device, on by
   // default — the point of a shared list is that you see it without asking.
@@ -605,7 +757,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     var sent = applyTokens(q);
     var url = view === "trash"
       ? "/api/trash"
-      : "/api/notes?scope=" + who + "&shared=" + (SHOW_SHARED ? 1 : 0)
+      : "/api/notes?me=" + encodeURIComponent(meName()) + "&scope=" + who + "&shared=" + (SHOW_SHARED ? 1 : 0)
         + (sent ? "&q=" + encodeURIComponent(sent) : "");
     return api("GET", url).then(function(d){
       if (mine !== searchSeq) return;   // a newer keystroke already won
@@ -615,7 +767,6 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       });
       if (d.cats) CATS = d.cats;        // full census, never filtered by q
       if (d.authors) AUTHORS = d.authors;
-      ME = d.me || null;                // the server read it from the cookie
       shownCount = PAGE; render();
     });
   }
@@ -675,6 +826,12 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     edPeopleBtn:document.getElementById("edPeopleBtn"), peopleMenu:document.getElementById("peopleMenu"),
     delMenu:document.getElementById("delMenu"), meMenu:document.getElementById("meMenu"),
     trashBtn:document.getElementById("trashBtn"), edWhoNow:document.getElementById("edWhoNow"),
+    menuBtn:document.getElementById("menuBtn"), drawer:document.getElementById("drawer"),
+    selbar:document.getElementById("selbar"), selCount:document.getElementById("selCount"),
+    selClose:document.getElementById("selClose"), selPin:document.getElementById("selPin"),
+    selArch:document.getElementById("selArch"), selDel:document.getElementById("selDel"),
+    selShare:document.getElementById("selShare"),
+    drawerScrim:document.getElementById("drawerScrim"), ptr:document.getElementById("ptr"),
     wall:document.getElementById("wall"), count:document.getElementById("count"),
     archBtn:document.getElementById("archBtn"), scrim:document.getElementById("scrim"),
     edClose:document.getElementById("edClose"), edTitle:document.getElementById("edTitle"),
@@ -691,7 +848,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     if (!inScope(n, who)) return false;
     if (onlyQueued) return !!n.pending;
     if (view === "trash") return true;        // the trash view IS its own list
-    if (!!n.archived !== showArchive()) return false;
+    if (archivedForMe(n) !== showArchive()) return false;
     return true;   // text AND category matching happen server-side
   }
 
@@ -816,9 +973,17 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   }
 
   function card(n){
-    var c = node("div", "card" + (n.shared ? " shared" : "") + (n.pinned ? " pinned" : "") + (n.pending ? " pending" : ""));
+    var c = node("div", "card" + (n.shared ? " shared" : "") + (n.pinned ? " pinned" : "") + (n.pending ? " pending" : "") + (SEL[n.id] ? " sel" : ""));
+    if (SEL[n.id]) {
+      var tick = node("div", "tick");
+      tick.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"><path d="m5 13 4.5 4.5L19 7"/></svg>';
+      c.appendChild(tick);
+    }
     c.tabIndex = 0;
-    c.appendChild(highlight(node("h3", null, n.title)));
+    // An untitled note shows no heading at all — an empty h3 would leave a
+    // gap where a title would be, which reads as a rendering fault.
+    if (n.title) c.appendChild(highlight(node("h3", null, n.title)));
+    else c.classList.add("untitled");
 
     var pin = node("button", "pin");
     pin.setAttribute("aria-label", (n.pinned ? "Unpin " : "Pin ") + n.title);
@@ -848,6 +1013,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     c.appendChild(meta);
 
     function act(){
+      if (selMode) { toggleSel(n.id); return; }
       if (n.pending) { toast("Queued — this note saves when the box is reachable", null); return; }
       if (n.trashed) { restoreNote(n); return; }
       open(n.id);
@@ -866,6 +1032,337 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     return c;
   }
 
+  // ---- back dismisses a layer, not the app ----
+  // In a PWA the system back gesture is the only "back" there is, and without
+  // this it closes the whole app from inside an open note. Each thing that
+  // covers the wall pushes one history entry and takes it back when it closes,
+  // so back means "close this" exactly once.
+  var LAYER = null;
+  function enterLayer(kind){
+    if (LAYER === kind) return;
+    LAYER = kind;
+    try { history.pushState({notesLayer: kind}, ""); } catch (e) {}
+  }
+  function exitLayer(){
+    if (!LAYER) return;
+    LAYER = null;
+    try { history.back(); } catch (e) {}
+  }
+  window.addEventListener("popstate", function(){
+    if (!LAYER) return;                 // not one of ours; let it be
+    var k = LAYER; LAYER = null;
+    if (k === "note") close(true);
+    else if (k === "drawer") closeDrawer(true);
+    else if (k === "sel") exitSel(true);
+  });
+
+  // ---- selection mode ----
+  // Long press enters it and tap adds, which is how Keep does it — and it is
+  // the only way to act on twenty notes without opening twenty notes.
+  var SEL = {}, selMode = false;
+  function selCount(){ return Object.keys(SEL).length; }
+
+  function enterSel(id){
+    selMode = true; SEL = {}; SEL[id] = 1;
+    document.body.classList.add("selecting");
+    enterLayer("sel");
+    render();
+  }
+  function exitSel(fromHistory){
+    selMode = false; SEL = {};
+    document.body.classList.remove("selecting");
+    if (!fromHistory) exitLayer();
+    render();
+  }
+  function toggleSel(id){
+    if (SEL[id]) delete SEL[id]; else SEL[id] = 1;
+    if (!selCount()) { exitSel(); return; }
+    render();
+  }
+  function selected(){
+    return NOTES.filter(function(n){ return SEL[n.id]; });
+  }
+  function drawSel(){
+    el.selbar.hidden = !selMode;
+    if (!selMode) return;
+    var n = selCount();
+    el.selCount.textContent = n + " selected";
+    var any = selected();
+    var allPinned = any.length && any.every(function(x){ return x.pinned; });
+    el.selPin.setAttribute("aria-pressed", allPinned ? "true" : "false");
+    el.selPin.title = allPinned ? "Unpin" : "Pin";
+  }
+
+  // One request per note, in order, then a single refresh — a bulk endpoint
+  // would be faster and would also need its own partial-failure story.
+  function bulk(patch, label, undoPatch){
+    var items = selected();
+    if (!items.length) return;
+    var done = 0, failed = 0;
+    items.reduce(function(chain, x){
+      return chain.then(function(){
+        return api("PUT", "/api/notes", Object.assign({id: x.id}, patch))
+          .then(function(){ done++; }).catch(function(){ failed++; });
+      });
+    }, Promise.resolve()).then(function(){
+      exitSel();
+      return refresh();
+    }).then(function(){
+      if (failed) { fail(label + ": " + failed + " of " + items.length + " failed", new Error("partial")); return; }
+      toast(label + " " + done, undoPatch ? function(){
+        items.reduce(function(c, x){
+          return c.then(function(){
+            return api("PUT", "/api/notes", Object.assign({id: x.id}, undoPatch)).catch(function(){});
+          });
+        }, Promise.resolve()).then(refresh);
+      } : null);
+    });
+  }
+
+  el.selClose.addEventListener("click", function(){ exitSel(); });
+  el.selPin.addEventListener("click", function(){
+    var any = selected(), allPinned = any.length && any.every(function(x){ return x.pinned; });
+    bulk({pinned: !allPinned}, allPinned ? "Unpinned" : "Pinned", {pinned: allPinned});
+  });
+  el.selShare.addEventListener("click", function(){
+    var any = selected(), allShared = any.length && any.every(function(x){ return x.shared; });
+    bulk({shared: !allShared}, allShared ? "Removed from Ours" : "Added to Ours", {shared: allShared});
+  });
+  el.selArch.addEventListener("click", function(){
+    var any = selected(), allArch = any.length && any.every(archivedForMe);
+    bulk({archived: !allArch}, allArch ? "Unarchived" : "Archived", {archived: allArch});
+  });
+  el.selDel.addEventListener("click", function(){
+    var items = selected();
+    if (!items.length) return;
+    var moved = [];
+    items.reduce(function(chain, x){
+      return chain.then(function(){
+        return api("POST", "/api/notes/trash", {id: x.id})
+          .then(function(d){ moved.push(d.trashed); }).catch(function(){});
+      });
+    }, Promise.resolve()).then(function(){
+      exitSel(); return refresh();
+    }).then(function(){
+      toast("Deleted " + moved.length + " — in Trash", function(){
+        moved.reduce(function(c, t){
+          return c.then(function(){
+            return api("POST", "/api/notes/restore", {id: t}).catch(function(){});
+          });
+        }, Promise.resolve()).then(refresh);
+      });
+    });
+  });
+
+  // ---- gestures: the things you do one-handed in a shop ----
+  // Swipe right archives, swipe left bins, long press pins. Deliberately the
+  // Gmail bindings rather than invented ones. A swipe-delete does NOT confirm
+  // (the undo toast and the Trash view are the safety net); the editor's
+  // delete button still asks, because that one is a deliberate act.
+  var PRESS_MS = 500, DECIDE_PX = 12;
+
+  function swipeable(cardEl, n){
+    var wrap = node("div", "swipe");
+    var bg = node("div", "swipe-bg");
+    wrap.appendChild(bg);
+    wrap.appendChild(cardEl);
+    // Not in the bin (a swipe there has no sensible meaning), and not on a
+    // note that has not reached the server yet.
+    if (n.pending || n.trashed || !("ontouchstart" in window) || selMode) return wrap;
+
+    var x0 = 0, y0 = 0, decided = false, dragging = false, lp = null, dx = 0;
+    var pressX = 0, pressY = 0;
+    function reset(){
+      wrap.classList.remove("dragging");
+      cardEl.style.transform = ""; bg.style.opacity = 0; dx = 0;
+    }
+    function cancelPress(){ if (lp) { clearTimeout(lp); lp = null; } }
+
+    wrap.addEventListener("touchstart", function(ev){
+      if (ev.touches.length !== 1) return;
+      x0 = ev.touches[0].clientX; y0 = ev.touches[0].clientY;
+      decided = false; dragging = false; dx = 0;
+      pressX = x0; pressY = y0;
+      lp = setTimeout(function(){
+        lp = null;
+        if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) {} }
+        // Keep's model: the hold LIFTS the note. Move from here and you are
+        // dragging it; let go without moving and you are selecting it. Only
+        // pinned notes can be dragged, so everything else selects at once.
+        if (n.pinned && view === "wall" && !selMode) { lift(wrap, cardEl, n); }
+        else if (selMode) toggleSel(n.id);
+        else enterSel(n.id);
+      }, PRESS_MS);
+    }, {passive: true});
+
+    wrap.addEventListener("touchmove", function(ev){
+      if (DRAG) return;                   // a lifted note is being reordered
+      var t = ev.touches[0], ax = t.clientX - x0, ay = t.clientY - y0;
+      if (!decided) {
+        if (Math.abs(ax) > DECIDE_PX && Math.abs(ax) > Math.abs(ay)) {
+          decided = true; dragging = true; cancelPress();
+          wrap.classList.add("dragging");
+        } else if (Math.abs(ay) > DECIDE_PX) {
+          decided = true; cancelPress();        // it is a scroll, let it scroll
+        }
+        return;
+      }
+      if (!dragging) return;
+      ev.preventDefault();
+      dx = ax;
+      cardEl.style.transform = "translateX(" + dx + "px)";
+      bg.className = "swipe-bg " + (dx > 0 ? "arch" : "del");
+      bg.textContent = "";
+      var lbl = node("span", null, dx > 0
+        ? (archivedForMe(n) ? "Unarchive" : "Archive") : "Delete");
+      lbl.style.cssText = "font:600 12px/1 Archivo,system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase";
+      if (dx > 0) { bg.appendChild(lbl); bg.appendChild(node("span")); }
+      else { bg.appendChild(node("span")); bg.appendChild(lbl); }
+      bg.style.opacity = Math.min(1, Math.abs(dx) / 90);
+    }, {passive: false});
+
+    function finish(){
+      if (DRAG) return;                   // dragEnd owns this gesture
+      cancelPress();
+      if (!dragging) { reset(); return; }
+      var limit = Math.min(120, wrap.offsetWidth * 0.33);
+      var go = Math.abs(dx) > limit, right = dx > 0;
+      if (!go) { reset(); return; }
+      cardEl.style.transform = "translateX(" + (right ? 1 : -1) * wrap.offsetWidth + "px)";
+      wrap.classList.remove("dragging");
+      if (right) {
+        var was = archivedForMe(n);
+        persist(n, {archived: !was}, "Couldn't archive that")
+          .then(refresh)
+          .then(function(){
+            toast(was ? "Unarchived" : "Archived", function(){
+              persist(n, {archived: was}, "Couldn't undo that").then(refresh).catch(function(){});
+            });
+          }).catch(function(){ reset(); });
+      } else {
+        api("POST", "/api/notes/trash", {id: n.id}).then(function(d){
+          return refresh().then(function(){
+            toast("Deleted — it is in Trash", function(){
+              api("POST", "/api/notes/restore", {id: d.trashed}).then(refresh)
+                .catch(function(e){ fail("Couldn't restore that note", e); });
+            });
+          });
+        }).catch(function(e){ fail("Couldn't delete that note", e); reset(); });
+      }
+    }
+    wrap.addEventListener("touchend", finish, {passive: true});
+    wrap.addEventListener("touchcancel", function(){ cancelPress(); reset(); }, {passive: true});
+    return wrap;
+  }
+
+  // ---- drag a pinned note to reorder it ----
+  // Scoped to pinned notes (Chris, 2026-11-09). That also makes the hard part
+  // vanish: the pinned set is small, so a drop RENUMBERS it 10, 20, 30… and
+  // writes only the ones whose number actually changed — no fractional
+  // indexing, no drift, nothing to rebalance later.
+  var DRAG = null;
+
+  function lift(wrap, cardEl, n){
+    DRAG = {wrap: wrap, card: cardEl, note: n, moved: false, x0: 0, y0: 0};
+    wrap.classList.add("lifting");
+    cardEl.classList.add("lifted");
+  }
+
+  function pinnedWraps(){
+    var sec = el.wall.querySelector(".section");
+    return sec ? [].slice.call(sec.querySelectorAll(".swipe")) : [];
+  }
+
+  function dragMove(cx, cy){
+    if (!DRAG) return;
+    DRAG.moved = true;
+    DRAG.card.style.transform = "translate(" + (cx - DRAG.x0) + "px," + (cy - DRAG.y0) + "px) scale(1.03)";
+    // Where would it land? The first sibling whose centre we are past.
+    var wraps = pinnedWraps(), me = wraps.indexOf(DRAG.wrap), target = me;
+    for (var i = 0; i < wraps.length; i++) {
+      if (wraps[i] === DRAG.wrap) continue;
+      var r = wraps[i].getBoundingClientRect();
+      if (cy > r.top && cy < r.bottom && cx > r.left && cx < r.right) { target = i; break; }
+    }
+    DRAG.target = target;
+    wraps.forEach(function(w, i){ w.classList.toggle("ghost", i === target && i !== me); });
+  }
+
+  function dragEnd(){
+    if (!DRAG) return;
+    var d = DRAG; DRAG = null;
+    d.wrap.classList.remove("lifting");
+    d.card.classList.remove("lifted");
+    d.card.style.transform = "";
+    pinnedWraps().forEach(function(w){ w.classList.remove("ghost"); });
+
+    if (!d.moved) {                       // held and released: that is a select
+      if (selMode) toggleSel(d.note.id); else enterSel(d.note.id);
+      return;
+    }
+    if (d.target === undefined) return;
+
+    var pins = NOTES.filter(function(x){ return x.pinned; }).sort(function(a, b){
+      var ao = (a.order == null) ? Infinity : a.order, bo = (b.order == null) ? Infinity : b.order;
+      if (ao !== bo) return ao - bo;
+      return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
+    });
+    var from = pins.findIndex(function(x){ return x.id === d.note.id; });
+    if (from < 0 || d.target === from) return;
+    pins.splice(d.target, 0, pins.splice(from, 1)[0]);
+
+    var writes = [];
+    pins.forEach(function(x, i){
+      var want = (i + 1) * 10;
+      if (x.order !== want) { x.order = want; writes.push({id: x.id, order: want}); }
+    });
+    render();
+    writes.reduce(function(chain, w){
+      return chain.then(function(){ return api("PUT", "/api/notes", w).catch(function(){}); });
+    }, Promise.resolve()).then(refresh).catch(function(e){ fail("Couldn't reorder", e); refresh(); });
+  }
+
+  document.addEventListener("touchmove", function(ev){
+    if (!DRAG) return;
+    ev.preventDefault();
+    dragMove(ev.touches[0].clientX, ev.touches[0].clientY);
+  }, {passive: false});
+  document.addEventListener("touchend", function(){ if (DRAG) dragEnd(); }, {passive: true});
+  document.addEventListener("touchcancel", function(){ if (DRAG) dragEnd(); }, {passive: true});
+
+  // ---- pull down to sync ----
+  // Only from the very top, only when nothing is layered over the wall.
+  (function(){
+    if (!("ontouchstart" in window)) return;
+    var y0 = 0, pulling = false, dist = 0, THRESH = 72;
+    function busy(){ return ed || !el.scrim.hidden || el.drawer.classList.contains("open"); }
+    document.addEventListener("touchstart", function(ev){
+      if (busy() || window.scrollY > 0 || ev.touches.length !== 1) { pulling = false; return; }
+      y0 = ev.touches[0].clientY; pulling = true; dist = 0;
+    }, {passive: true});
+    document.addEventListener("touchmove", function(ev){
+      if (!pulling) return;
+      dist = ev.touches[0].clientY - y0;
+      if (dist <= 0) { el.ptr.hidden = true; return; }
+      if (window.scrollY > 0) { pulling = false; el.ptr.hidden = true; return; }
+      el.ptr.hidden = false;
+      var d = Math.min(dist, 110);
+      el.ptr.style.transform = "translate(-50%," + (d - 48) + "px) rotate(" + (d * 3) + "deg)";
+      el.ptr.style.opacity = Math.min(1, d / THRESH);
+    }, {passive: true});
+    document.addEventListener("touchend", function(){
+      if (!pulling) return;
+      pulling = false;
+      if (dist > THRESH) {
+        el.ptr.classList.add("spin");
+        el.ptr.style.transform = "translate(-50%, 10px)";
+        syncNow().then(function(){
+          el.ptr.classList.remove("spin"); el.ptr.hidden = true;
+        });
+      } else { el.ptr.hidden = true; }
+    }, {passive: true});
+  })();
+
   function columnCount(){
     var w = el.wall.clientWidth || window.innerWidth || 1280;
     if (w < 560) return 1;
@@ -883,7 +1380,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     var w = node("div", "wall");
     var cols = columnCount(), boxes = [];
     for (var i = 0; i < cols; i++) { boxes.push(node("div", "col")); w.appendChild(boxes[i]); }
-    items.forEach(function(n, i){ boxes[i % cols].appendChild(card(n)); });
+    items.forEach(function(n, i){ boxes[i % cols].appendChild(swipeable(card(n), n)); });
     s.appendChild(w);
     return s;
   }
@@ -912,7 +1409,14 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     // With a query the server returns them RANKED; re-sorting by date here
     // would throw that away and bury the best match.
     if (!q) shown.sort(function(a, b){ return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
-    var pinned = shown.filter(function(n){ return n.pinned; });
+    var pinned = shown.filter(function(n){ return n.pinned; }).sort(function(a, b){
+      // Manual position wins; anything never dragged keeps its date place
+      // behind the ones that were.
+      var ao = (a.order === null || a.order === undefined) ? Infinity : a.order;
+      var bo = (b.order === null || b.order === undefined) ? Infinity : b.order;
+      if (ao !== bo) return ao - bo;
+      return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
+    });
     var rest = shown.filter(function(n){ return !n.pinned; });
 
     // Pinned always render in full -- there are a handful, and they are the
@@ -940,6 +1444,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
           : pinned.length ? "Everything else" : "All notes", slice, false));
       if (more > 0) el.wall.appendChild(sentinel(more));
     }
+    drawSel();
     el.count.textContent = shown.length === NOTES.length
       ? NOTES.length + " notes"
       : shown.length + " / " + NOTES.length;
@@ -992,6 +1497,9 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     var states = (mode === "in")
       ? STATES.filter(function(p){ return !frag || p[0].indexOf(frag) >= 0; })
       : (mode === "all" && "in:".indexOf(t) === 0) ? STATES : [];
+    var unfiled = NOTES.filter(function(n){ return n.filed === false; }).length;
+    var wantNone = (mode === "cat" && "none".indexOf(frag) === 0) ||
+                   (mode === "all" && t.length > 1 && "uncategorised".indexOf(t) === 0);
     var cats = (mode === "by" || mode === "in") ? [] :
       Object.keys(CATS).filter(function(c){ return !frag || c.indexOf(frag) >= 0; })
         .sort(function(a, b){ return CATS[b] - CATS[a]; }).slice(0, mode === "cat" ? 8 : 5);
@@ -1001,7 +1509,21 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     var titles = (mode === "all")
       ? NOTES.filter(function(n){ return n.title.toLowerCase().indexOf(t) >= 0; }).slice(0, 6)
       : [];
-    if (!cats.length && !titles.length && !people.length && !states.length) { closeSug(); return; }
+    if (!cats.length && !titles.length && !people.length && !states.length && !wantNone) { closeSug(); return; }
+
+    if (wantNone) {
+      el.sug.appendChild(node("div", "sug-head", "Unfiled"));
+      var nb = node("button");
+      nb.setAttribute("role", "option");
+      nb.appendChild(node("span", "tag", "cat:none"));
+      nb.appendChild(node("span", "t", "notes with no category"));
+      if (unfiled) nb.appendChild(node("span", "n", unfiled));
+      nb.addEventListener("click", function(){
+        q = "cat:none"; el.q.value = q + " "; closeSug(); el.q.focus();
+        refresh().catch(function(e){ fail("Couldn't filter", e); });
+      });
+      el.sug.appendChild(nb);
+    }
 
     if (states.length) {
       el.sug.appendChild(node("div", "sug-head", "Status — filters with in:"));
@@ -1166,6 +1688,15 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   // "Ours" is a place, not a union. A note is in it because somebody put it
   // there, exactly like archived — so your own feed is YOUR notes, plus the
   // shared ones if you want them (you do, by default).
+  // Archived FOR ME. A shared note Mary put away is still on my wall, and
+  // vice versa — archive is "I am done with this", not a claim about anyone
+  // else. A note with no named archiver falls back to the old global flag,
+  // which is what the 764 imported from Keep carry.
+  function archivedForMe(n){
+    if (n.archived_by && n.archived_by.length) return n.archived_by.indexOf(meName()) >= 0;
+    return !!n.archived;
+  }
+
   function inScope(n, scope){
     if (scope === "all") return true;              // literally everything
     if (scope === "shared") return !!n.shared;
@@ -1232,9 +1763,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   function setMe(name){
     var v = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
     if (!v) return;
-    try {
-      document.cookie = "notes_who=" + v + "; path=/; max-age=" + (10 * 365 * 24 * 3600) + "; SameSite=Lax";
-    } catch (e) {}
+    writeCookieMe(v);
     ME = v;
     closeMenus(null);
     refresh().catch(function(){});
@@ -1536,7 +2065,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     el.edPeopleBtn.setAttribute("aria-pressed", sh ? "true" : "false");
     el.edPeopleBtn.setAttribute("title", sh ? "Shared \u2014 owner and sharing" : "Owner and sharing");
     el.edPeopleBtn.disabled = !ed.note;
-    var arch = !!(ed.note && ed.note.archived);
+    var arch = !!(ed.note && archivedForMe(ed.note));
     el.edArch.setAttribute("aria-pressed", arch ? "true" : "false");
     el.edArch.setAttribute("aria-label", arch ? "Unarchive note" : "Archive note");
     el.edArch.setAttribute("title", arch ? "Unarchive" : "Archive");
@@ -1639,7 +2168,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   el.edArch.addEventListener("click", function(){
     commit().then(function(){
       if (!ed || !ed.note) { close(); return; }
-      var n = ed.note, was = !!n.archived;
+      var n = ed.note, was = archivedForMe(n);
       close();
       return persist(n, {archived:!was}, "Couldn't archive that").then(function(){
         // Re-read rather than trust the local mutation: the archive view is a
@@ -1732,6 +2261,82 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     if (!el.sug.hidden && !el.sug.contains(ev.target) && ev.target !== el.q) closeSug();
   });
 
+  // ---- the drawer: every filter, on a screen with no room for a chip row ----
+  function icon(d){
+    var w = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    w.setAttribute("width","16"); w.setAttribute("height","16");
+    w.setAttribute("viewBox","0 0 24 24"); w.setAttribute("fill","none");
+    w.setAttribute("stroke","currentColor"); w.setAttribute("stroke-width","2");
+    w.setAttribute("stroke-linecap","round"); w.setAttribute("stroke-linejoin","round");
+    var p = document.createElementNS("http://www.w3.org/2000/svg","path");
+    p.setAttribute("d", d); w.appendChild(p); return w;
+  }
+  var ICONS = {
+    notes: "M4 4h16v16H4zM8 9h8M8 13h8M8 17h5",
+    archive: "M3 7h18v3H3zM5 10v10h14V10M9.5 14h5",
+    trash: "M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13",
+    mine: "M12 8a3.4 3.4 0 1 0 0-.1zM5.5 20a6.5 6.5 0 0 1 13 0",
+    ours: "M9 8a3.2 3.2 0 1 0 0-.1zM3 19a6 6 0 0 1 12 0M18 7v6M21 10h-6",
+    all: "M4 6h16M4 12h16M4 18h16",
+    tag: "M3 11V5a2 2 0 0 1 2-2h6l10 10-8 8z"
+  };
+
+  function drawerRow(label, ico, pressed, count, onClick){
+    var b = node("button");
+    b.setAttribute("aria-pressed", pressed ? "true" : "false");
+    b.appendChild(icon(ICONS[ico] || ICONS.tag));
+    b.appendChild(document.createTextNode(label));
+    if (count !== undefined && count !== null) b.appendChild(node("span", "n", count));
+    b.addEventListener("click", function(){ closeDrawer(); onClick(); });
+    return b;
+  }
+
+  function fillDrawer(){
+    el.drawer.textContent = "";
+    el.drawer.appendChild(node("h2", null, "Views"));
+    el.drawer.appendChild(drawerRow("Notes", "notes", view === "wall", null, function(){ setView(view); }));
+    el.drawer.appendChild(drawerRow("Archive", "archive", view === "archive", null, function(){ if (view !== "archive") setView("archive"); }));
+    el.drawer.appendChild(drawerRow("Trash", "trash", view === "trash", null, function(){ if (view !== "trash") setView("trash"); }));
+    el.drawer.appendChild(node("div", "sep"));
+    el.drawer.appendChild(node("h2", null, "Whose"));
+    [["mine","Mine","mine"],["shared","Ours","ours"],["all","All","all"]].forEach(function(o){
+      var n = NOTES.filter(function(x){ return inScope(x, o[0]); }).length;
+      el.drawer.appendChild(drawerRow(o[1], o[2], who === o[0], n, function(){
+        who = o[0];
+        var rest = (q || "").split(/\s+/).filter(function(x){ return x && x.toLowerCase().indexOf("by:") !== 0; }).join(" ");
+        if (rest !== q) { q = rest; el.q.value = q ? q + " " : ""; }
+        refresh().catch(function(e){ fail("Couldn't switch", e); });
+      }));
+    });
+    el.drawer.appendChild(node("div", "sep"));
+    el.drawer.appendChild(node("h2", null, "Categories"));
+    var active = activeCat();
+    var keys = Object.keys(CATS).sort(function(a, b){ return CATS[b] - CATS[a] || (a < b ? -1 : 1); });
+    el.drawer.appendChild(drawerRow("All topics", "tag", !active, null, function(){ setCat(""); }));
+    keys.forEach(function(k){
+      el.drawer.appendChild(drawerRow(k.replace(/-/g, " "), "tag", active === k, CATS[k], function(){ setCat(k); }));
+    });
+  }
+
+  function openDrawer(){
+    fillDrawer();
+    el.drawer.classList.add("open");
+    el.drawerScrim.classList.add("open");
+    el.menuBtn.setAttribute("aria-expanded", "true");
+  }
+  function closeDrawer(){
+    el.drawer.classList.remove("open");
+    el.drawerScrim.classList.remove("open");
+    el.menuBtn.setAttribute("aria-expanded", "false");
+  }
+  el.menuBtn.addEventListener("click", function(){
+    if (el.drawer.classList.contains("open")) closeDrawer(); else openDrawer();
+  });
+  el.drawerScrim.addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", function(ev){
+    if (ev.key === "Escape" && el.drawer.classList.contains("open")) closeDrawer();
+  });
+
   // ---- keyboard ----
   // Ctrl/Cmd-F, -N and -S are taken over deliberately: the browser's own Find
   // only searches the ~60 cards currently in the DOM, which on a 586-note wall
@@ -1757,7 +2362,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   // sure nothing is in flight and the wall matches the disk.
   function syncNow(){
     var p = ed ? commit() : Promise.resolve();
-    p.then(refresh).then(function(){
+    return p.then(refresh).then(function(){
       setNet(true);
       toast(ed ? "Saved" : "Synced", null);
     }).catch(function(e){ fail("Sync failed", e); });

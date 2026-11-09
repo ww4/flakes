@@ -53,6 +53,7 @@ class NoteWrite(NoteRef):
     pinned: bool | None = None
     archived: bool | None = None
     shared: bool | None = None
+    order: int | None = Field(default=None, ge=-1, le=100000)
     category: str | None = Field(default=None, max_length=60)
     author: str | None = Field(default=None, max_length=40)
 
@@ -80,6 +81,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         q: str | None = None,
         scope: str = "all",
         shared: int = 1,
+        me: str | None = None,
     ):
         """The wall: summaries only, and the search runs here.
 
@@ -93,7 +95,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "cats": store.census(
                 space,
                 scope=scope if scope in ("mine", "shared", "all") else "all",
-                me=who(request) or store.HUMAN,
+                # The query param keeps the CACHE key honest — the service
+                # worker stores this response, and two people on one box must
+                # not share an entry. The cookie remains authoritative for
+                # writes, which are never cached.
+                me=(me if me and WHO_RE.match(me) else who(request)) or store.HUMAN,
                 show_shared=bool(shared),
             ),
             "authors": store.authors(space),
@@ -114,17 +120,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Attribution comes from the DEVICE, not from the client asking nicely:
         # the cookie is read here so a note is stamped the same way whichever
         # code path created it.
+        # No invented "Untitled": a Keep note may have only a body, and so
+        # may one made here.
         return store.create(space, req.title, req.body, author=who(request)).summary()
 
     @app.put("/api/notes")
-    async def update_note(req: NoteWrite):
+    async def update_note(req: NoteWrite, request: Request):
         if not paths.resolve(space, req.id).exists():
             raise HTTPException(404, "no such note")
         return store.write(
             space, req.id,
             title=req.title, body=req.body,
-            pinned=req.pinned, archived=req.archived, shared=req.shared,
+            pinned=req.pinned, archived=req.archived, shared=req.shared, order=req.order,
             category=req.category, author=req.author,
+            actor=who(request) or store.HUMAN,
         ).summary()
 
     @app.get("/api/trash")

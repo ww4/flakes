@@ -600,3 +600,173 @@ def test_census_shared_counts_only_the_shared_space(space):
     store.write(space, n.id, shared=True)
     store.create(space, "private", "x")
     assert sum(store.census(space, scope="shared").values()) == 1
+
+
+# --- untitled notes ----------------------------------------------------------
+# Keep treats a title as optional and Mary mostly leaves it off. Those notes get
+# a "<date> <keep_id>" FILENAME for uniqueness; that must never surface as a
+# title (it did, on 347 of her cards).
+
+def test_a_keep_id_filename_yields_no_title(space):
+    rel = "Keep/2020-02-14 1581722144437000.md"
+    (space / rel).write_text("---\ndate: 2020-02-14\n---\n\nmilk\neggs\n")
+    n = store.read(space, rel)
+    assert n.title == ""
+    assert n.body == "milk\neggs"
+
+
+def test_editing_an_untitled_note_does_not_invent_a_heading(space):
+    rel = "Keep/2020-02-14 1581722144437000.md"
+    (space / rel).write_text("---\ndate: 2020-02-14\n---\n\nmilk\n")
+    store.write(space, rel, body="milk\neggs")
+    text = (space / rel).read_text()
+    assert "# " not in text
+    assert store.read(space, rel).title == ""
+
+
+def test_giving_an_untitled_note_a_title_writes_a_heading(space):
+    rel = "Keep/2020-02-14 1581722144437000.md"
+    (space / rel).write_text("---\ndate: 2020-02-14\n---\n\nmilk\n")
+    store.write(space, rel, title="Shopping")
+    assert "# Shopping" in (space / rel).read_text()
+    assert store.read(space, rel).title == "Shopping"
+
+
+def test_a_normal_filename_still_yields_a_title(space):
+    n = store.read(space, "Keep/2017-03-04 Bring from Kentucky.md")
+    assert n.title == "Bring from Kentucky"
+
+
+def test_a_new_note_with_no_title_gets_no_heading(space):
+    n = store.create(space, "", "just a thought")
+    assert n.title == ""
+    text = (space / n.id).read_text()
+    assert "# " not in text and "Untitled" not in text
+    assert store.read(space, n.id).body == "just a thought"
+
+
+# --- cat:none ----------------------------------------------------------------
+# An unfiled note inherits its folder name as a display category, so without a
+# "was it actually filed" bit, "uncategorised" cannot be asked for at all.
+
+def test_filed_distinguishes_chosen_from_inherited(space):
+    rel = "Keep/2017-03-04 Bring from Kentucky.md"
+    assert store.read(space, rel).filed is True          # has category: logistics
+    (space / "Keep/loose.md").write_text("# loose\n\nnothing\n")
+    loose = store.read(space, "Keep/loose.md")
+    assert loose.filed is False
+    assert loose.cat == "keep"                            # still displays a folder
+
+
+def test_cat_none_finds_only_unfiled_notes(space):
+    (space / "Keep/loose.md").write_text("# loose\n\nnothing\n")
+    ids = [n.id for n in store.listing(space, "cat:none")]
+    assert "Keep/loose.md" in ids
+    assert "Keep/2017-03-04 Bring from Kentucky.md" not in ids
+
+
+def test_cat_none_composes_with_terms(space):
+    (space / "Keep/loose.md").write_text("# loose\n\nxyzzy\n")
+    (space / "Keep/loose2.md").write_text("# loose2\n\nsomething else\n")
+    assert [n.id for n in store.listing(space, "cat:none xyzzy")] == ["Keep/loose.md"]
+
+
+def test_filing_a_note_moves_it_out_of_cat_none(space):
+    (space / "Keep/loose.md").write_text("# loose\n\nnothing\n")
+    store.write(space, "Keep/loose.md", category="logistics")
+    assert "Keep/loose.md" not in [n.id for n in store.listing(space, "cat:none")]
+    assert store.read(space, "Keep/loose.md").filed is True
+
+
+# --- archive is personal, trash is not ---------------------------------------
+# Chris asked what happens when he archives a SHARED note. It used to archive
+# for Mary too, because the flag lived on the one file they both read.
+
+def test_archiving_names_who_did_it(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True)
+    store.write(space, n.id, archived=True, actor="chris")
+    got = store.read(space, n.id)
+    assert got.archived_by == ["chris"]
+    assert "archived_by: chris" in (space / n.id).read_text()
+
+
+def test_one_person_archiving_leaves_the_other_alone(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True)
+    store.write(space, n.id, archived=True, actor="chris")
+    assert store.read(space, n.id).archived_by == ["chris"]   # not mary
+    store.write(space, n.id, archived=True, actor="mary")
+    assert store.read(space, n.id).archived_by == ["chris", "mary"]
+    store.write(space, n.id, archived=False, actor="chris")
+    assert store.read(space, n.id).archived_by == ["mary"]    # hers survives
+
+
+def test_unarchiving_the_last_person_clears_the_key(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, archived=True, actor="chris")
+    store.write(space, n.id, archived=False, actor="chris")
+    text = (space / n.id).read_text()
+    assert "archived" not in text
+    assert store.read(space, n.id).archived_by == []
+
+
+def test_a_legacy_global_flag_is_preserved_for_the_other_party(space):
+    """The 764 notes imported from Keep carry a plain `archived: true`."""
+    rel = "Notes/old.md"
+    (space / rel).write_text("---\narchived: true\nauthor: mary\n---\n\n# old\n\nx\n")
+    assert store.read(space, rel).archived is True
+    # Chris unarchiving it for himself must not un-archive it for Mary
+    store.write(space, rel, archived=False, actor="chris")
+    assert store.read(space, rel).archived_by == ["mary"]
+
+
+def test_archiving_does_not_disturb_sharing_or_owner(space):
+    n = store.create(space, "hers", "x", author="mary")
+    store.write(space, n.id, shared=True)
+    store.write(space, n.id, archived=True, actor="chris")
+    got = store.read(space, n.id)
+    assert got.author == "mary" and got.shared is True and got.archived_by == ["chris"]
+
+
+def test_trash_is_global_and_that_is_deliberate(space):
+    """Delete MOVES the file; there is no per-person version of that."""
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True)
+    trashed = store.trash(space, n.id)
+    assert not (space / n.id).exists()          # gone for everyone
+    assert (space / trashed).exists()           # and recoverable by anyone
+
+
+# --- manual order, pinned notes only -----------------------------------------
+# Chris scoped drag-to-reorder to pinned notes: ordering 1382 notes by hand is
+# not a thing anyone does, ordering the handful you pinned is.
+
+def test_order_round_trips(space):
+    n = store.create(space, "a", "x")
+    assert store.read(space, n.id).order is None
+    store.write(space, n.id, order=20)
+    assert store.read(space, n.id).order == 20
+    assert "order: 20" in (space / n.id).read_text()
+
+
+def test_a_negative_order_clears_it(space):
+    n = store.create(space, "a", "x")
+    store.write(space, n.id, order=20)
+    store.write(space, n.id, order=-1)
+    assert store.read(space, n.id).order is None
+    assert "order:" not in (space / n.id).read_text()
+
+
+def test_order_survives_edits_and_pins(space):
+    n = store.create(space, "a", "x")
+    store.write(space, n.id, order=30)
+    store.write(space, n.id, body="y", pinned=True)
+    got = store.read(space, n.id)
+    assert got.order == 30 and got.pinned is True
+
+
+def test_a_junk_order_value_reads_as_unset(space):
+    rel = "Keep/2017-03-04 Bring from Kentucky.md"
+    (space / rel).write_text("---\norder: banana\n---\n\n# x\n\ny\n")
+    assert store.read(space, rel).order is None
