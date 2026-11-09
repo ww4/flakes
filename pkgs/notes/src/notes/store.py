@@ -54,7 +54,8 @@ class Note:
     cat: str
     date: str
     pinned: bool
-    archived: bool
+    archived: bool          # legacy/global: archived for everyone
+    archived_by: list[str]  # and per person, which is what a shared note needs
     shared: bool
     filed: bool
     author: str
@@ -127,6 +128,18 @@ def _title_from_name(rel: str) -> str:
     return rest or stem
 
 
+def _archived_any(fm: list[str]) -> bool:
+    """Archived by anyone — the legacy global flag, or any named person.
+
+    Per-VIEWER archiving is the client's question (is my name on it?); this is
+    the coarse "has anyone put this away" used for counting and for the
+    pre-identity notes that carry a bare archived: true.
+    """
+    if (_fm_get(fm, "archived") or "").lower() in TRUE:
+        return True
+    return bool([w for w in re.split(r"[,\s]+", (_fm_get(fm, "archived_by") or "")) if w])
+
+
 def _category(rel: str, fm: list[str]) -> str:
     explicit = _fm_get(fm, "category")
     if explicit:
@@ -165,7 +178,8 @@ def read(space: Path, rel: str, *, allow_trash: bool = False) -> Note:
         filed=bool(_fm_get(fm, "category")),
         date=when[:10],
         pinned=(_fm_get(fm, "pinned") or "").lower() in TRUE,
-        archived=(_fm_get(fm, "archived") or "").lower() in TRUE,
+        archived=_archived_any(fm),
+        archived_by=[w for w in re.split(r"[,\s]+", (_fm_get(fm, "archived_by") or "")) if w],
         shared=(_fm_get(fm, "shared") or "").lower() in TRUE,
         author=(_fm_get(fm, "author") or HUMAN).strip().lower(),
         had_h1=had_h1,
@@ -204,6 +218,7 @@ def write(
     pinned: bool | None = None,
     archived: bool | None = None,
     shared: bool | None = None,
+    actor: str | None = None,
     category: str | None = None,
     author: str | None = None,
 ) -> Note:
@@ -219,7 +234,26 @@ def write(
     if pinned is not None:
         fm = _fm_set(fm, "pinned", "true" if pinned else None)
     if archived is not None:
-        fm = _fm_set(fm, "archived", "true" if archived else None)
+        # ARCHIVE IS PERSONAL. Chris asked what happens when he archives a
+        # SHARED note, and the honest answer was "it archives for Mary too" —
+        # the flag lived on the one file they both read. Archive means "I am
+        # done with this", which is not a claim about anyone else, so it
+        # records WHO, and a viewer sees it archived only if they are named.
+        #
+        # (Trash stays global, and has to: it MOVES the file. A shared note
+        # either of them deletes is gone for both. Said plainly, not faked.)
+        act = re.sub(r"[^a-z0-9_-]+", "", (actor or HUMAN).strip().lower())[:32] or HUMAN
+        now = list(current.archived_by)
+        if current.archived and not now:
+            # An old GLOBAL flag meant archived, full stop. Keep that true for
+            # everyone else while this person changes only their own view.
+            now = sorted({current.author, HUMAN})
+        if archived and act not in now:
+            now.append(act)
+        if not archived and act in now:
+            now.remove(act)
+        fm = _fm_set(fm, "archived", None)
+        fm = _fm_set(fm, "archived_by", ", ".join(sorted(set(now))) if now else None)
     if shared is not None:
         # "Shared" is a PLACE a note is put, like archived -- not a computed
         # union of everyone's notes. Chris: "I want that to be a shared space

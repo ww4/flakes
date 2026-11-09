@@ -676,3 +676,63 @@ def test_filing_a_note_moves_it_out_of_cat_none(space):
     store.write(space, "Keep/loose.md", category="logistics")
     assert "Keep/loose.md" not in [n.id for n in store.listing(space, "cat:none")]
     assert store.read(space, "Keep/loose.md").filed is True
+
+
+# --- archive is personal, trash is not ---------------------------------------
+# Chris asked what happens when he archives a SHARED note. It used to archive
+# for Mary too, because the flag lived on the one file they both read.
+
+def test_archiving_names_who_did_it(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True)
+    store.write(space, n.id, archived=True, actor="chris")
+    got = store.read(space, n.id)
+    assert got.archived_by == ["chris"]
+    assert "archived_by: chris" in (space / n.id).read_text()
+
+
+def test_one_person_archiving_leaves_the_other_alone(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True)
+    store.write(space, n.id, archived=True, actor="chris")
+    assert store.read(space, n.id).archived_by == ["chris"]   # not mary
+    store.write(space, n.id, archived=True, actor="mary")
+    assert store.read(space, n.id).archived_by == ["chris", "mary"]
+    store.write(space, n.id, archived=False, actor="chris")
+    assert store.read(space, n.id).archived_by == ["mary"]    # hers survives
+
+
+def test_unarchiving_the_last_person_clears_the_key(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, archived=True, actor="chris")
+    store.write(space, n.id, archived=False, actor="chris")
+    text = (space / n.id).read_text()
+    assert "archived" not in text
+    assert store.read(space, n.id).archived_by == []
+
+
+def test_a_legacy_global_flag_is_preserved_for_the_other_party(space):
+    """The 764 notes imported from Keep carry a plain `archived: true`."""
+    rel = "Notes/old.md"
+    (space / rel).write_text("---\narchived: true\nauthor: mary\n---\n\n# old\n\nx\n")
+    assert store.read(space, rel).archived is True
+    # Chris unarchiving it for himself must not un-archive it for Mary
+    store.write(space, rel, archived=False, actor="chris")
+    assert store.read(space, rel).archived_by == ["mary"]
+
+
+def test_archiving_does_not_disturb_sharing_or_owner(space):
+    n = store.create(space, "hers", "x", author="mary")
+    store.write(space, n.id, shared=True)
+    store.write(space, n.id, archived=True, actor="chris")
+    got = store.read(space, n.id)
+    assert got.author == "mary" and got.shared is True and got.archived_by == ["chris"]
+
+
+def test_trash_is_global_and_that_is_deliberate(space):
+    """Delete MOVES the file; there is no per-person version of that."""
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True)
+    trashed = store.trash(space, n.id)
+    assert not (space / n.id).exists()          # gone for everyone
+    assert (space / trashed).exists()           # and recoverable by anyone

@@ -692,7 +692,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     if (!inScope(n, who)) return false;
     if (onlyQueued) return !!n.pending;
     if (view === "trash") return true;        // the trash view IS its own list
-    if (!!n.archived !== showArchive()) return false;
+    if (archivedForMe(n) !== showArchive()) return false;
     return true;   // text AND category matching happen server-side
   }
 
@@ -1187,6 +1187,15 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   // "Ours" is a place, not a union. A note is in it because somebody put it
   // there, exactly like archived — so your own feed is YOUR notes, plus the
   // shared ones if you want them (you do, by default).
+  // Archived FOR ME. A shared note Mary put away is still on my wall, and
+  // vice versa — archive is "I am done with this", not a claim about anyone
+  // else. A note with no named archiver falls back to the old global flag,
+  // which is what the 764 imported from Keep carry.
+  function archivedForMe(n){
+    if (n.archived_by && n.archived_by.length) return n.archived_by.indexOf(meName()) >= 0;
+    return !!n.archived;
+  }
+
   function inScope(n, scope){
     if (scope === "all") return true;              // literally everything
     if (scope === "shared") return !!n.shared;
@@ -1557,7 +1566,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     el.edPeopleBtn.setAttribute("aria-pressed", sh ? "true" : "false");
     el.edPeopleBtn.setAttribute("title", sh ? "Shared \u2014 owner and sharing" : "Owner and sharing");
     el.edPeopleBtn.disabled = !ed.note;
-    var arch = !!(ed.note && ed.note.archived);
+    var arch = !!(ed.note && archivedForMe(ed.note));
     el.edArch.setAttribute("aria-pressed", arch ? "true" : "false");
     el.edArch.setAttribute("aria-label", arch ? "Unarchive note" : "Archive note");
     el.edArch.setAttribute("title", arch ? "Unarchive" : "Archive");
@@ -1660,7 +1669,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   el.edArch.addEventListener("click", function(){
     commit().then(function(){
       if (!ed || !ed.note) { close(); return; }
-      var n = ed.note, was = !!n.archived;
+      var n = ed.note, was = archivedForMe(n);
       close();
       return persist(n, {archived:!was}, "Couldn't archive that").then(function(){
         // Re-read rather than trust the local mutation: the archive view is a

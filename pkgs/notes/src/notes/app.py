@@ -119,7 +119,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return store.create(space, req.title, req.body, author=who(request)).summary()
 
     @app.put("/api/notes")
-    async def update_note(req: NoteWrite):
+    async def update_note(req: NoteWrite, request: Request):
         if not paths.resolve(space, req.id).exists():
             raise HTTPException(404, "no such note")
         return store.write(
@@ -127,6 +127,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             title=req.title, body=req.body,
             pinned=req.pinned, archived=req.archived, shared=req.shared,
             category=req.category, author=req.author,
+            actor=who(request) or store.HUMAN,
         ).summary()
 
     @app.get("/api/trash")
