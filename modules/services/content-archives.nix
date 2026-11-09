@@ -88,6 +88,19 @@ in
       description = "systemd OnCalendar expression for the weekly run.";
     };
 
+    buildTimeout = lib.mkOption {
+      type = lib.types.str;
+      default = "5m";
+      description = ''
+        Wall-clock cap on a single archive's build.py, as `timeout` spells it.
+        Not the same thing as build.py's socket timeout, which bounds idle time
+        between reads rather than the total: on 2026-11-05 btcexplained spent 40
+        minutes on one feed fetch using 6.4s of CPU, and took the whole run down
+        with it when the unit's own timeout fired. A normal archive builds in
+        seconds, so this is pure headroom.
+      '';
+    };
+
     staleDays = lib.mkOption {
       type = lib.types.int;
       default = 21;
@@ -125,6 +138,7 @@ in
         Environment = [
           "HOME=${cfg.home}"          # git finds the ww4-bot credential helper
           "STALE_DAYS=${toString cfg.staleDays}"
+          "BUILD_TIMEOUT=${cfg.buildTimeout}"
         ];
         # ⚠️ The archive list is passed as ARGV, not as an environment variable,
         # and that is the whole point of this line. It used to be
@@ -141,8 +155,11 @@ in
         ExecStart = "${lib.getExe refresh} ${
           lib.escapeShellArgs (map (a: "${a.name}:${a.path}") cfg.archives)
         }";
-        # Feed fetches + a full FTS5 reindex; generous but bounded.
-        TimeoutStartSec = "45min";
+        # Feed fetches + a full FTS5 reindex; generous but bounded. Sized to sit
+        # ABOVE the worst case the per-archive buildTimeout allows (9 x 5min),
+        # so that when one archive hangs it is the archive that gets killed and
+        # named in the log, not the whole run killed anonymously at the end.
+        TimeoutStartSec = "60min";
       };
     };
 

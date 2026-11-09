@@ -28,6 +28,7 @@ set -uo pipefail
 
 STAMP_DIR=${STATE_DIRECTORY:-/var/lib/content-archives}
 STALE_DAYS=${STALE_DAYS:-21}
+BUILD_TIMEOUT=${BUILD_TIMEOUT:-5m}
 
 log() { echo "content-archives: $*"; }
 
@@ -83,8 +84,26 @@ refresh_one() {
     log "$name: origin has no main yet — bootstrapping"
   fi
 
-  if ! out=$(cd "$path" && python3 build.py 2>&1); then
-    log "$name: build.py failed"
+  # ⚠️ A WALL-CLOCK CAP, because build.py's own socket timeout is not one.
+  # 2026-11-05: btcexplained wrote 43 files and then sat for FORTY MINUTES on a
+  # feed fetch -- 6.4s of CPU across 45 min of wall clock -- until the unit hit
+  # TimeoutStartSec and was SIGTERMed, taking the whole run down with it. The
+  # fetch already passes timeout=60 to urlopen, and that is exactly the trap:
+  # the socket timeout bounds IDLE time between reads, not the total, so a
+  # server trickling a byte at a time resets it forever. One archive's bad
+  # morning must not cost the other eight their refresh.
+  #    ⚠️ CAPTURE THE STATUS, THEN TEST IT. `if ! out=$(cmd); then rc=$?` reads
+  #    ZERO -- the `!` has already replaced the status by the time the branch
+  #    runs -- so the timeout case below would have printed "failed (exit 0)"
+  #    and never once said TIMED OUT. Measured, not reasoned: the same script
+  #    shape returns 0 under `if !` and 124 when captured first.
+  out=$(cd "$path" && timeout "$BUILD_TIMEOUT" python3 build.py 2>&1); rc=$?
+  if [ "$rc" -ne 0 ]; then
+    if [ "$rc" -eq 124 ]; then
+      log "$name: build.py TIMED OUT after $BUILD_TIMEOUT (killed; the other archives still run)"
+    else
+      log "$name: build.py failed (exit $rc)"
+    fi
     printf '%s\n' "$out" | tail -5
     return 1
   fi
@@ -94,10 +113,14 @@ refresh_one() {
   newcount=$(printf '%s' "$out" | grep -oE 'Done\. [0-9]+ new' | grep -oE '[0-9]+' | head -1)
   newcount=${newcount:-0}
 
-  # A successful build with nothing new is still a success — the show simply
-  # had no new episodes. Stamp it so freshness tracks the CHECK, not the feed.
-  date +%s > "$stamp"
-
+  # ⚠️ THE STAMP IS WRITTEN AT THE SUCCESS RETURNS BELOW, NOT HERE. It used to
+  # be written at this point, right after build.py, and that is why seven weeks
+  # of totally dead pushes never raised anything: every run stamped itself
+  # healthy before even attempting the push, so staleness could never grow, the
+  # failure stayed inside the grace window forever, and the unit exited 0 while
+  # 44 commits piled up unpushed across nine archives. A freshness stamp has to
+  # mean "this archive is in sync with the forge" -- the thing the unit exists
+  # to achieve -- not "the step before the one that fails ran fine".
   # One path at a time: a single unexpected/ignored path must not abort the
   # whole staging step and leave us silently committing nothing.
   local g
@@ -128,6 +151,8 @@ refresh_one() {
   fi
 
   if [ "$ahead" -eq 0 ]; then
+    # Genuinely in sync: nothing local that the forge lacks.
+    date +%s > "$stamp"
     log "$name: up to date with origin (no new episodes)"
     return 0
   fi
@@ -136,6 +161,7 @@ refresh_one() {
     log "$name: push failed ($ahead commit(s) local; next run will retry)"
     return 1
   fi
+  date +%s > "$stamp"
   log "$name: pushed ($ahead commit(s), +$newcount episode(s) this run)"
   return 0
 }
