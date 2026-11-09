@@ -248,6 +248,36 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   text-transform:uppercase; color:var(--ink-soft); padding-left:2px;
 }
 
+/* who is on this device */
+.me-btn{
+  flex:none; width:30px; height:30px; border-radius:999px; cursor:pointer;
+  border:1px solid var(--line); background:var(--surface); color:var(--ink);
+  font:600 12px/1 Archivo,system-ui,sans-serif; letter-spacing:.02em;
+  display:grid; place-items:center;
+}
+.me-btn:hover{border-color:var(--accent); color:var(--accent)}
+.me-btn.unset{border-style:dashed; color:var(--ink-soft)}
+.whobar{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  max-width:1280px; margin:0 auto; padding:0 0 10px;
+}
+.whobar[hidden]{display:none}
+.whobar span{
+  font:500 10px/1.6 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--ink-soft);
+}
+.whobar button{
+  border:1px solid var(--line); background:var(--surface); color:var(--ink);
+  border-radius:999px; padding:5px 13px; cursor:pointer;
+  font:500 11px/1.3 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.05em; text-transform:uppercase;
+}
+.whobar button:hover{border-color:var(--accent); color:var(--accent)}
+.meta .by{color:var(--brass); text-transform:uppercase; letter-spacing:.08em; font-weight:500}
+.meta .shared-mark{display:inline-flex; color:var(--accent)}
+.card.shared{box-shadow:var(--shadow), inset 3px 0 0 var(--accent)}
+.card.shared.pinned{box-shadow:var(--shadow), inset 3px 0 0 var(--brass)}
+
 /* online / offline */
 .net{
   flex:none; display:grid; place-items:center; width:30px; height:30px;
@@ -355,6 +385,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 .tool:hover{background:var(--surface-2); color:var(--ink)}
 .tool[aria-pressed="true"]{background:var(--accent-wash); color:var(--accent)}
 .tool.brass[aria-pressed="true"]{background:var(--brass-wash); color:var(--brass)}
+.tool.share[aria-pressed="true"]{background:var(--accent-wash); color:var(--accent)}
 .ed-bar .sp{flex:1}
 .saved{
   font:400 10px/1 "IBM Plex Mono",ui-monospace,monospace;
@@ -395,10 +426,12 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       <div class="sug" id="sug" role="listbox" aria-label="Suggestions" hidden></div>
     </div>
     <span class="net" id="net" title="Online" aria-live="polite"></span>
+    <button class="me-btn unset" id="meBtn" title="Who's using this device?" aria-label="Who's using this device?">?</button>
     <button class="iconbtn" id="archBtn" aria-pressed="false" title="Show archive" aria-label="Show archive">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h18v3H3zM5 10v10h14V10M9.5 14h5"/></svg>
     </button>
   </div>
+  <div class="whobar" id="whobar" hidden></div>
   <div class="filters">
     <div class="seg" id="who" role="group" aria-label="Whose notes"></div>
     <div class="chips" id="chips"></div>
@@ -438,6 +471,9 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       <button class="tool brass" id="edArch" aria-pressed="false" aria-label="Archive note" title="Archive">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18v3H3zM5 10v10h14V10M9.5 14h5"/></svg>
       </button>
+      <button class="tool share" id="edShare" aria-pressed="false" aria-label="Add to the shared space" title="Add to Ours">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.4"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M19 6.5v7M22.5 10h-7"/></svg>
+      </button>
       <button class="tool" id="edDel" aria-label="Delete note" title="Delete">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>
       </button>
@@ -445,8 +481,16 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11V5a2 2 0 0 1 2-2h6l10 10-8 8z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg>
       </button>
       <span class="cat-now" id="edCatNow"></span>
+      <button class="tool" id="edWhoBtn" aria-label="Whose note" title="Whose note" aria-expanded="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.4"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/></svg>
+      </button>
+      <span class="cat-now" id="edWhoNow"></span>
       <span class="sp"></span>
       <span class="saved" id="edSaved"></span>
+      <div class="catpop" id="whopop" hidden>
+        <input id="edWho" placeholder="Whose note is this?" autocomplete="off" spellcheck="false" aria-label="Author">
+        <div class="catlist" id="wholistBox"></div>
+      </div>
       <div class="catpop" id="catpop" hidden>
         <input id="edCat" placeholder="Type a category, Enter to set" autocomplete="off" spellcheck="false" aria-label="Category">
         <div class="catlist" id="catlistBox"></div>
@@ -464,7 +508,15 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   // go stale against four other writers of this space (SilverBullet, the
   // daybook, the agent, a git restore). Every mutation is a request; the
   // reply is what we render.
-  var NOTES = [], CATS = {};
+  var NOTES = [], CATS = {}, AUTHORS = {}, ME = null;
+
+  // Whether the shared space shows up in your own feed. Per device, on by
+  // default — the point of a shared list is that you see it without asking.
+  var SHOW_SHARED = true;
+  try {
+    var pref = localStorage.getItem("notes-show-shared");
+    if (pref !== null) SHOW_SHARED = pref === "1";
+  } catch (e) {}
 
   function api(method, url, body){
     return fetch(url, {
@@ -497,6 +549,8 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       if (mine !== searchSeq) return;   // a newer keystroke already won
       NOTES = d.notes;
       if (d.cats) CATS = d.cats;        // full census, never filtered by q
+      if (d.authors) AUTHORS = d.authors;
+      ME = d.me || null;                // the server read it from the cookie
       shownCount = PAGE; render();
     });
   }
@@ -544,9 +598,14 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   var el = {
     q:document.getElementById("q"), chips:document.getElementById("chips"),
     who:document.getElementById("who"), sug:document.getElementById("sug"),
+    meBtn:document.getElementById("meBtn"), whobar:document.getElementById("whobar"),
     edCat:document.getElementById("edCat"), catpop:document.getElementById("catpop"),
     edCatBtn:document.getElementById("edCatBtn"), edCatNow:document.getElementById("edCatNow"),
     catlistBox:document.getElementById("catlistBox"), net:document.getElementById("net"),
+    edShare:document.getElementById("edShare"),
+    edWhoBtn:document.getElementById("edWhoBtn"), edWhoNow:document.getElementById("edWhoNow"),
+    whopop:document.getElementById("whopop"), edWho:document.getElementById("edWho"),
+    wholistBox:document.getElementById("wholistBox"),
     wall:document.getElementById("wall"), count:document.getElementById("count"),
     archBtn:document.getElementById("archBtn"), scrim:document.getElementById("scrim"),
     edClose:document.getElementById("edClose"), edTitle:document.getElementById("edTitle"),
@@ -560,7 +619,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   el.q.placeholder = "Search notes";
 
   function matches(n){
-    if (who !== "all" && n.author !== (who === "mine" ? "chris" : "claude")) return false;
+    if (!inScope(n, who)) return false;
     if (!!n.archived !== showArch) return false;
     return true;   // text AND category matching happen server-side
   }
@@ -686,7 +745,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   }
 
   function card(n){
-    var c = node("div", "card" + (n.pinned ? " pinned" : "") + (n.pending ? " pending" : ""));
+    var c = node("div", "card" + (n.shared ? " shared" : "") + (n.pinned ? " pinned" : "") + (n.pending ? " pending" : ""));
     c.tabIndex = 0;
     c.appendChild(highlight(node("h3", null, n.title)));
 
@@ -704,6 +763,15 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 
     var meta = node("div", "meta");
     meta.appendChild(node("span", "cat", n.pending ? "queued" : n.cat));
+    // Say who wrote it only when that is not you — otherwise every card on
+    // your own wall carries your own name, which is noise.
+    if (!n.pending && n.author !== meName()) meta.appendChild(node("span", "by", n.author));
+    if (n.shared) {
+      var sh = node("span", "shared-mark");
+      sh.setAttribute("title", "In the shared space");
+      sh.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 19a6 6 0 0 1 12 0M18 7v6M21 10h-6"/></svg>';
+      meta.appendChild(sh);
+    }
     meta.appendChild(node("span", "sp"));
     meta.appendChild(node("span", "yr", n.date));
     c.appendChild(meta);
@@ -833,7 +901,8 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     var cats = Object.keys(CATS).filter(function(c){ return c.indexOf(t) >= 0; })
       .sort(function(a, b){ return CATS[b] - CATS[a]; }).slice(0, 5);
     var titles = NOTES.filter(function(n){ return n.title.toLowerCase().indexOf(t) >= 0; }).slice(0, 6);
-    if (!cats.length && !titles.length) { closeSug(); return; }
+    var anyPerson = Object.keys(AUTHORS).some(function(a){ return a.indexOf(t) >= 0; });
+    if (!cats.length && !titles.length && !anyPerson) { closeSug(); return; }
 
     if (cats.length) {
       el.sug.appendChild(node("div", "sug-head", "Categories — filters with cat:"));
@@ -843,6 +912,25 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
         b.appendChild(highlight(node("span", "tag", c.replace(/-/g, " "))));
         b.appendChild(node("span", "n", CATS[c]));
         b.addEventListener("click", function(){ setCat(c); el.q.focus(); });
+        el.sug.appendChild(b);
+      });
+    }
+    var people = Object.keys(AUTHORS).filter(function(a){ return a.indexOf(t) >= 0; }).slice(0, 4);
+    if (people.length) {
+      el.sug.appendChild(node("div", "sug-head", "People — filters with by:"));
+      people.forEach(function(p){
+        var b = node("button");
+        b.setAttribute("role", "option");
+        b.appendChild(highlight(node("span", "tag", p)));
+        b.appendChild(node("span", "n", AUTHORS[p]));
+        b.addEventListener("click", function(){
+          var rest = (q || "").split(/\s+/).filter(function(x){
+            return x && x.toLowerCase().indexOf("by:") !== 0;
+          });
+          rest.unshift("by:" + p);
+          q = rest.join(" "); el.q.value = q + " "; closeSug(); el.q.focus();
+          refresh().catch(function(e){ fail("Couldn't filter", e); });
+        });
         el.sug.appendChild(b);
       });
     }
@@ -868,6 +956,66 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     el.catpop.hidden = true;
     el.edCatBtn.setAttribute("aria-expanded", "false");
   }
+
+  function closeWhoPop(){
+    el.whopop.hidden = true;
+    el.edWhoBtn.setAttribute("aria-expanded", "false");
+  }
+
+  // Reassigning ownership. Separate from the category chooser because it is a
+  // different question, and separate from editing because an edit must never
+  // move a note between people.
+  function drawWhoList(){
+    var typed = el.edWho.value.trim().toLowerCase();
+    var now = (ed && ed.note && ed.note.author) || "chris";
+    el.wholistBox.textContent = "";
+    function row(label, value, count, isNew){
+      var b = node("button", isNew ? "new" : null);
+      b.setAttribute("aria-pressed", value === now ? "true" : "false");
+      b.appendChild(document.createTextNode(label));
+      if (count !== null) b.appendChild(node("span", "n", count));
+      b.addEventListener("click", function(){ setOwner(value); });
+      return b;
+    }
+    var names = Object.keys(AUTHORS).filter(function(a){ return !typed || a.indexOf(typed) >= 0; })
+      .sort(function(a, b){ return AUTHORS[b] - AUTHORS[a] || (a < b ? -1 : 1); });
+    var slug = typed.replace(/[^a-z0-9_-]+/g, "");
+    if (slug && names.indexOf(slug) < 0) el.wholistBox.appendChild(row("+ " + slug, slug, null, true));
+    names.forEach(function(p){ el.wholistBox.appendChild(row(p, p, AUTHORS[p], false)); });
+    if (!el.wholistBox.children.length) el.wholistBox.appendChild(node("div", "sug-head", "type a name"));
+  }
+
+  function setOwner(value){
+    if (!ed || !ed.note) return;
+    closeWhoPop();
+    if (value === (ed.note.author || "chris")) return;
+    var n = ed.note;
+    persist(n, {author:value}, "Couldn't change who owns this").then(function(){
+      el.edWhoNow.textContent = n.author || "chris";
+      return refresh();
+    }).catch(function(){});
+  }
+
+  el.edWhoBtn.addEventListener("click", function(ev){
+    ev.stopPropagation();
+    if (!ed || !ed.note) return;
+    var opening = el.whopop.hidden;
+    closeCatPop();
+    el.whopop.hidden = !opening;
+    el.edWhoBtn.setAttribute("aria-expanded", opening ? "true" : "false");
+    if (opening) { el.edWho.value = ""; drawWhoList(); el.edWho.focus(); }
+  });
+  el.edWho.addEventListener("input", drawWhoList);
+  el.edWho.addEventListener("keydown", function(ev){
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      var first = el.wholistBox.querySelector("button");
+      if (first) first.click();
+    } else if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); closeWhoPop(); }
+  });
+  document.addEventListener("click", function(ev){
+    if (!el.whopop.hidden && !el.whopop.contains(ev.target) && ev.target !== el.edWhoBtn) closeWhoPop();
+  });
 
   function drawCatList(){
     var typed = el.edCat.value.trim().toLowerCase();
@@ -903,20 +1051,86 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     }).catch(function(){});
   }
 
+  // "Mine" needs to know who you are. Without a device identity everyone is
+  // Chris, which is exactly what the 545 notes predating this assume.
+  function meName(){ return ME || "chris"; }
+
+  // "Ours" is a place, not a union. A note is in it because somebody put it
+  // there, exactly like archived — so your own feed is YOUR notes, plus the
+  // shared ones if you want them (you do, by default).
+  function inScope(n, scope){
+    if (scope === "claude") return n.author === "claude";
+    if (scope === "shared") return !!n.shared;
+    return n.author === meName() || (SHOW_SHARED && !!n.shared);   // "mine"
+  }
+
   function drawWho(){
-    var opts = [["mine", "Mine"], ["claude", "Claude"], ["all", "Both"]];
+    var opts = [["mine", "Mine"], ["shared", "Ours"], ["claude", "Claude"]];
     el.who.textContent = "";
     opts.forEach(function(o){
-      var n = NOTES.filter(function(x){
-        return o[0] === "all" || x.author === (o[0] === "mine" ? "chris" : "claude");
-      }).length;
+      var n = NOTES.filter(function(x){ return inScope(x, o[0]); }).length;
       var b = node("button", null, o[1]);
       b.setAttribute("aria-pressed", who === o[0] ? "true" : "false");
       b.setAttribute("title", n + (n === 1 ? " note" : " notes"));
       b.addEventListener("click", function(){ who = o[0]; render(); });
       el.who.appendChild(b);
     });
+    drawMe();
   }
+
+  // ---- who is on this device ----
+  // A cookie, not an account. Chris: "I don't want to set up auth or accounts
+  // really... There's no secrets here to protect." It replaces Keep's
+  // add-collaborator dance; the server reads the same cookie when stamping a
+  // new note, so attribution does not depend on the client asking nicely.
+  function setMe(name){
+    var v = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
+    if (!v) return;
+    try {
+      document.cookie = "notes_who=" + v + "; path=/; max-age=" + (10 * 365 * 24 * 3600) + "; SameSite=Lax";
+    } catch (e) {}
+    ME = v;
+    el.whobar.hidden = true;
+    refresh().catch(function(){});
+  }
+
+  function drawMe(){
+    el.meBtn.textContent = ME ? ME.charAt(0).toUpperCase() : "?";
+    el.meBtn.className = "me-btn" + (ME ? "" : " unset");
+    el.meBtn.title = ME ? ("This device is " + ME + " — tap to change") : "Who's using this device?";
+  }
+
+  function openWhoBar(){
+    el.whobar.textContent = "";
+    el.whobar.appendChild(node("span", null, "Who's using this device?"));
+    // Offer whoever already writes here, so the second person appears on the
+    // first device that names them rather than being hardcoded.
+    var names = Object.keys(AUTHORS).filter(function(a){ return a !== "claude"; });
+    if (names.indexOf("chris") < 0) names.unshift("chris");
+    names.forEach(function(nm){
+      var b = node("button", null, nm);
+      b.addEventListener("click", function(){ setMe(nm); });
+      el.whobar.appendChild(b);
+    });
+    var other = node("button", null, "someone else…");
+    other.addEventListener("click", function(){
+      var nm = window.prompt("First name (lowercase, no spaces):", "");
+      if (nm) setMe(nm);
+    });
+    el.whobar.appendChild(other);
+
+    var sh = node("button", null, (SHOW_SHARED ? "✓ " : "") + "show ours in my feed");
+    sh.setAttribute("aria-pressed", SHOW_SHARED ? "true" : "false");
+    sh.addEventListener("click", function(){
+      SHOW_SHARED = !SHOW_SHARED;
+      try { localStorage.setItem("notes-show-shared", SHOW_SHARED ? "1" : "0"); } catch (e) {}
+      openWhoBar(); render();
+    });
+    el.whobar.appendChild(sh);
+    el.whobar.hidden = false;
+  }
+
+  el.meBtn.addEventListener("click", openWhoBar);
 
   // The ONE way to filter by category is the cat: token in the search box.
   // A chip writes that token rather than flipping hidden state, so the chip
@@ -1169,6 +1383,11 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     el.edCheck.disabled = ed.raw !== null;
     // The archive button shows the note's STATE, not just an action: lit when
     // the note is archived, and the tooltip then offers the way out.
+    var sh = !!(ed.note && ed.note.shared);
+    el.edShare.setAttribute("aria-pressed", sh ? "true" : "false");
+    el.edShare.setAttribute("aria-label", sh ? "Remove from the shared space" : "Add to the shared space");
+    el.edShare.setAttribute("title", sh ? "Remove from Ours" : "Add to Ours");
+    el.edShare.disabled = !ed.note;
     var arch = !!(ed.note && ed.note.archived);
     el.edArch.setAttribute("aria-pressed", arch ? "true" : "false");
     el.edArch.setAttribute("aria-label", arch ? "Unarchive note" : "Archive note");
@@ -1188,7 +1407,9 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     el.edCat.value = "";
     el.edCatNow.textContent = n ? (n.cat || "none") : "";
     el.edCatBtn.disabled = !n;       // a new note gets its category on first save
-    closeCatPop();
+    el.edWhoBtn.disabled = !n;
+    el.edWhoNow.textContent = n ? (n.author || "chris") : "";
+    closeCatPop(); closeWhoPop();
     el.scrim.hidden = false;
     syncBar();
     if (!n) { draw(); el.edTitle.focus(); return; }
@@ -1225,6 +1446,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     var opening = el.catpop.hidden;
     el.catpop.hidden = !opening;
     el.edCatBtn.setAttribute("aria-expanded", opening ? "true" : "false");
+    closeWhoPop();
     if (opening) { el.edCat.value = ""; drawCatList(); el.edCat.focus(); }
   });
   el.edCat.addEventListener("input", drawCatList);
@@ -1266,6 +1488,19 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     if (ed.raw === null) ed.raw = serialize(ed.blocks);
     else { ed.blocks = parseBlocks(ed.raw); ed.raw = null; }
     focusIdx = -1; draw(); syncBar(); touch();
+  });
+
+  el.edShare.addEventListener("click", function(){
+    commit().then(function(){
+      if (!ed || !ed.note) return;
+      var n = ed.note, was = !!n.shared;
+      return persist(n, {shared:!was}, "Couldn't change sharing").then(function(){
+        syncBar();
+        toast(was ? "Removed from Ours" : "Added to Ours", function(){
+          persist(n, {shared:was}, "Couldn't undo that").then(syncBar).catch(function(){});
+        });
+      });
+    }).catch(function(){});
   });
 
   el.edArch.addEventListener("click", function(){
@@ -1489,7 +1724,15 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 
   el.wall.appendChild(node("div", "empty", "Loading notes…"));
   loadPending().then(drain);
-  refresh().catch(function(e){
+  refresh().then(function(){
+    // Ask once, on a device that has never said who it is. Everything works
+    // without answering — the note is simply attributed to Chris, which is
+    // what every note before this was.
+    if (!ME) openWhoBar();
+    // No adaptive default any more: "Mine" already includes the shared space,
+    // so a second person sees the household's notes from their first visit
+    // without being switched to a different view behind their back.
+  }).catch(function(e){
     el.wall.textContent = "";
     var em = node("div", "empty");
     em.appendChild(node("div", null, "Couldn't reach the notes service."));

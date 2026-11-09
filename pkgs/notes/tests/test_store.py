@@ -404,7 +404,139 @@ def test_cat_prefix_filters_hard(space):
 
 
 def test_split_query_separates_filters_from_terms(space):
-    assert store.split_query("cat:woodgas truck parts") == (["woodgas"], ["truck", "parts"])
-    assert store.split_query("plain words") == ([], ["plain", "words"])
-    assert store.split_query("cat:") == ([], ["cat:"])     # not a filter, just text
-    assert store.split_query(None) == ([], [])
+    assert store.split_query("cat:woodgas truck parts") == (["woodgas"], [], ["truck", "parts"])
+    assert store.split_query("plain words") == ([], [], ["plain", "words"])
+    assert store.split_query("cat:") == ([], [], ["cat:"])   # not a filter, just text
+    assert store.split_query(None) == ([], [], [])
+
+
+# --- who wrote it ------------------------------------------------------------
+# Attribution between two people who trust each other, not authentication.
+# Chris: "There's no secrets here to protect."
+
+def test_create_stamps_a_named_author(space):
+    n = store.create(space, "milk", "2%", author="mary")
+    assert n.author == "mary"
+    assert "author: mary" in (space / n.id).read_text()
+
+
+def test_create_without_a_device_identity_stays_unlabelled(space):
+    """545 notes predate this; unlabelled must keep reading as Chris."""
+    n = store.create(space, "milk", "2%")
+    assert n.author == "chris"
+    assert "author:" not in (space / n.id).read_text()
+
+
+def test_chris_is_not_written_redundantly(space):
+    n = store.create(space, "milk", "2%", author="chris")
+    assert n.author == "chris"
+    assert "author:" not in (space / n.id).read_text()
+
+
+def test_by_filter_selects_one_persons_notes(space):
+    store.create(space, "hers", "x", author="mary")
+    store.create(space, "his", "y")
+    mary = [n.title for n in store.listing(space, "by:mary")]
+    assert mary == ["hers"]
+    his = [n.title for n in store.listing(space, "by:chris")]
+    assert "his" in his and "hers" not in his
+
+
+def test_by_composes_with_terms_and_categories(space):
+    store.create(space, "hers bread", "bread", author="mary")
+    store.create(space, "hers paint", "paint", author="mary")
+    assert [n.title for n in store.listing(space, "by:mary bread")] == ["hers bread"]
+
+
+def test_split_query_separates_all_three(space):
+    assert store.split_query("cat:woodgas by:mary truck") == (["woodgas"], ["mary"], ["truck"])
+    assert store.split_query("by:") == ([], [], ["by:"])
+
+
+def test_authors_census_counts_everyone(space):
+    store.create(space, "hers", "x", author="mary")
+    a = store.authors(space)
+    assert a["mary"] == 1
+    assert a["chris"] >= 1
+    assert sum(a.values()) == len(store.listing(space))
+
+
+def test_ownership_can_be_reassigned(space):
+    n = store.create(space, "hers", "x", author="mary")
+    assert n.author == "mary"
+    moved = store.write(space, n.id, author="chris")
+    assert moved.author == "chris"
+    assert "author:" not in (space / n.id).read_text()   # chris == unlabelled
+    back = store.write(space, n.id, author="mary")
+    assert back.author == "mary"
+    assert (space / n.id).read_text().count("author:") == 1
+
+
+def test_editing_a_note_never_changes_its_owner(space):
+    """Mary adding a line to Chris's grocery list must not take it over."""
+    n = store.create(space, "list", "bread", author="chris")
+    store.write(space, n.id, body="bread\nmilk")
+    assert store.read(space, n.id).author == "chris"
+    m = store.create(space, "hers", "x", author="mary")
+    store.write(space, m.id, body="x\ny", pinned=True)
+    assert store.read(space, m.id).author == "mary"
+
+
+def test_reassigned_author_is_slugged(space):
+    n = store.create(space, "x", "y")
+    store.write(space, n.id, author="Mary Jo\npinned: true")
+    text = (space / n.id).read_text()
+    assert "author: maryjopinnedtrue" in text or "author: maryjo" in text
+    assert text.count("pinned:") == 0
+
+
+# --- the shared space --------------------------------------------------------
+# "Ours" is a place a note is put, like archived -- not a computed union of
+# everyone's notes. Chris, 2026-11-09: "I don't want 'ours' to be a mashup of
+# every human note. I want that to be a shared space we can intentionally add
+# things to, like 'archived'."
+
+def test_notes_are_not_shared_by_default(space):
+    n = store.create(space, "mine", "x", author="mary")
+    assert n.shared is False
+    assert "shared:" not in (space / n.id).read_text()
+
+
+def test_sharing_is_a_flag_that_toggles(space):
+    n = store.create(space, "list", "bread")
+    on = store.write(space, n.id, shared=True)
+    assert on.shared is True
+    assert "shared: true" in (space / n.id).read_text()
+    off = store.write(space, n.id, shared=False)
+    assert off.shared is False
+    assert "shared:" not in (space / n.id).read_text()
+
+
+def test_sharing_does_not_change_who_owns_it(space):
+    """A shared note still belongs to whoever wrote it."""
+    n = store.create(space, "hers", "x", author="mary")
+    shared = store.write(space, n.id, shared=True)
+    assert shared.author == "mary" and shared.shared is True
+
+
+def test_sharing_is_independent_of_pinned_and_archived(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True, pinned=True)
+    got = store.read(space, n.id)
+    assert got.shared and got.pinned and not got.archived
+    store.write(space, n.id, archived=True)
+    got = store.read(space, n.id)
+    assert got.shared and got.pinned and got.archived
+
+
+def test_shared_survives_an_edit(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True)
+    store.write(space, n.id, body="bread\nmilk")
+    assert store.read(space, n.id).shared is True
+
+
+def test_summary_carries_shared(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True)
+    assert store.read(space, n.id).summary()["shared"] is True
