@@ -142,6 +142,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/agent/daybook.nix             # 09:00/20:00 claude -p bookends: plan the day / review + tomorrow
     ./modules/agent/queue-replies.nix       # gromit's half of the agent-vm reply channel (contract v1)
     ./modules/agent/project-board.nix       # where multi-day projects stand -> digest.rosemaryacres.com/board/
+    ./modules/agent/merge-notify.nix        # the forge pushes "PR merged" at us instead of us polling for it
   ];
 
   # The NixOS release the system was first installed from. Leave it pinned —
