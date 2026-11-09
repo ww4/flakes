@@ -292,3 +292,55 @@ def test_nonexistent_carve_out_is_retained_not_dropped(tmp_path):
 def test_carve_out_cannot_escape_the_space(tmp_path):
     root = _space_with_log(tmp_path)
     assert resolve_excluded(root, ["../../etc"]) == []
+
+# --- authorship --------------------------------------------------------------
+# The notes app (notes.rosemaryacres.com) defaults its wall to Chris's own
+# notes and treats an unlabelled note as his. Only the agent's own working
+# material carries the key.
+
+
+def test_a_capture_is_unlabelled_by_default(space):
+    """Most saves through this connector are things Chris said. Those are his."""
+    saved = save_note(space, INBOX, "paint list", "blue pearl", now=NOW)
+    text = (space / saved.path).read_text()
+    assert "author:" not in text
+    assert not text.startswith("---")          # house style: no frontmatter block
+
+
+def test_the_agent_can_mark_its_own_note(space):
+    saved = save_note(
+        space, INBOX, "pane closeout", "how a pane shuts down",
+        now=NOW, author="claude",
+    )
+    text = (space / saved.path).read_text()
+    assert text.startswith("---\nauthor: claude\n---\n")
+    assert "# pane closeout" in text
+    assert "*Captured from a Claude chat" in text   # provenance line survives
+
+
+def test_author_cannot_inject_extra_frontmatter(space):
+    saved = save_note(
+        space, INBOX, "x", "y", now=NOW,
+        author="claude\npinned: true\ncategory: secret",
+    )
+    text = (space / saved.path).read_text()
+    assert "pinned:" not in text and "category:" not in text
+    assert text.count("author:") == 1
+
+
+def test_append_never_changes_authorship(space):
+    """Appending to Chris's note must not reassign it to the agent.
+
+    append_note concatenates at the END of the file, so it cannot reach a
+    frontmatter block — this pins that property rather than assuming it.
+    """
+    saved = save_note(space, INBOX, "grocery", "bread", now=NOW)
+    append_note(space, INBOX, saved.path, "milk")
+    text = (space / saved.path).read_text()
+    assert "author:" not in text
+    assert "milk" in text
+
+
+def test_render_note_author_is_optional_and_off_by_default(space):
+    assert "author:" not in render_note("t", "b", now=NOW)
+    assert "author: claude" in render_note("t", "b", now=NOW, author="claude")
