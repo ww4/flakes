@@ -183,6 +183,9 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 .meta .cat{color:var(--accent); text-transform:uppercase; letter-spacing:.08em; font-weight:500}
 .meta .sp{flex:1}
 .meta .yr{font-variant-numeric:tabular-nums}
+/* On a phone that row is category + author + shared + date and it crowds.
+   The date lives on the note's own grey line next to the filename instead. */
+@media (max-width:700px){.meta .yr{display:none}}
 .pin{
   position:absolute; top:9px; right:8px; width:26px; height:26px; padding:0;
   display:grid; place-items:center; border:0; border-radius:7px;
@@ -360,6 +363,18 @@ body.selecting .pin{display:none}
 .swipe-bg.del{background:#9a3412}
 .swipe.armed .card{box-shadow:var(--shadow-lift)}
 .swipe.armed .swipe-bg{font-weight:700}
+/* latched: the card sits open where you left it and the exposed track is the
+   button that confirms. Only delete latches — archive acts on release. */
+.swipe.latched .swipe-bg{opacity:1}
+.swipe.latched .card{box-shadow:var(--shadow-lift)}
+.conf{
+  display:inline-flex; align-items:center; gap:7px;
+  padding:9px 15px; border-radius:999px;
+  background:rgba(255,255,255,.2); border:1px solid rgba(255,255,255,.65);
+  font:700 12px/1 Archivo,system-ui,sans-serif; letter-spacing:.07em;
+  text-transform:uppercase; white-space:nowrap; cursor:pointer;
+}
+.conf:active{background:rgba(255,255,255,.34)}
 .swipe .card{position:relative; z-index:1; transition:transform .16s ease}
 .swipe.dragging .card{transition:none}
 .ptr{
@@ -517,7 +532,7 @@ body.selecting .pin{display:none}
   font:400 10px/1 "IBM Plex Mono",ui-monospace,monospace;
   color:var(--ink-soft); letter-spacing:.04em; padding-right:6px;
 }
-.ed-bar .cat-now + .saved::before{content:"·"; margin:0 7px; color:var(--ink-faint)}
+.ed-bar .cat-now + .saved:not(:empty)::before{content:"·"; margin:0 7px; color:var(--ink-faint)}
 .ed-path{
   padding:2px 14px 9px; font:400 10px/1.5 "IBM Plex Mono",ui-monospace,monospace;
   color:var(--ink-faint); overflow-wrap:anywhere; flex:none;
@@ -1166,18 +1181,26 @@ body.selecting .pin{display:none}
   });
 
   // ---- gestures: the things you do one-handed in a shop ----
-  // Swipe right archives, swipe left bins, long press pins. Deliberately the
-  // Gmail bindings rather than invented ones. A swipe-delete does NOT confirm
-  // (the undo toast and the Trash view are the safety net); the editor's
-  // delete button still asks, because that one is a deliberate act.
+  // Swipe right archives, swipe left bins, long press pins — the Gmail
+  // bindings rather than invented ones. The two directions are deliberately
+  // NOT symmetric: archive acts the moment you let go, delete does not act
+  // until you tap the track. Both leave an undo toast.
   var PRESS_MS = 500, DECIDE_PX = 12;
-  // The left quarter of the screen is the drawer's, full stop. A 22px edge
-  // strip was too fine a target one-handed: aiming for it and missing swiped
-  // the note underneath instead, which is the opposite of what you wanted.
-  function drawerZone(){ return Math.max(40, window.innerWidth * 0.25); }
-  // Gmail latches the row about two thirds across: past that it stops
-  // following your thumb and holds, so you can SEE that letting go will act.
+  // The left fifth of the screen is the drawer's, full stop. A 22px edge strip
+  // was too fine a target one-handed: aiming for it and missing swiped the
+  // note underneath instead, which is the opposite of what you wanted.
+  function drawerZone(){ return Math.max(40, window.innerWidth * 0.20); }
+  // Two thirds across the card LATCHES: it stops following your thumb, and it
+  // stays there when you release. Nothing slides off the screen on its own.
   var LATCH = 0.66;
+
+  // At most one card sits latched open, and at most one gesture owns a drag.
+  // Both are module-level because the DRAWER has to be able to let go of a
+  // card: a touch near the edge was being picked up by the card and the drawer
+  // at once, so opening the menu archived the note underneath it.
+  var LATCHED = null, SWIPING = null;
+  function unlatchCard(){ var f = LATCHED; LATCHED = null; if (f) f(); }
+  function releaseCard(){ var f = SWIPING; SWIPING = null; if (f) f(); }
 
   function swipeable(cardEl, n){
     var wrap = node("div", "swipe");
@@ -1189,18 +1212,78 @@ body.selecting .pin{display:none}
     if (n.pending || n.trashed || !("ontouchstart" in window) || selMode) return wrap;
 
     var x0 = 0, y0 = 0, decided = false, dragging = false, lp = null, dx = 0;
-    var pressX = 0, pressY = 0, armed = false;
+    var pressX = 0, pressY = 0, armed = false, ignore = true, latched = false;
+    var swallow = 0;                      // the tap that cancels must not also open the note
     function reset(){
-      armed = false;
-      wrap.classList.remove("dragging", "armed");
-      cardEl.style.transform = ""; bg.style.opacity = 0; dx = 0;
+      if (latched) swallow = Date.now() + 500;
+      armed = false; latched = false;
+      if (SWIPING === reset) SWIPING = null;
+      if (LATCHED === reset) LATCHED = null;
+      wrap.classList.remove("dragging", "armed", "latched");
+      cardEl.style.transform = ""; bg.style.opacity = 0; bg.textContent = ""; dx = 0;
     }
     function cancelPress(){ if (lp) { clearTimeout(lp); lp = null; } }
 
+    // One place that draws the track, so the latched state cannot drift out of
+    // step with the dragging one.
+    function paint(right, strength, confirm){
+      bg.className = "swipe-bg " + (right ? "arch" : "del");
+      bg.textContent = "";
+      var lbl;
+      if (confirm) {
+        lbl = node("span", "conf", "Tap to delete");
+      } else {
+        lbl = node("span", null, right
+          ? (archivedForMe(n) ? "Unarchive" : "Archive") : "Delete");
+        lbl.style.cssText = "font:600 12px/1 Archivo,system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase";
+      }
+      if (right) { bg.appendChild(lbl); bg.appendChild(node("span")); }
+      else { bg.appendChild(node("span")); bg.appendChild(lbl); }
+      bg.style.opacity = strength;
+    }
+
+    function doDelete(){
+      cardEl.style.transform = "translateX(" + -wrap.offsetWidth + "px)";
+      wrap.classList.remove("latched");
+      latched = false; if (LATCHED === reset) LATCHED = null;
+      api("POST", "/api/notes/trash", {id: n.id}).then(function(d){
+        return refresh().then(function(){
+          toast("Deleted — it is in Trash", function(){
+            api("POST", "/api/notes/restore", {id: d.trashed}).then(refresh)
+              .catch(function(e){ fail("Couldn't restore that note", e); });
+          });
+        });
+      }).catch(function(e){ fail("Couldn't delete that note", e); reset(); });
+    }
+
+    // The exposed track IS the confirm button. Nothing else on the latched card
+    // deletes it, and a tap anywhere else puts it back (see touchstart).
+    bg.addEventListener("click", function(ev){
+      if (!latched) return;
+      ev.stopPropagation();
+      doDelete();
+    });
+    // While a card sits latched, the sliver of it still on screen is not a
+    // way into the editor — tapping it cancels, and that tap stops there.
+    wrap.addEventListener("click", function(ev){
+      if (bg.contains(ev.target)) return;
+      if (latched || Date.now() < swallow) { ev.preventDefault(); ev.stopPropagation(); }
+    }, true);
+
     wrap.addEventListener("touchstart", function(ev){
+      ignore = true;                      // until this proves to be a card gesture
       if (ev.touches.length !== 1) return;
-      // A touch that starts in the drawer zone is never a card swipe.
+      // A touch that starts in the drawer zone belongs to the drawer, and while
+      // the drawer is open every touch belongs to closing it. Bailing out here
+      // is not enough on its own — see releaseCard(), which is what stops a
+      // drag that had already started from acting when the menu takes over.
       if (ev.touches[0].clientX <= drawerZone()) return;
+      if (el.drawer.classList.contains("open")) return;
+      // A latched card is waiting for a verdict: the track confirms (that is
+      // the click handler above), anything else cancels.
+      if (latched) { if (!bg.contains(ev.target)) reset(); return; }
+      unlatchCard();                      // only one card sits open at a time
+      ignore = false;
       x0 = ev.touches[0].clientX; y0 = ev.touches[0].clientY;
       decided = false; dragging = false; dx = 0;
       pressX = x0; pressY = y0;
@@ -1217,12 +1300,13 @@ body.selecting .pin{display:none}
     }, {passive: true});
 
     wrap.addEventListener("touchmove", function(ev){
-      if (DRAG) return;                   // a lifted note is being reordered
+      if (ignore || DRAG) return;         // not ours / a lifted note is being reordered
       var t = ev.touches[0], ax = t.clientX - x0, ay = t.clientY - y0;
       if (!decided) {
         if (Math.abs(ax) > DECIDE_PX && Math.abs(ax) > Math.abs(ay)) {
           decided = true; dragging = true; cancelPress();
           wrap.classList.add("dragging");
+          SWIPING = reset;                // the drawer can take this back
         } else if (Math.abs(ay) > DECIDE_PX) {
           decided = true; cancelPress();        // it is a scroll, let it scroll
         }
@@ -1231,54 +1315,59 @@ body.selecting .pin{display:none}
       if (!dragging) return;
       ev.preventDefault();
       var limit = wrap.offsetWidth * LATCH;
-      // Follow the thumb up to the latch, then hold — past it the card stops
-      // moving and the track goes solid, which is the confirmation.
+      // Follow the thumb up to the latch, then hold. Past it the card stops
+      // dead however far you keep going — it can never be flung off-screen.
       dx = Math.abs(ax) <= limit ? ax : (ax > 0 ? limit : -limit);
       armed = Math.abs(ax) >= limit;
       wrap.classList.toggle("armed", armed);
       cardEl.style.transform = "translateX(" + dx + "px)";
-      bg.className = "swipe-bg " + (dx > 0 ? "arch" : "del");
-      bg.textContent = "";
-      var lbl = node("span", null, dx > 0
-        ? (archivedForMe(n) ? "Unarchive" : "Archive") : "Delete");
-      lbl.style.cssText = "font:600 12px/1 Archivo,system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase";
-      if (dx > 0) { bg.appendChild(lbl); bg.appendChild(node("span")); }
-      else { bg.appendChild(node("span")); bg.appendChild(lbl); }
-      bg.style.opacity = armed ? 1 : Math.min(0.85, Math.abs(dx) / (wrap.offsetWidth * LATCH));
+      paint(dx > 0, armed ? 1 : Math.min(0.85, Math.abs(dx) / limit), false);
     }, {passive: false});
 
     function finish(){
       if (DRAG) return;                   // dragEnd owns this gesture
       cancelPress();
+      if (ignore) return;
+      if (SWIPING === reset) SWIPING = null;
       if (!dragging) { reset(); return; }
       var go = armed, right = dx > 0;
-      wrap.classList.remove("armed");
-      if (!go) { reset(); return; }
-      cardEl.style.transform = "translateX(" + (right ? 1 : -1) * wrap.offsetWidth + "px)";
-      wrap.classList.remove("dragging");
-      if (right) {
-        var was = archivedForMe(n);
-        persist(n, {archived: !was}, "Couldn't archive that")
-          .then(refresh)
-          .then(function(){
-            toast(was ? "Unarchived" : "Archived", function(){
-              persist(n, {archived: was}, "Couldn't undo that").then(refresh).catch(function(){});
-            });
-          }).catch(function(){ reset(); });
-      } else {
-        api("POST", "/api/notes/trash", {id: n.id}).then(function(d){
-          return refresh().then(function(){
-            toast("Deleted — it is in Trash", function(){
-              api("POST", "/api/notes/restore", {id: d.trashed}).then(refresh)
-                .catch(function(e){ fail("Couldn't restore that note", e); });
-            });
-          });
-        }).catch(function(e){ fail("Couldn't delete that note", e); reset(); });
+      wrap.classList.remove("armed", "dragging");
+      if (!go) { reset(); return; }       // short of the latch: it springs back
+      if (!right) {
+        // Delete never completes on the swipe alone. The card stays exactly
+        // where the latch stopped it and waits to be confirmed; the undo toast
+        // still follows once it is.
+        latched = true; LATCHED = reset;
+        wrap.classList.add("latched");
+        cardEl.style.transform = "translateX(" + (-wrap.offsetWidth * LATCH) + "px)";
+        paint(false, 1, true);
+        return;
       }
+      cardEl.style.transform = "translateX(" + wrap.offsetWidth + "px)";
+      var was = archivedForMe(n);
+      persist(n, {archived: !was}, "Couldn't archive that")
+        .then(refresh)
+        .then(function(){
+          toast(was ? "Unarchived" : "Archived", function(){
+            persist(n, {archived: was}, "Couldn't undo that").then(refresh).catch(function(){});
+          });
+        }).catch(function(){ reset(); });
     }
     wrap.addEventListener("touchend", finish, {passive: true});
-    wrap.addEventListener("touchcancel", function(){ cancelPress(); reset(); }, {passive: true});
+    wrap.addEventListener("touchcancel", function(){
+      if (ignore) return;
+      cancelPress(); reset();
+    }, {passive: true});
     return wrap;
+  }
+
+  // A latched card is modal in spirit: touch anything else and it goes back.
+  if ("ontouchstart" in window) {
+    document.addEventListener("touchstart", function(ev){
+      if (!LATCHED) return;
+      var w = ev.target && ev.target.closest ? ev.target.closest(".swipe.latched") : null;
+      if (!w) unlatchCard();
+    }, {passive: true});
   }
 
   // ---- drag a pinned note to reorder it ----
@@ -1411,6 +1500,10 @@ body.selecting .pin{display:none}
         if (mode === "open" && dx < 10) return;
         if (mode === "close" && dx > -10) return;
         decided = true;
+        // The drawer now owns this gesture. Whatever the card handler had
+        // started with the same finger is abandoned, unacted — this is the
+        // bug where reaching for the menu archived the note underneath.
+        releaseCard(); unlatchCard();
         if (mode === "open") { el.drawer.classList.add("open"); el.drawerScrim.classList.add("open"); }
       }
       ev.preventDefault();
@@ -1507,6 +1600,7 @@ body.selecting .pin{display:none}
   }
 
   function render(){
+    LATCHED = null; SWIPING = null;       // the nodes these point at are about to go
     var shown = pendingCards().concat(NOTES).filter(matches);
     // With a query the server returns them RANKED; re-sorting by date here
     // would throw that away and bury the best match.
@@ -2052,7 +2146,10 @@ body.selecting .pin{display:none}
     return p.then(function(saved){
       // A new note gets its real path from the server; adopt it so the next
       // keystroke updates rather than creating a second file.
-      if (mine === ed) { ed.id = saved.id; ed.note = saved; el.edPath.textContent = saved.id; }
+      if (mine === ed) {
+        ed.id = saved.id; ed.note = saved;
+        el.edPath.textContent = saved.id + (saved.date ? "  ·  edited " + saved.date : "");
+      }
       var ex = null;
       for (var i = 0; i < NOTES.length; i++) if (NOTES[i].id === saved.id) ex = NOTES[i];
       if (ex) { for (var k in saved) ex[k] = saved[k]; } else { NOTES.push(saved); }
@@ -2194,14 +2291,16 @@ body.selecting .pin{display:none}
     // would truncate the file.
     ed = {id:id || null, note:n, base:"", busy:false, loading:!!n, blocks:parseBlocks(""), raw:null};
     el.edTitle.value = n ? n.title : "";
-    el.edPath.textContent = n ? n.id : "Inbox/" + new Date().toISOString().slice(0, 10) + "-new-note.md";
-    el.edSaved.textContent = n ? "Edited " + n.date : "";
+    el.edPath.textContent = (n ? n.id : "Inbox/" + new Date().toISOString().slice(0, 10) + "-new-note.md")
+      + (n && n.date ? "  ·  edited " + n.date : "");
+    el.edSaved.textContent = "";   // this one is save STATUS; the date is on the path line
     el.edCat.value = "";
     el.edCatNow.textContent = n ? (n.cat || "none") : "";
     el.edCatBtn.disabled = !n;       // a new note gets its category on first save
     el.edWhoNow.textContent = n ? (n.author || "chris") : "";
     closeMenus(null);
     el.scrim.hidden = false;
+    enterLayer("note");                 // so the system back gesture closes THIS
     syncBar();
     if (!n) { draw(); el.edTitle.focus(); return; }
 
@@ -2220,11 +2319,13 @@ body.selecting .pin{display:none}
       fail("Couldn't open that note", e);
     });
   }
-  function close(){
+  function close(fromHistory){
     if (!ed) return;
     clearTimeout(saveT);
     commit().then(render);
-    ed = null; el.scrim.hidden = true; render();
+    ed = null; el.scrim.hidden = true;
+    if (fromHistory !== true) exitLayer();   // popstate already consumed the entry
+    render();
   }
 
   el.edTitle.addEventListener("input", touch);
@@ -2252,7 +2353,7 @@ body.selecting .pin{display:none}
   document.addEventListener("click", function(ev){
     if (!el.catpop.hidden && !el.catpop.contains(ev.target) && ev.target !== el.edCatBtn) closeCatPop();
   });
-  el.edClose.addEventListener("click", close);
+  el.edClose.addEventListener("click", function(){ close(); });
   el.scrim.addEventListener("click", function(ev){ if (ev.target === el.scrim) close(); });
   document.addEventListener("keydown", function(ev){ if (ev.key === "Escape" && ed) close(); });
 
