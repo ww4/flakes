@@ -358,6 +358,8 @@ body.selecting .pin{display:none}
 }
 .swipe-bg.arch{background:var(--accent)}
 .swipe-bg.del{background:#9a3412}
+.swipe.armed .card{box-shadow:var(--shadow-lift)}
+.swipe.armed .swipe-bg{font-weight:700}
 .swipe .card{position:relative; z-index:1; transition:transform .16s ease}
 .swipe.dragging .card{transition:none}
 .ptr{
@@ -1169,6 +1171,13 @@ body.selecting .pin{display:none}
   // (the undo toast and the Trash view are the safety net); the editor's
   // delete button still asks, because that one is a deliberate act.
   var PRESS_MS = 500, DECIDE_PX = 12;
+  // The left quarter of the screen is the drawer's, full stop. A 22px edge
+  // strip was too fine a target one-handed: aiming for it and missing swiped
+  // the note underneath instead, which is the opposite of what you wanted.
+  function drawerZone(){ return Math.max(40, window.innerWidth * 0.25); }
+  // Gmail latches the row about two thirds across: past that it stops
+  // following your thumb and holds, so you can SEE that letting go will act.
+  var LATCH = 0.66;
 
   function swipeable(cardEl, n){
     var wrap = node("div", "swipe");
@@ -1180,15 +1189,18 @@ body.selecting .pin{display:none}
     if (n.pending || n.trashed || !("ontouchstart" in window) || selMode) return wrap;
 
     var x0 = 0, y0 = 0, decided = false, dragging = false, lp = null, dx = 0;
-    var pressX = 0, pressY = 0;
+    var pressX = 0, pressY = 0, armed = false;
     function reset(){
-      wrap.classList.remove("dragging");
+      armed = false;
+      wrap.classList.remove("dragging", "armed");
       cardEl.style.transform = ""; bg.style.opacity = 0; dx = 0;
     }
     function cancelPress(){ if (lp) { clearTimeout(lp); lp = null; } }
 
     wrap.addEventListener("touchstart", function(ev){
       if (ev.touches.length !== 1) return;
+      // A touch that starts in the drawer zone is never a card swipe.
+      if (ev.touches[0].clientX <= drawerZone()) return;
       x0 = ev.touches[0].clientX; y0 = ev.touches[0].clientY;
       decided = false; dragging = false; dx = 0;
       pressX = x0; pressY = y0;
@@ -1218,7 +1230,12 @@ body.selecting .pin{display:none}
       }
       if (!dragging) return;
       ev.preventDefault();
-      dx = ax;
+      var limit = wrap.offsetWidth * LATCH;
+      // Follow the thumb up to the latch, then hold — past it the card stops
+      // moving and the track goes solid, which is the confirmation.
+      dx = Math.abs(ax) <= limit ? ax : (ax > 0 ? limit : -limit);
+      armed = Math.abs(ax) >= limit;
+      wrap.classList.toggle("armed", armed);
       cardEl.style.transform = "translateX(" + dx + "px)";
       bg.className = "swipe-bg " + (dx > 0 ? "arch" : "del");
       bg.textContent = "";
@@ -1227,15 +1244,15 @@ body.selecting .pin{display:none}
       lbl.style.cssText = "font:600 12px/1 Archivo,system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase";
       if (dx > 0) { bg.appendChild(lbl); bg.appendChild(node("span")); }
       else { bg.appendChild(node("span")); bg.appendChild(lbl); }
-      bg.style.opacity = Math.min(1, Math.abs(dx) / 90);
+      bg.style.opacity = armed ? 1 : Math.min(0.85, Math.abs(dx) / (wrap.offsetWidth * LATCH));
     }, {passive: false});
 
     function finish(){
       if (DRAG) return;                   // dragEnd owns this gesture
       cancelPress();
       if (!dragging) { reset(); return; }
-      var limit = Math.min(120, wrap.offsetWidth * 0.33);
-      var go = Math.abs(dx) > limit, right = dx > 0;
+      var go = armed, right = dx > 0;
+      wrap.classList.remove("armed");
       if (!go) { reset(); return; }
       cardEl.style.transform = "translateX(" + (right ? 1 : -1) * wrap.offsetWidth + "px)";
       wrap.classList.remove("dragging");
@@ -1343,54 +1360,75 @@ body.selecting .pin{display:none}
   document.addEventListener("touchend", function(){ if (DRAG) dragEnd(); }, {passive: true});
   document.addEventListener("touchcancel", function(){ if (DRAG) dragEnd(); }, {passive: true});
 
-  // ---- swipe in from the left edge to open the drawer ----
-  // The same reach as the hamburger without aiming for it, which is the whole
-  // point one-handed. Only from the outer 22px, so it cannot be confused with
-  // a swipe on a card.
+  // ---- one gesture owns the drawer: open it, and swipe it away ----
+  // Opening from a 22px edge strip meant aiming, and missing it swiped the
+  // note underneath. The whole left quarter now routes here (see drawerZone),
+  // and while the drawer is open ANY leftward swipe closes it, from anywhere —
+  // you should not have to find the drawer again to dismiss it.
   (function(){
     if (!("ontouchstart" in window)) return;
-    var EDGE = 22, W = function(){ return Math.min(300, window.innerWidth * 0.84); };
-    var x0 = 0, y0 = 0, active = false, decided = false;
-    document.addEventListener("touchstart", function(ev){
-      if (ed || !el.scrim.hidden || DRAG) return;
-      if (el.drawer.classList.contains("open")) return;
-      if (ev.touches.length !== 1) return;
-      var t = ev.touches[0];
-      if (t.clientX > EDGE) return;
-      x0 = t.clientX; y0 = t.clientY; active = true; decided = false;
-    }, {passive: true});
-    document.addEventListener("touchmove", function(ev){
-      if (!active) return;
-      var t = ev.touches[0], dx = t.clientX - x0, dy = t.clientY - y0;
-      if (!decided) {
-        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 10) { active = false; return; }
-        if (dx < 10) return;
-        decided = true;
-        fillDrawer();
-        el.drawer.style.transition = "none";
-        el.drawerScrim.classList.add("open");
-      }
-      ev.preventDefault();
-      var d = Math.min(dx, W());
-      el.drawer.classList.add("open");
-      el.drawer.style.transform = "translateX(" + (d - W()) + "px)";
-      el.drawerScrim.style.opacity = d / W();
-    }, {passive: false});
-    document.addEventListener("touchend", function(ev){
-      if (!active) return;
-      active = false;
-      if (!decided) return;
+    var W = function(){ return Math.min(300, window.innerWidth * 0.84); };
+    var x0 = 0, y0 = 0, mode = null, decided = false;   // mode: "open" | "close"
+
+    function isOpen(){ return el.drawer.classList.contains("open"); }
+    function track(dx){
+      el.drawer.style.transition = "none";
+      var off = mode === "open" ? Math.min(dx, W()) - W() : Math.max(-W(), Math.min(0, dx));
+      el.drawer.style.transform = "translateX(" + off + "px)";
+      el.drawerScrim.style.opacity = (W() + off) / W();
+    }
+    function settle(open){
       el.drawer.style.transition = "";
-      el.drawerScrim.style.opacity = "";
-      var dx = (ev.changedTouches[0] || {}).clientX - x0;
       el.drawer.style.transform = "";
-      if (dx > W() * 0.4) {
+      el.drawerScrim.style.opacity = "";
+      if (open) {
+        el.drawer.classList.add("open");
+        el.drawerScrim.classList.add("open");
         el.menuBtn.setAttribute("aria-expanded", "true");
         enterLayer("drawer");             // opened by gesture: back still closes it
       } else {
-        el.drawer.classList.remove("open");
-        el.drawerScrim.classList.remove("open");
+        closeDrawer();                    // takes the history entry back with it
       }
+    }
+
+    document.addEventListener("touchstart", function(ev){
+      mode = null;
+      if (ed || !el.scrim.hidden || DRAG || ev.touches.length !== 1) return;
+      var t = ev.touches[0];
+      if (isOpen()) { mode = "close"; }
+      else if (t.clientX <= drawerZone()) { mode = "open"; fillDrawer(); }
+      else return;
+      x0 = t.clientX; y0 = t.clientY; decided = false;
+    }, {passive: true});
+
+    document.addEventListener("touchmove", function(ev){
+      if (!mode) return;
+      var t = ev.touches[0], dx = t.clientX - x0, dy = t.clientY - y0;
+      if (!decided) {
+        // Let a vertical drag be a scroll; only commit to the drawer once the
+        // movement is clearly sideways AND in the direction that makes sense.
+        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 10) { mode = null; return; }
+        if (mode === "open" && dx < 10) return;
+        if (mode === "close" && dx > -10) return;
+        decided = true;
+        if (mode === "open") { el.drawer.classList.add("open"); el.drawerScrim.classList.add("open"); }
+      }
+      ev.preventDefault();
+      track(dx);
+    }, {passive: false});
+
+    document.addEventListener("touchend", function(ev){
+      if (!mode) return;
+      var m = mode; mode = null;
+      if (!decided) return;
+      var dx = ((ev.changedTouches[0] || {}).clientX || x0) - x0;
+      // Open on a decisive pull; close on any real leftward flick.
+      settle(m === "open" ? dx > W() * 0.4 : dx > -40);
+    }, {passive: true});
+
+    document.addEventListener("touchcancel", function(){
+      if (mode && decided) settle(isOpen() && mode !== "open");
+      mode = null;
     }, {passive: true});
   })();
 
