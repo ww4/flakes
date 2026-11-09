@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <title>Notes</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
 <style>
@@ -134,6 +137,8 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 }
 .card:hover{box-shadow:var(--shadow-lift)}
 .card:active{transform:scale(.995)}
+.card.pending{box-shadow:var(--shadow), inset 3px 0 0 var(--mark-bg); opacity:.92}
+.card.pending .meta .cat{color:var(--brass)}
 .card.pinned{box-shadow:var(--shadow), inset 3px 0 0 var(--brass)}
 .card.pinned:hover{box-shadow:var(--shadow-lift), inset 3px 0 0 var(--brass)}
 .card h3{
@@ -681,7 +686,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   }
 
   function card(n){
-    var c = node("div", "card" + (n.pinned ? " pinned" : ""));
+    var c = node("div", "card" + (n.pinned ? " pinned" : "") + (n.pending ? " pending" : ""));
     c.tabIndex = 0;
     c.appendChild(highlight(node("h3", null, n.title)));
 
@@ -698,12 +703,15 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     c.appendChild(box);
 
     var meta = node("div", "meta");
-    meta.appendChild(node("span", "cat", n.cat));
+    meta.appendChild(node("span", "cat", n.pending ? "queued" : n.cat));
     meta.appendChild(node("span", "sp"));
     meta.appendChild(node("span", "yr", n.date));
     c.appendChild(meta);
 
-    function act(){ open(n.id); }
+    function act(){
+      if (n.pending) { toast("Queued — this note saves when the box is reachable", null); return; }
+      open(n.id);
+    }
     c.addEventListener("click", act);
     c.addEventListener("keydown", function(ev){ if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); act(); } });
 
@@ -745,8 +753,22 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   // lot: 67 ms per character on a desktop over loopback, far worse on a phone.
   var PAGE = 60, CLIP_LINES = 9, shownCount = PAGE, io = null;
 
+  // Queued notes render as real cards, marked, so a captured thought is
+  // visibly on the wall rather than sitting invisibly in a database.
+  function pendingCards(){
+    return PENDING.map(function(p){
+      return {
+        id: "pending:" + p.key, title: p.title, preview: p.body,
+        lines: p.body.split("\n").filter(function(l){ return l.trim(); }).length,
+        truncated: p.body.length > 700, cat: "inbox", author: "chris",
+        date: new Date(p.at).toISOString().slice(0, 10),
+        pinned: false, archived: false, pending: true
+      };
+    });
+  }
+
   function render(){
-    var shown = NOTES.filter(matches);
+    var shown = pendingCards().concat(NOTES).filter(matches);
     // With a query the server returns them RANKED; re-sorting by date here
     // would throw that away and bury the best match.
     if (!q) shown.sort(function(a, b){ return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
@@ -1029,6 +1051,15 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       if (ex) { for (var k in saved) ex[k] = saved[k]; } else { NOTES.push(saved); }
       el.edSaved.textContent = "Saved";
     }).catch(function(e){
+      // A NEW note with nowhere to go is queued rather than lost. An edit is
+      // not: replaying it later could overwrite someone else's change.
+      if (!mine.id && !ONLINE) {
+        return enqueue(t || "Untitled", b, mine.queueKey).then(function(k){
+          mine.queueKey = k;
+          if (mine === ed) el.edSaved.textContent = "Queued — saves when online";
+          render();
+        });
+      }
       el.edSaved.textContent = "Not saved";
       fail("Couldn't save that note", e);
     }).then(function(){ if (mine === ed) ed.busy = false; });
@@ -1333,6 +1364,105 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     }).catch(function(e){ fail("Sync failed", e); });
   }
 
+  // ---- service worker ----
+  // Unregister anything that is not ours FIRST. This origin ran SilverBullet's
+  // PWA until 2026-11-09 and its worker still owns browsers that opened it —
+  // serving a dead shell on every normal refresh. (The server also replies at
+  // its old /service_worker.js with a self-destructing worker, because a
+  // poisoned browser never gets far enough to run this.)
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistrations().then(function (rs) {
+      return Promise.all(rs.map(function (r) {
+        var src = (r.active && r.active.scriptURL) || (r.installing && r.installing.scriptURL) || "";
+        if (src && src.indexOf("/sw.js") < 0) return r.unregister();
+      }));
+    }).then(function () {
+      return navigator.serviceWorker.register("/sw.js", {scope: "/"});
+    }).catch(function (e) { console.warn("service worker:", e); });
+  }
+
+  // ---- outbox: capture a NEW note with no connection ----
+  // Deliberately creates only. A create cannot conflict — the server picks a
+  // fresh filename — whereas replaying an EDIT can land on a file that one of
+  // the other three writers of this space changed underneath it, and that
+  // needs a precondition and a real conflict answer, not a queue.
+  var DB = null, PENDING = [];
+
+  function db(){
+    if (DB) return Promise.resolve(DB);
+    return new Promise(function(res, rej){
+      if (!window.indexedDB) { rej(new Error("no indexedDB")); return; }
+      var rq = indexedDB.open("notes-outbox", 1);
+      rq.onupgradeneeded = function(){ rq.result.createObjectStore("queue", {autoIncrement:true}); };
+      rq.onsuccess = function(){ DB = rq.result; res(DB); };
+      rq.onerror = function(){ rej(rq.error); };
+    });
+  }
+
+  function tx(mode, fn){
+    return db().then(function(d){
+      return new Promise(function(res, rej){
+        var t = d.transaction("queue", mode), store = t.objectStore("queue"), out;
+        out = fn(store);
+        t.oncomplete = function(){ res(out && out.result !== undefined ? out.result : out); };
+        t.onerror = function(){ rej(t.error); };
+      });
+    });
+  }
+
+  // An editor session owns ONE queue entry. Without the key, the debounced
+  // autosave queues the note and then closing queues it again — the same
+  // thought lands twice, which is exactly the failure a capture tool must not
+  // have.
+  function enqueue(title, body, key){
+    var rec = {title:title, body:body, at:Date.now()};
+    return tx("readwrite", function(s){
+      return key === undefined || key === null ? s.add(rec) : s.put(rec, key);
+    }).then(function(k){
+      return loadPending().then(function(){ return k; });
+    });
+  }
+
+  function loadPending(){
+    return db().then(function(d){
+      return new Promise(function(res, rej){
+        var out = [], cur = d.transaction("queue").objectStore("queue").openCursor();
+        cur.onsuccess = function(){
+          var c = cur.result;
+          if (!c) { PENDING = out; res(out); return; }
+          out.push({key:c.key, title:c.value.title, body:c.value.body, at:c.value.at});
+          c.continue();
+        };
+        cur.onerror = function(){ rej(cur.error); };
+      });
+    }).catch(function(){ PENDING = []; return []; });
+  }
+
+  var draining = false;
+  function drain(){
+    if (draining) return Promise.resolve();
+    draining = true;
+    return loadPending().then(function(items){
+      // Oldest first, and stop at the first failure so order is preserved and
+      // nothing is dropped on a flaky link.
+      return items.reduce(function(chain, it){
+        return chain.then(function(ok){
+          if (!ok) return false;
+          return api("POST", "/api/notes", {title:it.title, body:it.body})
+            .then(function(){ return tx("readwrite", function(s){ s.delete(it.key); }); })
+            .then(function(){ return true; })
+            .catch(function(){ return false; });
+        });
+      }, Promise.resolve(true));
+    }).then(function(){
+      return loadPending();
+    }).then(function(left){
+      draining = false;
+      if (left.length === 0) return refresh();
+      render();
+    }).catch(function(){ draining = false; });
+  }
+
   // ---- online / offline ----
   // navigator.onLine only knows about the link, not whether THIS box is
   // reachable, so a failed request also flips it — and a success flips it back.
@@ -1347,7 +1477,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       : '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A6 6 0 0 0 6.1 11 3.5 3.5 0 0 0 6.5 19z"/><path d="M3 3l18 18"/></svg>';
   }
   ONLINE = false; setNet(true);                       // paint the initial state
-  window.addEventListener("online", function(){ setNet(true); refresh().catch(function(){}); });
+  window.addEventListener("online", function(){ setNet(true); drain(); });
   window.addEventListener("offline", function(){ setNet(false); });
 
   // Column count is width-derived, so a rotation or a resize has to re-deal.
@@ -1358,6 +1488,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   });
 
   el.wall.appendChild(node("div", "empty", "Loading notes…"));
+  loadPending().then(drain);
   refresh().catch(function(e){
     el.wall.textContent = "";
     var em = node("div", "empty");

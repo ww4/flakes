@@ -111,4 +111,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def index():
         return FileResponse(STATIC / "index.html", media_type="text/html")
 
+    @app.get("/sw.js")
+    async def service_worker():
+        """The worker must be served from the ROOT to control the whole origin.
+
+        Service-Worker-Allowed is set explicitly rather than relied upon: a
+        worker served from a subpath can only control that subpath, and the
+        failure mode is a worker that registers fine and then never intercepts
+        anything. no-store because a cached worker is how a stale app survives
+        a deploy -- this origin already has one dead PWA on it (SilverBullet
+        served notes.rosemaryacres.com until 2026-11-09).
+        """
+        return FileResponse(
+            STATIC / "sw.js",
+            media_type="application/javascript",
+            headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-store"},
+        )
+
+    @app.get("/service_worker.js")
+    async def silverbullet_worker_killer():
+        """Evict SilverBullet's worker, which still owns this origin.
+
+        See static/service_worker.js. This path is not ours; it is the one the
+        previous occupant registered, and the only thing a poisoned browser
+        still fetches from the network.
+        """
+        return FileResponse(
+            STATIC / "service_worker.js",
+            media_type="application/javascript",
+            headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-store"},
+        )
+
+    @app.get("/manifest.webmanifest")
+    async def manifest():
+        return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json")
+
+    @app.get("/icon.svg")
+    async def icon_svg():
+        return FileResponse(STATIC / "icon.svg", media_type="image/svg+xml")
+
+    @app.get("/icon-192.png")
+    async def icon_192():
+        return FileResponse(STATIC / "icon-192.png", media_type="image/png")
+
+    @app.get("/icon-512.png")
+    async def icon_512():
+        return FileResponse(STATIC / "icon-512.png", media_type="image/png")
+
     return app
