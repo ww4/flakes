@@ -1,4 +1,4 @@
-"""Entry point: ``shoebox`` runs the app under uvicorn."""
+"""Entry point: ``notes`` runs the app under uvicorn."""
 
 from __future__ import annotations
 

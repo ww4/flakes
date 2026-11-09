@@ -99,10 +99,10 @@ notify() { gromit-notify "$1" "$2" "${3:-default}" "${4:-}" "${5:-}" || true; }
 # The review page in the SilverBullet space. Notifications are read on a phone,
 # where a path like /var/lib/media-mirror/pending-deleted.txt is useless — you
 # cannot open it without SSHing in. Tapping this opens the same list, rendered.
-SPACE_URL="https://notes.rosemaryacres.com/System/Media%20Sync"
+SPACE_URL="https://silverbullet.rosemaryacres.com/System/Media%20Sync"
 
 # Centralized, phone-readable sync report published into the SilverBullet space,
-# so the last run's result is one tap away at notes.rosemaryacres.com/System/Media
+# so the last run's result is one tap away at silverbullet.rosemaryacres.com/System/Media
 # Sync — no opening a log off the drive. HISTORY is the machine-readable record;
 # the page is re-rendered from it each run (newest first, last 15).
 SPACE_DIR=/var/lib/silverbullet

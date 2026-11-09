@@ -1,6 +1,6 @@
 """Path scoping — the security boundary of this service.
 
-Shoebox is unauthenticated (Tailscale/LAN source-gate only, like SilverBullet
+Notes is unauthenticated (Tailscale/LAN source-gate only, like SilverBullet
 itself), and it takes a note id straight from the client. That id is a
 space-relative path, so every request is a path-traversal attempt waiting to
 happen. Everything that turns client input into a filesystem path goes through
@@ -11,7 +11,7 @@ Three independent conditions, all required:
   1. the resolved path stays inside the space (defeats ``..`` and symlinks),
   2. it sits under one of the roots this app owns (so a traversal that lands
      on Journal/ or System/ is still refused — the agent's pages are not
-     Shoebox's to rewrite),
+     Notes's to rewrite),
   3. it ends in ``.md``.
 
 Resolution is done with ``Path.resolve()`` on the *joined* path, so a symlink

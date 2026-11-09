@@ -117,7 +117,7 @@ in
 
     notesUrl = lib.mkOption {
       type = lib.types.str;
-      default = "https://notes.rosemaryacres.com";
+      default = "https://silverbullet.rosemaryacres.com";
       description = "Where the Today panel links to.";
     };
 

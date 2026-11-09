@@ -1,6 +1,6 @@
 """The path-scoping corpus. This is the security boundary; treat it as such.
 
-Shoebox is unauthenticated, so a client-supplied note id is the only thing
+Notes is unauthenticated, so a client-supplied note id is the only thing
 standing between a request and the filesystem. Each case below is a way that
 boundary has been broken in real services.
 """
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from shoebox import paths
+from notes import paths
 
 
 # --- things that must be reachable -----------------------------------------

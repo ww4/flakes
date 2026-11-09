@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
-<title>Shoebox</title>
+<title>Notes</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
 <style>
 *{box-sizing:border-box}html,body{margin:0}img{max-width:100%}[hidden]{display:none!important}
@@ -79,7 +79,19 @@ body{
 .iconbtn:hover{color:var(--ink); border-color:var(--line-strong)}
 .iconbtn[aria-pressed="true"]{background:var(--accent-wash); border-color:var(--accent); color:var(--accent)}
 
-.chips{display:flex; gap:6px; overflow-x:auto; padding:10px 0; max-width:1280px; margin:0 auto; scrollbar-width:thin}
+.filters{display:flex; gap:10px; align-items:center; max-width:1280px; margin:0 auto; padding:10px 0}
+.seg{flex:none; display:flex; border:1px solid var(--line); border-radius:999px; background:var(--surface); overflow:hidden}
+.seg button{
+  border:0; background:none; cursor:pointer; color:var(--ink-soft);
+  padding:6px 12px; font:500 11px/1.3 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.05em; text-transform:uppercase; white-space:nowrap;
+}
+.seg button + button{border-left:1px solid var(--line)}
+.filters::before{content:none}
+.filters .chips{border-left:1px solid var(--line); padding-left:10px}
+.seg button:hover{color:var(--ink); background:var(--surface-2)}
+.seg button[aria-pressed="true"]{background:var(--accent); color:var(--accent-ink)}
+.chips{display:flex; gap:6px; overflow-x:auto; min-width:0; scrollbar-width:thin}
 .chip{
   flex:none; cursor:pointer; border:1px solid var(--line); background:var(--surface);
   color:var(--ink-soft); border-radius:999px; padding:5px 11px;
@@ -288,7 +300,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 
 <div class="bar">
   <div class="bar-row">
-    <div class="brand">Shoe<b>box</b> <span class="count" id="count"></span></div>
+    <div class="brand">Notes <span class="count" id="count"></span></div>
     <label class="search">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <input id="q" type="search" placeholder="Search notes" aria-label="Search notes">
@@ -297,7 +309,10 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h18v3H3zM5 10v10h14V10M9.5 14h5"/></svg>
     </button>
   </div>
-  <div class="chips" id="chips"></div>
+  <div class="filters">
+    <div class="seg" id="who" role="group" aria-label="Whose notes"></div>
+    <div class="chips" id="chips"></div>
+  </div>
 </div>
 
 <main>
@@ -398,9 +413,13 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     });
   }
 
-  var q = "", cat = "", showArch = false, openId = null;
+  // Default to Chris's own notes. The agent has written into this space for
+  // months, and on first open the wall was almost entirely agent pages — his
+  // actual notes were buried (Chris, 2026-11-09).
+  var q = "", cat = "", showArch = false, openId = null, who = "mine";
   var el = {
     q:document.getElementById("q"), chips:document.getElementById("chips"),
+    who:document.getElementById("who"),
     wall:document.getElementById("wall"), count:document.getElementById("count"),
     archBtn:document.getElementById("archBtn"), scrim:document.getElementById("scrim"),
     edClose:document.getElementById("edClose"), edTitle:document.getElementById("edTitle"),
@@ -414,6 +433,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   el.q.placeholder = "Search notes";
 
   function matches(n){
+    if (who !== "all" && n.author !== (who === "mine" ? "chris" : "claude")) return false;
     if (!!n.archived !== showArch) return false;
     if (cat && n.cat !== cat) return false;
     if (q && (n.title + "\n" + n.body).toLowerCase().indexOf(q) < 0) return false;
@@ -555,10 +575,29 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       ? NOTES.length + " notes"
       : shown.length + " / " + NOTES.length;
     chips();
+    drawWho();
+  }
+
+  function drawWho(){
+    var opts = [["mine", "Mine"], ["claude", "Claude"], ["all", "Both"]];
+    el.who.textContent = "";
+    opts.forEach(function(o){
+      var n = NOTES.filter(function(x){
+        return o[0] === "all" || x.author === (o[0] === "mine" ? "chris" : "claude");
+      }).length;
+      var b = node("button", null, o[1]);
+      b.setAttribute("aria-pressed", who === o[0] ? "true" : "false");
+      b.setAttribute("title", n + (n === 1 ? " note" : " notes"));
+      b.addEventListener("click", function(){ who = o[0]; cat = ""; render(); });
+      el.who.appendChild(b);
+    });
   }
 
   function chips(){
-    var counts = {}, live = NOTES.filter(function(n){ return !!n.archived === showArch; });
+    var counts = {}, live = NOTES.filter(function(n){
+      if (who !== "all" && n.author !== (who === "mine" ? "chris" : "claude")) return false;
+      return !!n.archived === showArch;
+    });
     live.forEach(function(n){ counts[n.cat] = (counts[n.cat] || 0) + 1; });
     var keys = Object.keys(counts).sort();
     el.chips.textContent = "";

@@ -132,6 +132,11 @@
     }).silverbullet;
     indexPage = "Home";   # quick-capture dashboard, not the space map (Chris, 2026-08-23)
     secondWriter = "claude";
+    # Moved off "notes" 2026-11-09: that name now belongs to the card wall
+    # (modules/services/notes.nix), which is the front end Chris actually uses.
+    # SilverBullet stays for Journal/, Areas/, Projects/, System/ — the pages
+    # the card wall deliberately does not serve.
+    subdomain = "silverbullet";
   };
 
   # ── wave 3c service values ─────────────────────────────────────────────────

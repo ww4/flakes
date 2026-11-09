@@ -33,6 +33,16 @@ LEADING_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}[ _-]+")
 TRUE = {"true", "yes", "1", "on"}
 
 
+# Authorship is recorded ONLY on the agent's own notes. Unlabelled means
+# Chris's, which is the asymmetry that matters: his 553 notes keep their files
+# byte-identical, anything created in this app is his by construction, and the
+# agent is the one party that has to declare itself. A text heuristic was tried
+# first and misfiled "Queue replies — gromit side" as his, which is exactly the
+# kind of quiet wrongness a default filter must not have.
+AGENT = "claude"
+HUMAN = "chris"
+
+
 @dataclass
 class Note:
     id: str
@@ -42,6 +52,7 @@ class Note:
     date: str
     pinned: bool
     archived: bool
+    author: str
     had_h1: bool
 
     def public(self) -> dict:
@@ -121,6 +132,7 @@ def read(space: Path, rel: str, *, allow_trash: bool = False) -> Note:
         date=when[:10],
         pinned=(_fm_get(fm, "pinned") or "").lower() in TRUE,
         archived=(_fm_get(fm, "archived") or "").lower() in TRUE,
+        author=(_fm_get(fm, "author") or HUMAN).strip().lower(),
         had_h1=had_h1,
     )
 
@@ -133,7 +145,7 @@ def _atomic_write(path: Path, text: str) -> None:
     never sees a half-written page.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".shoebox-", suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".notes-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
