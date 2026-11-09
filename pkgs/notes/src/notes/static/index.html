@@ -212,18 +212,43 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 .sug .t{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .search-wrap{position:relative; flex:1 1 auto; min-width:0; display:flex}
 
-/* category control in the editor */
-.ed-cat{display:flex; align-items:center; gap:8px; padding:4px 14px 2px}
-.ed-cat label{
-  font:500 9.5px/1 "IBM Plex Mono",ui-monospace,monospace;
-  letter-spacing:.12em; text-transform:uppercase; color:var(--ink-soft);
+/* category chooser: an icon on the editor's bottom row, popping a panel that
+   both lists what exists and accepts a new name */
+.ed-bar{position:relative}
+.catpop{
+  position:absolute; left:8px; bottom:calc(100% + 6px); z-index:50; width:min(290px, calc(100vw - 32px));
+  background:var(--surface); border:1px solid var(--line); border-radius:12px;
+  box-shadow:var(--shadow-lift); overflow:hidden;
 }
-.ed-cat input{
-  flex:1; min-width:0; border:1px solid var(--line); border-radius:999px;
-  background:var(--ground); color:var(--ink); padding:5px 11px; outline:none;
-  font:500 11px/1.4 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.04em;
+.catpop[hidden]{display:none}
+.catpop input{
+  width:100%; border:0; border-bottom:1px solid var(--line); background:none;
+  color:var(--ink); padding:11px 13px; outline:none;
+  font:500 12px/1.3 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.04em;
 }
-.ed-cat input:focus{border-color:var(--accent)}
+.catpop input:focus{border-bottom-color:var(--accent)}
+.catlist{max-height:240px; overflow-y:auto}
+.catlist button{
+  display:flex; align-items:center; gap:9px; width:100%; text-align:left;
+  border:0; background:none; cursor:pointer; color:var(--ink); padding:8px 13px;
+  font:500 11.5px/1.3 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.04em;
+  text-transform:uppercase;
+}
+.catlist button:hover, .catlist button:focus-visible{background:var(--surface-2); outline:none}
+.catlist button[aria-pressed="true"]{color:var(--accent)}
+.catlist button .n{margin-left:auto; color:var(--ink-faint); text-transform:none}
+.catlist .new{color:var(--accent)}
+.cat-now{
+  font:500 9.5px/1 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--ink-soft); padding-left:2px;
+}
+
+/* online / offline */
+.net{
+  flex:none; display:grid; place-items:center; width:30px; height:30px;
+  border-radius:999px; color:var(--ink-soft);
+}
+.net.off{color:var(--brass); background:var(--brass-wash)}
 .more-btn{
   display:block; width:100%; margin:4px 0 18px; padding:13px 16px;
   border:1px dashed var(--line-strong); border-radius:var(--r);
@@ -364,6 +389,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       </label>
       <div class="sug" id="sug" role="listbox" aria-label="Suggestions" hidden></div>
     </div>
+    <span class="net" id="net" title="Online" aria-live="polite"></span>
     <button class="iconbtn" id="archBtn" aria-pressed="false" title="Show archive" aria-label="Show archive">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h18v3H3zM5 10v10h14V10M9.5 14h5"/></svg>
     </button>
@@ -396,11 +422,6 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       </button>
     </div>
     <div class="ed-scroll" id="edScroll"></div>
-    <div class="ed-cat">
-      <label for="edCat">Category</label>
-      <input id="edCat" list="catlist" placeholder="none" autocomplete="off" spellcheck="false">
-      <datalist id="catlist"></datalist>
-    </div>
     <div class="ed-path" id="edPath"></div>
     <div class="ed-bar">
       <button class="tool" id="edCheck" aria-pressed="false" aria-label="Show checkboxes" title="Show checkboxes">
@@ -409,14 +430,22 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       <button class="tool" id="edRaw" aria-pressed="false" aria-label="Show markdown source" title="Markdown source">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6 4 12l5 6M15 6l5 6-5 6"/></svg>
       </button>
-      <button class="tool" id="edArch" aria-label="Archive note" title="Archive">
+      <button class="tool brass" id="edArch" aria-pressed="false" aria-label="Archive note" title="Archive">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18v3H3zM5 10v10h14V10M9.5 14h5"/></svg>
       </button>
       <button class="tool" id="edDel" aria-label="Delete note" title="Delete">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>
       </button>
+      <button class="tool" id="edCatBtn" aria-label="Category" title="Category" aria-expanded="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11V5a2 2 0 0 1 2-2h6l10 10-8 8z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg>
+      </button>
+      <span class="cat-now" id="edCatNow"></span>
       <span class="sp"></span>
       <span class="saved" id="edSaved"></span>
+      <div class="catpop" id="catpop" hidden>
+        <input id="edCat" placeholder="Type a category, Enter to set" autocomplete="off" spellcheck="false" aria-label="Category">
+        <div class="catlist" id="catlistBox"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -438,12 +467,16 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       headers: body ? {"Content-Type":"application/json"} : undefined,
       body: body ? JSON.stringify(body) : undefined
     }).then(function(r){
+      setNet(true);                       // the box answered, whatever it said
       if (!r.ok) {
         return r.json().catch(function(){ return {}; }).then(function(j){
           throw new Error(j.detail || j.error || (r.status + " " + r.statusText));
         });
       }
       return r.json();
+    }, function(err){
+      setNet(false);                      // transport failed: unreachable
+      throw err;
     });
   }
 
@@ -506,7 +539,9 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   var el = {
     q:document.getElementById("q"), chips:document.getElementById("chips"),
     who:document.getElementById("who"), sug:document.getElementById("sug"),
-    edCat:document.getElementById("edCat"), catlist:document.getElementById("catlist"),
+    edCat:document.getElementById("edCat"), catpop:document.getElementById("catpop"),
+    edCatBtn:document.getElementById("edCatBtn"), edCatNow:document.getElementById("edCatNow"),
+    catlistBox:document.getElementById("catlistBox"), net:document.getElementById("net"),
     wall:document.getElementById("wall"), count:document.getElementById("count"),
     archBtn:document.getElementById("archBtn"), scrim:document.getElementById("scrim"),
     edClose:document.getElementById("edClose"), edTitle:document.getElementById("edTitle"),
@@ -804,11 +839,46 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     el.q.setAttribute("aria-expanded", "true");
   }
 
+  // ---- category chooser ----
+  // Lists what exists AND takes a new name, because a chooser that can only
+  // pick from a fixed list is how taxonomies ossify.
+  function closeCatPop(){
+    el.catpop.hidden = true;
+    el.edCatBtn.setAttribute("aria-expanded", "false");
+  }
+
   function drawCatList(){
-    el.catlist.textContent = "";
-    Object.keys(CATS).forEach(function(c){
-      var o = document.createElement("option"); o.value = c; el.catlist.appendChild(o);
-    });
+    var typed = el.edCat.value.trim().toLowerCase();
+    var now = (ed && ed.note && ed.note.cat) || "";
+    el.catlistBox.textContent = "";
+
+    function row(label, value, count, isNew){
+      var b = node("button", isNew ? "new" : null);
+      b.setAttribute("aria-pressed", value === now ? "true" : "false");
+      b.appendChild(document.createTextNode(label));
+      if (count !== null) b.appendChild(node("span", "n", count));
+      b.addEventListener("click", function(){ setCategory(value); });
+      return b;
+    }
+
+    var keys = Object.keys(CATS).filter(function(c){ return !typed || c.indexOf(typed) >= 0; })
+      .sort(function(a, b){ return CATS[b] - CATS[a] || (a < b ? -1 : 1); });
+    var slug = typed.replace(/[^a-z0-9 _-]+/g, "").trim().replace(/\s+/g, "-");
+    if (slug && keys.indexOf(slug) < 0) el.catlistBox.appendChild(row("+ " + slug, slug, null, true));
+    keys.forEach(function(c){ el.catlistBox.appendChild(row(c.replace(/-/g, " "), c, CATS[c], false)); });
+    if (now) el.catlistBox.appendChild(row("— none —", "", null, false));
+    if (!el.catlistBox.children.length) el.catlistBox.appendChild(node("div", "sug-head", "no match — type to create"));
+  }
+
+  function setCategory(value){
+    if (!ed || !ed.note) return;
+    closeCatPop();
+    if (value === (ed.note.cat || "")) return;
+    var n = ed.note;
+    persist(n, {category:value}, "Couldn't set the category").then(function(){
+      el.edCatNow.textContent = n.cat || "none";
+      return refresh();                 // the census changed
+    }).catch(function(){});
   }
 
   function drawWho(){
@@ -1066,7 +1136,12 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     el.edRaw.setAttribute("aria-pressed", ed.raw !== null ? "true" : "false");
     el.edPin.setAttribute("aria-pressed", ed.note && ed.note.pinned ? "true" : "false");
     el.edCheck.disabled = ed.raw !== null;
-    el.edArch.setAttribute("aria-label", ed.note && ed.note.archived ? "Unarchive note" : "Archive note");
+    // The archive button shows the note's STATE, not just an action: lit when
+    // the note is archived, and the tooltip then offers the way out.
+    var arch = !!(ed.note && ed.note.archived);
+    el.edArch.setAttribute("aria-pressed", arch ? "true" : "false");
+    el.edArch.setAttribute("aria-label", arch ? "Unarchive note" : "Archive note");
+    el.edArch.setAttribute("title", arch ? "Unarchive" : "Archive");
   }
 
   function open(id){
@@ -1079,9 +1154,10 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     el.edTitle.value = n ? n.title : "";
     el.edPath.textContent = n ? n.id : "Inbox/" + new Date().toISOString().slice(0, 10) + "-new-note.md";
     el.edSaved.textContent = n ? "Edited " + n.date : "";
-    el.edCat.value = n ? (n.cat || "") : "";
-    el.edCat.disabled = !n;          // a new note gets its category on first save
-    drawCatList();
+    el.edCat.value = "";
+    el.edCatNow.textContent = n ? (n.cat || "none") : "";
+    el.edCatBtn.disabled = !n;       // a new note gets its category on first save
+    closeCatPop();
     el.scrim.hidden = false;
     syncBar();
     if (!n) { draw(); el.edTitle.focus(); return; }
@@ -1112,14 +1188,26 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 
   // Category is its own write — it is frontmatter, not body text, and it
   // should land even if nothing else in the note changed.
-  el.edCat.addEventListener("change", function(){
+  el.edCatBtn.addEventListener("click", function(ev){
+    ev.stopPropagation();
     if (!ed || !ed.note) return;
-    var want = el.edCat.value.trim();
-    if (want === (ed.note.cat || "")) return;
-    persist(ed.note, {category:want}, "Couldn't set the category").then(function(){
-      if (ed) el.edCat.value = ed.note.cat || "";
-      return refresh();                 // the census changed
-    }).catch(function(){});
+    var opening = el.catpop.hidden;
+    el.catpop.hidden = !opening;
+    el.edCatBtn.setAttribute("aria-expanded", opening ? "true" : "false");
+    if (opening) { el.edCat.value = ""; drawCatList(); el.edCat.focus(); }
+  });
+  el.edCat.addEventListener("input", drawCatList);
+  el.edCat.addEventListener("keydown", function(ev){
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      var first = el.catlistBox.querySelector("button");
+      if (first) first.click();
+    } else if (ev.key === "Escape") {
+      ev.preventDefault(); ev.stopPropagation(); closeCatPop();
+    }
+  });
+  document.addEventListener("click", function(ev){
+    if (!el.catpop.hidden && !el.catpop.contains(ev.target) && ev.target !== el.edCatBtn) closeCatPop();
   });
   el.edClose.addEventListener("click", close);
   el.scrim.addEventListener("click", function(ev){ if (ev.target === el.scrim) close(); });
@@ -1155,8 +1243,13 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       var n = ed.note, was = !!n.archived;
       close();
       return persist(n, {archived:!was}, "Couldn't archive that").then(function(){
+        // Re-read rather than trust the local mutation: the archive view is a
+        // different slice of the same list, and a stale entry there shows up
+        // as "it isn't in the archive until I refresh".
+        return refresh();
+      }).then(function(){
         toast(was ? "Unarchived" : "Archived", function(){
-          persist(n, {archived:was}, "Couldn't undo that").catch(function(){});
+          persist(n, {archived:was}, "Couldn't undo that").then(refresh).catch(function(){});
         });
       });
     }).catch(function(){});
@@ -1208,6 +1301,54 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   document.addEventListener("click", function(ev){
     if (!el.sug.hidden && !el.sug.contains(ev.target) && ev.target !== el.q) closeSug();
   });
+
+  // ---- keyboard ----
+  // Ctrl/Cmd-F, -N and -S are taken over deliberately: the browser's own Find
+  // only searches the ~60 cards currently in the DOM, which on a 586-note wall
+  // is a worse answer than this page's own search, delivered confidently.
+  document.addEventListener("keydown", function(ev){
+    var mod = ev.ctrlKey || ev.metaKey;
+    if (!mod || ev.altKey) return;
+    var k = (ev.key || "").toLowerCase();
+    if (k === "f") {
+      ev.preventDefault();
+      el.q.focus(); el.q.select(); suggest();
+    } else if (k === "n") {
+      ev.preventDefault();
+      if (!ed) open(null);
+    } else if (k === "s") {
+      ev.preventDefault();
+      syncNow();
+    }
+  });
+
+  // Ctrl-S means "flush whatever is pending and re-read", which is the honest
+  // meaning of save here: edits already autosave, so the useful work is making
+  // sure nothing is in flight and the wall matches the disk.
+  function syncNow(){
+    var p = ed ? commit() : Promise.resolve();
+    p.then(refresh).then(function(){
+      setNet(true);
+      toast(ed ? "Saved" : "Synced", null);
+    }).catch(function(e){ fail("Sync failed", e); });
+  }
+
+  // ---- online / offline ----
+  // navigator.onLine only knows about the link, not whether THIS box is
+  // reachable, so a failed request also flips it — and a success flips it back.
+  var ONLINE = true;
+  function setNet(up){
+    if (up === ONLINE) return;
+    ONLINE = up;
+    el.net.className = "net" + (up ? "" : " off");
+    el.net.title = up ? "Online — changes save as you type" : "Offline — changes are NOT being saved";
+    el.net.innerHTML = up
+      ? '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A6 6 0 0 0 6.1 11 3.5 3.5 0 0 0 6.5 19z"/><path d="m9.5 14.5 2 2 3.5-4"/></svg>'
+      : '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A6 6 0 0 0 6.1 11 3.5 3.5 0 0 0 6.5 19z"/><path d="M3 3l18 18"/></svg>';
+  }
+  ONLINE = false; setNet(true);                       // paint the initial state
+  window.addEventListener("online", function(){ setNet(true); refresh().catch(function(){}); });
+  window.addEventListener("offline", function(){ setNet(false); });
 
   // Column count is width-derived, so a rotation or a resize has to re-deal.
   var rsT = null;
