@@ -540,3 +540,26 @@ def test_summary_carries_shared(space):
     n = store.create(space, "list", "bread")
     store.write(space, n.id, shared=True)
     assert store.read(space, n.id).summary()["shared"] is True
+
+
+def test_trash_is_listable_and_restorable(space):
+    """Deleting moves; the trash view is how that becomes recoverable by hand."""
+    rel = "Keep/2017-03-04 Bring from Kentucky.md"
+    assert store.trash_listing(space) == []
+    trashed = store.trash(space, rel)
+    listed = store.trash_listing(space)
+    assert [n.id for n in listed] == [trashed]
+    assert "Spices" in listed[0].body            # content survived the move
+    store.restore(space, trashed)
+    assert store.trash_listing(space) == []
+
+
+def test_trash_listing_is_empty_without_the_directory(space):
+    assert store.trash_listing(space) == []
+
+
+def test_trashed_notes_stay_out_of_the_normal_listing(space):
+    rel = "Keep/2017-03-04 Bring from Kentucky.md"
+    store.trash(space, rel)
+    assert not any(n.id.startswith("Trash/") for n in store.listing(space))
+    assert not store.listing(space, "Spices")

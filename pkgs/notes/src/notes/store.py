@@ -411,6 +411,29 @@ def authors(space: Path) -> dict[str, int]:
     return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
+def trash_listing(space: Path) -> list[Note]:
+    """Everything sitting in Trash/, newest first.
+
+    Delete has always MOVED a note here rather than unlinking it, which is why
+    a note deleted by accident on 2026-11-09 was recoverable at all. What was
+    missing was any way for Chris to do that himself without an agent and a
+    shell — so the trash is a view now.
+    """
+    out: list[Note] = []
+    root = space / paths.TRASH_DIR
+    if not root.is_dir():
+        return out
+    for p in sorted(root.rglob("*.md")):
+        rel = paths.relative(space, p)
+        if paths.in_scope(rel, allow_trash=True):
+            try:
+                out.append(read(space, rel, allow_trash=True))
+            except OSError:
+                continue
+    out.sort(key=lambda n: (n.date, n.id), reverse=True)
+    return out
+
+
 def census(space: Path) -> dict[str, int]:
     """Every category and how many notes carry it, ignoring any filter.
 

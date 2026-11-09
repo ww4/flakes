@@ -117,6 +117,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             category=req.category, author=req.author,
         ).summary()
 
+    @app.get("/api/trash")
+    async def list_trash():
+        """What is recoverable. Paired with /api/notes/restore."""
+        return {"notes": [n.summary() for n in store.trash_listing(space)]}
+
     @app.post("/api/notes/trash")
     async def trash_note(req: NoteRef):
         return {"trashed": store.trash(space, req.id)}
