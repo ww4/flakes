@@ -1,11 +1,11 @@
-# shoebox — the Keep-style card wall over the flat markdown subset of the
+# notes — the Keep-style card wall over the flat markdown subset of the
 # SilverBullet space (Keep/, Notes/, Inbox/ and the Grocery List).
 #
 # Vendored here rather than taken as a flake input, for the same reason
 # homelab-mcp is: comin deploys from the PUBLIC GitHub mirror of this repo, so
 # a private flake input would break every deploy. Everything in this directory
 # is therefore public — which is fine, it holds no secrets (all configuration
-# is environment, see src/shoebox/config.py).
+# is environment, see src/notes/config.py).
 #
 # Why this exists at all: SilverBullet's editor was used to create five pages
 # in sixteen months (two of them tests) while the agent wrote 817. The space —
@@ -15,7 +15,7 @@
 { lib, python3Packages }:
 
 python3Packages.buildPythonApplication {
-  pname = "shoebox";
+  pname = "notes";
   version = "0.1.0";
   pyproject = true;
 
@@ -39,22 +39,22 @@ python3Packages.buildPythonApplication {
   # files" promise — unknown frontmatter keys survive a write untouched.
   pytestFlags = [ "tests/" ];
 
-  pythonImportsCheck = [ "shoebox" "shoebox.app" "shoebox.paths" "shoebox.store" ];
+  pythonImportsCheck = [ "notes" "notes.app" "notes.paths" "notes.store" ];
 
   # The front end is a single file shipped as package data. If hatchling's
   # include rules ever drop it the service still starts and then 500s on every
   # page load, so assert it landed rather than finding out at runtime.
   postInstall = ''
-    page="$out/${python3Packages.python.sitePackages}/shoebox/static/index.html"
+    page="$out/${python3Packages.python.sitePackages}/notes/static/index.html"
     if [ ! -s "$page" ]; then
-      echo "shoebox: static/index.html missing from the wheel ($page)" >&2
+      echo "notes: static/index.html missing from the wheel ($page)" >&2
       exit 1
     fi
   '';
 
   meta = with lib; {
     description = "Keep-style card wall over the SilverBullet space";
-    mainProgram = "shoebox";
+    mainProgram = "notes";
     platforms = platforms.linux;
   };
 }

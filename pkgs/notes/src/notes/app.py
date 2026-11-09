@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from . import paths, store
 from .config import Settings
 
-log = logging.getLogger("shoebox")
+log = logging.getLogger("notes")
 
 STATIC = Path(__file__).parent / "static"
 
@@ -47,7 +47,7 @@ class NoteNew(BaseModel):
 def create_app(settings: Settings | None = None) -> FastAPI:
     cfg = settings or Settings()
     space = Path(cfg.space_dir)
-    app = FastAPI(title="Shoebox", docs_url=None, redoc_url=None)
+    app = FastAPI(title="Notes", docs_url=None, redoc_url=None)
 
     @app.exception_handler(paths.PathError)
     async def _path_error(_request, exc: paths.PathError):

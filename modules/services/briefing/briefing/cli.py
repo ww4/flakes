@@ -49,7 +49,7 @@ def cmd_card(args) -> int:
 
     page = render.render(
         issues, plan, ed,
-        notes_url=_env("BRIEFING_NOTES_URL", "https://notes.rosemaryacres.com"),
+        notes_url=_env("BRIEFING_NOTES_URL", "https://silverbullet.rosemaryacres.com"),
         sentinel_url=_env("BRIEFING_SENTINEL_URL",
                           "https://digest.rosemaryacres.com/sentinel/"),
         now=datetime.now(),

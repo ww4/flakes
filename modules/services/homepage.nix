@@ -648,7 +648,7 @@ let
     - Briefing:
         - Today:
             description: What is open, what today is about, and something to read
-            href: https://notes.rosemaryacres.com
+            href: https://silverbullet.rosemaryacres.com
             icon: mdi-script-text-outline
             id: embed-briefing
             widget:
@@ -879,11 +879,11 @@ let
         # duplicates are fine precisely because Media sits on another tab.
         - SilverBullet:
             description: Notes, tasks & the daybook (scheduling assistant)
-            href: https://notes.rosemaryacres.com
+            href: https://silverbullet.rosemaryacres.com
             icon: silverbullet.png
-        - Shoebox:
-            description: Notes as cards — Keep/, Notes/, Inbox & the grocery list
-            href: https://shoebox.rosemaryacres.com
+        - Notes:
+            description: Notes as cards — 13 years of Keep, the grocery list, quick capture
+            href: https://notes.rosemaryacres.com
             icon: mdi-card-text-outline
             # Link-only: no Homepage widget exists for this; it's ours.
         - Vaultwarden:

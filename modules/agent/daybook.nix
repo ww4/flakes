@@ -54,7 +54,7 @@ let
   notify = "${notifyPkg}/bin/gromit-notify";
 
   spaceDir = "/var/lib/silverbullet";
-  notesUrl = "https://notes.rosemaryacres.com";
+  notesUrl = "https://silverbullet.rosemaryacres.com";
 
   # Grocery automation PAUSED 2026-08-23 (Chris: "not useful like I had
   # hoped... just disable it for now"). Flip to true to restore the prompts'

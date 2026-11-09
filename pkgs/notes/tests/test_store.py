@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from shoebox import paths, store
+from notes import paths, store
 
 KEEP_NOTE = """---
 date: 2017-03-04
@@ -161,4 +161,43 @@ def test_listing_excludes_the_agents_pages(space):
 
 def test_atomic_write_leaves_no_temp_files(space):
     store.write(space, "Grocery List.md", pinned=True)
-    assert not list(space.glob(".shoebox-*"))
+    assert not list(space.glob(".notes-*"))
+
+
+# --- authorship -------------------------------------------------------------
+# Only the agent's own notes carry the key; unlabelled means Chris's. The
+# default wall filter depends on this, so a silent flip either way is a bug
+# that hides his notes or buries them again.
+
+def test_unlabelled_notes_are_chris(space):
+    assert store.read(space, "Keep/2017-03-04 Bring from Kentucky.md").author == "chris"
+    assert store.read(space, "Grocery List.md").author == "chris"
+
+
+def test_author_key_is_read(space):
+    rel = "Notes/agent page.md"
+    (space / rel).write_text("---\nauthor: claude\n---\n\n# agent page\n\nbody\n")
+    assert store.read(space, rel).author == "claude"
+
+
+def test_author_is_case_and_space_insensitive(space):
+    rel = "Notes/odd.md"
+    (space / rel).write_text("---\nauthor:  Claude \n---\n\nbody\n")
+    assert store.read(space, rel).author == "claude"
+
+
+def test_author_survives_an_unrelated_write(space):
+    """Pinning an agent note must not quietly re-attribute it to Chris."""
+    rel = "Notes/agent page.md"
+    (space / rel).write_text("---\nauthor: claude\ncategory: homelab\n---\n\nbody\n")
+    store.write(space, rel, pinned=True)
+    n = store.read(space, rel)
+    assert n.author == "claude" and n.pinned is True
+    assert "author: claude" in (space / rel).read_text()
+
+
+def test_notes_created_here_are_chris(space):
+    """Anything made in this app is his by construction — no key written."""
+    n = store.create(space, "deck screws", "3 inch")
+    assert n.author == "chris"
+    assert "author:" not in (space / n.id).read_text()
