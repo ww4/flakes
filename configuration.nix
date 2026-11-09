@@ -108,6 +108,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/vaultwarden.nix
     ./modules/services/litestream.nix       # continuous SQLite replication of the vault to B2
     ./modules/services/silverbullet.nix     # markdown notes/tasks space — scheduling-assistant SoT
+    ./modules/services/shoebox.nix          # Keep-style card wall over the space's flat subset
     ./modules/services/pim.nix              # plain-text calendar vdir + vdirsyncer (Nextcloud two-way, Google RO)
     ./modules/services/homelab-mcp.nix      # MCP connector for Claude-in-the-app — public via the lock3 VPS jump host
     ./modules/agent/daybook.nix             # 09:00/20:00 claude -p bookends: plan the day / review + tomorrow

@@ -234,6 +234,11 @@ let
             description: Notes, tasks & the daybook (scheduling assistant)
             href: https://notes.rosemaryacres.com
             icon: silverbullet.png
+        - Shoebox:
+            description: Notes as cards — Keep/, Notes/, Inbox & the grocery list
+            href: https://shoebox.rosemaryacres.com
+            icon: mdi-card-text-outline
+            # Link-only: no Homepage widget exists for this; it's ours.
         - Tandoor:
             description: Recipes
             href: https://recipes.rosemaryacres.com
