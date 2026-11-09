@@ -75,7 +75,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse({"error": "no such note"}, status_code=404)
 
     @app.get("/api/notes")
-    async def list_notes(request: Request, q: str | None = None):
+    async def list_notes(
+        request: Request,
+        q: str | None = None,
+        scope: str = "all",
+        shared: int = 1,
+    ):
         """The wall: summaries only, and the search runs here.
 
         Sending whole notes was 546 KB for 586 cards. Previews cut that to a
@@ -85,7 +90,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         return {
             "notes": [n.summary() for n in store.listing(space, q)],
-            "cats": store.census(space),
+            "cats": store.census(
+                space,
+                scope=scope if scope in ("mine", "shared", "all") else "all",
+                me=who(request) or store.HUMAN,
+                show_shared=bool(shared),
+            ),
             "authors": store.authors(space),
             "me": who(request),
         }
