@@ -53,12 +53,13 @@ class Note:
     body: str
     cat: str
     date: str
-    pinned: bool
+    pinned: bool            # pinned by anyone (coarse; the viewer asks pinned_by)
+    pinned_by: list[str]
+    pin_order: dict[str, int]
     archived: bool          # legacy/global: archived for everyone
     archived_by: list[str]  # and per person, which is what a shared note needs
     shared: bool
     filed: bool
-    order: int | None      # manual position, pinned notes only
     author: str
     had_h1: bool
 
@@ -136,6 +137,38 @@ def _int_or_none(v: str | None) -> int | None:
         return None
 
 
+def _actor(actor: str | None) -> str:
+    return re.sub(r"[^a-z0-9_-]+", "", (actor or HUMAN).strip().lower())[:32] or HUMAN
+
+
+def _people(v: str | None) -> list[str]:
+    return [w for w in re.split(r"[,\s]+", (v or "")) if w]
+
+
+def _order_map(v: str | None) -> dict[str, int]:
+    """"chris=10, mary=30" — a manual pin position PER PERSON.
+
+    One key rather than order_chris/order_mary, so adding a third person does
+    not add a third frontmatter key to every note.
+    """
+    out: dict[str, int] = {}
+    for part in re.split(r"[,\s]+", (v or "")):
+        if "=" not in part:
+            continue
+        who, _, num = part.partition("=")
+        try:
+            out[who.strip().lower()] = int(num)
+        except ValueError:
+            continue
+    return out
+
+
+def _pinned_any(fm: list[str]) -> bool:
+    if (_fm_get(fm, "pinned") or "").lower() in TRUE:
+        return True
+    return bool(_people(_fm_get(fm, "pinned_by")))
+
+
 def _archived_any(fm: list[str]) -> bool:
     """Archived by anyone — the legacy global flag, or any named person.
 
@@ -184,9 +217,10 @@ def read(space: Path, rel: str, *, allow_trash: bool = False) -> Note:
         # Without this "uncategorised" is invisible: an unfiled Keep note
         # reads as category "keep", indistinguishable from one filed there.
         filed=bool(_fm_get(fm, "category")),
-        order=_int_or_none(_fm_get(fm, "order")),
         date=when[:10],
-        pinned=(_fm_get(fm, "pinned") or "").lower() in TRUE,
+        pinned=_pinned_any(fm),
+        pinned_by=_people(_fm_get(fm, "pinned_by")),
+        pin_order=_order_map(_fm_get(fm, "pin_order")),
         archived=_archived_any(fm),
         archived_by=[w for w in re.split(r"[,\s]+", (_fm_get(fm, "archived_by") or "")) if w],
         shared=(_fm_get(fm, "shared") or "").lower() in TRUE,
@@ -242,7 +276,26 @@ def write(
     had_h1 = bool(new_title) and (current.had_h1 or new_title != _title_from_name(rel))
 
     if pinned is not None:
-        fm = _fm_set(fm, "pinned", "true" if pinned else None)
+        # A PIN IS PERSONAL, for the same reason archiving is: it means "keep
+        # this at the top FOR ME", which is not a claim about anyone else. On a
+        # shared grocery list Chris pinning it used to pin it for Mary too.
+        act = _actor(actor)
+        now = list(current.pinned_by)
+        if current.pinned and not now:
+            now = sorted({current.author, HUMAN})      # an old global pin
+        if pinned and act not in now:
+            now.append(act)
+        if not pinned and act in now:
+            now.remove(act)
+        fm = _fm_set(fm, "pinned", None)
+        fm = _fm_set(fm, "pinned_by", ", ".join(sorted(set(now))) if now else None)
+        if not pinned:
+            # Unpinning drops this person's manual position with it; it means
+            # nothing once the note is off their pinned row.
+            om = dict(current.pin_order)
+            om.pop(act, None)
+            fm = _fm_set(fm, "pin_order",
+                         ", ".join(f"{k}={v}" for k, v in sorted(om.items())) or None)
     if archived is not None:
         # ARCHIVE IS PERSONAL. Chris asked what happens when he archives a
         # SHARED note, and the honest answer was "it archives for Mary too" —
@@ -252,7 +305,7 @@ def write(
         #
         # (Trash stays global, and has to: it MOVES the file. A shared note
         # either of them deletes is gone for both. Said plainly, not faked.)
-        act = re.sub(r"[^a-z0-9_-]+", "", (actor or HUMAN).strip().lower())[:32] or HUMAN
+        act = _actor(actor)
         now = list(current.archived_by)
         if current.archived and not now:
             # An old GLOBAL flag meant archived, full stop. Keep that true for
@@ -265,10 +318,17 @@ def write(
         fm = _fm_set(fm, "archived", None)
         fm = _fm_set(fm, "archived_by", ", ".join(sorted(set(now))) if now else None)
     if order is not None:
-        # Manual position, and ONLY for pinned notes — Chris scoped it there
-        # deliberately. Ordering 1382 notes by hand is not a thing anyone does;
-        # ordering the handful you pinned is. A negative value clears it.
-        fm = _fm_set(fm, "order", str(order) if order >= 0 else None)
+        # Manual position, ONLY for pinned notes and ONLY for this person —
+        # otherwise Chris arranging his pinned row would rearrange Mary's.
+        act = _actor(actor)
+        om = dict(current.pin_order)
+        if order >= 0:
+            om[act] = order
+        else:
+            om.pop(act, None)
+        fm = _fm_set(fm, "order", None)        # retire the global key
+        fm = _fm_set(fm, "pin_order",
+                     ", ".join(f"{k}={v}" for k, v in sorted(om.items())) or None)
     if shared is not None:
         # "Shared" is a PLACE a note is put, like archived -- not a computed
         # union of everyone's notes. Chris: "I want that to be a shared space

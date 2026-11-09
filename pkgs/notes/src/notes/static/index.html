@@ -973,7 +973,7 @@ body.selecting .pin{display:none}
   }
 
   function card(n){
-    var c = node("div", "card" + (n.shared ? " shared" : "") + (n.pinned ? " pinned" : "") + (n.pending ? " pending" : "") + (SEL[n.id] ? " sel" : ""));
+    var c = node("div", "card" + (n.shared ? " shared" : "") + (pinnedForMe(n) ? " pinned" : "") + (n.pending ? " pending" : "") + (SEL[n.id] ? " sel" : ""));
     if (SEL[n.id]) {
       var tick = node("div", "tick");
       tick.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"><path d="m5 13 4.5 4.5L19 7"/></svg>';
@@ -986,10 +986,10 @@ body.selecting .pin{display:none}
     else c.classList.add("untitled");
 
     var pin = node("button", "pin");
-    pin.setAttribute("aria-label", (n.pinned ? "Unpin " : "Pin ") + n.title);
-    pin.setAttribute("title", n.pinned ? "Unpin" : "Pin");
-    pin.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="' + (n.pinned ? "currentColor" : "none") + '" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M7 4h10l-1.5 7 2.5 3H5.5L8 11z"/></svg>';
-    pin.addEventListener("click", function(ev){ ev.stopPropagation(); persist(n, {pinned:!n.pinned}, "Couldn't pin that").catch(function(){}); });
+    pin.setAttribute("aria-label", (pinnedForMe(n) ? "Unpin " : "Pin ") + (n.title || "note"));
+    pin.setAttribute("title", pinnedForMe(n) ? "Unpin" : "Pin");
+    pin.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="' + (pinnedForMe(n) ? "currentColor" : "none") + '" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M7 4h10l-1.5 7 2.5 3H5.5L8 11z"/></svg>';
+    pin.addEventListener("click", function(ev){ ev.stopPropagation(); persist(n, {pinned:!pinnedForMe(n)}, "Couldn't pin that").catch(function(){}); });
     c.appendChild(pin);
 
     var box = node("div", "body");
@@ -1088,7 +1088,7 @@ body.selecting .pin{display:none}
     var n = selCount();
     el.selCount.textContent = n + " selected";
     var any = selected();
-    var allPinned = any.length && any.every(function(x){ return x.pinned; });
+    var allPinned = any.length && any.every(pinnedForMe);
     el.selPin.setAttribute("aria-pressed", allPinned ? "true" : "false");
     el.selPin.title = allPinned ? "Unpin" : "Pin";
   }
@@ -1121,7 +1121,7 @@ body.selecting .pin{display:none}
 
   el.selClose.addEventListener("click", function(){ exitSel(); });
   el.selPin.addEventListener("click", function(){
-    var any = selected(), allPinned = any.length && any.every(function(x){ return x.pinned; });
+    var any = selected(), allPinned = any.length && any.every(pinnedForMe);
     bulk({pinned: !allPinned}, allPinned ? "Unpinned" : "Pinned", {pinned: allPinned});
   });
   el.selShare.addEventListener("click", function(){
@@ -1189,7 +1189,7 @@ body.selecting .pin{display:none}
         // Keep's model: the hold LIFTS the note. Move from here and you are
         // dragging it; let go without moving and you are selecting it. Only
         // pinned notes can be dragged, so everything else selects at once.
-        if (n.pinned && view === "wall" && !selMode) { lift(wrap, cardEl, n); }
+        if (pinnedForMe(n) && view === "wall" && !selMode) { lift(wrap, cardEl, n); }
         else if (selMode) toggleSel(n.id);
         else enterSel(n.id);
       }, PRESS_MS);
@@ -1302,8 +1302,8 @@ body.selecting .pin{display:none}
     }
     if (d.target === undefined) return;
 
-    var pins = NOTES.filter(function(x){ return x.pinned; }).sort(function(a, b){
-      var ao = (a.order == null) ? Infinity : a.order, bo = (b.order == null) ? Infinity : b.order;
+    var pins = NOTES.filter(pinnedForMe).sort(function(a, b){
+      var ao = orderForMe(a), bo = orderForMe(b);
       if (ao !== bo) return ao - bo;
       return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
     });
@@ -1314,7 +1314,11 @@ body.selecting .pin{display:none}
     var writes = [];
     pins.forEach(function(x, i){
       var want = (i + 1) * 10;
-      if (x.order !== want) { x.order = want; writes.push({id: x.id, order: want}); }
+      if (orderForMe(x) !== want) {
+        x.pin_order = x.pin_order || {};
+        x.pin_order[meName()] = want;          // optimistic, for this viewer
+        writes.push({id: x.id, order: want});
+      }
     });
     render();
     writes.reduce(function(chain, w){
@@ -1409,15 +1413,14 @@ body.selecting .pin{display:none}
     // With a query the server returns them RANKED; re-sorting by date here
     // would throw that away and bury the best match.
     if (!q) shown.sort(function(a, b){ return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
-    var pinned = shown.filter(function(n){ return n.pinned; }).sort(function(a, b){
-      // Manual position wins; anything never dragged keeps its date place
-      // behind the ones that were.
-      var ao = (a.order === null || a.order === undefined) ? Infinity : a.order;
-      var bo = (b.order === null || b.order === undefined) ? Infinity : b.order;
+    var pinned = shown.filter(pinnedForMe).sort(function(a, b){
+      // My manual position wins; anything I never dragged keeps its date
+      // place behind the ones I did.
+      var ao = orderForMe(a), bo = orderForMe(b);
       if (ao !== bo) return ao - bo;
       return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
     });
-    var rest = shown.filter(function(n){ return !n.pinned; });
+    var rest = shown.filter(function(n){ return !pinnedForMe(n); });
 
     // Pinned always render in full -- there are a handful, and they are the
     // ones you came for. The page budget applies to everything else.
@@ -1692,6 +1695,19 @@ body.selecting .pin{display:none}
   // vice versa — archive is "I am done with this", not a claim about anyone
   // else. A note with no named archiver falls back to the old global flag,
   // which is what the 764 imported from Keep carry.
+  // Pinned FOR ME, and MY position in the pinned row. A pin means "keep this
+  // at the top for me" — Mary pinning the grocery list should not pin it for
+  // Chris, and his arrangement of his pinned row is not hers.
+  function pinnedForMe(n){
+    if (n.pinned_by && n.pinned_by.length) return n.pinned_by.indexOf(meName()) >= 0;
+    return !!n.pinned;
+  }
+  function orderForMe(n){
+    var m = n.pin_order || {};
+    var v = m[meName()];
+    return (v === undefined || v === null) ? Infinity : v;
+  }
+
   function archivedForMe(n){
     if (n.archived_by && n.archived_by.length) return n.archived_by.indexOf(meName()) >= 0;
     return !!n.archived;
