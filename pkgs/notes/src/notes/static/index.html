@@ -274,6 +274,9 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 }
 .whobar button:hover{border-color:var(--accent); color:var(--accent)}
 .meta .by{color:var(--brass); text-transform:uppercase; letter-spacing:.08em; font-weight:500}
+.meta .shared-mark{display:inline-flex; color:var(--accent)}
+.card.shared{box-shadow:var(--shadow), inset 3px 0 0 var(--accent)}
+.card.shared.pinned{box-shadow:var(--shadow), inset 3px 0 0 var(--brass)}
 
 /* online / offline */
 .net{
@@ -382,6 +385,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 .tool:hover{background:var(--surface-2); color:var(--ink)}
 .tool[aria-pressed="true"]{background:var(--accent-wash); color:var(--accent)}
 .tool.brass[aria-pressed="true"]{background:var(--brass-wash); color:var(--brass)}
+.tool.share[aria-pressed="true"]{background:var(--accent-wash); color:var(--accent)}
 .ed-bar .sp{flex:1}
 .saved{
   font:400 10px/1 "IBM Plex Mono",ui-monospace,monospace;
@@ -467,6 +471,9 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       <button class="tool brass" id="edArch" aria-pressed="false" aria-label="Archive note" title="Archive">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18v3H3zM5 10v10h14V10M9.5 14h5"/></svg>
       </button>
+      <button class="tool share" id="edShare" aria-pressed="false" aria-label="Add to the shared space" title="Add to Ours">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.4"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M19 6.5v7M22.5 10h-7"/></svg>
+      </button>
       <button class="tool" id="edDel" aria-label="Delete note" title="Delete">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>
       </button>
@@ -502,6 +509,14 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   // daybook, the agent, a git restore). Every mutation is a request; the
   // reply is what we render.
   var NOTES = [], CATS = {}, AUTHORS = {}, ME = null;
+
+  // Whether the shared space shows up in your own feed. Per device, on by
+  // default — the point of a shared list is that you see it without asking.
+  var SHOW_SHARED = true;
+  try {
+    var pref = localStorage.getItem("notes-show-shared");
+    if (pref !== null) SHOW_SHARED = pref === "1";
+  } catch (e) {}
 
   function api(method, url, body){
     return fetch(url, {
@@ -587,6 +602,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     edCat:document.getElementById("edCat"), catpop:document.getElementById("catpop"),
     edCatBtn:document.getElementById("edCatBtn"), edCatNow:document.getElementById("edCatNow"),
     catlistBox:document.getElementById("catlistBox"), net:document.getElementById("net"),
+    edShare:document.getElementById("edShare"),
     edWhoBtn:document.getElementById("edWhoBtn"), edWhoNow:document.getElementById("edWhoNow"),
     whopop:document.getElementById("whopop"), edWho:document.getElementById("edWho"),
     wholistBox:document.getElementById("wholistBox"),
@@ -729,7 +745,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   }
 
   function card(n){
-    var c = node("div", "card" + (n.pinned ? " pinned" : "") + (n.pending ? " pending" : ""));
+    var c = node("div", "card" + (n.shared ? " shared" : "") + (n.pinned ? " pinned" : "") + (n.pending ? " pending" : ""));
     c.tabIndex = 0;
     c.appendChild(highlight(node("h3", null, n.title)));
 
@@ -750,6 +766,12 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     // Say who wrote it only when that is not you — otherwise every card on
     // your own wall carries your own name, which is noise.
     if (!n.pending && n.author !== meName()) meta.appendChild(node("span", "by", n.author));
+    if (n.shared) {
+      var sh = node("span", "shared-mark");
+      sh.setAttribute("title", "In the shared space");
+      sh.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 19a6 6 0 0 1 12 0M18 7v6M21 10h-6"/></svg>';
+      meta.appendChild(sh);
+    }
     meta.appendChild(node("span", "sp"));
     meta.appendChild(node("span", "yr", n.date));
     c.appendChild(meta);
@@ -1033,14 +1055,17 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   // Chris, which is exactly what the 545 notes predating this assume.
   function meName(){ return ME || "chris"; }
 
+  // "Ours" is a place, not a union. A note is in it because somebody put it
+  // there, exactly like archived — so your own feed is YOUR notes, plus the
+  // shared ones if you want them (you do, by default).
   function inScope(n, scope){
     if (scope === "claude") return n.author === "claude";
-    if (scope === "ours") return n.author !== "claude";
-    return n.author === meName();                  // "mine"
+    if (scope === "shared") return !!n.shared;
+    return n.author === meName() || (SHOW_SHARED && !!n.shared);   // "mine"
   }
 
   function drawWho(){
-    var opts = [["mine", "Mine"], ["ours", "Ours"], ["claude", "Claude"]];
+    var opts = [["mine", "Mine"], ["shared", "Ours"], ["claude", "Claude"]];
     el.who.textContent = "";
     opts.forEach(function(o){
       var n = NOTES.filter(function(x){ return inScope(x, o[0]); }).length;
@@ -1093,6 +1118,15 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       if (nm) setMe(nm);
     });
     el.whobar.appendChild(other);
+
+    var sh = node("button", null, (SHOW_SHARED ? "✓ " : "") + "show ours in my feed");
+    sh.setAttribute("aria-pressed", SHOW_SHARED ? "true" : "false");
+    sh.addEventListener("click", function(){
+      SHOW_SHARED = !SHOW_SHARED;
+      try { localStorage.setItem("notes-show-shared", SHOW_SHARED ? "1" : "0"); } catch (e) {}
+      openWhoBar(); render();
+    });
+    el.whobar.appendChild(sh);
     el.whobar.hidden = false;
   }
 
@@ -1349,6 +1383,11 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     el.edCheck.disabled = ed.raw !== null;
     // The archive button shows the note's STATE, not just an action: lit when
     // the note is archived, and the tooltip then offers the way out.
+    var sh = !!(ed.note && ed.note.shared);
+    el.edShare.setAttribute("aria-pressed", sh ? "true" : "false");
+    el.edShare.setAttribute("aria-label", sh ? "Remove from the shared space" : "Add to the shared space");
+    el.edShare.setAttribute("title", sh ? "Remove from Ours" : "Add to Ours");
+    el.edShare.disabled = !ed.note;
     var arch = !!(ed.note && ed.note.archived);
     el.edArch.setAttribute("aria-pressed", arch ? "true" : "false");
     el.edArch.setAttribute("aria-label", arch ? "Unarchive note" : "Archive note");
@@ -1449,6 +1488,19 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     if (ed.raw === null) ed.raw = serialize(ed.blocks);
     else { ed.blocks = parseBlocks(ed.raw); ed.raw = null; }
     focusIdx = -1; draw(); syncBar(); touch();
+  });
+
+  el.edShare.addEventListener("click", function(){
+    commit().then(function(){
+      if (!ed || !ed.note) return;
+      var n = ed.note, was = !!n.shared;
+      return persist(n, {shared:!was}, "Couldn't change sharing").then(function(){
+        syncBar();
+        toast(was ? "Removed from Ours" : "Added to Ours", function(){
+          persist(n, {shared:was}, "Couldn't undo that").then(syncBar).catch(function(){});
+        });
+      });
+    }).catch(function(){});
   });
 
   el.edArch.addEventListener("click", function(){
@@ -1676,11 +1728,10 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     // Ask once, on a device that has never said who it is. Everything works
     // without answering — the note is simply attributed to Chris, which is
     // what every note before this was.
-    if (!ME) { openWhoBar(); return; }
-    // A second person's first visit would otherwise land on an empty wall,
-    // because "Mine" is empty until they write something.
-    var mine = NOTES.filter(function(n){ return inScope(n, "mine"); }).length;
-    if (!mine) { who = "ours"; render(); }
+    if (!ME) openWhoBar();
+    // No adaptive default any more: "Mine" already includes the shared space,
+    // so a second person sees the household's notes from their first visit
+    // without being switched to a different view behind their back.
   }).catch(function(e){
     el.wall.textContent = "";
     var em = node("div", "empty");

@@ -488,3 +488,55 @@ def test_reassigned_author_is_slugged(space):
     text = (space / n.id).read_text()
     assert "author: maryjopinnedtrue" in text or "author: maryjo" in text
     assert text.count("pinned:") == 0
+
+
+# --- the shared space --------------------------------------------------------
+# "Ours" is a place a note is put, like archived -- not a computed union of
+# everyone's notes. Chris, 2026-11-09: "I don't want 'ours' to be a mashup of
+# every human note. I want that to be a shared space we can intentionally add
+# things to, like 'archived'."
+
+def test_notes_are_not_shared_by_default(space):
+    n = store.create(space, "mine", "x", author="mary")
+    assert n.shared is False
+    assert "shared:" not in (space / n.id).read_text()
+
+
+def test_sharing_is_a_flag_that_toggles(space):
+    n = store.create(space, "list", "bread")
+    on = store.write(space, n.id, shared=True)
+    assert on.shared is True
+    assert "shared: true" in (space / n.id).read_text()
+    off = store.write(space, n.id, shared=False)
+    assert off.shared is False
+    assert "shared:" not in (space / n.id).read_text()
+
+
+def test_sharing_does_not_change_who_owns_it(space):
+    """A shared note still belongs to whoever wrote it."""
+    n = store.create(space, "hers", "x", author="mary")
+    shared = store.write(space, n.id, shared=True)
+    assert shared.author == "mary" and shared.shared is True
+
+
+def test_sharing_is_independent_of_pinned_and_archived(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True, pinned=True)
+    got = store.read(space, n.id)
+    assert got.shared and got.pinned and not got.archived
+    store.write(space, n.id, archived=True)
+    got = store.read(space, n.id)
+    assert got.shared and got.pinned and got.archived
+
+
+def test_shared_survives_an_edit(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True)
+    store.write(space, n.id, body="bread\nmilk")
+    assert store.read(space, n.id).shared is True
+
+
+def test_summary_carries_shared(space):
+    n = store.create(space, "list", "bread")
+    store.write(space, n.id, shared=True)
+    assert store.read(space, n.id).summary()["shared"] is True

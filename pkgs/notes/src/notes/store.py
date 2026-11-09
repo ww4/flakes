@@ -55,6 +55,7 @@ class Note:
     date: str
     pinned: bool
     archived: bool
+    shared: bool
     author: str
     had_h1: bool
 
@@ -150,6 +151,7 @@ def read(space: Path, rel: str, *, allow_trash: bool = False) -> Note:
         date=when[:10],
         pinned=(_fm_get(fm, "pinned") or "").lower() in TRUE,
         archived=(_fm_get(fm, "archived") or "").lower() in TRUE,
+        shared=(_fm_get(fm, "shared") or "").lower() in TRUE,
         author=(_fm_get(fm, "author") or HUMAN).strip().lower(),
         had_h1=had_h1,
     )
@@ -186,6 +188,7 @@ def write(
     body: str | None = None,
     pinned: bool | None = None,
     archived: bool | None = None,
+    shared: bool | None = None,
     category: str | None = None,
     author: str | None = None,
 ) -> Note:
@@ -201,6 +204,12 @@ def write(
         fm = _fm_set(fm, "pinned", "true" if pinned else None)
     if archived is not None:
         fm = _fm_set(fm, "archived", "true" if archived else None)
+    if shared is not None:
+        # "Shared" is a PLACE a note is put, like archived -- not a computed
+        # union of everyone's notes. Chris: "I want that to be a shared space
+        # we can intentionally add things to". Ownership is untouched by it:
+        # a shared note still belongs to whoever wrote it.
+        fm = _fm_set(fm, "shared", "true" if shared else None)
     if author is not None:
         # Reassigning WHOSE note this is. Deliberately separate from writing
         # the body: an edit never changes authorship -- Mary adding a line to
