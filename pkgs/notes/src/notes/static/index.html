@@ -141,6 +141,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 .card.pending .meta .cat{color:var(--brass)}
 .card.pinned{box-shadow:var(--shadow), inset 3px 0 0 var(--brass)}
 .card.pinned:hover{box-shadow:var(--shadow-lift), inset 3px 0 0 var(--brass)}
+.card.untitled .body{padding-top:2px}
 .card h3{
   margin:0 26px 7px 0;
   font:600 15px/1.3 Archivo,system-ui,sans-serif; letter-spacing:-.005em;
@@ -485,7 +486,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       <button class="tool" id="edClose" aria-label="Close and save" title="Close">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
       </button>
-      <input id="edTitle" placeholder="Title">
+      <input id="edTitle" placeholder="Title (optional)">
       <button class="tool brass" id="edPin" aria-pressed="false" aria-label="Pin note" title="Pin">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M7 4h10l-1.5 7 2.5 3H5.5L8 11z"/></svg>
       </button>
@@ -818,7 +819,10 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   function card(n){
     var c = node("div", "card" + (n.shared ? " shared" : "") + (n.pinned ? " pinned" : "") + (n.pending ? " pending" : ""));
     c.tabIndex = 0;
-    c.appendChild(highlight(node("h3", null, n.title)));
+    // An untitled note shows no heading at all — an empty h3 would leave a
+    // gap where a title would be, which reads as a rendering fault.
+    if (n.title) c.appendChild(highlight(node("h3", null, n.title)));
+    else c.classList.add("untitled");
 
     var pin = node("button", "pin");
     pin.setAttribute("aria-label", (n.pinned ? "Unpin " : "Pin ") + n.title);
@@ -992,6 +996,9 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     var states = (mode === "in")
       ? STATES.filter(function(p){ return !frag || p[0].indexOf(frag) >= 0; })
       : (mode === "all" && "in:".indexOf(t) === 0) ? STATES : [];
+    var unfiled = NOTES.filter(function(n){ return n.filed === false; }).length;
+    var wantNone = (mode === "cat" && "none".indexOf(frag) === 0) ||
+                   (mode === "all" && t.length > 1 && "uncategorised".indexOf(t) === 0);
     var cats = (mode === "by" || mode === "in") ? [] :
       Object.keys(CATS).filter(function(c){ return !frag || c.indexOf(frag) >= 0; })
         .sort(function(a, b){ return CATS[b] - CATS[a]; }).slice(0, mode === "cat" ? 8 : 5);
@@ -1001,7 +1008,21 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     var titles = (mode === "all")
       ? NOTES.filter(function(n){ return n.title.toLowerCase().indexOf(t) >= 0; }).slice(0, 6)
       : [];
-    if (!cats.length && !titles.length && !people.length && !states.length) { closeSug(); return; }
+    if (!cats.length && !titles.length && !people.length && !states.length && !wantNone) { closeSug(); return; }
+
+    if (wantNone) {
+      el.sug.appendChild(node("div", "sug-head", "Unfiled"));
+      var nb = node("button");
+      nb.setAttribute("role", "option");
+      nb.appendChild(node("span", "tag", "cat:none"));
+      nb.appendChild(node("span", "t", "notes with no category"));
+      if (unfiled) nb.appendChild(node("span", "n", unfiled));
+      nb.addEventListener("click", function(){
+        q = "cat:none"; el.q.value = q + " "; closeSug(); el.q.focus();
+        refresh().catch(function(e){ fail("Couldn't filter", e); });
+      });
+      el.sug.appendChild(nb);
+    }
 
     if (states.length) {
       el.sug.appendChild(node("div", "sug-head", "Status — filters with in:"));

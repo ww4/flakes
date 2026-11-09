@@ -56,6 +56,7 @@ class Note:
     pinned: bool
     archived: bool
     shared: bool
+    filed: bool
     author: str
     had_h1: bool
 
@@ -111,9 +112,19 @@ def _fm_set(fm: list[str], key: str, value: str | None) -> list[str]:
     return out
 
 
+# A Keep note's title is OPTIONAL, and Mary mostly leaves it off. Those notes
+# still need a unique FILENAME, so the import uses "<date> <keep_id>" — a
+# uniqueness device, not a title. Deriving a title from it would put a
+# timestamp at the top of 347 of her cards.
+KEEP_ID_STEM = re.compile(r"^\d{10,}$")
+
+
 def _title_from_name(rel: str) -> str:
     stem = Path(rel).stem
-    return LEADING_DATE.sub("", stem).strip() or stem
+    rest = LEADING_DATE.sub("", stem).strip()
+    if KEEP_ID_STEM.match(rest):
+        return ""
+    return rest or stem
 
 
 def _category(rel: str, fm: list[str]) -> str:
@@ -148,6 +159,10 @@ def read(space: Path, rel: str, *, allow_trash: bool = False) -> Note:
         title=title,
         body=body.strip("\n"),
         cat=_category(rel, fm),
+        # Whether the category was CHOSEN or just inherited from the folder.
+        # Without this "uncategorised" is invisible: an unfiled Keep note
+        # reads as category "keep", indistinguishable from one filed there.
+        filed=bool(_fm_get(fm, "category")),
         date=when[:10],
         pinned=(_fm_get(fm, "pinned") or "").lower() in TRUE,
         archived=(_fm_get(fm, "archived") or "").lower() in TRUE,
@@ -198,7 +213,8 @@ def write(
     current = read(space, rel)
 
     new_title = current.title if title is None else title.strip()
-    had_h1 = current.had_h1 or (new_title != _title_from_name(rel))
+    # An untitled note stays untitled: no heading is invented for it.
+    had_h1 = bool(new_title) and (current.had_h1 or new_title != _title_from_name(rel))
 
     if pinned is not None:
         fm = _fm_set(fm, "pinned", "true" if pinned else None)
@@ -247,7 +263,11 @@ def _slug(title: str) -> str:
 
 def create(space: Path, title: str, body: str, author: str | None = None) -> Note:
     stamp = datetime.now().strftime("%Y-%m-%d")
-    base = f"Inbox/{stamp} {_slug(title or 'note')}"
+    # An untitled note needs a unique filename but must not acquire a title
+    # from it, so it uses the same all-digits stem the Keep import uses —
+    # which _title_from_name reads back as "no title" rather than as "note".
+    base = (f"Inbox/{stamp} {_slug(title)}" if title.strip()
+            else f"Inbox/{stamp} {int(datetime.now().timestamp() * 1_000_000)}")
     rel = f"{base}.md"
     n = 2
     while paths.resolve(space, rel).exists():
@@ -259,7 +279,11 @@ def create(space: Path, title: str, body: str, author: str | None = None) -> Not
     # which is what every note predating device identity is.
     if author and author != HUMAN:
         out += ["---", f"author: {author}", "---", ""]
-    out += [f"# {title.strip() or 'Untitled'}", "", body.strip("\n")]
+    # A title is optional here too — no "Untitled" is invented for a note that
+    # is just a thought and a body.
+    if title.strip():
+        out += [f"# {title.strip()}", ""]
+    out += [body.strip("\n")]
     _atomic_write(path, "\n".join(out).rstrip("\n") + "\n")
     return read(space, rel)
 
@@ -501,8 +525,13 @@ def listing(space: Path, query: str | None = None) -> list[Note]:
         except OSError:
             continue
         note = _cached(space, rel, st)
-        if cat_filters and (note.cat or "").lower() not in cat_filters:
-            continue
+        if cat_filters:
+            # cat:none is "never filed", not a category called none.
+            wanted = (note.cat or "").lower() in cat_filters
+            if "none" in cat_filters and not note.filed:
+                wanted = True
+            if not wanted:
+                continue
         if who_filters and (note.author or HUMAN).lower() not in who_filters:
             continue
         if needles and not _score(note, needles)[0]:

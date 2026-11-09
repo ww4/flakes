@@ -600,3 +600,79 @@ def test_census_shared_counts_only_the_shared_space(space):
     store.write(space, n.id, shared=True)
     store.create(space, "private", "x")
     assert sum(store.census(space, scope="shared").values()) == 1
+
+
+# --- untitled notes ----------------------------------------------------------
+# Keep treats a title as optional and Mary mostly leaves it off. Those notes get
+# a "<date> <keep_id>" FILENAME for uniqueness; that must never surface as a
+# title (it did, on 347 of her cards).
+
+def test_a_keep_id_filename_yields_no_title(space):
+    rel = "Keep/2020-02-14 1581722144437000.md"
+    (space / rel).write_text("---\ndate: 2020-02-14\n---\n\nmilk\neggs\n")
+    n = store.read(space, rel)
+    assert n.title == ""
+    assert n.body == "milk\neggs"
+
+
+def test_editing_an_untitled_note_does_not_invent_a_heading(space):
+    rel = "Keep/2020-02-14 1581722144437000.md"
+    (space / rel).write_text("---\ndate: 2020-02-14\n---\n\nmilk\n")
+    store.write(space, rel, body="milk\neggs")
+    text = (space / rel).read_text()
+    assert "# " not in text
+    assert store.read(space, rel).title == ""
+
+
+def test_giving_an_untitled_note_a_title_writes_a_heading(space):
+    rel = "Keep/2020-02-14 1581722144437000.md"
+    (space / rel).write_text("---\ndate: 2020-02-14\n---\n\nmilk\n")
+    store.write(space, rel, title="Shopping")
+    assert "# Shopping" in (space / rel).read_text()
+    assert store.read(space, rel).title == "Shopping"
+
+
+def test_a_normal_filename_still_yields_a_title(space):
+    n = store.read(space, "Keep/2017-03-04 Bring from Kentucky.md")
+    assert n.title == "Bring from Kentucky"
+
+
+def test_a_new_note_with_no_title_gets_no_heading(space):
+    n = store.create(space, "", "just a thought")
+    assert n.title == ""
+    text = (space / n.id).read_text()
+    assert "# " not in text and "Untitled" not in text
+    assert store.read(space, n.id).body == "just a thought"
+
+
+# --- cat:none ----------------------------------------------------------------
+# An unfiled note inherits its folder name as a display category, so without a
+# "was it actually filed" bit, "uncategorised" cannot be asked for at all.
+
+def test_filed_distinguishes_chosen_from_inherited(space):
+    rel = "Keep/2017-03-04 Bring from Kentucky.md"
+    assert store.read(space, rel).filed is True          # has category: logistics
+    (space / "Keep/loose.md").write_text("# loose\n\nnothing\n")
+    loose = store.read(space, "Keep/loose.md")
+    assert loose.filed is False
+    assert loose.cat == "keep"                            # still displays a folder
+
+
+def test_cat_none_finds_only_unfiled_notes(space):
+    (space / "Keep/loose.md").write_text("# loose\n\nnothing\n")
+    ids = [n.id for n in store.listing(space, "cat:none")]
+    assert "Keep/loose.md" in ids
+    assert "Keep/2017-03-04 Bring from Kentucky.md" not in ids
+
+
+def test_cat_none_composes_with_terms(space):
+    (space / "Keep/loose.md").write_text("# loose\n\nxyzzy\n")
+    (space / "Keep/loose2.md").write_text("# loose2\n\nsomething else\n")
+    assert [n.id for n in store.listing(space, "cat:none xyzzy")] == ["Keep/loose.md"]
+
+
+def test_filing_a_note_moves_it_out_of_cat_none(space):
+    (space / "Keep/loose.md").write_text("# loose\n\nnothing\n")
+    store.write(space, "Keep/loose.md", category="logistics")
+    assert "Keep/loose.md" not in [n.id for n in store.listing(space, "cat:none")]
+    assert store.read(space, "Keep/loose.md").filed is True

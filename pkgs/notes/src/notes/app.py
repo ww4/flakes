@@ -114,6 +114,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Attribution comes from the DEVICE, not from the client asking nicely:
         # the cookie is read here so a note is stamped the same way whichever
         # code path created it.
+        # No invented "Untitled": a Keep note may have only a body, and so
+        # may one made here.
         return store.create(space, req.title, req.body, author=who(request)).summary()
 
     @app.put("/api/notes")
