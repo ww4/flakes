@@ -502,7 +502,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   // Default to Chris's own notes. The agent has written into this space for
   // months, and on first open the wall was almost entirely agent pages — his
   // actual notes were buried (Chris, 2026-11-09).
-  var q = "", cat = "", showArch = false, openId = null, who = "mine";
+  var q = "", showArch = false, openId = null, who = "mine";
   var el = {
     q:document.getElementById("q"), chips:document.getElementById("chips"),
     who:document.getElementById("who"), sug:document.getElementById("sug"),
@@ -522,8 +522,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
   function matches(n){
     if (who !== "all" && n.author !== (who === "mine" ? "chris" : "claude")) return false;
     if (!!n.archived !== showArch) return false;
-    if (cat && n.cat !== cat) return false;
-    return true;   // text matching happens server-side; NOTES is already the result
+    return true;   // text AND category matching happen server-side
   }
 
   var INL = /\*\*([^*]+)\*\*|`([^`]+)`|\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]|\[([^\]]+)\]\(([^)]+)\)/g;
@@ -735,7 +734,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       if (pinned.length) el.wall.appendChild(section("Pinned", pinned, true));
       if (slice.length) el.wall.appendChild(section(
         showArch ? "Archived"
-          : (cat || q) ? shown.length + " matching"
+          : q ? shown.length + " matching"
           : pinned.length ? "Everything else" : "All notes", slice, false));
       if (more > 0) el.wall.appendChild(sentinel(more));
     }
@@ -786,12 +785,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
         b.setAttribute("role", "option");
         b.appendChild(highlight(node("span", "tag", c.replace(/-/g, " "))));
         b.appendChild(node("span", "n", CATS[c]));
-        // Put the real syntax in the box rather than flipping hidden state:
-        // it shows how to do it by hand next time, and stays editable.
-        b.addEventListener("click", function(){
-          cat = ""; q = "cat:" + c; el.q.value = q + " "; closeSug(); el.q.focus();
-          refresh().catch(function(e){ fail("Couldn't filter", e); });
-        });
+        b.addEventListener("click", function(){ setCat(c); el.q.focus(); });
         el.sug.appendChild(b);
       });
     }
@@ -827,19 +821,37 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
       var b = node("button", null, o[1]);
       b.setAttribute("aria-pressed", who === o[0] ? "true" : "false");
       b.setAttribute("title", n + (n === 1 ? " note" : " notes"));
-      b.addEventListener("click", function(){ who = o[0]; cat = ""; render(); });
+      b.addEventListener("click", function(){ who = o[0]; render(); });
       el.who.appendChild(b);
     });
   }
 
-  function chips(){
-    var counts = {}, live = NOTES.filter(function(n){
-      if (who !== "all" && n.author !== (who === "mine" ? "chris" : "claude")) return false;
-      return !!n.archived === showArch;
+  // The ONE way to filter by category is the cat: token in the search box.
+  // A chip writes that token rather than flipping hidden state, so the chip
+  // and the typed syntax are the same mechanism and clicking one teaches the
+  // other. There is no separate filter variable to drift out of sync.
+  function activeCat(){
+    var m = (q || "").toLowerCase().match(/(?:^|\s)cat:(\S+)/);
+    return m ? m[1] : "";
+  }
+
+  function setCat(value){
+    // Keep any ordinary search terms; swap only the cat: token.
+    var rest = (q || "").split(/\s+/).filter(function(t){
+      return t && t.toLowerCase().indexOf("cat:") !== 0;
     });
-    live.forEach(function(n){ counts[n.cat] = (counts[n.cat] || 0) + 1; });
-    // Busiest first, and only as many as fit the bar. The tail is reachable by
-    // typing the category name — the chip row is a shortcut, not an index.
+    if (value) rest.unshift("cat:" + value);
+    q = rest.join(" ");
+    el.q.value = q ? q + " " : "";
+    closeSug();
+    refresh().catch(function(e){ fail("Couldn't filter", e); });
+  }
+
+  function chips(){
+    // Counts come from the server's full census, not from NOTES — once a
+    // cat: filter is applied NOTES holds only that category, and chips built
+    // from it would collapse to a single entry.
+    var counts = CATS, active = activeCat();
     var keys = Object.keys(counts).sort(function(a, b){
       return counts[b] - counts[a] || (a < b ? -1 : 1);
     });
@@ -848,21 +860,24 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     // loop that settles on two chips no matter how wide the window is.
     var avail = (window.innerWidth || 900) - 300;   // brand + the Mine/Claude/Both control
     var room = Math.max(2, Math.floor(avail / 150));
-    if (cat && keys.indexOf(cat) >= room) {             // keep the active one visible
-      keys.splice(room - 1, 0, keys.splice(keys.indexOf(cat), 1)[0]);
+    if (active && keys.indexOf(active) >= room) {       // keep the active one visible
+      keys.splice(room - 1, 0, keys.splice(keys.indexOf(active), 1)[0]);
     }
     keys = keys.slice(0, room);
+
+    var total = 0;
+    Object.keys(counts).forEach(function(k){ total += counts[k]; });
+
     el.chips.textContent = "";
     function mk(label, value, n){
       var b = node("button", "chip");
-      b.setAttribute("aria-pressed", cat === value ? "true" : "false");
+      b.setAttribute("aria-pressed", active === value ? "true" : "false");
       b.appendChild(document.createTextNode(label));
-      var s = node("b", null, n);
-      b.appendChild(s);
-      b.addEventListener("click", function(){ cat = (cat === value ? "" : value); render(); });
+      b.appendChild(node("b", null, n));
+      b.addEventListener("click", function(){ setCat(active === value ? "" : value); });
       return b;
     }
-    el.chips.appendChild(mk("All", "", live.length));
+    el.chips.appendChild(mk("All", "", total));
     keys.forEach(function(k){ el.chips.appendChild(mk(k.replace(/-/g, " "), k, counts[k])); });
   }
 
@@ -1177,7 +1192,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
 
   el.newBtn.addEventListener("click", function(){ open(null); });
   el.archBtn.addEventListener("click", function(){
-    showArch = !showArch; cat = "";
+    showArch = !showArch;
     el.archBtn.setAttribute("aria-pressed", showArch ? "true" : "false");
     render();
   });
