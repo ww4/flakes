@@ -304,13 +304,28 @@ def _walk(space: Path):
             yield f, p
 
 
-def _score(note: Note, needles: list[str]) -> tuple[int, int]:
-    """(distinct terms matched anywhere, distinct terms matched in the title)."""
+def _word(hay: str, term: str) -> bool:
+    return re.search(r"\b" + re.escape(term) + r"\b", hay) is not None
+
+
+def _score(note: Note, needles: list[str]) -> tuple[int, int, int]:
+    """How well a note answers the query. Bigger is better.
+
+    (terms matched anywhere, terms matched as whole words, terms in the title)
+
+    Substring matching is kept -- it is what Keep does, and dropping it would
+    lose real hits -- but on this corpus "gas" also matches gasket, gasoline
+    and gasbuddy, and "wood" matches plywood, firewood and Woodstock. Measured
+    on the live space, "wood gas" is 90 notes by substring and 41 by whole
+    word. Rather than choose, rank: whole-word hits rise to the top and the
+    in-word ones become a tail you never scroll to.
+    """
     title = note.title.lower()
     hay = title + "\n" + note.body.lower()
     anywhere = sum(1 for t in needles if t in hay)
+    whole = sum(1 for t in needles if _word(hay, t))
     in_title = sum(1 for t in needles if t in title)
-    return anywhere, in_title
+    return anywhere, whole, in_title
 
 
 def census(space: Path) -> dict[str, int]:

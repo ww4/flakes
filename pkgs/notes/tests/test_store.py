@@ -351,3 +351,12 @@ def test_title_hits_outrank_body_hits(space):
 def test_a_term_matching_nothing_does_not_exclude_others(space):
     (space / "Notes/w.md").write_text("# shed\n\nwood\n")
     assert "Notes/w.md" in [n.id for n in store.listing(space, "wood zzzznope")]
+
+
+def test_whole_word_hits_rank_above_in_word_hits(space):
+    """"gas" matches gasket and gasoline too; those belong below the real ones."""
+    (space / "Notes/real.md").write_text("# trailer\n\ncheck the gas level\n")
+    (space / "Notes/inword.md").write_text("# trailer\n\nreplace the head gasket\n")
+    ids = [n.id for n in store.listing(space, "gas")]
+    assert "Notes/inword.md" in ids          # still found
+    assert ids.index("Notes/real.md") < ids.index("Notes/inword.md")
