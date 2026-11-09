@@ -722,7 +722,7 @@ body.selecting .pin{display:none}
   // The wall is sent previews, not bodies, so the SERVER does the matching --
   // see /api/notes. Searching the preview here would miss hits inside long
   // notes and look like "no results".
-  var searchT = null, searchSeq = 0, onlyQueued = false;
+  var searchT = null, searchSeq = 0, onlyQueued = false, LOADING = true;
 
   // in: picks a VIEW, by: picks a SCOPE — neither is text to search for, so
   // both are read here and stripped before the query reaches the server.
@@ -752,6 +752,17 @@ body.selecting .pin{display:none}
     return terms.join(" ");
   }
 
+  function applyListing(d){
+    NOTES = d.notes.map(function(n){
+      if (view === "trash") n.trashed = true;
+      return n;
+    });
+    if (d.cats) CATS = d.cats;          // full census, never filtered by q
+    if (d.authors) AUTHORS = d.authors;
+    shownCount = PAGE;
+    render();
+  }
+
   function refresh(){
     var mine = ++searchSeq;
     var sent = applyTokens(q);
@@ -760,14 +771,12 @@ body.selecting .pin{display:none}
       : "/api/notes?me=" + encodeURIComponent(meName()) + "&scope=" + who + "&shared=" + (SHOW_SHARED ? 1 : 0)
         + (sent ? "&q=" + encodeURIComponent(sent) : "");
     return api("GET", url).then(function(d){
+      LOADING = false;
       if (mine !== searchSeq) return;   // a newer keystroke already won
-      NOTES = d.notes.map(function(n){
-        if (view === "trash") n.trashed = true;
-        return n;
-      });
-      if (d.cats) CATS = d.cats;        // full census, never filtered by q
-      if (d.authors) AUTHORS = d.authors;
-      shownCount = PAGE; render();
+      applyListing(d);
+      // Only the plain wall is worth keeping: a snapshot of a search result
+      // would open the app next time showing someone's old query.
+      if (!q && view === "wall") snapSave(d);
     });
   }
 
@@ -1334,6 +1343,57 @@ body.selecting .pin{display:none}
   document.addEventListener("touchend", function(){ if (DRAG) dragEnd(); }, {passive: true});
   document.addEventListener("touchcancel", function(){ if (DRAG) dragEnd(); }, {passive: true});
 
+  // ---- swipe in from the left edge to open the drawer ----
+  // The same reach as the hamburger without aiming for it, which is the whole
+  // point one-handed. Only from the outer 22px, so it cannot be confused with
+  // a swipe on a card.
+  (function(){
+    if (!("ontouchstart" in window)) return;
+    var EDGE = 22, W = function(){ return Math.min(300, window.innerWidth * 0.84); };
+    var x0 = 0, y0 = 0, active = false, decided = false;
+    document.addEventListener("touchstart", function(ev){
+      if (ed || !el.scrim.hidden || DRAG) return;
+      if (el.drawer.classList.contains("open")) return;
+      if (ev.touches.length !== 1) return;
+      var t = ev.touches[0];
+      if (t.clientX > EDGE) return;
+      x0 = t.clientX; y0 = t.clientY; active = true; decided = false;
+    }, {passive: true});
+    document.addEventListener("touchmove", function(ev){
+      if (!active) return;
+      var t = ev.touches[0], dx = t.clientX - x0, dy = t.clientY - y0;
+      if (!decided) {
+        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 10) { active = false; return; }
+        if (dx < 10) return;
+        decided = true;
+        fillDrawer();
+        el.drawer.style.transition = "none";
+        el.drawerScrim.classList.add("open");
+      }
+      ev.preventDefault();
+      var d = Math.min(dx, W());
+      el.drawer.classList.add("open");
+      el.drawer.style.transform = "translateX(" + (d - W()) + "px)";
+      el.drawerScrim.style.opacity = d / W();
+    }, {passive: false});
+    document.addEventListener("touchend", function(ev){
+      if (!active) return;
+      active = false;
+      if (!decided) return;
+      el.drawer.style.transition = "";
+      el.drawerScrim.style.opacity = "";
+      var dx = (ev.changedTouches[0] || {}).clientX - x0;
+      el.drawer.style.transform = "";
+      if (dx > W() * 0.4) {
+        el.menuBtn.setAttribute("aria-expanded", "true");
+        enterLayer("drawer");             // opened by gesture: back still closes it
+      } else {
+        el.drawer.classList.remove("open");
+        el.drawerScrim.classList.remove("open");
+      }
+    }, {passive: true});
+  })();
+
   // ---- pull down to sync ----
   // Only from the very top, only when nothing is layered over the wall.
   (function(){
@@ -1433,7 +1493,8 @@ body.selecting .pin{display:none}
     if (!shown.length) {
       var em = node("div", "empty");
       em.appendChild(node("div", null,
-        view === "trash" ? "Nothing deleted. Notes you delete land here and can be put back."
+        LOADING ? "Loading…"
+          : view === "trash" ? "Nothing deleted. Notes you delete land here and can be put back."
           : showArchive() ? "Nothing archived yet."
           : "No notes match " + (q ? '"' + q + '"' : "that filter") + "."));
       el.wall.appendChild(em);
@@ -2339,11 +2400,16 @@ body.selecting .pin{display:none}
     el.drawer.classList.add("open");
     el.drawerScrim.classList.add("open");
     el.menuBtn.setAttribute("aria-expanded", "true");
+    // The drawer covers the wall, so back must close it rather than leave the
+    // app — it was the one layer that never pushed a history entry.
+    enterLayer("drawer");
   }
-  function closeDrawer(){
+  function closeDrawer(fromHistory){
     el.drawer.classList.remove("open");
     el.drawerScrim.classList.remove("open");
+    el.drawer.style.transform = "";
     el.menuBtn.setAttribute("aria-expanded", "false");
+    if (!fromHistory) exitLayer();
   }
   el.menuBtn.addEventListener("click", function(){
     if (el.drawer.classList.contains("open")) closeDrawer(); else openDrawer();
@@ -2412,8 +2478,16 @@ body.selecting .pin{display:none}
     if (DB) return Promise.resolve(DB);
     return new Promise(function(res, rej){
       if (!window.indexedDB) { rej(new Error("no indexedDB")); return; }
-      var rq = indexedDB.open("notes-outbox", 1);
-      rq.onupgradeneeded = function(){ rq.result.createObjectStore("queue", {autoIncrement:true}); };
+      var rq = indexedDB.open("notes-outbox", 2);
+      rq.onupgradeneeded = function(){
+        var d = rq.result;
+        if (!d.objectStoreNames.contains("queue")) d.createObjectStore("queue", {autoIncrement:true});
+        // The last listing we successfully loaded. The app owns its offline
+        // copy rather than relying on HTTP cache semantics: "if we have ever
+        // loaded the app before it should have something to start with and
+        // then sync from there" (Chris, 2026-11-09).
+        if (!d.objectStoreNames.contains("snap")) d.createObjectStore("snap");
+      };
       rq.onsuccess = function(){ DB = rq.result; res(DB); };
       rq.onerror = function(){ rej(rq.error); };
     });
@@ -2434,6 +2508,27 @@ body.selecting .pin{display:none}
   // autosave queues the note and then closing queues it again — the same
   // thought lands twice, which is exactly the failure a capture tool must not
   // have.
+  function snapSave(d){
+    return db().then(function(dbh){
+      return new Promise(function(res){
+        var t = dbh.transaction("snap", "readwrite");
+        t.objectStore("snap").put({at: Date.now(), data: d}, "listing");
+        t.oncomplete = function(){ res(); };
+        t.onerror = function(){ res(); };
+      });
+    }).catch(function(){});
+  }
+
+  function snapLoad(){
+    return db().then(function(dbh){
+      return new Promise(function(res){
+        var rq = dbh.transaction("snap").objectStore("snap").get("listing");
+        rq.onsuccess = function(){ res(rq.result || null); };
+        rq.onerror = function(){ res(null); };
+      });
+    }).catch(function(){ return null; });
+  }
+
   function enqueue(title, body, key){
     var rec = {title:title, body:body, at:Date.now()};
     return tx("readwrite", function(s){
@@ -2509,6 +2604,18 @@ body.selecting .pin{display:none}
 
   el.wall.appendChild(node("div", "empty", "Loading notes…"));
   loadPending().then(drain);
+
+  // Paint whatever we had last time BEFORE waiting on the network. A fresh
+  // reload used to sit blank for as long as the listing took — and on a bad
+  // link, indefinitely. Now the wall is there instantly and the network just
+  // updates it.
+  snapLoad().then(function(snap){
+    if (snap && snap.data && !NOTES.length) {
+      applyListing(snap.data);
+      setNet(ONLINE);
+    }
+  }).catch(function(){});
+
   refresh().then(function(){
     // Ask once, on a device that has never said who it is. Everything works
     // without answering — the note is simply attributed to Chris, which is

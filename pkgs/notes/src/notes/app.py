@@ -90,20 +90,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         hit inside a long note would silently not be found -- so q is handled
         server-side against the full text.
         """
+        # ONE walk of the space, not three. This called listing(), census()
+        # and authors() separately, and census/authors each walked the whole
+        # space AGAIN — 1412 notes read three times per request, which is most
+        # of why a fresh load sat blank (Chris, 2026-11-09).
+        #
+        # The query param keeps the CACHE key honest: the service worker stores
+        # this response, and two people on one box must not share an entry. The
+        # cookie stays authoritative for writes, which are never cached.
+        viewer = (me if me and WHO_RE.match(me) else who(request)) or store.HUMAN
+        notes = store.listing(space, q)
+        # The census has to describe the WHOLE space, not the search result, or
+        # a category vanishes from the chips the moment you type its name.
+        everything = notes if not q else store.listing(space)
         return {
-            "notes": [n.summary() for n in store.listing(space, q)],
-            "cats": store.census(
-                space,
+            "notes": [n.summary() for n in notes],
+            "cats": store.census_of(
+                everything,
                 scope=scope if scope in ("mine", "shared", "all") else "all",
-                # The query param keeps the CACHE key honest — the service
-                # worker stores this response, and two people on one box must
-                # not share an entry. The cookie remains authoritative for
-                # writes, which are never cached.
-                me=(me if me and WHO_RE.match(me) else who(request)) or store.HUMAN,
+                me=viewer,
                 show_shared=bool(shared),
             ),
-            "authors": store.authors(space),
-            "me": who(request),
+            "authors": store.authors_of(everything),
         }
 
     @app.get("/api/note")

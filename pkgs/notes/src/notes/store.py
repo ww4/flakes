@@ -42,8 +42,10 @@ TRUE = {"true", "yes", "1", "on"}
 AGENT = "claude"
 HUMAN = "chris"
 
-# Enough to overflow a card at the widest column; the wall clips at ~184px.
-PREVIEW_CHARS = 700
+# Enough to overflow a card at the widest column; the wall clips at ~184px,
+# which is about twelve lines. 700 was generous guesswork and, at 1412 notes,
+# the difference between a 773 KB listing and a 500 KB one.
+PREVIEW_CHARS = 500
 
 
 @dataclass
@@ -530,6 +532,26 @@ def _score(note: Note, needles: list[str]) -> tuple[int, int, int]:
     whole = sum(1 for t in needles if _word(hay, t) or t in cats)
     in_title = sum(1 for t in needles if t in title)
     return anywhere, whole, in_title
+
+
+def authors_of(notes: list[Note]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for n in notes:
+        out[n.author] = out.get(n.author, 0) + 1
+    return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def census_of(
+    notes: list[Note],
+    scope: str = "all",
+    me: str = HUMAN,
+    show_shared: bool = True,
+) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for n in notes:
+        if in_feed(n, scope, me, show_shared):
+            out[n.cat] = out.get(n.cat, 0) + 1
+    return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
 def authors(space: Path) -> dict[str, int]:
