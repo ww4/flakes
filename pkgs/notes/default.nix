@@ -12,7 +12,7 @@
 # flat markdown on disk — was the part that worked; the markdown IDE in front
 # of it was not (Chris, 2026-11-08: "it's just overwhelming when you look at
 # it"). This serves the same files behind a card wall instead.
-{ lib, python3Packages }:
+{ lib, python3Packages, librsvg }:
 
 python3Packages.buildPythonApplication {
   pname = "notes";
@@ -30,6 +30,16 @@ python3Packages.buildPythonApplication {
     pydantic-settings
   ];
 
+  # The manifest needs real PNG icons — Android's installer does not take SVG
+  # for the home-screen icon — so render them from the single SVG at build
+  # time rather than committing binaries that can drift from it.
+  nativeBuildInputs = [ librsvg ];
+
+  preBuild = ''
+    rsvg-convert -w 192 -h 192 -o src/notes/static/icon-192.png src/notes/static/icon.svg
+    rsvg-convert -w 512 -h 512 -o src/notes/static/icon-512.png src/notes/static/icon.svg
+  '';
+
   nativeCheckInputs = [ python3Packages.pytestCheckHook ];
 
   # The traversal corpus is the security boundary of this service: it is
@@ -45,11 +55,15 @@ python3Packages.buildPythonApplication {
   # include rules ever drop it the service still starts and then 500s on every
   # page load, so assert it landed rather than finding out at runtime.
   postInstall = ''
-    page="$out/${python3Packages.python.sitePackages}/notes/static/index.html"
-    if [ ! -s "$page" ]; then
-      echo "notes: static/index.html missing from the wheel ($page)" >&2
-      exit 1
-    fi
+    static="$out/${python3Packages.python.sitePackages}/notes/static"
+    for f in index.html sw.js service_worker.js manifest.webmanifest icon.svg icon-192.png icon-512.png; do
+      if [ ! -s "$static/$f" ]; then
+        echo "notes: $f missing from the wheel ($static/$f)" >&2
+        exit 1
+      fi
+    done
+    # A service worker that 404s leaves the app online-only and silent about
+    # it, so the packaging is asserted rather than assumed.
   '';
 
   meta = with lib; {
