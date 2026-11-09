@@ -459,3 +459,32 @@ def test_authors_census_counts_everyone(space):
     assert a["mary"] == 1
     assert a["chris"] >= 1
     assert sum(a.values()) == len(store.listing(space))
+
+
+def test_ownership_can_be_reassigned(space):
+    n = store.create(space, "hers", "x", author="mary")
+    assert n.author == "mary"
+    moved = store.write(space, n.id, author="chris")
+    assert moved.author == "chris"
+    assert "author:" not in (space / n.id).read_text()   # chris == unlabelled
+    back = store.write(space, n.id, author="mary")
+    assert back.author == "mary"
+    assert (space / n.id).read_text().count("author:") == 1
+
+
+def test_editing_a_note_never_changes_its_owner(space):
+    """Mary adding a line to Chris's grocery list must not take it over."""
+    n = store.create(space, "list", "bread", author="chris")
+    store.write(space, n.id, body="bread\nmilk")
+    assert store.read(space, n.id).author == "chris"
+    m = store.create(space, "hers", "x", author="mary")
+    store.write(space, m.id, body="x\ny", pinned=True)
+    assert store.read(space, m.id).author == "mary"
+
+
+def test_reassigned_author_is_slugged(space):
+    n = store.create(space, "x", "y")
+    store.write(space, n.id, author="Mary Jo\npinned: true")
+    text = (space / n.id).read_text()
+    assert "author: maryjopinnedtrue" in text or "author: maryjo" in text
+    assert text.count("pinned:") == 0

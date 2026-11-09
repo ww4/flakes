@@ -474,8 +474,16 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11V5a2 2 0 0 1 2-2h6l10 10-8 8z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg>
       </button>
       <span class="cat-now" id="edCatNow"></span>
+      <button class="tool" id="edWhoBtn" aria-label="Whose note" title="Whose note" aria-expanded="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.4"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/></svg>
+      </button>
+      <span class="cat-now" id="edWhoNow"></span>
       <span class="sp"></span>
       <span class="saved" id="edSaved"></span>
+      <div class="catpop" id="whopop" hidden>
+        <input id="edWho" placeholder="Whose note is this?" autocomplete="off" spellcheck="false" aria-label="Author">
+        <div class="catlist" id="wholistBox"></div>
+      </div>
       <div class="catpop" id="catpop" hidden>
         <input id="edCat" placeholder="Type a category, Enter to set" autocomplete="off" spellcheck="false" aria-label="Category">
         <div class="catlist" id="catlistBox"></div>
@@ -579,6 +587,9 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     edCat:document.getElementById("edCat"), catpop:document.getElementById("catpop"),
     edCatBtn:document.getElementById("edCatBtn"), edCatNow:document.getElementById("edCatNow"),
     catlistBox:document.getElementById("catlistBox"), net:document.getElementById("net"),
+    edWhoBtn:document.getElementById("edWhoBtn"), edWhoNow:document.getElementById("edWhoNow"),
+    whopop:document.getElementById("whopop"), edWho:document.getElementById("edWho"),
+    wholistBox:document.getElementById("wholistBox"),
     wall:document.getElementById("wall"), count:document.getElementById("count"),
     archBtn:document.getElementById("archBtn"), scrim:document.getElementById("scrim"),
     edClose:document.getElementById("edClose"), edTitle:document.getElementById("edTitle"),
@@ -923,6 +934,66 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     el.catpop.hidden = true;
     el.edCatBtn.setAttribute("aria-expanded", "false");
   }
+
+  function closeWhoPop(){
+    el.whopop.hidden = true;
+    el.edWhoBtn.setAttribute("aria-expanded", "false");
+  }
+
+  // Reassigning ownership. Separate from the category chooser because it is a
+  // different question, and separate from editing because an edit must never
+  // move a note between people.
+  function drawWhoList(){
+    var typed = el.edWho.value.trim().toLowerCase();
+    var now = (ed && ed.note && ed.note.author) || "chris";
+    el.wholistBox.textContent = "";
+    function row(label, value, count, isNew){
+      var b = node("button", isNew ? "new" : null);
+      b.setAttribute("aria-pressed", value === now ? "true" : "false");
+      b.appendChild(document.createTextNode(label));
+      if (count !== null) b.appendChild(node("span", "n", count));
+      b.addEventListener("click", function(){ setOwner(value); });
+      return b;
+    }
+    var names = Object.keys(AUTHORS).filter(function(a){ return !typed || a.indexOf(typed) >= 0; })
+      .sort(function(a, b){ return AUTHORS[b] - AUTHORS[a] || (a < b ? -1 : 1); });
+    var slug = typed.replace(/[^a-z0-9_-]+/g, "");
+    if (slug && names.indexOf(slug) < 0) el.wholistBox.appendChild(row("+ " + slug, slug, null, true));
+    names.forEach(function(p){ el.wholistBox.appendChild(row(p, p, AUTHORS[p], false)); });
+    if (!el.wholistBox.children.length) el.wholistBox.appendChild(node("div", "sug-head", "type a name"));
+  }
+
+  function setOwner(value){
+    if (!ed || !ed.note) return;
+    closeWhoPop();
+    if (value === (ed.note.author || "chris")) return;
+    var n = ed.note;
+    persist(n, {author:value}, "Couldn't change who owns this").then(function(){
+      el.edWhoNow.textContent = n.author || "chris";
+      return refresh();
+    }).catch(function(){});
+  }
+
+  el.edWhoBtn.addEventListener("click", function(ev){
+    ev.stopPropagation();
+    if (!ed || !ed.note) return;
+    var opening = el.whopop.hidden;
+    closeCatPop();
+    el.whopop.hidden = !opening;
+    el.edWhoBtn.setAttribute("aria-expanded", opening ? "true" : "false");
+    if (opening) { el.edWho.value = ""; drawWhoList(); el.edWho.focus(); }
+  });
+  el.edWho.addEventListener("input", drawWhoList);
+  el.edWho.addEventListener("keydown", function(ev){
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      var first = el.wholistBox.querySelector("button");
+      if (first) first.click();
+    } else if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); closeWhoPop(); }
+  });
+  document.addEventListener("click", function(ev){
+    if (!el.whopop.hidden && !el.whopop.contains(ev.target) && ev.target !== el.edWhoBtn) closeWhoPop();
+  });
 
   function drawCatList(){
     var typed = el.edCat.value.trim().toLowerCase();
@@ -1297,7 +1368,9 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     el.edCat.value = "";
     el.edCatNow.textContent = n ? (n.cat || "none") : "";
     el.edCatBtn.disabled = !n;       // a new note gets its category on first save
-    closeCatPop();
+    el.edWhoBtn.disabled = !n;
+    el.edWhoNow.textContent = n ? (n.author || "chris") : "";
+    closeCatPop(); closeWhoPop();
     el.scrim.hidden = false;
     syncBar();
     if (!n) { draw(); el.edTitle.focus(); return; }
@@ -1334,6 +1407,7 @@ main{max-width:1280px; margin:0 auto; padding:18px 14px 96px}
     var opening = el.catpop.hidden;
     el.catpop.hidden = !opening;
     el.edCatBtn.setAttribute("aria-expanded", opening ? "true" : "false");
+    closeWhoPop();
     if (opening) { el.edCat.value = ""; drawCatList(); el.edCat.focus(); }
   });
   el.edCat.addEventListener("input", drawCatList);

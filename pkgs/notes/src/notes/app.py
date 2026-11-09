@@ -53,6 +53,7 @@ class NoteWrite(NoteRef):
     pinned: bool | None = None
     archived: bool | None = None
     category: str | None = Field(default=None, max_length=60)
+    author: str | None = Field(default=None, max_length=40)
 
 
 class NoteNew(BaseModel):
@@ -112,6 +113,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             space, req.id,
             title=req.title, body=req.body,
             pinned=req.pinned, archived=req.archived, category=req.category,
+            author=req.author,
         ).summary()
 
     @app.post("/api/notes/trash")

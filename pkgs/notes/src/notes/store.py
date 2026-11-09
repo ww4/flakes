@@ -187,6 +187,7 @@ def write(
     pinned: bool | None = None,
     archived: bool | None = None,
     category: str | None = None,
+    author: str | None = None,
 ) -> Note:
     path = paths.resolve(space, rel)
     raw = path.read_text(encoding="utf-8", errors="replace")
@@ -200,6 +201,13 @@ def write(
         fm = _fm_set(fm, "pinned", "true" if pinned else None)
     if archived is not None:
         fm = _fm_set(fm, "archived", "true" if archived else None)
+    if author is not None:
+        # Reassigning WHOSE note this is. Deliberately separate from writing
+        # the body: an edit never changes authorship -- Mary adding a line to
+        # the grocery list does not take it over -- so the only way ownership
+        # moves is somebody saying so.
+        who = re.sub(r"[^a-z0-9_-]+", "", author.strip().lower())[:32]
+        fm = _fm_set(fm, "author", who if who and who != HUMAN else None)
     if category is not None:
         # Empty string clears it, which falls the note back to the directory
         # default rather than writing an empty key.
