@@ -597,6 +597,14 @@ body.selecting .pin{display:none}
 .idline{display:flex; align-items:center; gap:9px; flex:1 1 100%; min-width:0}
 .u-id .who{overflow-wrap:anywhere}
 .u-id select{margin-left:auto}
+.u-detach{
+  margin-left:auto; padding:2px 8px; border:1px solid var(--line); border-radius:6px;
+  background:none; color:var(--ink-faint); cursor:pointer;
+  font:400 10px/1.6 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.04em;
+}
+.u-detach:hover{border-color:#9a3412; color:#9a3412}
+.u-id.muted{color:var(--ink-faint); font-style:italic}
+.u-slug.since{margin-left:auto; padding-left:10px}
 @media (min-width:560px){
   .idline{flex:1 1 auto}
   .u-id select{margin-left:0}
@@ -2778,26 +2786,10 @@ body.selecting .pin{display:none}
       }).catch(function(e){ fail("Couldn't save that", e); });
   }
 
-  // "github:aparker" -> GITHUB. A bare name has no source to show.
-  function sourceOf(identity){
-    var i = String(identity || "");
-    var colon = i.indexOf(":");
-    if (colon > 0) return i.slice(0, colon);
-    if (i.indexOf("@") > 0) return i.slice(i.indexOf("@") + 1);
-    return "";
-  }
-
   function drawUsers(){
     var d = USERS;
     el.usersBody.textContent = "";
     el.usersPath.textContent = d.file + "  ·  a markdown table you can also edit by hand";
-
-    var intro = node("div", "u-intro");
-    intro.appendChild(document.createTextNode(
-      d.proxy_auth
-        ? "Your sign-in comes from the proxy in front of this app. Names here are labels only — change them freely; notes record the short id beneath each name."
-        : "Names here are labels only. A note records the short id beneath each name, so renaming someone never rewrites what they have already touched."));
-    el.usersBody.appendChild(intro);
 
     var people = Object.keys(d.people).sort();
     var claimed = {}, loose = [];
@@ -2807,64 +2799,109 @@ body.selecting .pin{display:none}
     });
     people.forEach(function(slug){ claimed[slug] = claimed[slug] || []; });
 
+    var intro = node("div", "u-intro");
+    intro.appendChild(document.createTextNode(
+      "Names here are labels only — change them freely. What a note records is "
+      + "the short id beside each name, so renaming someone never rewrites what "
+      + "they have already touched."
+      + (loose.length ? "" : " Sign-ins appear here as they are used.")));
+    el.usersBody.appendChild(intro);
+
     people.forEach(function(slug){
       var row = node("div", "u-person");
       var inp = node("input", "u-name");
       inp.value = nameOf(slug);
       inp.setAttribute("aria-label", "Display name for " + slug);
-      inp.addEventListener("change", function(){
-        saveperson(slug, slug, inp.value);
-      });
+      inp.addEventListener("change", function(){ saveperson(slug, slug, inp.value); });
       row.appendChild(inp);
       row.appendChild(node("span", "u-slug", slug + (slug === d.me ? " · you" : "")));
       el.usersBody.appendChild(row);
 
+      var mine = claimed[slug] || [];
       var ids = node("div", "u-ids");
-      (claimed[slug] || []).forEach(function(r){
-        ids.appendChild(idRow(r, people, d));
+      mine.forEach(function(r){
+        // Detaching is offered only when it cannot orphan someone. A person
+        // with one sign-in and no way back in is not a state worth reaching
+        // by accident.
+        ids.appendChild(signInRow(r, mine.length > 1));
       });
+      if (!mine.length) {
+        ids.appendChild(node("div", "u-id muted", "no sign-in recorded yet"));
+      }
       el.usersBody.appendChild(ids);
     });
 
+    // The only assignment question that is ever live: a sign-in nobody has
+    // placed. A person's own sign-in used to carry the same dropdown, which
+    // offered to hand one person's login to another — redundant when there is
+    // one each, and a way to make someone's notes land under the wrong name.
     if (loose.length) {
       var box = node("div", "u-unclaimed");
       box.appendChild(node("h3", null, "Not yet matched"));
       box.appendChild(node("p", null,
         loose.length === 1
-          ? "One sign-in has been seen that nobody owns yet. Pick who it is, or leave it — it works on its own."
-          : loose.length + " sign-ins have been seen that nobody owns yet. Pick who each one is, or leave them — they work on their own."));
-      loose.forEach(function(r){ box.appendChild(idRow(r, people, d)); });
+          ? "A sign-in has been used that is not attached to anyone. Say who it is to merge it with their notes, or leave it — it works on its own."
+          : loose.length + " sign-ins have been used that are not attached to anyone. Say who each one is to merge it with their notes, or leave them — they work on their own."));
+      loose.forEach(function(r){ box.appendChild(claimRow(r, people)); });
       el.usersBody.appendChild(box);
     }
   }
 
-  function idRow(r, people, d){
-    var line = node("div", "u-id");
+  // "github:aparker" -> GITHUB. A bare name has no source to show.
+  function sourceOf(identity){
+    var i = String(identity || "");
+    var colon = i.indexOf(":");
+    if (colon > 0) return i.slice(0, colon);
+    if (i.indexOf("@") > 0) return i.slice(i.indexOf("@") + 1);
+    return "";
+  }
+
+  function idHead(r){
     var head = node("span", "idline");
     head.appendChild(node("span", "src", sourceOf(r.identity) || "local"));
     head.appendChild(node("span", "who", r.identity));
+    return head;
+  }
+
+  // A sign-in that already belongs to someone: shown, not re-asked about.
+  function signInRow(r, detachable){
+    var line = node("div", "u-id");
+    var head = idHead(r);
     line.appendChild(head);
+    if (detachable) {
+      var off = node("button", "u-detach", "not them");
+      off.setAttribute("title", "Detach " + r.identity + " from this person");
+      off.addEventListener("click", function(){ saveperson(r.identity, "", null); });
+      line.appendChild(off);
+      if (r.first_seen) line.appendChild(node("span", "u-slug", r.first_seen));
+    } else if (r.first_seen) {
+      // Nothing else is competing for the row, so the date rides along rather
+      // than taking a line of its own under every person.
+      head.appendChild(node("span", "u-slug since", r.first_seen));
+    }
+    return line;
+  }
+
+  // A sign-in nobody has placed: the one row where a choice means something.
+  function claimRow(r, people){
+    var line = node("div", "u-id");
+    line.appendChild(idHead(r));
     var sel = node("select");
     sel.setAttribute("aria-label", "Who is " + r.identity + "?");
-    var none = node("option", null, "— nobody —");
+    var none = node("option", null, "who is this?");
     none.value = "";
     sel.appendChild(none);
     people.forEach(function(p){
       var o = node("option", null, nameOf(p));
       o.value = p;
-      if (p === r.person) o.selected = true;
       sel.appendChild(o);
     });
-    // An identity can also become a person in its own right, which is how
-    // the first sign-in from a new source gets a seat at all.
-    if (people.indexOf(r.identity) < 0) {
-      var own = node("option", null, "new person");
-      own.value = "\u0000new";
-      sel.appendChild(own);
-    }
+    var own = node("option", null, "someone new");
+    own.value = "\u0000new";
+    sel.appendChild(own);
     sel.addEventListener("change", function(){
-      var v = sel.value === "\u0000new" ? r.identity : sel.value;
-      saveperson(r.identity, v, null);
+      if (!sel.value) return;
+      saveperson(r.identity, sel.value === "\u0000new" ? r.identity : sel.value, null);
     });
     line.appendChild(sel);
     if (r.first_seen) line.appendChild(node("span", "u-slug", r.first_seen));
