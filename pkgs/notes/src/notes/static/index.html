@@ -559,6 +559,11 @@ body.selecting .pin{display:none}
 }
 
 /* sign-in */
+/* Above everything else it can be opened from: the Users sheet (a .scrim at
+   40) and the drawer (46) with its own scrim (45). Two .scrim siblings at the
+   same z-index stack by DOM order, and this one is written first, so without
+   saying so it opens UNDERNEATH the page that opened it. */
+#signinScrim{z-index:55}
 .signin{
   background:var(--surface); border-radius:var(--r); width:min(420px, calc(100vw - 28px));
   max-height:calc(100vh - 36px); overflow-y:auto; padding:22px 22px 24px;
@@ -589,6 +594,7 @@ body.selecting .pin{display:none}
   letter-spacing:.16em; text-transform:uppercase;
 }
 .si-or::before, .si-or::after{content:""; flex:1; height:1px; background:var(--line)}
+.si-or[hidden]{display:none}
 .si-form{display:flex; flex-direction:column; gap:13px}
 .si-form label{
   display:flex; flex-direction:column; gap:5px; color:var(--ink-soft);
@@ -771,7 +777,7 @@ body.selecting .pin{display:none}
     <h2 id="signinTitle">Who are you?</h2>
     <p class="si-sub" id="signinSub"></p>
     <div class="si-list" id="signinList"></div>
-    <div class="si-or"><span>or</span></div>
+    <div class="si-or" id="signinOr"><span>or</span></div>
     <form class="si-form" id="signinForm">
       <label>Username
         <input id="suUser" autocomplete="username" autocapitalize="none"
@@ -1059,6 +1065,7 @@ body.selecting .pin{display:none}
     netTip:document.getElementById("netTip"),
     signinScrim:document.getElementById("signinScrim"), signinList:document.getElementById("signinList"),
     signinSub:document.getElementById("signinSub"), signinTitle:document.getElementById("signinTitle"),
+    signinOr:document.getElementById("signinOr"),
     signinForm:document.getElementById("signinForm"), suUser:document.getElementById("suUser"),
     suName:document.getElementById("suName"), suMail:document.getElementById("suMail"),
     suGo:document.getElementById("suGo"), suHint:document.getElementById("suHint"),
@@ -2276,11 +2283,13 @@ body.selecting .pin{display:none}
       el.signinList.appendChild(b);
     });
     el.signinList.hidden = ADDING_OTHER || !list.length;
+    el.signinOr.hidden = el.signinList.hidden;   // it separates a list from a form
 
     el.suUser.value = (ADDING_OTHER ? "" : d.suggest_username) || "";
     el.suName.value = (ADDING_OTHER ? "" : d.suggest_name) || "";
     el.suMail.value = (!ADDING_OTHER && d.sign_in && d.sign_in.indexOf("@") > 0) ? d.sign_in : "";
     checkUsername();
+    hideDrawer();                 // modal: nothing it was opened from stays over it
     el.signinScrim.hidden = false;
     enterLayer("signin");
     if (ADDING_OTHER || !list.length) el.suUser.focus();
@@ -2291,6 +2300,10 @@ body.selecting .pin{display:none}
     ADDING_OTHER = false;
     el.signinScrim.hidden = true;
     if (fromHistory !== true) exitLayer();
+    // The Users sheet may still be open behind this one. It owned the layer
+    // before the dialog took it; give it back, or the next back press exits
+    // the app instead of closing the sheet.
+    if (usersOpen() && !LAYER) LAYER = "users";
   }
 
   el.suUser.addEventListener("input", checkUsername);
@@ -2974,10 +2987,10 @@ body.selecting .pin{display:none}
 
     var intro = node("div", "u-intro");
     intro.appendChild(document.createTextNode(
-      "Each person has an account. The NAME is a label — change it freely, and "
-      + "two people may share one. The ID underneath is what notes record, so it "
-      + "is set once and stays. Emails let a sign-in that was authenticated "
-      + "elsewhere be recognised as that account."));
+      "Each person has an account. The display name is a label — change it "
+      + "freely, and two people may share one. The username beside it is what "
+      + "notes record, so it is set once and stays. Emails let a sign-in that "
+      + "was authenticated elsewhere be recognised as that account."));
     el.usersBody.appendChild(intro);
 
     d.users.forEach(function(u){ el.usersBody.appendChild(userCard(u, d)); });
