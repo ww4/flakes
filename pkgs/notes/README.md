@@ -182,10 +182,6 @@ itself rather than needing to be set up. Where a proxy sends a human-readable
 name (`Remote-Name` and friends, see `NOTES_AUTH_NAME_HEADER`) that becomes
 the first guess at the display name.
 
-Avatars are generated from the name and the slug — initials on a colour. There
-is no upload: a binary file type in a space whose whole security story is
-"only `.md` under these directories" is a lot of new surface for decoration.
-
 The table is shared, so anyone who can use the app can edit anyone's display
 name and merge identities. That is right for a household and worth knowing
 for anything larger: it is a label, not a permission.

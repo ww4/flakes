@@ -571,12 +571,6 @@ body.selecting .pin{display:none}
   border-top:1px solid var(--line);
 }
 .u-person:first-of-type{border-top:0}
-.av{
-  flex:none; width:38px; height:38px; border-radius:999px;
-  display:grid; place-items:center; color:#fff;
-  font:600 14px/1 "IBM Plex Sans",system-ui,sans-serif; letter-spacing:.02em;
-}
-.av.sm{width:22px; height:22px; font-size:9px}
 .u-name{
   flex:1; min-width:0; background:none; border:0; border-bottom:1px solid transparent;
   padding:4px 2px; color:var(--ink);
@@ -588,8 +582,7 @@ body.selecting .pin{display:none}
   flex:none; color:var(--ink-faint);
   font:400 10px/1 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.04em;
 }
-.u-ids{margin:0 0 14px 50px; display:flex; flex-direction:column; gap:2px}
-@media (max-width:480px){.u-ids{margin-left:14px}}
+.u-ids{margin:0 0 14px 14px; display:flex; flex-direction:column; gap:2px}
 .u-id{
   display:flex; align-items:center; gap:9px; flex-wrap:wrap; padding:3px 0;
   font:400 11px/1.5 "IBM Plex Mono",ui-monospace,monospace; color:var(--ink-soft);
@@ -1140,10 +1133,7 @@ body.selecting .pin{display:none}
     meta.appendChild(node("span", "cat", n.pending ? "queued" : n.cat));
     // Say who wrote it only when that is not you — otherwise every card on
     // your own wall carries your own name, which is noise.
-    if (!n.pending && n.author !== meName()) {
-      meta.appendChild(avatar(n.author, true));
-      meta.appendChild(node("span", "by", nameOf(n.author)));
-    }
+    if (!n.pending && n.author !== meName()) meta.appendChild(node("span", "by", nameOf(n.author)));
     if (n.shared) {
       var sh = node("span", "shared-mark");
       sh.setAttribute("title", "In the shared space");
@@ -2678,31 +2668,6 @@ body.selecting .pin{display:none}
     if (!slug) return "";
     return (PEOPLE[slug] || "").trim() || slug;
   }
-  // Initials on a colour derived from the slug — not an upload. Storing
-  // images would mean a binary file type in a space whose entire security
-  // story is "only .md under these dirs", which is a lot of new surface for
-  // decoration. This is deterministic, needs no network, and is what Keep
-  // does for anyone without a photo anyway.
-  function initials(name){
-    var parts = String(name || "").trim().split(/[\s._-]+/).filter(Boolean);
-    if (!parts.length) return "?";
-    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  }
-  function hueOf(slug){
-    var h = 0, str = String(slug || "");
-    for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) % 360;
-    return h;
-  }
-  function avatar(slug, small){
-    var a = node("span", "av" + (small ? " sm" : ""), initials(nameOf(slug)));
-    // Fixed saturation and lightness so every face reads against both themes
-    // and against each other; only the hue varies.
-    a.style.background = "hsl(" + hueOf(slug) + " 42% 38%)";
-    a.setAttribute("title", nameOf(slug));
-    return a;
-  }
-
   // ---- the drawer: every filter, on a screen with no room for a chip row ----
   function icon(d){
     var w = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -2844,7 +2809,6 @@ body.selecting .pin{display:none}
 
     people.forEach(function(slug){
       var row = node("div", "u-person");
-      row.appendChild(avatar(slug));
       var inp = node("input", "u-name");
       inp.value = nameOf(slug);
       inp.setAttribute("aria-label", "Display name for " + slug);
