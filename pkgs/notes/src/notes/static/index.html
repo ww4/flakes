@@ -2377,9 +2377,10 @@ body.selecting .pin{display:none}
       });
       el.meMenu.appendChild(b);
     });
-    var make = node("button", null, list.length ? "none of these — new account…" : "create an account…");
-    make.addEventListener("click", function(ev){ ev.stopPropagation(); closeMenus(null); openSignIn(); });
-    el.meMenu.appendChild(make);
+    // No "create an account" here. This menu switches between the people who
+    // exist; making a new one is a different job and it lives in Users. The
+    // one case that needs it without Users — a space with no accounts at all
+    // — never reaches this menu, because the sign-in overlay takes that.
     if (unknown && WHOAMI.sign_in && fixed) {
       el.meMenu.appendChild(node("div", "head", "signed in as " + WHOAMI.sign_in));
     }
@@ -2393,6 +2394,17 @@ body.selecting .pin{display:none}
       fillMeMenu(); render();
     });
     el.meMenu.appendChild(sh);
+    // The only door to Users on a desktop: the drawer that holds it on a
+    // phone is replaced by the chip row above 700px. Here rather than in that
+    // row because it is about people, not a way of filtering notes.
+    el.meMenu.appendChild(node("div", "sep"));
+    var mu = node("button", null, "Users");
+    mu.addEventListener("click", function(ev){
+      ev.stopPropagation();
+      closeMenus(null);
+      openUsers();
+    });
+    el.meMenu.appendChild(mu);
   }
 
   function openWhoBar(){ toggleMenu(el.meMenu, el.meBtn, fillMeMenu); }
