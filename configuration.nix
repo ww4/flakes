@@ -130,7 +130,7 @@ let hm = homelab-modules.nixosModules; in
     hm.vaultwarden                          # subdomain, env secret + SMTP in homelab-values
     ./modules/services/litestream.nix       # continuous SQLite replication of the vault to B2
     hm.silverbullet                         # markdown notes/tasks space — scheduling-assistant SoT; two-writer values below
-    ./modules/services/notes.nix            # THE notes front end: Keep-style card wall over the space's flat subset
+    hm.notes                                # THE notes front end: Keep-style card wall over the space's flat subset; values below
     ./modules/services/pim.nix              # plain-text calendar vdir + vdirsyncer (Nextcloud two-way, Google RO)
     ./modules/services/homelab-mcp.nix      # MCP connector for Claude-in-the-app — public via the lock3 VPS jump host
     ./modules/services/cd-ripper.nix        # insert a CD in any USB drive → whipper rips it, beets files it in the library, ntfy says so

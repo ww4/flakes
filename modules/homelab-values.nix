@@ -144,6 +144,18 @@
     autosaveInterval = "*:0/10";
   };
 
+  # ── notes (hm.notes) ───────────────────────────────────────────────────────
+  # The card wall over the same space. Lives in the public library since
+  # 2026-11-10; everything site-specific is here.
+  homelab.notes = {
+    # Who an unlabelled note belongs to. ⚠️ NOT cosmetic: every note written
+    # before the app recorded authorship has no `author` key, so this is who
+    # all 553 of them belong to. The library default is the generic "owner".
+    defaultAuthor = "chris";
+    # spaceDir, spaceGroup, subdomain and port all take the library defaults:
+    # /var/lib/silverbullet, the silverbullet group, "notes", 3337.
+  };
+
   # ── wave 3c service values ─────────────────────────────────────────────────
   homelab.acme = {
     email = "chris@saenzmail.com";
