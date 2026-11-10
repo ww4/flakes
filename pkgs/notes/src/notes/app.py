@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import paths, people, store
+from . import paths, store, users
 from .config import Settings
 
 log = logging.getLogger("notes")
@@ -45,27 +45,22 @@ WHO_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 
 def normalize_who(raw: str | None) -> str | None:
-    """Any sign-in string, reduced to the slug that can land in frontmatter.
-
-    Proxies hand back whatever their directory holds — ``ana``,
-    ``ana@example.com``, ``ANA``. One definition of "slug" lives in
-    people.py, because the people table has to agree with this exactly.
-    """
-    return people.slug(raw)
+    """Any sign-in string reduced to a candidate user id. A SUGGESTION only."""
+    return users.make_username(raw)
 
 
 def raw_identity(request: Request, cfg: Settings) -> str | None:
-    """The sign-in string as it arrived, before any mapping.
+    """The sign-in string as it arrived, before any account is matched.
 
-    Kept distinct from the person it resolves to: ``github:aparker`` and
-    ``google:ana@gmail.com`` are two identities and one person, and only the
-    person is ever written to a note.
+    Either what a trusted proxy says, or what this browser has previously
+    said it is. Not an account on its own: ``users.People.resolve`` decides
+    whether anybody claims it.
     """
     return (proxy_raw(request, cfg) or (request.cookies.get(WHO_COOKIE) or "").strip()) or None
 
 
 def proxy_raw(request: Request, cfg: Settings) -> str | None:
-    """The identity an upstream proxy says this is — only when told to believe it.
+    """The sign-in an upstream proxy says this is — only when told to believe it.
 
     ⚠️ This header is trustworthy ONLY because nothing can reach the port
     except the proxy. If the app is directly reachable, anyone can send it.
@@ -77,11 +72,6 @@ def proxy_raw(request: Request, cfg: Settings) -> str | None:
     return (request.headers.get(cfg.auth_user_header) or "").strip() or None
 
 
-def proxy_who(request: Request, cfg: Settings) -> str | None:
-    """The proxy's identity as a person slug, ignoring the people table."""
-    return normalize_who(proxy_raw(request, cfg))
-
-
 def proxy_name(request: Request, cfg: Settings) -> str | None:
     """A human-readable name the proxy offers, if it sends one."""
     if not cfg.trust_proxy_auth:
@@ -89,38 +79,36 @@ def proxy_name(request: Request, cfg: Settings) -> str | None:
     return (request.headers.get(cfg.auth_name_header) or "").strip() or None
 
 
-def who(request: Request, cfg: Settings, ppl: people.People | None = None) -> str | None:
-    """Which PERSON this request is from: the proxy's word first, else the browser's.
+def who(request: Request, cfg: Settings, ppl: users.People | None = None) -> str | None:
+    """The user id this request belongs to, or None when nobody claims it.
 
-    The proxy WINS. A cookie is a claim the browser makes about itself, which
-    is the right weight when there is nothing to protect; once something has
-    actually authenticated the person, that answer outranks it.
-
-    The people table maps the sign-in identity onto a person, so someone with
-    a Google login on their phone and a GitHub one on a laptop archives a
-    note once rather than twice.
+    The proxy's word outranks the cookie: a cookie is a claim the browser
+    makes about itself, which is the right weight when there is nothing to
+    protect, but once something has actually authenticated the person that
+    answer wins.
     """
     raw = raw_identity(request, cfg)
     if ppl is not None:
-        return ppl.canonical(raw)
+        u = ppl.resolve(raw)
+        return u.username if u else None
     return normalize_who(raw)
 
 
 def viewer_for(request: Request, cfg: Settings, me: str | None,
-               ppl: people.People | None = None) -> str:
-    """Whose feed the listing should be built for.
+               ppl: users.People | None = None) -> str:
+    """Whose feed the listing is built for.
 
     ``?me=`` exists so one browser can preview another person's wall, and so
     the service worker's cache entry is keyed per person rather than shared.
     It is a QUERY PARAMETER, so it must never outrank an authenticated
-    identity — otherwise proxy auth would be bypassable with a URL.
+    sign-in — otherwise proxy auth would be bypassable with a URL.
     """
-    authed = proxy_raw(request, cfg)
-    if authed:
-        return (ppl.canonical(authed) if ppl is not None else normalize_who(authed)) or store.HUMAN
+    if proxy_raw(request, cfg):
+        return who(request, cfg, ppl) or store.HUMAN
     if me and WHO_RE.match(me):
         return me
     return who(request, cfg, ppl) or store.HUMAN
+
 
 STATIC = Path(__file__).parent / "static"
 
@@ -145,10 +133,18 @@ class NoteNew(BaseModel):
     body: str = Field(default="", max_length=1_000_000)
 
 
-class PersonWrite(BaseModel):
-    identity: str = Field(min_length=1, max_length=128)
-    person: str | None = Field(default=None, max_length=40)
-    display: str | None = Field(default=None, max_length=60)
+class UserNew(BaseModel):
+    username: str | None = Field(default=None, max_length=32)
+    name: str = Field(default="", max_length=60)        # display name, optional
+    emails: list[str] | None = Field(default=None, max_length=10)
+    claim_sign_in: bool = True
+
+
+class UserWrite(BaseModel):
+    username: str = Field(min_length=1, max_length=32)
+    name: str | None = Field(default=None, max_length=60)
+    add_emails: list[str] | None = Field(default=None, max_length=10)
+    remove_emails: list[str] | None = Field(default=None, max_length=10)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -156,62 +152,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     space = Path(cfg.space_dir)
     # One module-level default rather than threading it through every call:
     # it is read in a dozen places and never changes after start-up.
-    store.HUMAN = people.slug(cfg.default_author) or store.HUMAN
+    store.HUMAN = users.make_username(cfg.default_author) or store.HUMAN
     app = FastAPI(title="Notes", docs_url=None, redoc_url=None)
 
-    def roster() -> people.People:
-        return people.load(space, paths.PEOPLE_FILE)
+    def roster() -> users.People:
+        return users.load(space, paths.PEOPLE_FILE)
 
-    def known_people(ppl: people.People) -> set[str]:
-        """Everyone the app already has evidence for.
+    def save_roster(ppl: users.People) -> None:
+        users.save(space, paths.PEOPLE_FILE, ppl)
 
-        A row in the table, the default author, or anyone notes are already
-        attributed to. Walking the space for that last part is why this is
-        only called when an identity is genuinely new.
+    def seed(ppl: users.People) -> bool:
+        """Create accounts for people the notes already say exist.
+
+        A space has authorship in it long before it has a user list, so the
+        first time anyone looks the list should describe reality rather than
+        being empty. Returns whether anything was added.
         """
-        found = set(ppl.people()) | {store.HUMAN}
-        try:
-            found |= set(store.authors_of(store.listing(space)))
-        except OSError:
-            pass
-        return found
-
-    def seen(request: Request) -> people.People:
-        """Load the roster, recording this sign-in if it is a new one.
-
-        This is what fills the Users page: every identity any authentication
-        source has ever presented turns up there. One it can place — a name
-        already on the table, or one that notes are attributed to — is
-        recorded as that person, because the app would have resolved it there
-        anyway and there is nothing to ask. Anything else stays unclaimed,
-        and the front end asks on first load.
-
-        Writing during a read is deliberate but rare: only the first time an
-        identity appears at all.
-        """
-        ppl = roster()
-        raw = raw_identity(request, cfg)
-        if not raw or ppl.has(raw):
-            return ppl
-        if ppl.observe(raw, known=known_people(ppl)):
-            name = proxy_name(request, cfg)
-            if name:
-                # A proxy's own name header is a far better first guess than
-                # the login string, and it is only a default — the table wins
-                # once anybody edits it.
-                ppl.assign(raw, None, name)
-            try:
-                people.save(space, paths.PEOPLE_FILE, ppl)
-            except OSError as e:          # a read-only space must still serve
-                log.warning("could not record a new identity: %s", e)
-        return ppl
-
-    @app.exception_handler(paths.PathError)
-    async def _path_error(_request, exc: paths.PathError):
-        # Deliberately terse: the client never needs to learn which of the
-        # three scope conditions it tripped.
-        log.warning("rejected out-of-scope path: %s", exc)
-        return JSONResponse({"error": "no such note"}, status_code=404)
+        added = False
+        for name in [store.HUMAN] + list(store.authors_of(store.listing(space))):
+            if users.USERNAME_RE.match(name) and ppl.get(name) is None:
+                try:
+                    ppl.add(name)
+                    added = True
+                except ValueError:
+                    pass
+        return added
 
     @app.get("/api/notes")
     async def list_notes(
@@ -236,7 +201,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The query param keeps the CACHE key honest: the service worker stores
         # this response, and two people on one box must not share an entry. The
         # cookie stays authoritative for writes, which are never cached.
-        ppl = seen(request)
+        ppl = roster()
         viewer = viewer_for(request, cfg, me, ppl)
         notes = store.listing(space, q)
         # The census has to describe the WHOLE space, not the search result, or
@@ -253,9 +218,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "authors": store.authors_of(everything),
             # Labels only. The client renders these; what a note RECORDS is
             # always the person slug.
-            "people": {p: ppl.display_for(p) for p in
-                       sorted(set(ppl.people()) | {viewer} |
-                              {n.author for n in notes if n.author})},
+            # Labels only. What a note RECORDS is always the user id.
+            "people": labels(ppl, {viewer} | {n.author for n in notes if n.author}),
         }
 
     @app.get("/api/note")
@@ -275,7 +239,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # No invented "Untitled": a Keep note may have only a body, and so
         # may one made here.
         return store.create(space, req.title, req.body,
-                            author=who(request, cfg, seen(request))).summary()
+                            author=who(request, cfg, roster())).summary()
 
     @app.put("/api/notes")
     async def update_note(req: NoteWrite, request: Request):
@@ -302,63 +266,96 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def restore_note(req: NoteRef):
         return {"restored": store.restore(space, req.id)}
 
+    def labels(ppl: users.People, ids: set[str]) -> dict:
+        """id -> what to show for it, for every account AND everyone cited."""
+        out = {u.username: u.label for u in ppl.users}
+        for i in ids:
+            if i and i not in out:
+                out[i] = i          # someone the notes name but the list does not
+        return out
+
     @app.get("/api/whoami")
     async def whoami(request: Request):
-        """Who this browser is, and whether anybody has said so yet.
+        """Which account this browser is, and the list to pick from if none.
 
         ⚠️ Deliberately NOT part of /api/notes. That response is cached by the
         service worker, and identity in a cached body is what made the app
-        forget who you were on every reload — two people on one box would
+        forget who you were on every reload — two people on one device would
         also share the entry. This endpoint is never cached.
         """
-        ppl = seen(request)
-        raw = raw_identity(request, cfg)
-        row = ppl._by_identity().get(people.ident(raw)) if raw else None
-        person = who(request, cfg, ppl)
-        return {
-            "identity": people.ident(raw) if raw else "",
-            "person": person,
-            # Nobody has said whose this sign-in is. The front end asks, once.
-            "unclaimed": bool(raw) and not (row and row.person),
-            # What to put in the box when it does: the name the proxy gave, or
-            # the best guess from the login itself.
-            "suggest": (row.display if row and row.display else "") or person or "",
-            "people": {p: ppl.display_for(p) for p in ppl.people()},
-            "fixed": cfg.trust_proxy_auth,   # the identity is the proxy's, not ours to change
-            # Who an unlabelled note belongs to. The client needs the SAME
-            # answer the store uses, or "is this mine?" disagrees between
-            # them: it decides which notes look archived and pinned to you.
-            "default_author": store.HUMAN,
-        }
-
-    @app.get("/api/people")
-    async def list_people(request: Request):
-        """Every identity ever seen, who it belongs to, and where that is stored.
-
-        The file path comes back too, so the page can say where this actually
-        lives — it is an ordinary markdown table in the space, editable by
-        hand, and hiding that would misrepresent the design.
-        """
-        ppl = seen(request)
-        return {
-            "rows": [{"identity": r.identity, "person": r.person,
-                      "display": r.display, "first_seen": r.first_seen}
-                     for r in sorted(ppl.rows,
-                                     key=lambda r: (r.person == "", r.person, r.identity))],
-            "people": {p: ppl.display_for(p) for p in ppl.people()},
-            "me": who(request, cfg, ppl) or store.HUMAN,
-            "file": paths.PEOPLE_FILE,
-            "proxy_auth": cfg.trust_proxy_auth,
-        }
-
-    @app.put("/api/people")
-    async def put_person(request: Request, req: PersonWrite):
-        """Link an identity to a person, and/or set that person's display name."""
         ppl = roster()
-        ppl.assign(req.identity, req.person, req.display)
-        people.save(space, paths.PEOPLE_FILE, ppl)
-        fresh = roster()
-        return {"ok": True, "me": who(request, cfg, fresh) or store.HUMAN}
+        if not ppl.users and seed(ppl):
+            try:
+                save_roster(ppl)
+            except OSError as e:
+                log.warning("could not write the user list: %s", e)
+        raw = raw_identity(request, cfg)
+        u = ppl.resolve(raw)
+        return {
+            "sign_in": raw or "",
+            "me": u.username if u else None,
+            # Nobody claims this sign-in. The front end asks, once.
+            "unknown": bool(raw) and u is None,
+            "fixed": cfg.trust_proxy_auth,   # the sign-in is the proxy's, not ours
+            "users": [x.as_dict() for x in sorted(ppl.users, key=lambda x: x.username)],
+            "suggest_name": proxy_name(request, cfg) or "",
+            # Only suggest when there is something to suggest FROM. Filling
+            # the box with "user" would hand someone a username they did not
+            # choose, for the one field here that can never be changed.
+            "suggest_username": (ppl.suggest_username(proxy_name(request, cfg), raw)
+                                 if (proxy_name(request, cfg) or raw) else ""),
+            "default_author": store.HUMAN,
+            "file": paths.PEOPLE_FILE,
+        }
+
+    @app.get("/api/users")
+    async def list_users(request: Request):
+        ppl = roster()
+        return {
+            "users": [u.as_dict() for u in sorted(ppl.users, key=lambda u: u.username)],
+            "me": who(request, cfg, ppl),
+            "file": paths.PEOPLE_FILE,
+            "fixed": cfg.trust_proxy_auth,
+        }
+
+    @app.post("/api/users")
+    async def create_user(request: Request, req: UserNew):
+        """Make an account. The id is chosen ONCE and never changes.
+
+        Taking an id that exists is refused rather than merged: two people
+        called Mary is ordinary, and quietly folding one into the other would
+        file their notes under someone else.
+        """
+        ppl = roster()
+        uid = (req.username or "").strip().lower() or ppl.suggest_username(req.name)
+        try:
+            u = ppl.add(uid, req.name)
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        # Whoever is asking is presumably this person; attach the sign-in if
+        # it is an email, so they are recognised next time without a step.
+        if req.claim_sign_in:
+            ppl.attach_email(u, raw_identity(request, cfg))
+        for e in req.emails or []:
+            ppl.attach_email(u, e)
+        save_roster(ppl)
+        return {"ok": True, "user": u.as_dict()}
+
+    @app.put("/api/users")
+    async def update_user(req: UserWrite):
+        """Rename, or add and remove emails. The id is not editable."""
+        ppl = roster()
+        u = ppl.get(req.username)
+        if u is None:
+            raise HTTPException(status_code=404, detail="no such user")
+        if req.name is not None:
+            u.name = users.clean_name(req.name)
+        for e in req.add_emails or []:
+            ppl.attach_email(u, e)
+        for e in req.remove_emails or []:
+            ppl.detach_email(u, e)
+        save_roster(ppl)
+        return {"ok": True, "user": u.as_dict()}
 
     @app.get("/healthz")
     async def healthz():
