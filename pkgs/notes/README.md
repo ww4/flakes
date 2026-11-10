@@ -148,51 +148,53 @@ An email is reduced to its local part, so `ana@example.com` becomes `ana`.
 
 ## Users
 
-**Users** in the side menu lists every sign-in identity the app has ever seen,
-who it belongs to, and what to call them. It is a view over a markdown table
-in the space — `Notes/People.md` — and the page says so at the bottom, because
-editing that file by hand must stay just as good an answer.
+Everyone who uses the space has an **account**. **Users** in the side menu
+lists them, and it is a view over a markdown table in the space —
+`Notes/People.md` — which the page says at the bottom, because editing that
+file by hand must stay just as good an answer.
 
 ```markdown
-| Identity | Person | Display name | First seen |
-| --- | --- | --- | --- |
-| sam@example.com | sam | the owner | 2026-07-09 |
-| ana@example.com | ana | the other person Parker | 2026-11-09 |
-| github:aparker | ana |  | 2026-11-10 |
+| ID | Name | Emails |
+| --- | --- | --- |
+| ana | Ana Parker | ana@example.com, a.parker@work.example |
+| maryj | Mary | maryj@example.com |
+| marys | Mary | marys@example.com |
 ```
 
-Three different strings, deliberately kept apart:
+- **id** — unique, chosen once, and the only thing a note records
+  (`archived_by: ana`). It does not change, because changing it would orphan
+  every note already filed under it.
+- **name** — a label. Free text, and **not** unique: two people called Mary
+  is an ordinary situation, and the ids are what keep them apart.
+- **emails** — optional. How a sign-in that was authenticated elsewhere is
+  matched to an account. Nothing is verified here; the proxy did that. One
+  address belongs to one account at a time.
 
-- an **identity** is what a login source calls someone. There can be several
-  per person and you don't choose them.
-- a **person** is one short slug, and it is the only one that ever reaches a
-  note (`archived_by: ana`). It has to be stable, because it is written
-  across every file that person has touched — renaming yourself must never
-  rewrite history.
-- a **display name** is a label. Change it whenever you like; nothing depends
-  on it.
+A sign-in is matched two ways, both exact: against the id itself, or against
+one of the account's emails. Nothing is inferred from spelling — an
+unrecognised sign-in is a question for the person using it, and the app asks
+once, offering the existing accounts or a new one.
 
-Point two identities at the same person and they *are* the same person — that
-is how someone signs in with Google on a phone and GitHub on a laptop and
-still archives a note once. An identity nobody has claimed still works; it
-simply stands for itself.
+There are no passwords and no sessions here. See [Access](#access) for how
+authentication is actually done.
 
-New sign-ins are recorded the first time they appear, so the page fills in by
-itself rather than needing to be set up. Where a proxy sends a human-readable
-name (`Remote-Name` and friends, see `NOTES_AUTH_NAME_HEADER`) that becomes
-the first guess at the display name.
+If a proxy sends something that is neither an email nor an account id
+(`github:someone`, an opaque OIDC subject), there is nowhere to record it —
+give that account an id matching what the proxy sends, or configure the proxy
+to send the user's email, which most can.
 
-The table is shared, so anyone who can use the app can edit anyone's display
-name and merge identities. That is right for a household and worth knowing
-for anything larger: it is a label, not a permission.
+## Why the accounts have no passwords
 
-## Why no accounts
+An account here answers "which of you did this", not "are you allowed in".
+The first question needs a stable name to write into a file; the second needs
+credential storage, sessions, resets, lockout and rate limiting — a permanent
+obligation, and where small self-hosted projects' CVEs live.
 
-Two people who already trust each other share one folder of notes. The thing
-worth recording is *which of them* did something, not whether they are
-allowed to. That is attribution, and a cookie the browser sets for itself is
-the right weight for it. Authentication is a different question with a
-different answer, and that answer is "your proxy".
+They are also different in scope. There are no per-note permissions in this
+data model, so being allowed in is all-or-nothing, and a reverse proxy does
+all-or-nothing better than this app could, before a request reaches Python.
+So accounts carry identity, your proxy carries authentication, and the emails
+column is how the two are joined up.
 
 If you need per-note access control, this is the wrong tool — the data model
 has nowhere to put it.

@@ -1,6 +1,6 @@
-"""Identity from a reverse proxy, and the refusal to be exposed without one.
+"""Which account a request belongs to, and the refusal to be exposed.
 
-There are no accounts in this app. These two things are the whole of its
+There are no passwords in this app. These two things are the whole of its
 security posture that lives in code — everything else is the deployment's job
 — so they get the same corpus treatment as path scoping.
 """
@@ -10,7 +10,8 @@ from __future__ import annotations
 import pytest
 from fastapi import Request
 
-from notes.app import normalize_who, proxy_who, viewer_for, who
+from notes import users
+from notes.app import normalize_who, proxy_raw, raw_identity, viewer_for, who
 from notes.config import Settings
 from notes.__main__ import check_exposure, is_loopback
 
@@ -23,88 +24,103 @@ def req(headers: dict[str, str] | None = None, cookies: dict[str, str] | None = 
     return Request({"type": "http", "method": "GET", "path": "/", "headers": raw})
 
 
-# ---------------------------------------------------------------- normalising
-
-@pytest.mark.parametrize("raw,want", [
-    ("ana", "ana"),
-    ("Ana", "ana"),
-    ("  ana  ", "ana"),
-    ("ana@example.com", "ana"),                 # the common proxy shape
-    ("ANA@CORP.EXAMPLE.COM", "ana"),
-    ("ana.jones@example.com", "ana-jones"),     # dots are not in WHO_RE
-    ("ana jones", "ana-jones"),
-    ("m", "m"),
-    ("m" * 40, "m" * 32),                         # truncated, still valid
-    ("", None),
-    (None, None),
-    ("   ", None),
-    ("@example.com", None),                       # no local part
-    ("123", None),                                # must start with a letter
-    ("-ana", "ana"),                            # leading separator stripped
-    ("../../etc/passwd", "etc-passwd"),           # cannot become a path
-    # A newline-bearing value cannot inject a second header or escape into a
-    # path: every run of non-[a-z0-9_-] collapses to a single "-".
-    ("ana\nRemote-User: admin", "ana-remote-user-admin"),
-])
-def test_normalize(raw, want):
-    assert normalize_who(raw) == want
+def roster() -> users.People:
+    p = users.People()
+    p.add("sam", "Sam Reed", ["sam@example.com"])
+    p.add("ana", "Ana Parker", ["ana@example.com", "a.parker@work.example"])
+    return p
 
 
-# ------------------------------------------------------------- trust is opt-in
+# -------------------------------------------------------- the sign-in string
+
+def test_the_sign_in_arrives_unchanged():
+    """It is matched against accounts verbatim; nothing is guessed from it."""
+    cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True)
+    assert raw_identity(req({"Remote-User": "a.parker@work.example"}), cfg) == "a.parker@work.example"
+    assert raw_identity(req(cookies={"notes_who": "ana"}), cfg) == "ana"
+    assert raw_identity(req(), cfg) is None
+
 
 def test_header_ignored_unless_trusted():
     cfg = Settings(space_dir="/nonexistent")
     assert cfg.trust_proxy_auth is False, "trusting a header must never be the default"
-    r = req({"Remote-User": "admin"})
-    assert proxy_who(r, cfg) is None
-    assert who(r, cfg) is None
+    assert proxy_raw(req({"Remote-User": "admin"}), cfg) is None
+    assert who(req({"Remote-User": "admin"}), cfg, roster()) is None
 
 
-def test_header_used_when_trusted():
-    cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True)
-    assert who(req({"Remote-User": "ana"}), cfg) == "ana"
+@pytest.mark.parametrize("header", [
+    "Remote-User", "X-Forwarded-User", "X-authentik-username",
+    "Cf-Access-Authenticated-User-Email", "Tailscale-User-Login",
+])
+def test_the_proxies_people_actually_run(header):
+    cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True, auth_user_header=header)
+    assert who(req({header: "ana@example.com"}), cfg, roster()) == "ana"
 
 
-def test_header_name_is_configurable():
+def test_only_the_configured_header_counts():
     cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True,
                    auth_user_header="X-authentik-username")
-    r = req({"X-authentik-username": "ana", "Remote-User": "admin"})
-    assert who(r, cfg) == "ana", "only the configured header counts"
+    r = req({"X-authentik-username": "ana", "Remote-User": "sam"})
+    assert who(r, cfg, roster()) == "ana"
 
 
-@pytest.mark.parametrize("header,value,want", [
-    ("Remote-User", "ana", "ana"),                                   # Authelia
-    ("X-Forwarded-User", "ana", "ana"),                              # oauth2-proxy
-    ("X-authentik-username", "ana", "ana"),                          # Authentik
-    ("Cf-Access-Authenticated-User-Email", "ana@ex.com", "ana"),     # Cloudflare Access
-    ("Tailscale-User-Login", "ana@ex.com", "ana"),                   # tailscale serve
-])
-def test_the_proxies_people_actually_run(header, value, want):
-    cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True, auth_user_header=header)
-    assert who(req({header: value}), cfg) == want
+# ------------------------------------------------------- matching an account
+
+def test_a_sign_in_matching_an_id():
+    cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True)
+    assert who(req({"Remote-User": "ana"}), cfg, roster()) == "ana"
+
+
+def test_a_sign_in_matching_an_email():
+    cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True)
+    assert who(req({"Remote-User": "a.parker@work.example"}), cfg, roster()) == "ana"
+
+
+def test_an_unknown_sign_in_is_nobody():
+    """Not guessed into an account — the front end asks who they are."""
+    cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True)
+    assert who(req({"Remote-User": "ana@gmail.com"}), cfg, roster()) is None
+    assert who(req({"Remote-User": "github:aparker"}), cfg, roster()) is None
 
 
 def test_proxy_beats_the_cookie():
     """A cookie is the browser's claim about itself; the proxy has checked."""
     cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True)
     r = req({"Remote-User": "ana"}, {"notes_who": "sam"})
-    assert who(r, cfg) == "ana"
+    assert who(r, cfg, roster()) == "ana"
 
 
-def test_cookie_still_works_without_a_proxy():
+def test_the_cookie_works_without_a_proxy():
     cfg = Settings(space_dir="/nonexistent")
-    assert who(req(cookies={"notes_who": "ana"}), cfg) == "ana"
+    assert who(req(cookies={"notes_who": "ana"}), cfg, roster()) == "ana"
+    assert who(req(cookies={"notes_who": "nobody"}), cfg, roster()) is None
 
 
-def test_garbage_cookie_is_not_an_identity():
+# --------------------------------------------- whose feed a listing is built for
+
+def test_me_param_works_without_auth():
     cfg = Settings(space_dir="/nonexistent")
-    assert who(req(cookies={"notes_who": "../../etc"}), cfg) == "etc"
-    assert who(req(cookies={"notes_who": ""}), cfg) is None
+    assert viewer_for(req(cookies={"notes_who": "sam"}), cfg, "ana", roster()) == "ana"
 
 
-def test_a_trusted_header_that_is_absent_falls_back():
+def test_me_param_cannot_override_an_authenticated_sign_in():
+    """Otherwise proxy auth is bypassable with a query string."""
     cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True)
-    assert who(req(cookies={"notes_who": "sam"}), cfg) == "sam"
+    r = req({"Remote-User": "ana"}, {"notes_who": "ana"})
+    for pretend in ("sam", "admin", None):
+        assert viewer_for(r, cfg, pretend, roster()) == "ana"
+
+
+def test_viewer_falls_back_to_the_default_author():
+    from notes import store
+    cfg = Settings(space_dir="/nonexistent")
+    assert viewer_for(req(), cfg, None, roster()) == store.HUMAN
+
+
+def test_make_id_is_a_suggestion_not_a_lookup():
+    assert normalize_who("Ana Parker") == "ana-parker"
+    assert normalize_who("ana@example.com") == "ana"
+    assert normalize_who("!!!") is None
 
 
 # ------------------------------------------------------------- exposure guard

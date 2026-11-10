@@ -566,11 +566,7 @@ body.selecting .pin{display:none}
   padding:4px 2px 16px; color:var(--ink-soft);
   font:400 13px/1.55 "IBM Plex Sans",system-ui,sans-serif; max-width:62ch;
 }
-.u-person{
-  display:flex; align-items:center; gap:12px; padding:12px 0 10px;
-  border-top:1px solid var(--line);
-}
-.u-person:first-of-type{border-top:0}
+.u-person{display:flex; align-items:center; gap:12px; padding:14px 0 6px}
 .u-name{
   flex:1; min-width:0; background:none; border:0; border-bottom:1px solid transparent;
   padding:4px 2px; color:var(--ink);
@@ -613,17 +609,19 @@ body.selecting .pin{display:none}
   background:none; border:1px solid var(--line); border-radius:6px;
   color:var(--ink-soft); padding:2px 5px; font:inherit; font-size:10.5px;
 }
-.u-unclaimed{
-  margin-top:18px; padding:14px; border:1px dashed var(--line-strong); border-radius:var(--r);
+.u-card{border-top:1px solid var(--line)}
+/* An email is short enough to share its line with the remove button; only a
+   long opaque sign-in ever needed a line of its own. */
+.u-card .u-id .idline{flex:1 1 auto}
+.u-card:first-of-type{border-top:0}
+.u-add, .u-addmail{
+  background:none; border:1px dashed var(--line-strong); border-radius:7px;
+  color:var(--ink-soft); cursor:pointer; padding:7px 12px;
+  font:500 11px/1 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.06em;
 }
-.u-unclaimed h3{
-  margin:0 0 4px; font:500 9.5px/1 "IBM Plex Mono",ui-monospace,monospace;
-  letter-spacing:.16em; text-transform:uppercase; color:var(--brass);
-}
-.u-unclaimed p{
-  margin:0 0 12px; color:var(--ink-soft);
-  font:400 12px/1.5 "IBM Plex Sans",system-ui,sans-serif;
-}
+.u-add{margin-top:18px; width:100%; padding:11px}
+.u-addmail{align-self:flex-start; margin-top:4px; border-style:dashed; font-size:10px}
+.u-add:hover, .u-addmail:hover{border-color:var(--accent); color:var(--accent)}
 
 /* undo toast */
 .toast{
@@ -2119,24 +2117,32 @@ body.selecting .pin{display:none}
   var DEFAULT_AUTHOR = "owner";
   try { DEFAULT_AUTHOR = localStorage.getItem("notes_default_author") || DEFAULT_AUTHOR; } catch (e) {}
 
-  function setMe(name, display){
-    var v = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
+  // Choosing an account for this browser. With a proxy in front the sign-in
+  // is not ours to change, so this only matters without one.
+  function setMe(userId){
+    var v = (userId || "").trim().toLowerCase();
     if (!v) return;
-    // Record the association, so the answer survives this browser: an
-    // identity from a directory is not ours to store in a cookie, and even a
-    // cookie one is worth writing down so the other person's device knows
-    // the name too.
-    var id = WHOAMI && WHOAMI.identity;
-    var p = id
-      ? api("PUT", "/api/people", {identity: id, person: v,
-                                   display: display && display !== v ? display : null})
-          .catch(function(e){ fail("Couldn't save that", e); })
-      : Promise.resolve();
-    // A proxy owns the identity; a cookie is only meaningful without one.
-    if (!(WHOAMI && WHOAMI.fixed)) { writeCookieMe(v); }
+    if (!(WHOAMI && WHOAMI.fixed)) writeCookieMe(v);
     ME = v;
     closeMenus(null);
-    p.then(loadWhoami).then(function(){ return refresh(); }).catch(function(){});
+    loadWhoami().then(function(){ return refresh(); }).catch(function(){});
+  }
+
+  // Make an account and take it. The id is chosen once and is what notes
+  // record, so it is shown while choosing rather than sprung afterwards.
+  function createMe(){
+    var name = window.prompt("Your name", (WHOAMI && WHOAMI.suggest_name) || "");
+    if (!name) return;
+    var id = window.prompt(
+      "Short id — this is what notes record, and it does not change:",
+      (WHOAMI && WHOAMI.suggest_id) || "");
+    if (!id) return;
+    api("POST", "/api/users", {name: name, id: id, claim_sign_in: true})
+      .then(function(d){ setMe(d.user.id); })
+      .catch(function(e){
+        fail(/already taken/i.test((e && e.message) || "")
+          ? "That id is taken — pick another" : "Couldn't create that account", e);
+      });
   }
 
   function loadWhoami(){
@@ -2146,8 +2152,11 @@ body.selecting .pin{display:none}
         DEFAULT_AUTHOR = d.default_author;
         try { localStorage.setItem("notes_default_author", DEFAULT_AUTHOR); } catch (e) {}
       }
-      if (d.people) PEOPLE = d.people;
-      if (d.person) ME = d.person;
+      if (d.users) {
+        PEOPLE = {};
+        d.users.forEach(function(u){ PEOPLE[u.id] = u.label; });
+      }
+      ME = d.me || ME;
       drawMe();
       return d;
     }).catch(function(){ return null; });
@@ -2160,35 +2169,31 @@ body.selecting .pin{display:none}
   }
 
   function fillMeMenu(){
-    var fresh = WHOAMI && WHOAMI.unclaimed;
+    var unknown = WHOAMI && WHOAMI.unknown;
+    var fixed = WHOAMI && WHOAMI.fixed;
+    var list = (WHOAMI && WHOAMI.users) || [];
     el.meMenu.textContent = "";
     el.meMenu.appendChild(node("div", "head",
-      fresh ? "New here — who are you?" : (WHOAMI && WHOAMI.fixed ? "Signed in as" : "This device is")));
-    // Offer whoever already writes here, so a second person appears on the
-    // first device that names them rather than being hardcoded.
-    var names = Object.keys(PEOPLE);
-    Object.keys(AUTHORS).forEach(function(a){
-      if (a !== "claude" && names.indexOf(a) < 0) names.push(a);
-    });
-    if (names.indexOf(DEFAULT_AUTHOR) < 0) names.unshift(DEFAULT_AUTHOR);
-    names.forEach(function(nm){
-      var b = node("button", null, nameOf(nm));
-      b.setAttribute("aria-pressed", ME === nm ? "true" : "false");
-      b.addEventListener("click", function(){ setMe(nm); });
+      unknown ? "Who are you?" : (fixed ? "Signed in as" : "This device is")));
+    list.forEach(function(u){
+      var b = node("button", null, u.label);
+      b.setAttribute("aria-pressed", ME === u.id ? "true" : "false");
+      b.addEventListener("click", function(){
+        // With a proxy, picking an existing account means "that sign-in is
+        // mine" — attach it, rather than pretending to be somebody else.
+        if (fixed && unknown && WHOAMI.sign_in) {
+          api("PUT", "/api/users", {id: u.id, add_emails: [WHOAMI.sign_in]})
+            .then(function(){ setMe(u.id); })
+            .catch(function(e){ fail("Couldn't link that sign-in", e); });
+        } else { setMe(u.id); }
+      });
       el.meMenu.appendChild(b);
     });
-    var other = node("button", null, fresh ? "none of these — I'm…" : "someone else…");
-    other.addEventListener("click", function(){
-      // Pre-filled with whatever we can guess: the name the proxy gave, or
-      // the login itself. Accepting it is one tap; it is still only a guess.
-      var guess = (WHOAMI && WHOAMI.suggest) || ME || "";
-      var nm = window.prompt("What should we call you?", guess);
-      if (nm) setMe(nm, nm);
-    });
-    el.meMenu.appendChild(other);
-    if (fresh && WHOAMI.identity) {
-      var sub = node("div", "head", "signed in as " + WHOAMI.identity);
-      el.meMenu.appendChild(sub);
+    var make = node("button", null, list.length ? "none of these — new account…" : "create an account…");
+    make.addEventListener("click", function(ev){ ev.stopPropagation(); createMe(); });
+    el.meMenu.appendChild(make);
+    if (unknown && WHOAMI.sign_in && fixed) {
+      el.meMenu.appendChild(node("div", "head", "signed in as " + WHOAMI.sign_in));
     }
     el.meMenu.appendChild(node("div", "sep"));
     var sh = node("button", null, (SHOW_SHARED ? "\u2713 " : "") + "show Ours in my feed");
@@ -2744,10 +2749,10 @@ body.selecting .pin{display:none}
     });
   }
 
-  // ---- Users: the one page that edits a file instead of a note ----
-  // It is a view over Notes/People.md — a markdown table in the space. The
-  // path is shown at the bottom on purpose: pretending this is app state
-  // would misrepresent the only promise the project makes.
+  // ---- Users: accounts, not identities ----
+  // A view over Notes/People.md, a markdown table in the space. The path is
+  // shown at the bottom on purpose: pretending this is app state would
+  // misrepresent the only promise the project makes.
   var USERS = null;
 
   function usersOpen(){ return !el.usersScrim.hidden; }
@@ -2758,14 +2763,19 @@ body.selecting .pin{display:none}
     else enterLayer("users");
     el.usersBody.textContent = "";
     el.usersBody.appendChild(node("div", "empty", "Loading…"));
-    api("GET", "/api/people").then(function(d){
+    reloadUsers();
+  }
+
+  function reloadUsers(){
+    return api("GET", "/api/users").then(function(d){
       USERS = d;
-      PEOPLE = d.people || PEOPLE;
+      PEOPLE = {};
+      d.users.forEach(function(u){ PEOPLE[u.id] = u.label; });
       drawUsers();
     }).catch(function(e){
       el.usersBody.textContent = "";
       el.usersBody.appendChild(node("div", "empty",
-        "Couldn't load the people table — " + ((e && e.message) || "unknown error")));
+        "Couldn't load the user list — " + ((e && e.message) || "unknown error")));
     });
   }
 
@@ -2776,14 +2786,10 @@ body.selecting .pin{display:none}
     render();
   }
 
-  function saveperson(identity, person, display){
-    return api("PUT", "/api/people", {identity: identity, person: person, display: display})
-      .then(function(d){
-        if (d && d.me) { ME = d.me; }
-        return api("GET", "/api/people");
-      }).then(function(d){
-        USERS = d; PEOPLE = d.people || PEOPLE; drawUsers();
-      }).catch(function(e){ fail("Couldn't save that", e); });
+  function saveUser(body){
+    return api("PUT", "/api/users", body)
+      .then(reloadUsers)
+      .catch(function(e){ fail("Couldn't save that", e); });
   }
 
   function drawUsers(){
@@ -2791,129 +2797,70 @@ body.selecting .pin{display:none}
     el.usersBody.textContent = "";
     el.usersPath.textContent = d.file + "  ·  a markdown table you can also edit by hand";
 
-    var people = Object.keys(d.people).sort();
-    var claimed = {}, loose = [];
-    d.rows.forEach(function(r){
-      if (r.person) { (claimed[r.person] = claimed[r.person] || []).push(r); }
-      else loose.push(r);
-    });
-    people.forEach(function(slug){ claimed[slug] = claimed[slug] || []; });
-
     var intro = node("div", "u-intro");
     intro.appendChild(document.createTextNode(
-      "Names here are labels only — change them freely. What a note records is "
-      + "the short id beside each name: it is set once, from whatever first "
-      + "named the person, and stays put because it is written into every note "
-      + "they have touched."
-      + (loose.length ? "" : " Sign-ins appear here as they are used.")));
+      "Each person has an account. The NAME is a label — change it freely, and "
+      + "two people may share one. The ID underneath is what notes record, so it "
+      + "is set once and stays. Emails let a sign-in that was authenticated "
+      + "elsewhere be recognised as that account."));
     el.usersBody.appendChild(intro);
 
-    people.forEach(function(slug){
-      var row = node("div", "u-person");
-      var inp = node("input", "u-name");
-      inp.value = nameOf(slug);
-      inp.setAttribute("aria-label", "Display name for " + slug);
-      inp.addEventListener("change", function(){ saveperson(slug, slug, inp.value); });
-      row.appendChild(inp);
-      row.appendChild(node("span", "u-slug", slug + (slug === d.me ? " · you" : "")));
-      el.usersBody.appendChild(row);
+    d.users.forEach(function(u){ el.usersBody.appendChild(userCard(u, d)); });
 
-      var mine = claimed[slug] || [];
-      var ids = node("div", "u-ids");
-      mine.forEach(function(r){
-        // Detaching is offered only when it cannot orphan someone. A person
-        // with one sign-in and no way back in is not a state worth reaching
-        // by accident.
-        ids.appendChild(signInRow(r, mine.length > 1));
+    var add = node("button", "u-add", "Add someone");
+    add.addEventListener("click", function(){
+      var name = window.prompt("Their name", "");
+      if (!name) return;
+      var id = window.prompt("Short id — what notes will record, and it does not change:",
+                             name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, ""));
+      if (!id) return;
+      api("POST", "/api/users", {name: name, id: id, claim_sign_in: false})
+        .then(reloadUsers)
+        .catch(function(e){
+          fail(/already taken/i.test((e && e.message) || "")
+            ? "That id is taken — pick another" : "Couldn't add that account", e);
+        });
+    });
+    el.usersBody.appendChild(add);
+  }
+
+  function userCard(u, d){
+    var box = node("div", "u-card");
+
+    var row = node("div", "u-person");
+    var inp = node("input", "u-name");
+    inp.value = u.name || "";
+    inp.placeholder = u.id;
+    inp.setAttribute("aria-label", "Name for " + u.id);
+    inp.addEventListener("change", function(){ saveUser({id: u.id, name: inp.value}); });
+    row.appendChild(inp);
+    row.appendChild(node("span", "u-slug", u.id + (u.id === d.me ? " · you" : "")));
+    box.appendChild(row);
+
+    var mails = node("div", "u-ids");
+    u.emails.forEach(function(e){
+      var line = node("div", "u-id");
+      var head = node("span", "idline");
+      head.appendChild(node("span", "src", "email"));
+      head.appendChild(node("span", "who", e));
+      line.appendChild(head);
+      var off = node("button", "u-detach", "remove");
+      off.setAttribute("title", "Stop recognising " + e + " as " + u.id);
+      off.addEventListener("click", function(){
+        saveUser({id: u.id, remove_emails: [e]});
       });
-      if (!mine.length) {
-        ids.appendChild(node("div", "u-id muted", "no sign-in recorded yet"));
-      }
-      el.usersBody.appendChild(ids);
-    });
-
-    // The only assignment question that is ever live: a sign-in nobody has
-    // placed. A person's own sign-in used to carry the same dropdown, which
-    // offered to hand one person's login to another — redundant when there is
-    // one each, and a way to make someone's notes land under the wrong name.
-    if (loose.length) {
-      var box = node("div", "u-unclaimed");
-      box.appendChild(node("h3", null, "Not yet matched"));
-      box.appendChild(node("p", null,
-        loose.length === 1
-          ? "A sign-in has been used that is not attached to anyone. Say who it is to merge it with their notes, or leave it — it works on its own."
-          : loose.length + " sign-ins have been used that are not attached to anyone. Say who each one is to merge it with their notes, or leave them — they work on their own."));
-      loose.forEach(function(r){ box.appendChild(claimRow(r, people)); });
-      el.usersBody.appendChild(box);
-    }
-  }
-
-  // "github:aparker" -> GITHUB. A bare name has no source to show.
-  function sourceOf(identity){
-    var i = String(identity || "");
-    var colon = i.indexOf(":");
-    if (colon > 0) return i.slice(0, colon);
-    if (i.indexOf("@") > 0) return i.slice(i.indexOf("@") + 1);
-    return "";
-  }
-
-  function idHead(r){
-    var head = node("span", "idline");
-    head.appendChild(node("span", "src", sourceOf(r.identity) || "local"));
-    head.appendChild(node("span", "who", r.identity));
-    return head;
-  }
-
-  // A sign-in that already belongs to someone: shown, not re-asked about.
-  function signInRow(r, detachable){
-    var line = node("div", "u-id");
-    var head = idHead(r);
-    line.appendChild(head);
-    if (detachable) {
-      var off = node("button", "u-detach", "not them");
-      off.setAttribute("title", "Detach " + r.identity + " from this person");
-      off.addEventListener("click", function(){ saveperson(r.identity, "", null); });
       line.appendChild(off);
-      if (r.first_seen) line.appendChild(node("span", "u-slug", r.first_seen));
-    } else if (r.first_seen) {
-      // Nothing else is competing for the row, so the date rides along rather
-      // than taking a line of its own under every person.
-      head.appendChild(node("span", "u-slug since", r.first_seen));
-    }
-    return line;
-  }
-
-  // A sign-in nobody has placed: the one row where a choice means something.
-  function claimRow(r, people){
-    var line = node("div", "u-id");
-    line.appendChild(idHead(r));
-    var sel = node("select");
-    sel.setAttribute("aria-label", "Who is " + r.identity + "?");
-    var none = node("option", null, "who is this?");
-    none.value = "";
-    sel.appendChild(none);
-    people.forEach(function(p){
-      var o = node("option", null, nameOf(p));
-      o.value = p;
-      sel.appendChild(o);
+      mails.appendChild(line);
     });
-    var own = node("option", null, "someone new…");
-    own.value = "\u0000new";
-    sel.appendChild(own);
-    sel.addEventListener("change", function(){
-      if (!sel.value) return;
-      if (sel.value !== "\u0000new") { saveperson(r.identity, sel.value, null); return; }
-      // ASK for the name. Minting the person from the login string instead
-      // is where unreadable ids came from: "oidc:9f21c" became the person
-      // "oidc-9f21c", and that is then what every note they touch is filed
-      // under — the one thing here that is meant to never change.
-      var nm = window.prompt("What should we call them?", r.display || "");
-      if (!nm) { sel.value = ""; return; }
-      saveperson(r.identity, nm, nm);
+    var addMail = node("button", "u-addmail",
+      u.emails.length ? "add another email" : "add an email for sign-in");
+    addMail.addEventListener("click", function(){
+      var e = window.prompt("Email that signs in as " + (u.name || u.id) + ":", "");
+      if (e) saveUser({id: u.id, add_emails: [e]});
     });
-    line.appendChild(sel);
-    if (r.first_seen) line.appendChild(node("span", "u-slug", r.first_seen));
-    return line;
+    mails.appendChild(addMail);
+    box.appendChild(mails);
+    return box;
   }
 
   el.usersClose.addEventListener("click", function(){ closeUsers(); });
