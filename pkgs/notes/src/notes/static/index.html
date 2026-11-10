@@ -2802,8 +2802,9 @@ body.selecting .pin{display:none}
     var intro = node("div", "u-intro");
     intro.appendChild(document.createTextNode(
       "Names here are labels only — change them freely. What a note records is "
-      + "the short id beside each name, so renaming someone never rewrites what "
-      + "they have already touched."
+      + "the short id beside each name: it is set once, from whatever first "
+      + "named the person, and stays put because it is written into every note "
+      + "they have touched."
       + (loose.length ? "" : " Sign-ins appear here as they are used.")));
     el.usersBody.appendChild(intro);
 
@@ -2896,12 +2897,19 @@ body.selecting .pin{display:none}
       o.value = p;
       sel.appendChild(o);
     });
-    var own = node("option", null, "someone new");
+    var own = node("option", null, "someone new…");
     own.value = "\u0000new";
     sel.appendChild(own);
     sel.addEventListener("change", function(){
       if (!sel.value) return;
-      saveperson(r.identity, sel.value === "\u0000new" ? r.identity : sel.value, null);
+      if (sel.value !== "\u0000new") { saveperson(r.identity, sel.value, null); return; }
+      // ASK for the name. Minting the person from the login string instead
+      // is where unreadable ids came from: "oidc:9f21c" became the person
+      // "oidc-9f21c", and that is then what every note they touch is filed
+      // under — the one thing here that is meant to never change.
+      var nm = window.prompt("What should we call them?", r.display || "");
+      if (!nm) { sel.value = ""; return; }
+      saveperson(r.identity, nm, nm);
     });
     line.appendChild(sel);
     if (r.first_seen) line.appendChild(node("span", "u-slug", r.first_seen));
