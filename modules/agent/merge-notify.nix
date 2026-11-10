@@ -47,6 +47,31 @@ let
   # The consumer side. `merge-watch` is what a pane hands to the Monitor tool,
   # so its behaviour is the contract: one line per event, nothing else on
   # stdout, and it must survive the log being rotated or absent.
+  # The consumer side. `merge-watch` is what a pane hands to the Monitor tool,
+  # so its behaviour is the contract: one line per event, nothing else on
+  # stdout, and it must survive the log being rotated or absent.
+  #
+  # ⚠️ IT FILTERS BY STAKE, AND THAT IS THE WHOLE POINT. Chris, 2026-11-10:
+  # *"I have much sessions that are all armed and all watching for all PRs. Now
+  # every time I merge anything multiple sessions respond to it even though all
+  # but one of them have nothing to do with it. This may be a structural
+  # issue."* It was structural: the subscription is ORG-WIDE (one webhook, one
+  # log) while relevance is PER-SESSION. Every armed pane was a consumer of a
+  # broadcast, so one merge produced N reactions and N-1 of them were noise.
+  #
+  # The fix is ownership, not a quieter firehose. `fj` records each PR it opens
+  # in a session-scoped ledger under $XDG_RUNTIME_DIR/merge-watch/, and this
+  # reports a merge ONLY if that PR is in this session's ledger — then drops the
+  # entry, so a pane stops being woken once its own work has landed. Exactly one
+  # session reacts to any given merge: the one that opened it. `--all` restores
+  # the firehose for a pane that really wants it.
+  #
+  # ⚠️ A "your base moved" rule was written and then CUT, because it recreated
+  # the same problem: a session holding one open flakes PR collected eight
+  # wake-ups from an unrelated session merging notes work. A base-moved push is
+  # not actionable anyway — you cannot rebase usefully mid-edit, and by the time
+  # you push, more will have landed. That check belongs at push/build time,
+  # where the answer is needed, not in a notification stream.
   merge-watch = pkgs.writeShellApplication {
     name = "merge-watch";
     runtimeInputs = with pkgs; [ coreutils gnugrep ];
@@ -59,33 +84,75 @@ let
           --all)    all=1; shift ;;
           -h|--help)
             echo "merge-watch [--all] [--recent N]"
-            echo "  stream merged/closed PRs in ${org}/* as one line each"
+            echo "  report merges in ${org}/* that THIS session has a stake in"
             echo "  --recent N   print the last N instead of streaming"
-            echo "  --all        include ww4-bot's own self-merges"
+            echo "  --all        every merge, including ones nothing here opened"
             exit 0 ;;
           *) echo "merge-watch: unknown argument $1" >&2; exit 2 ;;
         esac
       done
 
+      ledger="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/merge-watch/''${CLAUDE_CODE_SESSION_ID:-nosession}.prs"
+      # Overridable so the filter can be exercised against a fixture log. The
+      # first version hardcoded the path, so a test that set MERGE_LOG silently
+      # read the REAL log and "passed" while proving nothing.
+      log="''${MERGE_LOG:-${logFile}}"
+
       # ⚠️ An absent log is ambiguous — "no merges yet" or "the receiver is
       # dead". Say which, once, on stdout, so a silent watch is never mistaken
       # for a quiet forge.
-      if [ ! -e ${logFile} ]; then
-        echo "merge-watch: ${logFile} absent — is merge-notify.service running?"
+      if [ ! -e "$log" ]; then
+        echo "merge-watch: $log absent — is merge-notify.service running?"
       fi
 
-      filter() {
-        if [ -n "$all" ]; then cat
-        else grep --line-buffered -v ' by=ww4-bot ' || true
+      # No stake recorded means nothing to report, and saying so is the honest
+      # answer — streaming every merge "just in case" is the behaviour that
+      # made one merge wake five panes.
+      if [ -z "$all" ] && [ ! -s "$ledger" ]; then
+        echo "merge-watch: this session has opened no PRs, so it has no stake in any merge."
+        echo "merge-watch: it will start reporting once you open one (fj records it). --all streams every merge."
+        exit 0
+      fi
+
+      report() {   # report <log line>
+        local line=$1 ref
+        # ⚠️ `if`, not `[ -n "$all" ] && { ...; }`. writeShellApplication injects
+        # `set -o errexit`, and an `A && B` STATEMENT whose A is false exits 1 —
+        # which kills the shell. The first version of this filter did exactly
+        # that and silently reported nothing at all for every session that had
+        # not passed --all: a filter that fails closed, which is the original
+        # bug wearing a disguise. Caught only because the test asserted a
+        # POSITIVE expectation instead of looking for absence of errors.
+        if [ -n "$all" ]; then printf '%s\n' "$line"; return; fi
+        # field 3 of a line is the ref: owner/repo#N
+        ref=$(printf '%s\n' "$line" | cut -d" " -f3)
+        case "$ref" in */*#*) : ;; *) return 0 ;; esac
+        # ⚠️ `return 0`, never a bare `return`. A bare one hands back the status
+        # of the last command — here a non-matching `grep`, i.e. 1 — and under
+        # errexit a function that returns non-zero AS A LOOP BODY STATEMENT
+        # kills the shell. That is what the third rewrite of this filter did:
+        # it processed the first log line, found it irrelevant, and exited. The
+        # stream then looked exactly like a quiet forge.
+        grep -qxF "$ref" "$ledger" 2>/dev/null || return 0
+        printf '%s\n' "$line"
+        # The stake is discharged: this session asked about that PR and now
+        # knows. Leaving it would keep the entry matching nothing forever.
+        # Same errexit trap, and worse here: discharging the LAST entry makes
+        # `grep -v` output nothing and exit 1, so the `&&` form died exactly
+        # when the ledger emptied — the one moment it has something to say.
+        if grep -vxF "$ref" "$ledger" > "$ledger.tmp" 2>/dev/null || true; then
+          mv "$ledger.tmp" "$ledger"
         fi
+        [ -s "$ledger" ] || echo "merge-watch: that was the last tracked PR for this session; now idle."
+        return 0
       }
 
       if [ -n "$recent" ]; then
-        tail -n "$recent" ${logFile} 2>/dev/null | filter
+        tail -n "$recent" "$log" 2>/dev/null | while IFS= read -r l; do report "$l"; done
       else
         # -F, not -f: follow by name, so a rotated or recreated log is picked
         # up instead of silently tailing an unlinked inode forever.
-        tail -n 0 -F ${logFile} | filter
+        tail -n 0 -F "$log" | while IFS= read -r l; do report "$l"; done
       fi
     '';
   };
