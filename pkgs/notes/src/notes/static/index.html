@@ -422,9 +422,29 @@ body.selecting .pin{display:none}
 /* online / offline */
 .net{
   flex:none; display:grid; place-items:center; width:30px; height:30px;
+  padding:0; border:0; background:none; cursor:pointer;
   border-radius:999px; color:var(--ink-soft);
 }
+.net:hover{color:var(--accent)}
 .net.off{color:var(--brass); background:var(--brass-wash)}
+/* Fixed, and positioned from the button's own rect: an absolute popover here
+   would resolve against whichever ancestor happens to be positioned. */
+.nettip{
+  position:fixed; z-index:70; max-width:min(260px, calc(100vw - 20px));
+  background:var(--ink); color:var(--ground); border-radius:9px;
+  padding:9px 12px; box-shadow:0 6px 22px #00000040;
+  font:400 12px/1.5 "IBM Plex Sans",system-ui,sans-serif;
+}
+.nettip[hidden]{display:none}
+.nettip b{font-weight:600}
+.nettip .when{
+  display:block; color:#ffffffb0;
+  font:400 11px/1.5 "IBM Plex Mono",ui-monospace,monospace;
+}
+.nettip::before{
+  content:""; position:absolute; top:-5px; right:14px; width:10px; height:10px;
+  background:var(--ink); transform:rotate(45deg); border-radius:2px;
+}
 .more-btn{
   display:block; width:100%; margin:4px 0 18px; padding:13px 16px;
   border:1px dashed var(--line-strong); border-radius:var(--r);
@@ -570,7 +590,9 @@ body.selecting .pin{display:none}
       </label>
       <div class="sug" id="sug" role="listbox" aria-label="Suggestions" hidden></div>
     </div>
-    <span class="net" id="net" title="Online" aria-live="polite"></span>
+    <button class="net" id="net" type="button" aria-haspopup="true" aria-expanded="false"
+            title="Sync status" aria-label="Sync status"></button>
+    <div class="nettip" id="netTip" role="status" hidden></div>
     <span class="anchor">
       <button class="me-btn unset" id="meBtn" aria-haspopup="true" aria-expanded="false" title="Who's using this device?" aria-label="Who's using this device?">?</button>
       <div class="menu below" id="meMenu" hidden></div>
@@ -769,6 +791,12 @@ body.selecting .pin{display:none}
     return terms.join(" ");
   }
 
+  // When the listing last landed. Kept in localStorage too, so after an
+  // offline start the tip can say how stale the painted snapshot is instead of
+  // claiming the app has never synced.
+  var LAST_SYNC = 0;
+  try { LAST_SYNC = parseInt(localStorage.getItem("notes_last_sync") || "0", 10) || 0; } catch (e) {}
+
   function applyListing(d){
     NOTES = d.notes.map(function(n){
       if (view === "trash") n.trashed = true;
@@ -789,6 +817,8 @@ body.selecting .pin{display:none}
         + (sent ? "&q=" + encodeURIComponent(sent) : "");
     return api("GET", url).then(function(d){
       LOADING = false;
+      LAST_SYNC = Date.now();           // the wall and the disk agreed, just now
+      try { localStorage.setItem("notes_last_sync", String(LAST_SYNC)); } catch (e) {}
       if (mine !== searchSeq) return;   // a newer keystroke already won
       applyListing(d);
       // Only the plain wall is worth keeping: a snapshot of a search result
@@ -865,6 +895,7 @@ body.selecting .pin{display:none}
     edPath:document.getElementById("edPath"), edCheck:document.getElementById("edCheck"),
     edRaw:document.getElementById("edRaw"), edArch:document.getElementById("edArch"),
     edDel:document.getElementById("edDel"), edSaved:document.getElementById("edSaved"),
+    netTip:document.getElementById("netTip"),
     toast:document.getElementById("toast"), toastMsg:document.getElementById("toastMsg"),
     toastUndo:document.getElementById("toastUndo"), newBtn:document.getElementById("newBtn")
   };
@@ -1193,6 +1224,13 @@ body.selecting .pin{display:none}
   // Two thirds across the card LATCHES: it stops following your thumb, and it
   // stays there when you release. Nothing slides off the screen on its own.
   var LATCH = 0.66;
+  // A fast flick used to put the card at the latch in one frame, so there was
+  // no travel to read — it simply appeared there. The card now has a TOP SPEED
+  // in px per millisecond and your thumb can outrun it; the animation on
+  // release carries the rest at the same rate, so a swipe always looks like a
+  // swipe however hard you throw it.
+  var MAX_PX_MS = 1.1;
+  function glideMs(px){ return Math.max(130, Math.min(380, Math.abs(px) / MAX_PX_MS)); }
 
   // At most one card sits latched open, and at most one gesture owns a drag.
   // Both are module-level because the DRAWER has to be able to let go of a
@@ -1214,12 +1252,14 @@ body.selecting .pin{display:none}
     var x0 = 0, y0 = 0, decided = false, dragging = false, lp = null, dx = 0;
     var pressX = 0, pressY = 0, armed = false, ignore = true, latched = false;
     var swallow = 0;                      // the tap that cancels must not also open the note
+    var lastT = 0;                        // for the speed clamp
     function reset(){
       if (latched) swallow = Date.now() + 500;
       armed = false; latched = false;
       if (SWIPING === reset) SWIPING = null;
       if (LATCHED === reset) LATCHED = null;
       wrap.classList.remove("dragging", "armed", "latched");
+      cardEl.style.transition = "transform " + glideMs(dx) + "ms cubic-bezier(.25,.55,.35,1)";
       cardEl.style.transform = ""; bg.style.opacity = 0; bg.textContent = ""; dx = 0;
     }
     function cancelPress(){ if (lp) { clearTimeout(lp); lp = null; } }
@@ -1286,6 +1326,8 @@ body.selecting .pin{display:none}
       ignore = false;
       x0 = ev.touches[0].clientX; y0 = ev.touches[0].clientY;
       decided = false; dragging = false; dx = 0;
+      lastT = ev.timeStamp || Date.now();
+      cardEl.style.transition = "";
       pressX = x0; pressY = y0;
       lp = setTimeout(function(){
         lp = null;
@@ -1317,7 +1359,15 @@ body.selecting .pin{display:none}
       var limit = wrap.offsetWidth * LATCH;
       // Follow the thumb up to the latch, then hold. Past it the card stops
       // dead however far you keep going — it can never be flung off-screen.
-      dx = Math.abs(ax) <= limit ? ax : (ax > 0 ? limit : -limit);
+      var want = Math.abs(ax) <= limit ? ax : (ax > 0 ? limit : -limit);
+      // ...and it only ever CLOSES the gap at the top speed, so a flick is
+      // still something you can watch rather than a jump cut.
+      var now = ev.timeStamp || Date.now();
+      var step = MAX_PX_MS * Math.max(1, Math.min(64, now - lastT));
+      lastT = now;
+      dx = Math.abs(want - dx) <= step ? want : dx + (want > dx ? step : -step);
+      // Armed follows your THUMB, not the lagging card: the gesture you made
+      // is the one that counts, and the card catches up on release.
       armed = Math.abs(ax) >= limit;
       wrap.classList.toggle("armed", armed);
       cardEl.style.transform = "translateX(" + dx + "px)";
@@ -1339,10 +1389,13 @@ body.selecting .pin{display:none}
         // still follows once it is.
         latched = true; LATCHED = reset;
         wrap.classList.add("latched");
-        cardEl.style.transform = "translateX(" + (-wrap.offsetWidth * LATCH) + "px)";
+        var rest = -wrap.offsetWidth * LATCH;
+        cardEl.style.transition = "transform " + glideMs(rest - dx) + "ms cubic-bezier(.25,.55,.35,1)";
+        cardEl.style.transform = "translateX(" + rest + "px)";
         paint(false, 1, true);
         return;
       }
+      cardEl.style.transition = "transform " + glideMs(wrap.offsetWidth - dx) + "ms cubic-bezier(.3,.5,.4,1)";
       cardEl.style.transform = "translateX(" + wrap.offsetWidth + "px)";
       var was = archivedForMe(n);
       persist(n, {archived: !was}, "Couldn't archive that")
@@ -2450,8 +2503,11 @@ body.selecting .pin{display:none}
     clearTimeout(toastT);
     el.toastMsg.textContent = msg;
     el.toast.hidden = false;
-    el.toastUndo.onclick = function(){ undo(); el.toast.hidden = true; };
-    toastT = setTimeout(function(){ el.toast.hidden = true; }, 6000);
+    // No undo button on a toast with nothing to undo — "Synced · Undo" offered
+    // to reverse something that never happened.
+    el.toastUndo.hidden = !undo;
+    el.toastUndo.onclick = undo ? function(){ undo(); el.toast.hidden = true; } : null;
+    toastT = setTimeout(function(){ el.toast.hidden = true; }, undo ? 6000 : 2600);
   }
 
   el.newBtn.addEventListener("click", function(){ open(null); });
@@ -2722,14 +2778,70 @@ body.selecting .pin{display:none}
   // reachable, so a failed request also flips it — and a success flips it back.
   var ONLINE = true;
   function setNet(up){
-    if (up === ONLINE) return;
+    if (up === ONLINE) { if (el.netTip && !el.netTip.hidden) showNetTip(); return; }
     ONLINE = up;
+    if (el.netTip && !el.netTip.hidden) setTimeout(showNetTip, 0);
     el.net.className = "net" + (up ? "" : " off");
     el.net.title = up ? "Online — changes save as you type" : "Offline — changes are NOT being saved";
     el.net.innerHTML = up
       ? '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A6 6 0 0 0 6.1 11 3.5 3.5 0 0 0 6.5 19z"/><path d="m9.5 14.5 2 2 3.5-4"/></svg>'
       : '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A6 6 0 0 0 6.1 11 3.5 3.5 0 0 0 6.5 19z"/><path d="M3 3l18 18"/></svg>';
   }
+  // ---- tapping the cloud says what it means ----
+  // The icon alone only ever said online/offline, and `title` is a desktop
+  // affordance: a phone has no hover, so on the device this matters most the
+  // tooltip could not be read at all.
+  function whenText(t){
+    if (!t) return "never — nothing has loaded from the box yet";
+    var d = new Date(t), now = new Date();
+    var clock = d.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+    var secs = Math.round((now - d) / 1000);
+    if (secs < 45) return "just now";
+    if (d.toDateString() !== now.toDateString()) {
+      return d.toLocaleDateString([], {month: "short", day: "numeric"}) + " at " + clock;
+    }
+    if (secs < 3600) return Math.round(secs / 60) + " min ago, at " + clock;
+    return clock;
+  }
+  function netTipText(){
+    var queued = (typeof pendingCards === "function" ? pendingCards().length : 0);
+    var head = !ONLINE ? "Offline"
+      : queued ? queued + (queued === 1 ? " note waiting to save" : " notes waiting to save")
+      : "Synced";
+    // Only say more when the headline leaves something unanswered. "Synced"
+    // does not: explaining it just made the tip wordy.
+    var tail = !ONLINE && queued
+      ? "They go up when the box is reachable."
+      : !ONLINE ? "Showing what loaded last. New notes are saved on this device."
+      : "";
+    return [head, tail, "Last synced " + whenText(LAST_SYNC)];
+  }
+  function showNetTip(){
+    var parts = netTipText();
+    el.netTip.textContent = "";
+    el.netTip.appendChild(node("b", null, parts[0]));
+    if (parts[1]) el.netTip.appendChild(document.createTextNode(" — " + parts[1]));
+    el.netTip.appendChild(node("span", "when", parts[2]));
+    el.netTip.hidden = false;
+    var r = el.net.getBoundingClientRect(), w = el.netTip.offsetWidth;
+    el.netTip.style.top = Math.round(r.bottom + 9) + "px";
+    el.netTip.style.left = Math.round(Math.max(10,
+      Math.min(window.innerWidth - w - 10, r.right - w + 8))) + "px";
+    el.net.setAttribute("aria-expanded", "true");
+  }
+  function hideNetTip(){
+    el.netTip.hidden = true;
+    el.net.setAttribute("aria-expanded", "false");
+  }
+  el.net.addEventListener("click", function(ev){
+    ev.stopPropagation();
+    if (el.netTip.hidden) { closeMenus(null); showNetTip(); } else hideNetTip();
+  });
+  document.addEventListener("click", function(){ if (!el.netTip.hidden) hideNetTip(); });
+  document.addEventListener("keydown", function(ev){
+    if (ev.key === "Escape" && !el.netTip.hidden) hideNetTip();
+  });
+
   ONLINE = false; setNet(true);                       // paint the initial state
   window.addEventListener("online", function(){ setNet(true); drain(); });
   window.addEventListener("offline", function(){ setNet(false); });
