@@ -137,6 +137,11 @@
     # SilverBullet stays for Journal/, Areas/, Projects/, System/ — the pages
     # the card wall deliberately does not serve.
     subdomain = "silverbullet";
+    # Every 10 min rather than hourly (Chris, 2026-11-09). This repo is the
+    # ONLY undo for a SilverBullet delete — the editor has no trash — so the
+    # interval is the size of the window nothing covers. It only commits when
+    # something changed, so an idle space still produces nothing.
+    autosaveInterval = "*:0/10";
   };
 
   # ── wave 3c service values ─────────────────────────────────────────────────
