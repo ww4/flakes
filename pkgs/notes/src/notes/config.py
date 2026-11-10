@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     # "Remote-User: anyone". That is why this is opt-in and not a default.
     trust_proxy_auth: bool = False
     auth_user_header: str = "Remote-User"
+    # The same proxies send a human-readable name alongside the identity, and
+    # it is usually the one somebody wants to see: Authelia "Remote-Name",
+    # Authentik "X-authentik-name", oauth2-proxy
+    # "X-Forwarded-Preferred-Username". Used only as the INITIAL display name
+    # for a newly-seen identity; the people file wins ever after.
+    auth_name_header: str = "Remote-Name"
 
     # Required to bind a non-loopback address with no proxy auth configured.
     # The point is not to stop anyone — it is to make exposing an unprotected

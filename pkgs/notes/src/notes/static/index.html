@@ -558,6 +558,72 @@ body.selecting .pin{display:none}
   color:var(--ink-faint); overflow-wrap:anywhere; flex:none;
 }
 
+/* users */
+.users-title{
+  flex:1; font:600 15px/1.2 "IBM Plex Sans",system-ui,sans-serif; color:var(--ink);
+}
+.u-intro{
+  padding:4px 2px 16px; color:var(--ink-soft);
+  font:400 13px/1.55 "IBM Plex Sans",system-ui,sans-serif; max-width:62ch;
+}
+.u-person{
+  display:flex; align-items:center; gap:12px; padding:12px 0 10px;
+  border-top:1px solid var(--line);
+}
+.u-person:first-of-type{border-top:0}
+.av{
+  flex:none; width:38px; height:38px; border-radius:999px;
+  display:grid; place-items:center; color:#fff;
+  font:600 14px/1 "IBM Plex Sans",system-ui,sans-serif; letter-spacing:.02em;
+}
+.av.sm{width:22px; height:22px; font-size:9px}
+.u-name{
+  flex:1; min-width:0; background:none; border:0; border-bottom:1px solid transparent;
+  padding:4px 2px; color:var(--ink);
+  font:500 15px/1.3 "IBM Plex Sans",system-ui,sans-serif;
+}
+.u-name:hover{border-bottom-color:var(--line)}
+.u-name:focus{outline:none; border-bottom-color:var(--accent)}
+.u-slug{
+  flex:none; color:var(--ink-faint);
+  font:400 10px/1 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.04em;
+}
+.u-ids{margin:0 0 14px 50px; display:flex; flex-direction:column; gap:2px}
+@media (max-width:480px){.u-ids{margin-left:14px}}
+.u-id{
+  display:flex; align-items:center; gap:9px; flex-wrap:wrap; padding:3px 0;
+  font:400 11px/1.5 "IBM Plex Mono",ui-monospace,monospace; color:var(--ink-soft);
+}
+.u-id .src{
+  flex:none; padding:1px 6px; border-radius:4px; background:var(--line);
+  color:var(--ink-soft); font-size:9.5px; letter-spacing:.06em; text-transform:uppercase;
+}
+/* Source chip and identity share the first line; the dropdown drops to the
+   second on a phone. Squeezing them all onto one line broke
+   "chris@example.com" into "chris@e / xample. / com", which is worse. */
+.idline{display:flex; align-items:center; gap:9px; flex:1 1 100%; min-width:0}
+.u-id .who{overflow-wrap:anywhere}
+.u-id select{margin-left:auto}
+@media (min-width:560px){
+  .idline{flex:1 1 auto}
+  .u-id select{margin-left:0}
+}
+.u-id select{
+  background:none; border:1px solid var(--line); border-radius:6px;
+  color:var(--ink-soft); padding:2px 5px; font:inherit; font-size:10.5px;
+}
+.u-unclaimed{
+  margin-top:18px; padding:14px; border:1px dashed var(--line-strong); border-radius:var(--r);
+}
+.u-unclaimed h3{
+  margin:0 0 4px; font:500 9.5px/1 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.16em; text-transform:uppercase; color:var(--brass);
+}
+.u-unclaimed p{
+  margin:0 0 12px; color:var(--ink-soft);
+  font:400 12px/1.5 "IBM Plex Sans",system-ui,sans-serif;
+}
+
 /* undo toast */
 .toast{
   position:fixed; left:16px; bottom:18px; z-index:60; display:flex; align-items:center; gap:14px;
@@ -642,6 +708,19 @@ body.selecting .pin{display:none}
   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
   New note
 </button>
+
+<div class="scrim" id="usersScrim" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Users">
+    <div class="ed-top">
+      <button class="tool" id="usersClose" aria-label="Close" title="Close">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+      </button>
+      <span class="users-title">Users</span>
+    </div>
+    <div class="ed-scroll" id="usersBody"></div>
+    <div class="ed-path" id="usersPath"></div>
+  </div>
+</div>
 
 <div class="scrim" id="scrim" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-label="Edit note">
@@ -803,6 +882,7 @@ body.selecting .pin{display:none}
       return n;
     });
     if (d.cats) CATS = d.cats;          // full census, never filtered by q
+    if (d.people) PEOPLE = d.people;    // slug -> label, for faces and bylines
     if (d.authors) AUTHORS = d.authors;
     shownCount = PAGE;
     render();
@@ -896,6 +976,8 @@ body.selecting .pin{display:none}
     edRaw:document.getElementById("edRaw"), edArch:document.getElementById("edArch"),
     edDel:document.getElementById("edDel"), edSaved:document.getElementById("edSaved"),
     netTip:document.getElementById("netTip"),
+    usersScrim:document.getElementById("usersScrim"), usersBody:document.getElementById("usersBody"),
+    usersClose:document.getElementById("usersClose"), usersPath:document.getElementById("usersPath"),
     toast:document.getElementById("toast"), toastMsg:document.getElementById("toastMsg"),
     toastUndo:document.getElementById("toastUndo"), newBtn:document.getElementById("newBtn")
   };
@@ -1058,7 +1140,10 @@ body.selecting .pin{display:none}
     meta.appendChild(node("span", "cat", n.pending ? "queued" : n.cat));
     // Say who wrote it only when that is not you — otherwise every card on
     // your own wall carries your own name, which is noise.
-    if (!n.pending && n.author !== meName()) meta.appendChild(node("span", "by", n.author));
+    if (!n.pending && n.author !== meName()) {
+      meta.appendChild(avatar(n.author, true));
+      meta.appendChild(node("span", "by", nameOf(n.author)));
+    }
     if (n.shared) {
       var sh = node("span", "shared-mark");
       sh.setAttribute("title", "In the shared space");
@@ -1109,6 +1194,7 @@ body.selecting .pin{display:none}
     if (!LAYER) return;                 // not one of ours; let it be
     var k = LAYER; LAYER = null;
     if (k === "note") close(true);
+    else if (k === "users") closeUsers(true);
     else if (k === "drawer") closeDrawer(true);
     else if (k === "sel") exitSel(true);
   });
@@ -1535,7 +1621,7 @@ body.selecting .pin{display:none}
 
     document.addEventListener("touchstart", function(ev){
       mode = null;
-      if (ed || !el.scrim.hidden || DRAG || ev.touches.length !== 1) return;
+      if (ed || !el.scrim.hidden || usersOpen() || DRAG || ev.touches.length !== 1) return;
       var t = ev.touches[0];
       if (isOpen()) { mode = "close"; }
       else if (t.clientX <= drawerZone()) { mode = "open"; fillDrawer(); }
@@ -1583,7 +1669,7 @@ body.selecting .pin{display:none}
   (function(){
     if (!("ontouchstart" in window)) return;
     var y0 = 0, pulling = false, dist = 0, THRESH = 72;
-    function busy(){ return ed || !el.scrim.hidden || el.drawer.classList.contains("open"); }
+    function busy(){ return ed || !el.scrim.hidden || usersOpen() || el.drawer.classList.contains("open"); }
     document.addEventListener("touchstart", function(ev){
       if (busy() || window.scrollY > 0 || ev.touches.length !== 1) { pulling = false; return; }
       y0 = ev.touches[0].clientY; pulling = true; dist = 0;
@@ -1885,7 +1971,7 @@ body.selecting .pin{display:none}
     if (value === (ed.note.author || "chris")) return;
     var n = ed.note;
     persist(n, {author:value}, "Couldn't change who owns this").then(function(){
-      el.edWhoNow.textContent = n.author || "chris";
+      el.edWhoNow.textContent = nameOf(n.author || meName());
       return refresh();
     }).catch(function(){});
   }
@@ -2350,7 +2436,7 @@ body.selecting .pin{display:none}
     el.edCat.value = "";
     el.edCatNow.textContent = n ? (n.cat || "none") : "";
     el.edCatBtn.disabled = !n;       // a new note gets its category on first save
-    el.edWhoNow.textContent = n ? (n.author || "chris") : "";
+    el.edWhoNow.textContent = n ? nameOf(n.author || meName()) : "";
     closeMenus(null);
     el.scrim.hidden = false;
     enterLayer("note");                 // so the system back gesture closes THIS
@@ -2533,6 +2619,40 @@ body.selecting .pin{display:none}
     if (!el.sug.hidden && !el.sug.contains(ev.target) && ev.target !== el.q) closeSug();
   });
 
+  // ---- people: a name to show, and a face to go with it ----
+  // PEOPLE maps a person slug to their display name. A slug is what a note
+  // records (archived_by: mary); the name is only ever a label, so anything
+  // missing falls back to the slug rather than to blank.
+  var PEOPLE = {};
+  function nameOf(slug){
+    if (!slug) return "";
+    return (PEOPLE[slug] || "").trim() || slug;
+  }
+  // Initials on a colour derived from the slug — not an upload. Storing
+  // images would mean a binary file type in a space whose entire security
+  // story is "only .md under these dirs", which is a lot of new surface for
+  // decoration. This is deterministic, needs no network, and is what Keep
+  // does for anyone without a photo anyway.
+  function initials(name){
+    var parts = String(name || "").trim().split(/[\s._-]+/).filter(Boolean);
+    if (!parts.length) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  function hueOf(slug){
+    var h = 0, str = String(slug || "");
+    for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) % 360;
+    return h;
+  }
+  function avatar(slug, small){
+    var a = node("span", "av" + (small ? " sm" : ""), initials(nameOf(slug)));
+    // Fixed saturation and lightness so every face reads against both themes
+    // and against each other; only the hue varies.
+    a.style.background = "hsl(" + hueOf(slug) + " 42% 38%)";
+    a.setAttribute("title", nameOf(slug));
+    return a;
+  }
+
   // ---- the drawer: every filter, on a screen with no room for a chip row ----
   function icon(d){
     var w = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -2550,16 +2670,24 @@ body.selecting .pin{display:none}
     mine: "M12 8a3.4 3.4 0 1 0 0-.1zM5.5 20a6.5 6.5 0 0 1 13 0",
     ours: "M9 8a3.2 3.2 0 1 0 0-.1zM3 19a6 6 0 0 1 12 0M18 7v6M21 10h-6",
     all: "M4 6h16M4 12h16M4 18h16",
-    tag: "M3 11V5a2 2 0 0 1 2-2h6l10 10-8 8z"
+    tag: "M3 11V5a2 2 0 0 1 2-2h6l10 10-8 8z",
+    users: "M9 8.5a3.2 3.2 0 1 0 0-.1zM2.5 19.5a6.5 6.5 0 0 1 13 0M16 5.3a3.2 3.2 0 0 1 0 6.4M18 19.5a6.4 6.4 0 0 0-2-4.6"
   };
 
-  function drawerRow(label, ico, pressed, count, onClick){
+  function drawerRow(label, ico, pressed, count, onClick, ownsLayer){
     var b = node("button");
     b.setAttribute("aria-pressed", pressed ? "true" : "false");
     b.appendChild(icon(ICONS[ico] || ICONS.tag));
     b.appendChild(document.createTextNode(label));
     if (count !== undefined && count !== null) b.appendChild(node("span", "n", count));
-    b.addEventListener("click", function(){ closeDrawer(); onClick(); });
+    b.addEventListener("click", function(){
+      // A row that opens its own layer INHERITS the drawer's history entry.
+      // Popping it here and pushing a new one in the action does not work:
+      // history.back() is asynchronous, so its popstate lands after the new
+      // layer is in place and dismisses it the instant it opens.
+      if (ownsLayer) hideDrawer(); else closeDrawer();
+      onClick();
+    });
     return b;
   }
 
@@ -2581,6 +2709,9 @@ body.selecting .pin{display:none}
       }));
     });
     el.drawer.appendChild(node("div", "sep"));
+    el.drawer.appendChild(node("h2", null, "People"));
+    el.drawer.appendChild(drawerRow("Users", "users", usersOpen(), null, openUsers, true));
+    el.drawer.appendChild(node("div", "sep"));
     el.drawer.appendChild(node("h2", null, "Categories"));
     var active = activeCat();
     var keys = Object.keys(CATS).sort(function(a, b){ return CATS[b] - CATS[a] || (a < b ? -1 : 1); });
@@ -2589,6 +2720,147 @@ body.selecting .pin{display:none}
       el.drawer.appendChild(drawerRow(k.replace(/-/g, " "), "tag", active === k, CATS[k], function(){ setCat(k); }));
     });
   }
+
+  // ---- Users: the one page that edits a file instead of a note ----
+  // It is a view over Notes/People.md — a markdown table in the space. The
+  // path is shown at the bottom on purpose: pretending this is app state
+  // would misrepresent the only promise the project makes.
+  var USERS = null;
+
+  function usersOpen(){ return !el.usersScrim.hidden; }
+
+  function openUsers(){
+    el.usersScrim.hidden = false;
+    if (LAYER === "drawer") LAYER = "users";   // inherited from the drawer row
+    else enterLayer("users");
+    el.usersBody.textContent = "";
+    el.usersBody.appendChild(node("div", "empty", "Loading…"));
+    api("GET", "/api/people").then(function(d){
+      USERS = d;
+      PEOPLE = d.people || PEOPLE;
+      drawUsers();
+    }).catch(function(e){
+      el.usersBody.textContent = "";
+      el.usersBody.appendChild(node("div", "empty",
+        "Couldn't load the people table — " + ((e && e.message) || "unknown error")));
+    });
+  }
+
+  function closeUsers(fromHistory){
+    if (el.usersScrim.hidden) return;
+    el.usersScrim.hidden = true;
+    if (fromHistory !== true) exitLayer();
+    render();
+  }
+
+  function saveperson(identity, person, display){
+    return api("PUT", "/api/people", {identity: identity, person: person, display: display})
+      .then(function(d){
+        if (d && d.me) { ME = d.me; }
+        return api("GET", "/api/people");
+      }).then(function(d){
+        USERS = d; PEOPLE = d.people || PEOPLE; drawUsers();
+      }).catch(function(e){ fail("Couldn't save that", e); });
+  }
+
+  // "github:marysaenz" -> GITHUB. A bare name has no source to show.
+  function sourceOf(identity){
+    var i = String(identity || "");
+    var colon = i.indexOf(":");
+    if (colon > 0) return i.slice(0, colon);
+    if (i.indexOf("@") > 0) return i.slice(i.indexOf("@") + 1);
+    return "";
+  }
+
+  function drawUsers(){
+    var d = USERS;
+    el.usersBody.textContent = "";
+    el.usersPath.textContent = d.file + "  ·  a markdown table you can also edit by hand";
+
+    var intro = node("div", "u-intro");
+    intro.appendChild(document.createTextNode(
+      d.proxy_auth
+        ? "Your sign-in comes from the proxy in front of this app. Names here are labels only — change them freely; notes record the short id beneath each name."
+        : "Names here are labels only. A note records the short id beneath each name, so renaming someone never rewrites what they have already touched."));
+    el.usersBody.appendChild(intro);
+
+    var people = Object.keys(d.people).sort();
+    var claimed = {}, loose = [];
+    d.rows.forEach(function(r){
+      if (r.person) { (claimed[r.person] = claimed[r.person] || []).push(r); }
+      else loose.push(r);
+    });
+    people.forEach(function(slug){ claimed[slug] = claimed[slug] || []; });
+
+    people.forEach(function(slug){
+      var row = node("div", "u-person");
+      row.appendChild(avatar(slug));
+      var inp = node("input", "u-name");
+      inp.value = nameOf(slug);
+      inp.setAttribute("aria-label", "Display name for " + slug);
+      inp.addEventListener("change", function(){
+        saveperson(slug, slug, inp.value);
+      });
+      row.appendChild(inp);
+      row.appendChild(node("span", "u-slug", slug + (slug === d.me ? " · you" : "")));
+      el.usersBody.appendChild(row);
+
+      var ids = node("div", "u-ids");
+      (claimed[slug] || []).forEach(function(r){
+        ids.appendChild(idRow(r, people, d));
+      });
+      el.usersBody.appendChild(ids);
+    });
+
+    if (loose.length) {
+      var box = node("div", "u-unclaimed");
+      box.appendChild(node("h3", null, "Not yet matched"));
+      box.appendChild(node("p", null,
+        loose.length === 1
+          ? "One sign-in has been seen that nobody owns yet. Pick who it is, or leave it — it works on its own."
+          : loose.length + " sign-ins have been seen that nobody owns yet. Pick who each one is, or leave them — they work on their own."));
+      loose.forEach(function(r){ box.appendChild(idRow(r, people, d)); });
+      el.usersBody.appendChild(box);
+    }
+  }
+
+  function idRow(r, people, d){
+    var line = node("div", "u-id");
+    var head = node("span", "idline");
+    head.appendChild(node("span", "src", sourceOf(r.identity) || "local"));
+    head.appendChild(node("span", "who", r.identity));
+    line.appendChild(head);
+    var sel = node("select");
+    sel.setAttribute("aria-label", "Who is " + r.identity + "?");
+    var none = node("option", null, "— nobody —");
+    none.value = "";
+    sel.appendChild(none);
+    people.forEach(function(p){
+      var o = node("option", null, nameOf(p));
+      o.value = p;
+      if (p === r.person) o.selected = true;
+      sel.appendChild(o);
+    });
+    // An identity can also become a person in its own right, which is how
+    // the first sign-in from a new source gets a seat at all.
+    if (people.indexOf(r.identity) < 0) {
+      var own = node("option", null, "new person");
+      own.value = "\u0000new";
+      sel.appendChild(own);
+    }
+    sel.addEventListener("change", function(){
+      var v = sel.value === "\u0000new" ? r.identity : sel.value;
+      saveperson(r.identity, v, null);
+    });
+    line.appendChild(sel);
+    if (r.first_seen) line.appendChild(node("span", "u-slug", r.first_seen));
+    return line;
+  }
+
+  el.usersClose.addEventListener("click", function(){ closeUsers(); });
+  el.usersScrim.addEventListener("click", function(ev){
+    if (ev.target === el.usersScrim) closeUsers();
+  });
 
   function openDrawer(){
     fillDrawer();
@@ -2599,17 +2871,22 @@ body.selecting .pin{display:none}
     // app — it was the one layer that never pushed a history entry.
     enterLayer("drawer");
   }
-  function closeDrawer(fromHistory){
+  // Visual only: the caller keeps the drawer's history entry. Used when the
+  // thing being opened is itself a layer — see openUsers.
+  function hideDrawer(){
     el.drawer.classList.remove("open");
     el.drawerScrim.classList.remove("open");
     el.drawer.style.transform = "";
     el.menuBtn.setAttribute("aria-expanded", "false");
-    if (!fromHistory) exitLayer();
+  }
+  function closeDrawer(fromHistory){
+    hideDrawer();
+    if (fromHistory !== true) exitLayer();
   }
   el.menuBtn.addEventListener("click", function(){
     if (el.drawer.classList.contains("open")) closeDrawer(); else openDrawer();
   });
-  el.drawerScrim.addEventListener("click", closeDrawer);
+  el.drawerScrim.addEventListener("click", function(){ closeDrawer(); });
   document.addEventListener("keydown", function(ev){
     if (ev.key === "Escape" && el.drawer.classList.contains("open")) closeDrawer();
   });

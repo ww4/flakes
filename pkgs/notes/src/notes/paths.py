@@ -34,7 +34,12 @@ CARD_FILES: tuple[str, ...] = ("Grocery List.md",)
 # capture log the daybook appends to — a growing record, not a note. Each entry
 # excludes the directory, its contents, AND the sibling index page
 # ("Inbox/Log.md"), which is a real file in the space.
-EXCLUDE_PREFIXES: tuple[str, ...] = ("Inbox/Log",)
+EXCLUDE_PREFIXES: tuple[str, ...] = ("Inbox/Log", "Notes/People")
+
+# Who-is-who lives in the space like everything else (see people.py). It sits
+# inside a card dir so the existing scoping already permits writing it, and in
+# EXCLUDE_PREFIXES above so it never appears as a card.
+PEOPLE_FILE = "Notes/People.md"
 
 # Deleted notes are moved here rather than unlinked, so the UI's undo is real
 # and a mistake is recoverable from the space itself.

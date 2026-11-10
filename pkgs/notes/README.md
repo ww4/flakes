@@ -79,6 +79,7 @@ All environment variables, prefixed `NOTES_`. A `.env` file works too.
 | `NOTES_PORT` | `3337` | |
 | `NOTES_TRUST_PROXY_AUTH` | `0` | believe an upstream proxy's user header |
 | `NOTES_AUTH_USER_HEADER` | `Remote-User` | which header that is |
+| `NOTES_AUTH_NAME_HEADER` | `Remote-Name` | optional display name from the proxy |
 | `NOTES_ALLOW_PUBLIC_BIND` | `0` | required to bind a public address unauthenticated |
 
 ### What it will and won't touch
@@ -144,6 +145,50 @@ An email is reduced to its local part, so `mary@example.com` becomes `mary`.
 > the app directly, it can send `Remote-User: anyone`. Bind loopback, or put
 > the app on a private network where only the proxy can reach it. This is why
 > trusting the header is opt-in.
+
+## Users
+
+**Users** in the side menu lists every sign-in identity the app has ever seen,
+who it belongs to, and what to call them. It is a view over a markdown table
+in the space — `Notes/People.md` — and the page says so at the bottom, because
+editing that file by hand must stay just as good an answer.
+
+```markdown
+| Identity | Person | Display name | First seen |
+| --- | --- | --- | --- |
+| chris@example.com | chris | Chris | 2026-07-09 |
+| mary@example.com | mary | Mary Saenz | 2026-11-09 |
+| github:marysaenz | mary |  | 2026-11-10 |
+```
+
+Three different strings, deliberately kept apart:
+
+- an **identity** is what a login source calls someone. There can be several
+  per person and you don't choose them.
+- a **person** is one short slug, and it is the only one that ever reaches a
+  note (`archived_by: mary`). It has to be stable, because it is written
+  across every file that person has touched — renaming yourself must never
+  rewrite history.
+- a **display name** is a label. Change it whenever you like; nothing depends
+  on it.
+
+Point two identities at the same person and they *are* the same person — that
+is how someone signs in with Google on a phone and GitHub on a laptop and
+still archives a note once. An identity nobody has claimed still works; it
+simply stands for itself.
+
+New sign-ins are recorded the first time they appear, so the page fills in by
+itself rather than needing to be set up. Where a proxy sends a human-readable
+name (`Remote-Name` and friends, see `NOTES_AUTH_NAME_HEADER`) that becomes
+the first guess at the display name.
+
+Avatars are generated from the name and the slug — initials on a colour. There
+is no upload: a binary file type in a space whose whole security story is
+"only `.md` under these directories" is a lot of new surface for decoration.
+
+The table is shared, so anyone who can use the app can edit anyone's display
+name and merge identities. That is right for a household and worth knowing
+for anything larger: it is a label, not a permission.
 
 ## Why no accounts
 
