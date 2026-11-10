@@ -26,13 +26,13 @@ def req(headers: dict[str, str] | None = None, cookies: dict[str, str] | None = 
 # ---------------------------------------------------------------- normalising
 
 @pytest.mark.parametrize("raw,want", [
-    ("mary", "mary"),
-    ("Mary", "mary"),
-    ("  mary  ", "mary"),
-    ("mary@example.com", "mary"),                 # the common proxy shape
-    ("MARY@CORP.EXAMPLE.COM", "mary"),
-    ("mary.jones@example.com", "mary-jones"),     # dots are not in WHO_RE
-    ("mary jones", "mary-jones"),
+    ("ana", "ana"),
+    ("Ana", "ana"),
+    ("  ana  ", "ana"),
+    ("ana@example.com", "ana"),                 # the common proxy shape
+    ("ANA@CORP.EXAMPLE.COM", "ana"),
+    ("ana.jones@example.com", "ana-jones"),     # dots are not in WHO_RE
+    ("ana jones", "ana-jones"),
     ("m", "m"),
     ("m" * 40, "m" * 32),                         # truncated, still valid
     ("", None),
@@ -40,11 +40,11 @@ def req(headers: dict[str, str] | None = None, cookies: dict[str, str] | None = 
     ("   ", None),
     ("@example.com", None),                       # no local part
     ("123", None),                                # must start with a letter
-    ("-mary", "mary"),                            # leading separator stripped
+    ("-ana", "ana"),                            # leading separator stripped
     ("../../etc/passwd", "etc-passwd"),           # cannot become a path
     # A newline-bearing value cannot inject a second header or escape into a
     # path: every run of non-[a-z0-9_-] collapses to a single "-".
-    ("mary\nRemote-User: admin", "mary-remote-user-admin"),
+    ("ana\nRemote-User: admin", "ana-remote-user-admin"),
 ])
 def test_normalize(raw, want):
     assert normalize_who(raw) == want
@@ -62,22 +62,22 @@ def test_header_ignored_unless_trusted():
 
 def test_header_used_when_trusted():
     cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True)
-    assert who(req({"Remote-User": "mary"}), cfg) == "mary"
+    assert who(req({"Remote-User": "ana"}), cfg) == "ana"
 
 
 def test_header_name_is_configurable():
     cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True,
                    auth_user_header="X-authentik-username")
-    r = req({"X-authentik-username": "mary", "Remote-User": "admin"})
-    assert who(r, cfg) == "mary", "only the configured header counts"
+    r = req({"X-authentik-username": "ana", "Remote-User": "admin"})
+    assert who(r, cfg) == "ana", "only the configured header counts"
 
 
 @pytest.mark.parametrize("header,value,want", [
-    ("Remote-User", "mary", "mary"),                                   # Authelia
-    ("X-Forwarded-User", "mary", "mary"),                              # oauth2-proxy
-    ("X-authentik-username", "mary", "mary"),                          # Authentik
-    ("Cf-Access-Authenticated-User-Email", "mary@ex.com", "mary"),     # Cloudflare Access
-    ("Tailscale-User-Login", "mary@ex.com", "mary"),                   # tailscale serve
+    ("Remote-User", "ana", "ana"),                                   # Authelia
+    ("X-Forwarded-User", "ana", "ana"),                              # oauth2-proxy
+    ("X-authentik-username", "ana", "ana"),                          # Authentik
+    ("Cf-Access-Authenticated-User-Email", "ana@ex.com", "ana"),     # Cloudflare Access
+    ("Tailscale-User-Login", "ana@ex.com", "ana"),                   # tailscale serve
 ])
 def test_the_proxies_people_actually_run(header, value, want):
     cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True, auth_user_header=header)
@@ -87,13 +87,13 @@ def test_the_proxies_people_actually_run(header, value, want):
 def test_proxy_beats_the_cookie():
     """A cookie is the browser's claim about itself; the proxy has checked."""
     cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True)
-    r = req({"Remote-User": "mary"}, {"notes_who": "chris"})
-    assert who(r, cfg) == "mary"
+    r = req({"Remote-User": "ana"}, {"notes_who": "sam"})
+    assert who(r, cfg) == "ana"
 
 
 def test_cookie_still_works_without_a_proxy():
     cfg = Settings(space_dir="/nonexistent")
-    assert who(req(cookies={"notes_who": "mary"}), cfg) == "mary"
+    assert who(req(cookies={"notes_who": "ana"}), cfg) == "ana"
 
 
 def test_garbage_cookie_is_not_an_identity():
@@ -104,7 +104,7 @@ def test_garbage_cookie_is_not_an_identity():
 
 def test_a_trusted_header_that_is_absent_falls_back():
     cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True)
-    assert who(req(cookies={"notes_who": "chris"}), cfg) == "chris"
+    assert who(req(cookies={"notes_who": "sam"}), cfg) == "sam"
 
 
 # ------------------------------------------------------------- exposure guard
@@ -147,23 +147,39 @@ def test_an_unresolvable_host_counts_as_public():
 def test_me_param_works_without_auth():
     """One browser previewing the other person's wall — the reason ?me= exists."""
     cfg = Settings(space_dir="/nonexistent")
-    assert viewer_for(req(cookies={"notes_who": "chris"}), cfg, "mary") == "mary"
+    assert viewer_for(req(cookies={"notes_who": "sam"}), cfg, "ana") == "ana"
 
 
 def test_me_param_cannot_override_an_authenticated_user():
     """Otherwise proxy auth is bypassable with a query string."""
     cfg = Settings(space_dir="/nonexistent", trust_proxy_auth=True)
-    r = req({"Remote-User": "mary"}, {"notes_who": "mary"})
-    assert viewer_for(r, cfg, "chris") == "mary"
-    assert viewer_for(r, cfg, "admin") == "mary"
-    assert viewer_for(r, cfg, None) == "mary"
+    r = req({"Remote-User": "ana"}, {"notes_who": "ana"})
+    assert viewer_for(r, cfg, "sam") == "ana"
+    assert viewer_for(r, cfg, "admin") == "ana"
+    assert viewer_for(r, cfg, None) == "ana"
 
 
 def test_viewer_falls_back_to_the_default_identity():
     cfg = Settings(space_dir="/nonexistent")
-    assert viewer_for(req(), cfg, None) == "chris"
+    assert viewer_for(req(), cfg, None) == "sam"
 
 
 def test_a_junk_me_param_does_not_become_the_viewer():
     cfg = Settings(space_dir="/nonexistent")
-    assert viewer_for(req(cookies={"notes_who": "mary"}), cfg, "../../etc") == "mary"
+    assert viewer_for(req(cookies={"notes_who": "ana"}), cfg, "../../etc") == "ana"
+
+
+# ------------------------------------------------- the default author is config
+
+def test_the_default_author_comes_from_configuration():
+    """⚠️ Not cosmetic: every note predating authorship is attributed to this."""
+    from notes import store
+    from notes.app import create_app
+    before = store.HUMAN
+    try:
+        create_app(Settings(space_dir="/nonexistent", default_author="Sam"))
+        assert store.HUMAN == "sam", "slugged, then applied"
+        create_app(Settings(space_dir="/nonexistent", default_author="!!!"))
+        assert store.HUMAN == "sam", "an unusable value must not blank it"
+    finally:
+        store.HUMAN = before

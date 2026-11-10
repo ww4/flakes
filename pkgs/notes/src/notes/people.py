@@ -4,10 +4,10 @@ Three different strings get confused with each other the moment more than one
 sign-in source exists, so they are kept apart here:
 
   * an **identity** is what an authentication source calls someone —
-    ``mary``, ``mary@example.com``, ``github:marysaenz``. There can be
+    ``ana``, ``ana@example.com``, ``github:aparker``. There can be
     several per person and they are not chosen by us.
   * a **person** is one canonical slug. This is the ONLY one that ever
-    reaches a note: ``archived_by: mary``. It must be stable, because it is
+    reaches a note: ``archived_by: ana``. It must be stable, because it is
     written across every file someone has touched — renaming yourself must
     never rewrite history.
   * a **display name** is a label. Free text, changeable on a whim, never
@@ -19,9 +19,9 @@ edited by hand as readily as from the Users page::
 
     | Identity | Person | Display name | First seen |
     | --- | --- | --- | --- |
-    | chris | chris | Chris | 2026-07-09 |
-    | mary | mary | Mary Saenz | 2026-11-09 |
-    | github:marysaenz | mary |  | 2026-11-10 |
+    | sam | sam | the owner | 2026-07-09 |
+    | ana | ana | the other person Parker | 2026-11-09 |
+    | github:aparker | ana |  | 2026-11-10 |
 
 A row whose Person is its own Identity IS that person. A row pointing at
 another row's Identity is an alias — that is how one human signs in with
@@ -107,7 +107,7 @@ class People:
             return own.display.strip()
         # An alias row may carry the name even when the canonical row does not
         # — several can, when each provider offered one. Prefer the fullest,
-        # since "Mary Saenz" from one directory beats "Mary S" from another,
+        # since "the other person Parker" from one directory beats "the other person S" from another,
         # and ties break on identity so the answer is at least stable.
         candidates = [r for r in self.rows
                       if r.person.strip().lower() == p and r.display.strip()]
@@ -126,28 +126,30 @@ class People:
         return out
 
     # ---------------------------------------------------------------- change
-    def observe(self, raw: str | None, today: str | None = None) -> bool:
+    def has(self, raw: str | None) -> bool:
+        """Have we recorded this identity before?"""
+        i = ident(raw)
+        return bool(i) and i in self._by_identity()
+
+    def observe(self, raw: str | None, today: str | None = None,
+                known: set[str] | None = None) -> bool:
         """Record an identity we have not seen before. True when it was new.
 
-        A person slug the app already uses is recorded as claiming itself, so
-        an existing single-source deployment opens the Users page to its own
-        names rather than to an empty table.
+        ``known`` is the set of people the app already has evidence for — a
+        row here, or notes already attributed to them. An identity that lands
+        on one of those is recorded as theirs, because there is nothing to
+        ask: it is what the app would have done by fallback anyway. Anything
+        else is left unclaimed, and the app asks whose it is on first load.
         """
         i = ident(raw)
         if not i or i in self._by_identity():
             return False
         if sum(1 for r in self.rows if not r.person) >= MAX_UNCLAIMED:
             return False
-        # Self-claim when the identity has no PROVIDER prefix. "mary" and
-        # "mary@example.com" both already resolve to the person "mary" by
-        # fallback, so recording that is just saying what the app is doing;
-        # leaving them blank would ask a question nobody needs to answer.
-        # "github:marysaenz" is genuinely ambiguous — it could be anyone — so
-        # it stays unclaimed and shows up on the Users page.
         s = slug(raw)
         self.rows.append(Row(
             identity=i,
-            person=s if s and ":" not in i else "",
+            person=s if (s and known is not None and s in known) else "",
             first_seen=today or date.today().isoformat(),
         ))
         return True
@@ -215,7 +217,7 @@ DEFAULT_PROLOGUE = """# People
 
 Who is who. One row per sign-in identity.
 
-**Person** is the name that gets written into notes (`archived_by: mary`), so
+**Person** is the name that gets written into notes (`archived_by: ana`), so
 it stays the same even when someone's login changes. Point two identities at
 the same person and they ARE the same person — that is how one human signs in
 with Google on a phone and GitHub on a laptop and still archives a note once.

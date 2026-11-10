@@ -10,7 +10,7 @@
 # Why this exists at all: SilverBullet's editor was used to create five pages
 # in sixteen months (two of them tests) while the agent wrote 817. The space —
 # flat markdown on disk — was the part that worked; the markdown IDE in front
-# of it was not (Chris, 2026-11-08: "it's just overwhelming when you look at
+# of it was not (2026-11-08: "it's just overwhelming when you look at
 # it"). This serves the same files behind a card wall instead.
 { lib, python3Packages, librsvg }:
 
@@ -45,7 +45,7 @@ python3Packages.buildPythonApplication {
   # The traversal corpus is the security boundary of this service: it is
   # unauthenticated, and a note id is a client-supplied path. Running the
   # corpus at build time means a scope regression fails the deploy instead of
-  # shipping. tests/test_store.py additionally pins the "don't reformat Chris's
+  # shipping. tests/test_store.py additionally pins the "don't reformat the owner's
   # files" promise — unknown frontmatter keys survive a write untouched.
   pytestFlags = [ "tests/" ];
 

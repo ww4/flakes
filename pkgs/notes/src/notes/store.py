@@ -2,7 +2,7 @@
 
 Two rules shape everything here:
 
-**Don't reformat Chris's files.** The space is edited by at least three other
+**Don't reformat the owner's files.** The space is edited by at least three other
 writers (SilverBullet itself, the daybook, interactive agent sessions), and
 539 of the Keep-import pages carry hand-written frontmatter. So frontmatter is
 edited LINE BY LINE — the keys this app owns (``pinned``, ``archived``) are
@@ -34,13 +34,17 @@ TRUE = {"true", "yes", "1", "on"}
 
 
 # Authorship is recorded ONLY on the agent's own notes. Unlabelled means
-# Chris's, which is the asymmetry that matters: his 553 notes keep their files
-# byte-identical, anything created in this app is his by construction, and the
+# the owner's, which is the asymmetry that matters: those 553 notes keep their files
+# byte-identical, anything created in this app is theirs by construction, and the
 # agent is the one party that has to declare itself. A text heuristic was tried
-# first and misfiled "Queue replies — gromit side" as his, which is exactly the
+# first and misfiled "Queue replies — gromit side" as theirs, which is exactly the
 # kind of quiet wrongness a default filter must not have.
 AGENT = "claude"
-HUMAN = "chris"
+# The author a note is attributed to when its frontmatter says nothing. Every
+# note written before authorship existed is unlabelled, so this is not a
+# cosmetic default: changing it re-attributes all of them. Set it once, at
+# deploy time, via NOTES_DEFAULT_AUTHOR, and then leave it alone.
+HUMAN = "owner"
 
 # Enough to overflow a card at the widest column; the wall clips at ~184px,
 # which is about twelve lines. 700 was generous guesswork and, at 1412 notes,
@@ -117,10 +121,10 @@ def _fm_set(fm: list[str], key: str, value: str | None) -> list[str]:
     return out
 
 
-# A Keep note's title is OPTIONAL, and Mary mostly leaves it off. Those notes
+# A Keep note's title is OPTIONAL, and the other person mostly leaves it off. Those notes
 # still need a unique FILENAME, so the import uses "<date> <keep_id>" — a
 # uniqueness device, not a title. Deriving a title from it would put a
-# timestamp at the top of 347 of her cards.
+# timestamp at the top of 347 of those cards.
 KEEP_ID_STEM = re.compile(r"^\d{10,}$")
 
 
@@ -148,9 +152,9 @@ def _people(v: str | None) -> list[str]:
 
 
 def _order_map(v: str | None) -> dict[str, int]:
-    """"chris=10, mary=30" — a manual pin position PER PERSON.
+    """"sam=10, ana=30" — a manual pin position PER PERSON.
 
-    One key rather than order_chris/order_mary, so adding a third person does
+    One key rather than order_sam/order_ana, so adding a third person does
     not add a third frontmatter key to every note.
     """
     out: dict[str, int] = {}
@@ -280,7 +284,7 @@ def write(
     if pinned is not None:
         # A PIN IS PERSONAL, for the same reason archiving is: it means "keep
         # this at the top FOR ME", which is not a claim about anyone else. On a
-        # shared grocery list Chris pinning it used to pin it for Mary too.
+        # shared grocery list the owner pinning it used to pin it for the other person too.
         act = _actor(actor)
         now = list(current.pinned_by)
         if current.pinned and not now:
@@ -299,8 +303,8 @@ def write(
             fm = _fm_set(fm, "pin_order",
                          ", ".join(f"{k}={v}" for k, v in sorted(om.items())) or None)
     if archived is not None:
-        # ARCHIVE IS PERSONAL. Chris asked what happens when he archives a
-        # SHARED note, and the honest answer was "it archives for Mary too" —
+        # ARCHIVE IS PERSONAL. The question was what happens when you archive a
+        # SHARED note, and the honest answer was "it archives for the other person too" —
         # the flag lived on the one file they both read. Archive means "I am
         # done with this", which is not a claim about anyone else, so it
         # records WHO, and a viewer sees it archived only if they are named.
@@ -321,7 +325,7 @@ def write(
         fm = _fm_set(fm, "archived_by", ", ".join(sorted(set(now))) if now else None)
     if order is not None:
         # Manual position, ONLY for pinned notes and ONLY for this person —
-        # otherwise Chris arranging his pinned row would rearrange Mary's.
+        # otherwise the owner arranging their pinned row would rearrange the other person's.
         act = _actor(actor)
         om = dict(current.pin_order)
         if order >= 0:
@@ -333,13 +337,13 @@ def write(
                      ", ".join(f"{k}={v}" for k, v in sorted(om.items())) or None)
     if shared is not None:
         # "Shared" is a PLACE a note is put, like archived -- not a computed
-        # union of everyone's notes. Chris: "I want that to be a shared space
+        # union of everyone's notes. The ask was "I want that to be a shared space
         # we can intentionally add things to". Ownership is untouched by it:
         # a shared note still belongs to whoever wrote it.
         fm = _fm_set(fm, "shared", "true" if shared else None)
     if author is not None:
         # Reassigning WHOSE note this is. Deliberately separate from writing
-        # the body: an edit never changes authorship -- Mary adding a line to
+        # the body: an edit never changes authorship -- the other person adding a line to
         # the grocery list does not take it over -- so the only way ownership
         # moves is somebody saying so.
         who = re.sub(r"[^a-z0-9_-]+", "", author.strip().lower())[:32]
@@ -386,7 +390,7 @@ def create(space: Path, title: str, body: str, author: str | None = None) -> Not
         n += 1
     path = paths.resolve(space, rel)
     out: list[str] = []
-    # Only write the key when the device said who it is. No key reads as Chris,
+    # Only write the key when the device said who it is. No key reads as the owner,
     # which is what every note predating device identity is.
     if author and author != HUMAN:
         out += ["---", f"author: {author}", "---", ""]
@@ -475,7 +479,7 @@ def split_query(query: str | None) -> tuple[list[str], list[str], list[str]]:
     """Split a raw query into (cat: filters, by: filters, ordinary terms).
 
     ``cat:woodgas truck`` means "inside the woodgas category, anything about
-    trucks", and ``by:mary`` narrows to what Mary wrote -- the prefixed parts
+    trucks", and ``by:ana`` narrows to what the other person wrote -- the prefixed parts
     are filters, the rest is the usual ranked OR.
     """
     cats: list[str] = []
@@ -494,7 +498,7 @@ def split_query(query: str | None) -> tuple[list[str], list[str], list[str]]:
 def _cat_terms(note: Note, needles: list[str]) -> set[str]:
     """Which query terms this note's CATEGORY answers.
 
-    Chris: "if the category name is a high grade match for the search term you
+    The ask was "if the category name is a high grade match for the search term you
     should pull in the whole category." So a term that names a category counts
     as satisfied for every note in it, even one whose text never says the word
     -- searching woodgas should return the woodgas notes, not just the ones
@@ -571,7 +575,7 @@ def trash_listing(space: Path) -> list[Note]:
 
     Delete has always MOVED a note here rather than unlinking it, which is why
     a note deleted by accident on 2026-11-09 was recoverable at all. What was
-    missing was any way for Chris to do that himself without an agent and a
+    missing was any way for the owner to do that without an agent and a
     shell — so the trash is a view now.
     """
     out: list[Note] = []
@@ -613,7 +617,7 @@ def census(
 
     Scoped rather than global because a count that includes notes you are not
     looking at is a lie: with the wall set to "mine", a chip reading 83 that
-    yields 4 notes is worse than no chip at all (Chris, 2026-11-09).
+    yields 4 notes is worse than no chip at all (decided 2026-11-09).
 
     Deliberately NOT narrowed by the search query — a category has to stay
     suggestible while you are typing its name.
@@ -633,7 +637,7 @@ def listing(space: Path, query: str | None = None) -> list[Note]:
     inside long notes and present as "no results" -- a silent wrong answer
     rather than a slow one.
     """
-    # ANY term, substring, ranked -- which is what Keep does, and what Chris
+    # ANY term, substring, ranked -- which is what Keep does, and what the owner
     # expects from it. Two earlier attempts were both wrong:
     #   literal phrase : "wood gas" found nothing, because no note contains
     #                    that exact run -- they say "woodgas", or have "wood"

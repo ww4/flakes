@@ -44,9 +44,9 @@ Nothing it knows lives anywhere but the files:
 ---
 date: 2024-03-22
 category: shopping
-author: mary
-archived_by: chris, mary
-pinned_by: chris
+author: ana
+archived_by: sam, ana
+pinned_by: sam
 ---
 
 - [x] cilantro
@@ -139,7 +139,7 @@ NOTES_AUTH_USER_HEADER=Remote-User
 | Cloudflare Access | `Cf-Access-Authenticated-User-Email` |
 | `tailscale serve` | `Tailscale-User-Login` |
 
-An email is reduced to its local part, so `mary@example.com` becomes `mary`.
+An email is reduced to its local part, so `ana@example.com` becomes `ana`.
 
 > **The header is only as trustworthy as the port.** If anything can reach
 > the app directly, it can send `Remote-User: anyone`. Bind loopback, or put
@@ -156,9 +156,9 @@ editing that file by hand must stay just as good an answer.
 ```markdown
 | Identity | Person | Display name | First seen |
 | --- | --- | --- | --- |
-| chris@example.com | chris | Chris | 2026-07-09 |
-| mary@example.com | mary | Mary Saenz | 2026-11-09 |
-| github:marysaenz | mary |  | 2026-11-10 |
+| sam@example.com | sam | the owner | 2026-07-09 |
+| ana@example.com | ana | the other person Parker | 2026-11-09 |
+| github:aparker | ana |  | 2026-11-10 |
 ```
 
 Three different strings, deliberately kept apart:
@@ -166,7 +166,7 @@ Three different strings, deliberately kept apart:
 - an **identity** is what a login source calls someone. There can be several
   per person and you don't choose them.
 - a **person** is one short slug, and it is the only one that ever reaches a
-  note (`archived_by: mary`). It has to be stable, because it is written
+  note (`archived_by: ana`). It has to be stable, because it is written
   across every file that person has touched — renaming yourself must never
   rewrite history.
 - a **display name** is a label. Change it whenever you like; nothing depends

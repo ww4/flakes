@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="NOTES_", env_file=".env", extra="ignore")
 
     space_dir: str = "/var/lib/silverbullet"
+    # Who an unlabelled note belongs to. ⚠️ Not cosmetic: every note written
+    # before this app recorded authorship has no author key, so this value is
+    # who they all belong to. Changing it on a live space re-attributes them.
+    default_author: str = "owner"
     host: str = "127.0.0.1"
     port: int = 3337
 

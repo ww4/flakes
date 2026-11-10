@@ -60,6 +60,11 @@ in
 
     environment = {
       NOTES_SPACE_DIR = spaceDir;
+      # Who an unlabelled note belongs to. Every note predating authorship
+      # has no author key, so this is what they are all attributed to — it
+      # must keep saying "chris" or 553 notes change hands. The package
+      # default is deliberately generic because it is public.
+      NOTES_DEFAULT_AUTHOR = "chris";
       NOTES_HOST = "127.0.0.1";
       NOTES_PORT = toString port;
     };

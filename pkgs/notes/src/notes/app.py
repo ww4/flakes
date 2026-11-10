@@ -3,7 +3,7 @@
 Unauthenticated by design, exactly like the SilverBullet vhost it sits beside:
 the perimeter is the nginx source-gate (Tailscale/LAN) plus the tailnet ACL,
 and adding a login here would reintroduce the friction that made the notes
-app go unused in the first place (Chris, 2026-07-09).
+app go unused in the first place (decided 2026-07-09).
 
 There are no accounts and there will not be. This app has no per-note
 permissions to express, so access is all-or-nothing — and a reverse proxy
@@ -35,11 +35,11 @@ from .config import Settings
 log = logging.getLogger("notes")
 
 # Who is using this browser. Not authentication -- there is nothing here to
-# protect, and Chris explicitly did not want accounts. It replaces Google
-# Keep's "add collaborator", which he has found annoying for years: the point
+# protect, and the owner explicitly did not want accounts. It replaces Google
+# Keep's "add collaborator", which is annoying to live with for years: the point
 # is attribution between two people who already trust each other, so a cookie
 # the browser sets for itself is the right weight. An unknown device stays
-# unlabelled, which reads as Chris and preserves the 545 notes predating this.
+# unlabelled, which reads as the owner and preserves the 545 notes predating this.
 WHO_COOKIE = "notes_who"
 WHO_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
@@ -47,8 +47,8 @@ WHO_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 def normalize_who(raw: str | None) -> str | None:
     """Any sign-in string, reduced to the slug that can land in frontmatter.
 
-    Proxies hand back whatever their directory holds — ``mary``,
-    ``mary@example.com``, ``MARY``. One definition of "slug" lives in
+    Proxies hand back whatever their directory holds — ``ana``,
+    ``ana@example.com``, ``ANA``. One definition of "slug" lives in
     people.py, because the people table has to agree with this exactly.
     """
     return people.slug(raw)
@@ -57,8 +57,8 @@ def normalize_who(raw: str | None) -> str | None:
 def raw_identity(request: Request, cfg: Settings) -> str | None:
     """The sign-in string as it arrived, before any mapping.
 
-    Kept distinct from the person it resolves to: ``github:marysaenz`` and
-    ``google:mary@gmail.com`` are two identities and one person, and only the
+    Kept distinct from the person it resolves to: ``github:aparker`` and
+    ``google:ana@gmail.com`` are two identities and one person, and only the
     person is ever written to a note.
     """
     return (proxy_raw(request, cfg) or (request.cookies.get(WHO_COOKIE) or "").strip()) or None
@@ -154,24 +154,46 @@ class PersonWrite(BaseModel):
 def create_app(settings: Settings | None = None) -> FastAPI:
     cfg = settings or Settings()
     space = Path(cfg.space_dir)
+    # One module-level default rather than threading it through every call:
+    # it is read in a dozen places and never changes after start-up.
+    store.HUMAN = people.slug(cfg.default_author) or store.HUMAN
     app = FastAPI(title="Notes", docs_url=None, redoc_url=None)
 
     def roster() -> people.People:
         return people.load(space, paths.PEOPLE_FILE)
 
+    def known_people(ppl: people.People) -> set[str]:
+        """Everyone the app already has evidence for.
+
+        A row in the table, the default author, or anyone notes are already
+        attributed to. Walking the space for that last part is why this is
+        only called when an identity is genuinely new.
+        """
+        found = set(ppl.people()) | {store.HUMAN}
+        try:
+            found |= set(store.authors_of(store.listing(space)))
+        except OSError:
+            pass
+        return found
+
     def seen(request: Request) -> people.People:
         """Load the roster, recording this sign-in if it is a new one.
 
         This is what fills the Users page: every identity any authentication
-        source has ever presented turns up there, unclaimed, waiting for
-        someone to say which person it belongs to. Writing on a read is
-        deliberate but rare — only the first time an identity appears.
+        source has ever presented turns up there. One it can place — a name
+        already on the table, or one that notes are attributed to — is
+        recorded as that person, because the app would have resolved it there
+        anyway and there is nothing to ask. Anything else stays unclaimed,
+        and the front end asks on first load.
+
+        Writing during a read is deliberate but rare: only the first time an
+        identity appears at all.
         """
         ppl = roster()
         raw = raw_identity(request, cfg)
-        if not raw:
+        if not raw or ppl.has(raw):
             return ppl
-        if ppl.observe(raw):
+        if ppl.observe(raw, known=known_people(ppl)):
             name = proxy_name(request, cfg)
             if name:
                 # A proxy's own name header is a far better first guess than
@@ -209,7 +231,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # ONE walk of the space, not three. This called listing(), census()
         # and authors() separately, and census/authors each walked the whole
         # space AGAIN — 1412 notes read three times per request, which is most
-        # of why a fresh load sat blank (Chris, 2026-11-09).
+        # of why a fresh load sat blank (decided 2026-11-09).
         #
         # The query param keeps the CACHE key honest: the service worker stores
         # this response, and two people on one box must not share an entry. The
@@ -280,6 +302,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def restore_note(req: NoteRef):
         return {"restored": store.restore(space, req.id)}
 
+    @app.get("/api/whoami")
+    async def whoami(request: Request):
+        """Who this browser is, and whether anybody has said so yet.
+
+        ⚠️ Deliberately NOT part of /api/notes. That response is cached by the
+        service worker, and identity in a cached body is what made the app
+        forget who you were on every reload — two people on one box would
+        also share the entry. This endpoint is never cached.
+        """
+        ppl = seen(request)
+        raw = raw_identity(request, cfg)
+        row = ppl._by_identity().get(people.ident(raw)) if raw else None
+        person = who(request, cfg, ppl)
+        return {
+            "identity": people.ident(raw) if raw else "",
+            "person": person,
+            # Nobody has said whose this sign-in is. The front end asks, once.
+            "unclaimed": bool(raw) and not (row and row.person),
+            # What to put in the box when it does: the name the proxy gave, or
+            # the best guess from the login itself.
+            "suggest": (row.display if row and row.display else "") or person or "",
+            "people": {p: ppl.display_for(p) for p in ppl.people()},
+            "fixed": cfg.trust_proxy_auth,   # the identity is the proxy's, not ours to change
+        }
+
     @app.get("/api/people")
     async def list_people(request: Request):
         """Every identity ever seen, who it belongs to, and where that is stored.
@@ -327,7 +374,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         failure mode is a worker that registers fine and then never intercepts
         anything. no-store because a cached worker is how a stale app survives
         a deploy -- this origin already has one dead PWA on it (SilverBullet
-        served notes.rosemaryacres.com until 2026-11-09).
+        served notes.example.com until 2026-11-09).
         """
         return FileResponse(
             STATIC / "sw.js",
