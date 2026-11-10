@@ -2808,18 +2808,19 @@ body.selecting .pin{display:none}
     var head = !ONLINE ? "Offline"
       : queued ? queued + (queued === 1 ? " note waiting to save" : " notes waiting to save")
       : "Synced";
+    // Only say more when the headline leaves something unanswered. "Synced"
+    // does not: explaining it just made the tip wordy.
     var tail = !ONLINE && queued
-      ? "Written here and queued — they go up when the box is reachable."
+      ? "They go up when the box is reachable."
       : !ONLINE ? "Showing what loaded last. New notes are saved on this device."
-      : queued ? "Sending now." : "The wall matches the box.";
+      : "";
     return [head, tail, "Last synced " + whenText(LAST_SYNC)];
   }
   function showNetTip(){
     var parts = netTipText();
     el.netTip.textContent = "";
-    var b = node("b", null, parts[0]);
-    el.netTip.appendChild(b);
-    el.netTip.appendChild(document.createTextNode(" — " + parts[1]));
+    el.netTip.appendChild(node("b", null, parts[0]));
+    if (parts[1]) el.netTip.appendChild(document.createTextNode(" — " + parts[1]));
     el.netTip.appendChild(node("span", "when", parts[2]));
     el.netTip.hidden = false;
     var r = el.net.getBoundingClientRect(), w = el.netTip.offsetWidth;
