@@ -558,6 +558,64 @@ body.selecting .pin{display:none}
   color:var(--ink-faint); overflow-wrap:anywhere; flex:none;
 }
 
+/* sign-in */
+.signin{
+  background:var(--surface); border-radius:var(--r); width:min(420px, calc(100vw - 28px));
+  max-height:calc(100vh - 36px); overflow-y:auto; padding:22px 22px 24px;
+  box-shadow:0 14px 60px #00000055;
+}
+.signin h2{
+  margin:0 0 4px; font:600 20px/1.25 "IBM Plex Sans",system-ui,sans-serif; color:var(--ink);
+}
+.si-sub{
+  margin:0 0 18px; color:var(--ink-soft);
+  font:400 13px/1.5 "IBM Plex Sans",system-ui,sans-serif;
+}
+.si-list{display:flex; flex-direction:column; gap:7px}
+.si-list button{
+  display:flex; align-items:baseline; gap:10px; width:100%; text-align:left;
+  padding:12px 14px; border:1px solid var(--line); border-radius:9px;
+  background:var(--ground); color:var(--ink); cursor:pointer;
+  font:500 15px/1.2 "IBM Plex Sans",system-ui,sans-serif;
+}
+.si-list button:hover{border-color:var(--accent); color:var(--accent)}
+.si-list button .u{
+  margin-left:auto; color:var(--ink-faint);
+  font:400 11px/1 "IBM Plex Mono",ui-monospace,monospace;
+}
+.si-or{
+  display:flex; align-items:center; gap:12px; margin:18px 0 14px;
+  color:var(--ink-faint); font:400 10px/1 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.16em; text-transform:uppercase;
+}
+.si-or::before, .si-or::after{content:""; flex:1; height:1px; background:var(--line)}
+.si-form{display:flex; flex-direction:column; gap:13px}
+.si-form label{
+  display:flex; flex-direction:column; gap:5px; color:var(--ink-soft);
+  font:500 10px/1 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.14em; text-transform:uppercase;
+}
+.si-form input{
+  padding:10px 12px; border:1px solid var(--line); border-radius:8px;
+  background:var(--ground); color:var(--ink);
+  font:400 15px/1.3 "IBM Plex Sans",system-ui,sans-serif; letter-spacing:0;
+  text-transform:none;
+}
+.si-form input:focus{outline:none; border-color:var(--accent)}
+.si-form input.bad{border-color:#9a3412}
+.si-opt{color:var(--ink-faint); letter-spacing:.08em}
+.si-hint{
+  color:var(--ink-faint); font:400 10.5px/1.45 "IBM Plex Sans",system-ui,sans-serif;
+  letter-spacing:0; text-transform:none;
+}
+.si-hint.bad{color:#9a3412}
+.si-go{
+  margin-top:3px; padding:12px; border:0; border-radius:9px;
+  background:var(--accent); color:#fff; cursor:pointer;
+  font:600 14px/1 "IBM Plex Sans",system-ui,sans-serif;
+}
+.si-go:disabled{opacity:.45; cursor:default}
+
 /* users */
 .users-title{
   flex:1; font:600 15px/1.2 "IBM Plex Sans",system-ui,sans-serif; color:var(--ink);
@@ -707,6 +765,30 @@ body.selecting .pin{display:none}
   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
   New note
 </button>
+
+<div class="scrim" id="signinScrim" hidden>
+  <div class="signin" role="dialog" aria-modal="true" aria-labelledby="signinTitle">
+    <h2 id="signinTitle">Who are you?</h2>
+    <p class="si-sub" id="signinSub"></p>
+    <div class="si-list" id="signinList"></div>
+    <div class="si-or"><span>or</span></div>
+    <form class="si-form" id="signinForm">
+      <label>Username
+        <input id="suUser" autocomplete="username" autocapitalize="none"
+               spellcheck="false" maxlength="32" placeholder="shortname">
+        <span class="si-hint" id="suHint">lowercase letters, digits, - and _. This is what notes record, and it does not change.</span>
+      </label>
+      <label>Display name <span class="si-opt">optional</span>
+        <input id="suName" maxlength="60" placeholder="How your name appears">
+      </label>
+      <label>Email <span class="si-opt">optional</span>
+        <input id="suMail" type="email" autocomplete="email" autocapitalize="none"
+               spellcheck="false" maxlength="120" placeholder="Used to recognise you when signed in elsewhere">
+      </label>
+      <button type="submit" class="si-go" id="suGo">Create account</button>
+    </form>
+  </div>
+</div>
 
 <div class="scrim" id="usersScrim" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-label="Users">
@@ -975,6 +1057,11 @@ body.selecting .pin{display:none}
     edRaw:document.getElementById("edRaw"), edArch:document.getElementById("edArch"),
     edDel:document.getElementById("edDel"), edSaved:document.getElementById("edSaved"),
     netTip:document.getElementById("netTip"),
+    signinScrim:document.getElementById("signinScrim"), signinList:document.getElementById("signinList"),
+    signinSub:document.getElementById("signinSub"), signinTitle:document.getElementById("signinTitle"),
+    signinForm:document.getElementById("signinForm"), suUser:document.getElementById("suUser"),
+    suName:document.getElementById("suName"), suMail:document.getElementById("suMail"),
+    suGo:document.getElementById("suGo"), suHint:document.getElementById("suHint"),
     usersScrim:document.getElementById("usersScrim"), usersBody:document.getElementById("usersBody"),
     usersClose:document.getElementById("usersClose"), usersPath:document.getElementById("usersPath"),
     toast:document.getElementById("toast"), toastMsg:document.getElementById("toastMsg"),
@@ -1191,6 +1278,7 @@ body.selecting .pin{display:none}
     var k = LAYER; LAYER = null;
     if (k === "note") close(true);
     else if (k === "users") closeUsers(true);
+    else if (k === "signin") closeSignIn(true);
     else if (k === "drawer") closeDrawer(true);
     else if (k === "sel") exitSel(true);
   });
@@ -2128,22 +2216,109 @@ body.selecting .pin{display:none}
     loadWhoami().then(function(){ return refresh(); }).catch(function(){});
   }
 
-  // Make an account and take it. The id is chosen once and is what notes
-  // record, so it is shown while choosing rather than sprung afterwards.
-  function createMe(){
-    var name = window.prompt("Your name", (WHOAMI && WHOAMI.suggest_name) || "");
-    if (!name) return;
-    var id = window.prompt(
-      "Short id — this is what notes record, and it does not change:",
-      (WHOAMI && WHOAMI.suggest_id) || "");
-    if (!id) return;
-    api("POST", "/api/users", {name: name, id: id, claim_sign_in: true})
-      .then(function(d){ setMe(d.user.id); })
-      .catch(function(e){
-        fail(/already taken/i.test((e && e.message) || "")
-          ? "That id is taken — pick another" : "Couldn't create that account", e);
-      });
+  // ---- the sign-in overlay ----
+  // A browser that has never said who it is gets this, not a popover: on a
+  // fresh load it is the only question worth answering. Dismissable, because
+  // everything works unattributed and a notes app must not hold you hostage.
+  function signinOpen(){ return !el.signinScrim.hidden; }
+
+  // Adding someone from Users is the same form, but it must not claim this
+  // browser's sign-in or switch who you are afterwards.
+  var ADDING_OTHER = false;
+
+  var USERNAME_OK = /^[a-z][a-z0-9_-]{0,31}$/;
+  function checkUsername(){
+    var v = (el.suUser.value || "").trim().toLowerCase();
+    var taken = ((WHOAMI && WHOAMI.users) || []).some(function(u){ return u.username === v; });
+    var ok = USERNAME_OK.test(v) && !taken;
+    el.suUser.classList.toggle("bad", !!v && !ok);
+    el.suHint.classList.toggle("bad", !!v && !ok);
+    el.suHint.textContent = !v
+      ? "Lowercase letters, digits, - and _. This is what notes record, and it does not change."
+      : taken ? "\u201c" + v + "\u201d is taken \u2014 pick another."
+      : !USERNAME_OK.test(v) ? "Start with a letter; then letters, digits, - or _ only."
+      : "Notes will be recorded as \u201c" + v + "\u201d. This does not change later.";
+    el.suGo.disabled = !ok;
+    return ok;
   }
+
+  function openSignIn(){
+    if (signinOpen()) return;
+    var d = WHOAMI || {};
+    var list = d.users || [];
+    var fixed = !!d.fixed, unknown = !!d.unknown;
+
+    el.signinTitle.textContent = ADDING_OTHER ? "Add someone"
+      : (list.length ? "Who are you?" : "Create an account");
+    el.signinSub.textContent = ADDING_OTHER
+      ? "They choose their own display name later. The username is what their notes are recorded under."
+      : unknown && d.sign_in
+        ? "You are signed in as " + d.sign_in + ", which no account claims yet. Pick yourself to attach it, or make a new account."
+        : list.length
+          ? "Pick an account for this device. Notes you write are recorded under it."
+          : "Nobody has an account here yet. Yours will be the first.";
+
+    el.signinList.textContent = "";
+    list.forEach(function(u){
+      var b = node("button");
+      b.type = "button";
+      b.appendChild(document.createTextNode(u.label));
+      if (u.label !== u.username) b.appendChild(node("span", "u", u.username));
+      b.addEventListener("click", function(){
+        // With a proxy in front, picking an account means "that sign-in is
+        // mine" \u2014 attach it, rather than claiming to be someone else.
+        if (fixed && unknown && d.sign_in) {
+          api("PUT", "/api/users", {username: u.username, add_emails: [d.sign_in]})
+            .then(function(){ closeSignIn(); setMe(u.username); })
+            .catch(function(e){ fail("Couldn't link that sign-in", e); });
+        } else { closeSignIn(); setMe(u.username); }
+      });
+      el.signinList.appendChild(b);
+    });
+    el.signinList.hidden = ADDING_OTHER || !list.length;
+
+    el.suUser.value = (ADDING_OTHER ? "" : d.suggest_username) || "";
+    el.suName.value = (ADDING_OTHER ? "" : d.suggest_name) || "";
+    el.suMail.value = (!ADDING_OTHER && d.sign_in && d.sign_in.indexOf("@") > 0) ? d.sign_in : "";
+    checkUsername();
+    el.signinScrim.hidden = false;
+    enterLayer("signin");
+    if (ADDING_OTHER || !list.length) el.suUser.focus();
+  }
+
+  function closeSignIn(fromHistory){
+    if (el.signinScrim.hidden) return;
+    ADDING_OTHER = false;
+    el.signinScrim.hidden = true;
+    if (fromHistory !== true) exitLayer();
+  }
+
+  el.suUser.addEventListener("input", checkUsername);
+  el.signinForm.addEventListener("submit", function(ev){
+    ev.preventDefault();
+    if (!checkUsername()) return;
+    var adding = ADDING_OTHER;
+    var body = {
+      username: (el.suUser.value || "").trim().toLowerCase(),
+      name: (el.suName.value || "").trim(),
+      claim_sign_in: !adding
+    };
+    var mail = (el.suMail.value || "").trim();
+    if (mail) body.emails = [mail];
+    el.suGo.disabled = true;
+    api("POST", "/api/users", body).then(function(d){
+      closeSignIn();
+      if (adding) { reloadUsers(); loadWhoami(); }
+      else setMe(d.user.username);
+    }).catch(function(e){
+      el.suGo.disabled = false;
+      if (/already taken/i.test((e && e.message) || "")) { checkUsername(); el.suUser.focus(); }
+      else fail("Couldn't create that account", e);
+    });
+  });
+  el.signinScrim.addEventListener("click", function(ev){
+    if (ev.target === el.signinScrim) closeSignIn();
+  });
 
   function loadWhoami(){
     return api("GET", "/api/whoami").then(function(d){
@@ -2154,7 +2329,7 @@ body.selecting .pin{display:none}
       }
       if (d.users) {
         PEOPLE = {};
-        d.users.forEach(function(u){ PEOPLE[u.id] = u.label; });
+        d.users.forEach(function(u){ PEOPLE[u.username] = u.label; });
       }
       ME = d.me || ME;
       drawMe();
@@ -2177,20 +2352,20 @@ body.selecting .pin{display:none}
       unknown ? "Who are you?" : (fixed ? "Signed in as" : "This device is")));
     list.forEach(function(u){
       var b = node("button", null, u.label);
-      b.setAttribute("aria-pressed", ME === u.id ? "true" : "false");
+      b.setAttribute("aria-pressed", ME === u.username ? "true" : "false");
       b.addEventListener("click", function(){
         // With a proxy, picking an existing account means "that sign-in is
         // mine" — attach it, rather than pretending to be somebody else.
         if (fixed && unknown && WHOAMI.sign_in) {
-          api("PUT", "/api/users", {id: u.id, add_emails: [WHOAMI.sign_in]})
-            .then(function(){ setMe(u.id); })
+          api("PUT", "/api/users", {username: u.username, add_emails: [WHOAMI.sign_in]})
+            .then(function(){ setMe(u.username); })
             .catch(function(e){ fail("Couldn't link that sign-in", e); });
-        } else { setMe(u.id); }
+        } else { setMe(u.username); }
       });
       el.meMenu.appendChild(b);
     });
     var make = node("button", null, list.length ? "none of these — new account…" : "create an account…");
-    make.addEventListener("click", function(ev){ ev.stopPropagation(); createMe(); });
+    make.addEventListener("click", function(ev){ ev.stopPropagation(); closeMenus(null); openSignIn(); });
     el.meMenu.appendChild(make);
     if (unknown && WHOAMI.sign_in && fixed) {
       el.meMenu.appendChild(node("div", "head", "signed in as " + WHOAMI.sign_in));
@@ -2770,7 +2945,7 @@ body.selecting .pin{display:none}
     return api("GET", "/api/users").then(function(d){
       USERS = d;
       PEOPLE = {};
-      d.users.forEach(function(u){ PEOPLE[u.id] = u.label; });
+      d.users.forEach(function(u){ PEOPLE[u.username] = u.label; });
       drawUsers();
     }).catch(function(e){
       el.usersBody.textContent = "";
@@ -2809,17 +2984,14 @@ body.selecting .pin{display:none}
 
     var add = node("button", "u-add", "Add someone");
     add.addEventListener("click", function(){
-      var name = window.prompt("Their name", "");
-      if (!name) return;
-      var id = window.prompt("Short id — what notes will record, and it does not change:",
-                             name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, ""));
-      if (!id) return;
-      api("POST", "/api/users", {name: name, id: id, claim_sign_in: false})
-        .then(reloadUsers)
-        .catch(function(e){
-          fail(/already taken/i.test((e && e.message) || "")
-            ? "That id is taken — pick another" : "Couldn't add that account", e);
-        });
+      // The same form as signing in, so there is one place that explains what
+      // a username is and one place that checks it is free.
+      WHOAMI = WHOAMI || {};
+      WHOAMI.users = d.users;
+      WHOAMI.suggest_username = "";
+      WHOAMI.suggest_name = "";
+      ADDING_OTHER = true;
+      openSignIn();
     });
     el.usersBody.appendChild(add);
   }
@@ -2830,11 +3002,11 @@ body.selecting .pin{display:none}
     var row = node("div", "u-person");
     var inp = node("input", "u-name");
     inp.value = u.name || "";
-    inp.placeholder = u.id;
-    inp.setAttribute("aria-label", "Name for " + u.id);
-    inp.addEventListener("change", function(){ saveUser({id: u.id, name: inp.value}); });
+    inp.placeholder = u.username;
+    inp.setAttribute("aria-label", "Display name for " + u.username);
+    inp.addEventListener("change", function(){ saveUser({username: u.username, name: inp.value}); });
     row.appendChild(inp);
-    row.appendChild(node("span", "u-slug", u.id + (u.id === d.me ? " · you" : "")));
+    row.appendChild(node("span", "u-slug", u.username + (u.username === d.me ? " · you" : "")));
     box.appendChild(row);
 
     var mails = node("div", "u-ids");
@@ -2845,9 +3017,9 @@ body.selecting .pin{display:none}
       head.appendChild(node("span", "who", e));
       line.appendChild(head);
       var off = node("button", "u-detach", "remove");
-      off.setAttribute("title", "Stop recognising " + e + " as " + u.id);
+      off.setAttribute("title", "Stop recognising " + e + " as " + u.username);
       off.addEventListener("click", function(){
-        saveUser({id: u.id, remove_emails: [e]});
+        saveUser({username: u.username, remove_emails: [e]});
       });
       line.appendChild(off);
       mails.appendChild(line);
@@ -2855,8 +3027,8 @@ body.selecting .pin{display:none}
     var addMail = node("button", "u-addmail",
       u.emails.length ? "add another email" : "add an email for sign-in");
     addMail.addEventListener("click", function(){
-      var e = window.prompt("Email that signs in as " + (u.name || u.id) + ":", "");
-      if (e) saveUser({id: u.id, add_emails: [e]});
+      var e = window.prompt("Email that signs in as " + (u.name || u.username) + ":", "");
+      if (e) saveUser({username: u.username, add_emails: [e]});
     });
     mails.appendChild(addMail);
     box.appendChild(mails);
@@ -3151,12 +3323,14 @@ body.selecting .pin{display:none}
   }).catch(function(){});
 
   refresh().then(function(){
-    // Ask once, when nobody has said whose this sign-in is. That is a device
-    // with no cookie, or a login from a directory that nothing has claimed
-    // yet. Everything works without answering — the note is attributed to the
-    // best guess, which is what every note before this was.
+    // A browser that has never said who it is, or a sign-in no account
+    // claims, gets the OVERLAY rather than a popover tucked under an icon:
+    // on a fresh load it is the only question worth answering. Everything
+    // still works without answering — notes go to the default author, which
+    // is what every note written before accounts existed did.
     loadWhoami().then(function(d){
-      if (!ME || (d && d.unclaimed)) openWhoBar();
+      if (!d) return;
+      if (!d.me || d.unknown) openSignIn();
     });
     // No adaptive default any more: "Mine" already includes the shared space,
     // so a second person sees the household's notes from their first visit

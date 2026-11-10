@@ -154,33 +154,36 @@ lists them, and it is a view over a markdown table in the space —
 file by hand must stay just as good an answer.
 
 ```markdown
-| ID | Name | Emails |
+| Username | Display name | Emails |
 | --- | --- | --- |
 | ana | Ana Parker | ana@example.com, a.parker@work.example |
 | maryj | Mary | maryj@example.com |
 | marys | Mary | marys@example.com |
 ```
 
-- **id** — unique, chosen once, and the only thing a note records
+- **username** — unique, chosen once, and the only thing a note records
   (`archived_by: ana`). It does not change, because changing it would orphan
   every note already filed under it.
-- **name** — a label. Free text, and **not** unique: two people called Mary
-  is an ordinary situation, and the ids are what keep them apart.
+- **display name** — a label, optional. Free text, and **not** unique: two
+  people called Mary is an ordinary situation, and the usernames keep them
+  apart. A card shows the display name, falling back to the username.
 - **emails** — optional. How a sign-in that was authenticated elsewhere is
   matched to an account. Nothing is verified here; the proxy did that. One
   address belongs to one account at a time.
 
-A sign-in is matched two ways, both exact: against the id itself, or against
-one of the account's emails. Nothing is inferred from spelling — an
-unrecognised sign-in is a question for the person using it, and the app asks
-once, offering the existing accounts or a new one.
+A sign-in is matched two ways, both exact: against the username itself, or
+against one of the account's emails. Nothing is inferred from spelling — an
+unrecognised sign-in is a question for the person using it. A browser that
+has never said who it is gets a sign-in overlay on first load: pick an
+account, or create one with a username, an optional display name and an
+optional email.
 
 There are no passwords and no sessions here. See [Access](#access) for how
 authentication is actually done.
 
 If a proxy sends something that is neither an email nor an account id
 (`github:someone`, an opaque OIDC subject), there is nowhere to record it —
-give that account an id matching what the proxy sends, or configure the proxy
+give that account a username matching what the proxy sends, or configure the proxy
 to send the user's email, which most can.
 
 ## Why the accounts have no passwords

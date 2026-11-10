@@ -4,7 +4,7 @@ Deliberately the shape people already expect from every other system, after
 an earlier design grew three overlapping notions of "who someone is" and
 became hard to reason about:
 
-    id      unique, chosen once, and the ONLY thing a note records
+    username  unique, chosen once, and the ONLY thing a note records
             (``archived_by: mary``). It does not change, because changing it
             would orphan every note already filed under it.
     name    a label. Free text, not unique — two people called Mary is an
@@ -27,24 +27,24 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-HEADERS = ("ID", "Name", "Emails")
+HEADERS = ("Username", "Display name", "Emails")
 
-ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-_ID_BAD = re.compile(r"[^a-z0-9_-]+")
+USERNAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+_USERNAME_BAD = re.compile(r"[^a-z0-9_-]+")
 EMAIL_RE = re.compile(r"^[^@\s,|]+@[^@\s,|]+\.[^@\s,|]+$")
 
 MAX_USERS = 500
 
 
-def make_id(raw: str | None) -> str | None:
+def make_username(raw: str | None) -> str | None:
     """A candidate id from free text. ``None`` when nothing usable remains.
 
     Only ever a SUGGESTION: whether it can be used depends on whether it is
     already taken, which is ``People.available``.
     """
     s = (raw or "").strip().lower().split("@", 1)[0]
-    s = _ID_BAD.sub("-", s).strip("-")[:32]
-    return s if ID_RE.match(s) else None
+    s = _USERNAME_BAD.sub("-", s).strip("-")[:32]
+    return s if USERNAME_RE.match(s) else None
 
 
 def clean_email(raw: str | None) -> str | None:
@@ -58,17 +58,17 @@ def clean_name(raw: str | None) -> str:
 
 @dataclass
 class User:
-    id: str
+    username: str
     name: str = ""
     emails: list[str] = field(default_factory=list)
 
     @property
     def label(self) -> str:
         """What to show. Never blank — the id is a serviceable name."""
-        return self.name.strip() or self.id
+        return self.name.strip() or self.username
 
     def as_dict(self) -> dict:
-        return {"id": self.id, "name": self.name, "label": self.label,
+        return {"username": self.username, "name": self.name, "label": self.label,
                 "emails": list(self.emails)}
 
 
@@ -79,10 +79,10 @@ class People:
     epilogue: str = ""
 
     # ------------------------------------------------------------- lookup
-    def get(self, user_id: str | None) -> User | None:
-        wanted = (user_id or "").strip().lower()
+    def get(self, username: str | None) -> User | None:
+        wanted = (username or "").strip().lower()
         for u in self.users:
-            if u.id == wanted:
+            if u.username == wanted:
                 return u
         return None
 
@@ -107,19 +107,19 @@ class People:
             return None
         return self.get(raw) or self.by_email(raw)
 
-    def available(self, user_id: str | None) -> bool:
+    def available(self, username: str | None) -> bool:
         """Is this id both usable and free?"""
-        candidate = (user_id or "").strip().lower()
-        return bool(ID_RE.match(candidate)) and self.get(candidate) is None
+        candidate = (username or "").strip().lower()
+        return bool(USERNAME_RE.match(candidate)) and self.get(candidate) is None
 
-    def suggest_id(self, name: str | None, sign_in: str | None = None) -> str:
+    def suggest_username(self, name: str | None, sign_in: str | None = None) -> str:
         """A free id for a new account: from the name, then the sign-in.
 
         Collisions get a numeric suffix rather than being rejected, because
         "Mary" being taken is an ordinary thing and the person should not have
         to invent spellings to get past it.
         """
-        base = make_id(name) or make_id(sign_in) or "user"
+        base = make_username(name) or make_username(sign_in) or "user"
         if self.available(base):
             return base
         for n in range(2, 100):
@@ -129,15 +129,15 @@ class People:
         return base
 
     # ------------------------------------------------------------- change
-    def add(self, user_id: str, name: str = "", emails: list[str] | None = None) -> User:
-        uid = (user_id or "").strip().lower()
-        if not ID_RE.match(uid):
+    def add(self, username: str, name: str = "", emails: list[str] | None = None) -> User:
+        uid = (username or "").strip().lower()
+        if not USERNAME_RE.match(uid):
             raise ValueError("a user id is a short lowercase name: letters, digits, - and _")
         if self.get(uid) is not None:
             raise ValueError("that id is already taken")
         if len(self.users) >= MAX_USERS:
             raise ValueError("too many accounts")
-        u = User(id=uid, name=clean_name(name))
+        u = User(username=uid, name=clean_name(name))
         for e in emails or []:
             self.attach_email(u, e)
         self.users.append(u)
@@ -213,9 +213,9 @@ def parse(text: str) -> People:
             uid = (cells[0] or "").strip().lower()
             # A duplicate id in a hand-edited file is the one thing that
             # breaks the model, so the first wins and the rest are dropped.
-            if ID_RE.match(uid) and uid not in seen:
+            if USERNAME_RE.match(uid) and uid not in seen:
                 seen.add(uid)
-                u = User(id=uid, name=clean_name(cells[1]))
+                u = User(username=uid, name=clean_name(cells[1]))
                 for part in cells[2].split(","):
                     e = clean_email(part)
                     if e and e not in u.emails:
@@ -261,7 +261,7 @@ def migrate_legacy(text: str) -> People | None:
             cells = [c.strip() for c in m.group(1).split("|")] + ["", "", "", ""]
             identity, person, display = cells[0], cells[1].lower(), cells[2]
             # An unclaimed identity named nobody; there is no account to make.
-            if ID_RE.match(person):
+            if USERNAME_RE.match(person):
                 if person not in order:
                     order.append(person)
                     mails[person] = []
@@ -283,8 +283,8 @@ def render(p: People) -> str:
     head = p.prologue.strip("\n") or DEFAULT_PROLOGUE
     out = [head, "", "| " + " | ".join(HEADERS) + " |",
            "| " + " | ".join("---" for _ in HEADERS) + " |"]
-    for u in sorted(p.users, key=lambda u: u.id):
-        out.append("| " + " | ".join([u.id, u.name, ", ".join(u.emails)]) + " |")
+    for u in sorted(p.users, key=lambda u: u.username):
+        out.append("| " + " | ".join([u.username, u.name, ", ".join(u.emails)]) + " |")
     if p.epilogue.strip():
         out += ["", p.epilogue.strip("\n")]
     return "\n".join(out) + "\n"

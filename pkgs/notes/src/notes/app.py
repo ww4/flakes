@@ -46,7 +46,7 @@ WHO_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 def normalize_who(raw: str | None) -> str | None:
     """Any sign-in string reduced to a candidate user id. A SUGGESTION only."""
-    return users.make_id(raw)
+    return users.make_username(raw)
 
 
 def raw_identity(request: Request, cfg: Settings) -> str | None:
@@ -90,7 +90,7 @@ def who(request: Request, cfg: Settings, ppl: users.People | None = None) -> str
     raw = raw_identity(request, cfg)
     if ppl is not None:
         u = ppl.resolve(raw)
-        return u.id if u else None
+        return u.username if u else None
     return normalize_who(raw)
 
 
@@ -134,14 +134,14 @@ class NoteNew(BaseModel):
 
 
 class UserNew(BaseModel):
-    name: str = Field(default="", max_length=60)
-    id: str | None = Field(default=None, max_length=32)
+    username: str | None = Field(default=None, max_length=32)
+    name: str = Field(default="", max_length=60)        # display name, optional
     emails: list[str] | None = Field(default=None, max_length=10)
     claim_sign_in: bool = True
 
 
 class UserWrite(BaseModel):
-    id: str = Field(min_length=1, max_length=32)
+    username: str = Field(min_length=1, max_length=32)
     name: str | None = Field(default=None, max_length=60)
     add_emails: list[str] | None = Field(default=None, max_length=10)
     remove_emails: list[str] | None = Field(default=None, max_length=10)
@@ -152,7 +152,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     space = Path(cfg.space_dir)
     # One module-level default rather than threading it through every call:
     # it is read in a dozen places and never changes after start-up.
-    store.HUMAN = users.make_id(cfg.default_author) or store.HUMAN
+    store.HUMAN = users.make_username(cfg.default_author) or store.HUMAN
     app = FastAPI(title="Notes", docs_url=None, redoc_url=None)
 
     def roster() -> users.People:
@@ -170,7 +170,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         added = False
         for name in [store.HUMAN] + list(store.authors_of(store.listing(space))):
-            if users.ID_RE.match(name) and ppl.get(name) is None:
+            if users.USERNAME_RE.match(name) and ppl.get(name) is None:
                 try:
                     ppl.add(name)
                     added = True
@@ -268,7 +268,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def labels(ppl: users.People, ids: set[str]) -> dict:
         """id -> what to show for it, for every account AND everyone cited."""
-        out = {u.id: u.label for u in ppl.users}
+        out = {u.username: u.label for u in ppl.users}
         for i in ids:
             if i and i not in out:
                 out[i] = i          # someone the notes name but the list does not
@@ -293,13 +293,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         u = ppl.resolve(raw)
         return {
             "sign_in": raw or "",
-            "me": u.id if u else None,
+            "me": u.username if u else None,
             # Nobody claims this sign-in. The front end asks, once.
             "unknown": bool(raw) and u is None,
             "fixed": cfg.trust_proxy_auth,   # the sign-in is the proxy's, not ours
-            "users": [x.as_dict() for x in sorted(ppl.users, key=lambda x: x.id)],
+            "users": [x.as_dict() for x in sorted(ppl.users, key=lambda x: x.username)],
             "suggest_name": proxy_name(request, cfg) or "",
-            "suggest_id": ppl.suggest_id(proxy_name(request, cfg), raw),
+            # Only suggest when there is something to suggest FROM. Filling
+            # the box with "user" would hand someone a username they did not
+            # choose, for the one field here that can never be changed.
+            "suggest_username": (ppl.suggest_username(proxy_name(request, cfg), raw)
+                                 if (proxy_name(request, cfg) or raw) else ""),
             "default_author": store.HUMAN,
             "file": paths.PEOPLE_FILE,
         }
@@ -308,7 +312,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def list_users(request: Request):
         ppl = roster()
         return {
-            "users": [u.as_dict() for u in sorted(ppl.users, key=lambda u: u.id)],
+            "users": [u.as_dict() for u in sorted(ppl.users, key=lambda u: u.username)],
             "me": who(request, cfg, ppl),
             "file": paths.PEOPLE_FILE,
             "fixed": cfg.trust_proxy_auth,
@@ -323,7 +327,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         file their notes under someone else.
         """
         ppl = roster()
-        uid = (req.id or "").strip().lower() or ppl.suggest_id(req.name)
+        uid = (req.username or "").strip().lower() or ppl.suggest_username(req.name)
         try:
             u = ppl.add(uid, req.name)
         except ValueError as e:
@@ -341,7 +345,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def update_user(req: UserWrite):
         """Rename, or add and remove emails. The id is not editable."""
         ppl = roster()
-        u = ppl.get(req.id)
+        u = ppl.get(req.username)
         if u is None:
             raise HTTPException(status_code=404, detail="no such user")
         if req.name is not None:

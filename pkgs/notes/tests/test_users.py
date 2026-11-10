@@ -12,7 +12,7 @@ TABLE = """# People
 
 Prose that must survive a rewrite.
 
-| ID | Name | Emails |
+| Username | Display name | Emails |
 | --- | --- | --- |
 | ana | Ana Parker | ana@example.com, a.parker@work.example |
 | sam | Sam Reed | sam@example.com |
@@ -37,19 +37,19 @@ A trailing note.
     ("@example.com", None),
     ("x" * 40, "x" * 32),
 ])
-def test_make_id_is_only_a_suggestion(raw, want):
-    assert users.make_id(raw) == want
+def test_make_username_is_only_a_suggestion(raw, want):
+    assert users.make_username(raw) == want
 
 
 def test_two_people_called_mary_get_different_ids():
     """The situation that broke the previous model."""
     p = People()
-    first = p.suggest_id("Mary")
+    first = p.suggest_username("Mary")
     p.add(first, "Mary")
-    second = p.suggest_id("Mary")
+    second = p.suggest_username("Mary")
     assert first == "mary" and second == "mary2"
     p.add(second, "Mary")
-    assert [u.id for u in p.users] == ["mary", "mary2"]
+    assert [u.username for u in p.users] == ["mary", "mary2"]
     assert [u.label for u in p.users] == ["Mary", "Mary"], "a NAME may repeat"
 
 
@@ -81,14 +81,14 @@ def people_from(text):
 
 def test_a_sign_in_matching_an_id_is_that_account():
     p = people_from(TABLE)
-    assert p.resolve("ana").id == "ana"
-    assert p.resolve("ANA").id == "ana"
+    assert p.resolve("ana").username == "ana"
+    assert p.resolve("ANA").username == "ana"
 
 
 def test_a_sign_in_matching_an_email_is_that_account():
     p = people_from(TABLE)
-    assert p.resolve("a.parker@work.example").id == "ana"
-    assert p.resolve("A.Parker@Work.Example").id == "ana"
+    assert p.resolve("a.parker@work.example").username == "ana"
+    assert p.resolve("A.Parker@Work.Example").username == "ana"
 
 
 def test_an_unknown_sign_in_belongs_to_nobody():
@@ -111,7 +111,7 @@ def test_an_email_belongs_to_one_account_at_a_time():
     p = people_from(TABLE)
     sam = p.get("sam")
     p.attach_email(sam, "a.parker@work.example")
-    assert p.resolve("a.parker@work.example").id == "sam"
+    assert p.resolve("a.parker@work.example").username == "sam"
     assert "a.parker@work.example" not in p.get("ana").emails
 
 
@@ -129,7 +129,7 @@ def test_detach():
     assert p.detach_email(ana, "ana@example.com") is True
     assert p.detach_email(ana, "ana@example.com") is False
     assert p.resolve("ana@example.com") is None
-    assert p.resolve("ana").id == "ana", "the id still works"
+    assert p.resolve("ana").username == "ana", "the id still works"
 
 
 # ------------------------------------------------------------------- label
@@ -150,23 +150,23 @@ def test_round_trip_keeps_the_prose_and_is_a_fixed_point():
     assert "Prose that must survive a rewrite." in out
     assert "A trailing note." in out
     again = users.parse(out)
-    assert [(u.id, u.name, u.emails) for u in again.users] == \
-           [(u.id, u.name, u.emails) for u in sorted(p.users, key=lambda u: u.id)]
+    assert [(u.username, u.name, u.emails) for u in again.users] == \
+           [(u.username, u.name, u.emails) for u in sorted(p.users, key=lambda u: u.username)]
     assert users.render(again) == out
 
 
 def test_a_duplicate_id_in_a_hand_edited_file_does_not_split_a_person():
-    p = users.parse("""| ID | Name | Emails |
+    p = users.parse("""| Username | Display name | Emails |
 |---|---|---|
 | ana | Ana | ana@example.com |
 | ana | Ana Again | other@example.com |
 """)
-    assert len([u for u in p.users if u.id == "ana"]) == 1
+    assert len([u for u in p.users if u.username == "ana"]) == 1
     assert p.get("ana").name == "Ana", "the first wins"
 
 
 def test_a_ragged_hand_edited_table_still_reads():
-    p = users.parse("""| ID | Name | Emails |
+    p = users.parse("""| Username | Display name | Emails |
 |---|---|---|
 |ana|Ana|
 | sam | Sam | sam@example.com |
@@ -174,7 +174,7 @@ def test_a_ragged_hand_edited_table_still_reads():
 | bad id here | X | x@example.com |
 | extra | Extra | e@example.com | and | more |
 """)
-    assert sorted(u.id for u in p.users) == ["ana", "extra", "sam"]
+    assert sorted(u.username for u in p.users) == ["ana", "extra", "sam"]
 
 
 def test_a_pipe_in_a_name_cannot_split_a_cell():
@@ -186,7 +186,7 @@ def test_a_pipe_in_a_name_cannot_split_a_cell():
 def test_an_empty_file_gets_the_explanatory_default():
     out = users.render(People())
     assert "Everyone who uses this space" in out
-    assert "| ID | Name | Emails |" in out
+    assert "| Username | Display name | Emails |" in out
 
 
 # ---------------------------------------------------- migrating the old shape
@@ -204,11 +204,11 @@ LEGACY = """# People
 
 def test_the_old_identity_table_becomes_accounts():
     p = users.migrate_legacy(LEGACY)
-    assert sorted(u.id for u in p.users) == ["ana", "sam"]
+    assert sorted(u.username for u in p.users) == ["ana", "sam"]
     assert p.get("ana").name == "Ana Parker"
     assert p.get("ana").emails == ["ana@example.com"], "only emails carry over"
-    assert p.resolve("ana@example.com").id == "ana"
-    assert p.resolve("sam").id == "sam"
+    assert p.resolve("ana@example.com").username == "ana"
+    assert p.resolve("sam").username == "sam"
 
 
 def test_an_unclaimed_legacy_identity_makes_no_account():
@@ -228,5 +228,5 @@ def test_the_live_shape_migrates():
 | chris | chris |  | 2026-11-10 |
 | mary | mary |  | 2026-11-10 |
 """)
-    assert [u.id for u in p.users] == ["chris", "mary"]
+    assert [u.username for u in p.users] == ["chris", "mary"]
     assert [u.label for u in p.users] == ["chris", "mary"], "the id serves as a name"
