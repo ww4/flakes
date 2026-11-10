@@ -284,7 +284,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         also share the entry. This endpoint is never cached.
         """
         ppl = roster()
-        if not ppl.users and seed(ppl):
+        # Two reasons to write on a read, both once-only: an empty list that
+        # the notes can describe, and an old-format table just converted in
+        # memory. Leaving the latter unwritten means the file on disk never
+        # matches what the app and the README say it looks like.
+        if (not ppl.users and seed(ppl)) or ppl.migrated:
             try:
                 save_roster(ppl)
             except OSError as e:

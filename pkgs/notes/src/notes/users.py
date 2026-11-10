@@ -77,6 +77,10 @@ class People:
     users: list[User] = field(default_factory=list)
     prologue: str = ""
     epilogue: str = ""
+    # True when this was read from the old identity/person table and converted
+    # in memory. The caller persists it once, so the file on disk converges on
+    # the documented shape instead of being re-converted on every load.
+    migrated: bool = False
 
     # ------------------------------------------------------------- lookup
     def get(self, username: str | None) -> User | None:
@@ -315,6 +319,7 @@ def load(space: Path, rel: str) -> People:
         # in which case convert rather than silently forgetting everyone.
         legacy = migrate_legacy(text)
         if legacy is not None:
+            legacy.migrated = True
             parsed = legacy
     _CACHE = (st.st_mtime_ns, st.st_size, parsed)
     return parsed
