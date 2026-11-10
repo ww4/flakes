@@ -325,6 +325,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "suggest": (row.display if row and row.display else "") or person or "",
             "people": {p: ppl.display_for(p) for p in ppl.people()},
             "fixed": cfg.trust_proxy_auth,   # the identity is the proxy's, not ours to change
+            # Who an unlabelled note belongs to. The client needs the SAME
+            # answer the store uses, or "is this mine?" disagrees between
+            # them: it decides which notes look archived and pinned to you.
+            "default_author": store.HUMAN,
         }
 
     @app.get("/api/people")

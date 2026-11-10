@@ -1731,7 +1731,7 @@ body.selecting .pin{display:none}
       return {
         id: "pending:" + p.key, title: p.title, preview: p.body,
         lines: p.body.split("\n").filter(function(l){ return l.trim(); }).length,
-        truncated: p.body.length > 700, cat: "inbox", author: "sam",
+        truncated: p.body.length > 700, cat: "inbox", author: meName(),
         date: new Date(p.at).toISOString().slice(0, 10),
         pinned: false, archived: false, pending: true
       };
@@ -1926,27 +1926,27 @@ body.selecting .pin{display:none}
   // Owner and sharing are one menu because they are one question — "who is
   // this note for" — and two adjacent person icons were two things to guess at.
   function fillPeopleMenu(){
-    var now = (ed && ed.note && ed.note.author) || "sam";
+    var now = (ed && ed.note && ed.note.author) || DEFAULT_AUTHOR;
     var isShared = !!(ed && ed.note && ed.note.shared);
     el.peopleMenu.textContent = "";
     el.peopleMenu.appendChild(node("div", "head", "Owner"));
-    var names = Object.keys(AUTHORS).filter(function(a){ return a !== "claude"; });
-    if (names.indexOf("sam") < 0) names.unshift("sam");
+    // People who exist, and nobody else. Typing a name here used to conjure
+    // one, which made sense when a cookie was the only notion of identity;
+    // now that sign-ins are recorded and named in Users, an owner invented
+    // at this prompt is one nothing can ever resolve to a real person.
+    var names = Object.keys(PEOPLE);
+    Object.keys(AUTHORS).forEach(function(a){
+      if (a !== "claude" && names.indexOf(a) < 0) names.push(a);
+    });
+    if (names.indexOf(DEFAULT_AUTHOR) < 0) names.unshift(DEFAULT_AUTHOR);
     if (now !== "claude" && names.indexOf(now) < 0) names.push(now);
     names.forEach(function(p){
-      var b = node("button", null, p);
+      var b = node("button", null, nameOf(p));
       b.setAttribute("aria-pressed", p === now ? "true" : "false");
       if (AUTHORS[p]) b.appendChild(node("span", "n", AUTHORS[p]));
       b.addEventListener("click", function(){ closeMenus(null); setOwner(p); });
       el.peopleMenu.appendChild(b);
     });
-    var other = node("button", null, "someone else…");
-    other.addEventListener("click", function(ev){
-      ev.stopPropagation();
-      var nm = window.prompt("First name (lowercase, no spaces):", "");
-      if (nm) { closeMenus(null); setOwner(nm); }
-    });
-    el.peopleMenu.appendChild(other);
     el.peopleMenu.appendChild(node("div", "sep"));
     var sh = node("button", null, (isShared ? "\u2713 " : "") + "Share note");
     sh.setAttribute("aria-pressed", isShared ? "true" : "false");
@@ -1968,7 +1968,7 @@ body.selecting .pin{display:none}
 
   function setOwner(value){
     if (!ed || !ed.note) return;
-    if (value === (ed.note.author || "sam")) return;
+    if (value === (ed.note.author || DEFAULT_AUTHOR)) return;
     var n = ed.note;
     persist(n, {author:value}, "Couldn't change who owns this").then(function(){
       el.edWhoNow.textContent = nameOf(n.author || meName());
@@ -2018,7 +2018,7 @@ body.selecting .pin{display:none}
 
   // "Mine" needs to know who you are. Without a device identity everyone is
   // the owner, which is exactly what the 545 notes predating this assume.
-  function meName(){ return ME || "sam"; }
+  function meName(){ return ME || DEFAULT_AUTHOR; }
 
   // "Ours" is a place, not a union. A note is in it because somebody put it
   // there, exactly like archived — so your own feed is YOUR notes, plus the
@@ -2113,6 +2113,14 @@ body.selecting .pin{display:none}
   // body is what made the app forget who you were on every reload.
   var WHOAMI = null;
 
+  // Who an unlabelled note belongs to. This MUST agree with the store's own
+  // default (NOTES_DEFAULT_AUTHOR) — it decides which notes read as archived
+  // and pinned for you, so a client-side literal that drifts from the server
+  // silently shows the wrong wall. Cached so an offline first paint, which
+  // happens before /api/whoami lands, still agrees.
+  var DEFAULT_AUTHOR = "owner";
+  try { DEFAULT_AUTHOR = localStorage.getItem("notes_default_author") || DEFAULT_AUTHOR; } catch (e) {}
+
   function setMe(name, display){
     var v = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
     if (!v) return;
@@ -2136,6 +2144,10 @@ body.selecting .pin{display:none}
   function loadWhoami(){
     return api("GET", "/api/whoami").then(function(d){
       WHOAMI = d;
+      if (d.default_author) {
+        DEFAULT_AUTHOR = d.default_author;
+        try { localStorage.setItem("notes_default_author", DEFAULT_AUTHOR); } catch (e) {}
+      }
       if (d.people) PEOPLE = d.people;
       if (d.person) ME = d.person;
       drawMe();
@@ -2160,7 +2172,7 @@ body.selecting .pin{display:none}
     Object.keys(AUTHORS).forEach(function(a){
       if (a !== "claude" && names.indexOf(a) < 0) names.push(a);
     });
-    if (names.indexOf("sam") < 0) names.unshift("sam");
+    if (names.indexOf(DEFAULT_AUTHOR) < 0) names.unshift(DEFAULT_AUTHOR);
     names.forEach(function(nm){
       var b = node("button", null, nameOf(nm));
       b.setAttribute("aria-pressed", ME === nm ? "true" : "false");
