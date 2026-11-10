@@ -230,3 +230,13 @@ def test_the_live_shape_migrates():
 """)
     assert [u.username for u in p.users] == ["chris", "mary"]
     assert [u.label for u in p.users] == ["chris", "mary"], "the id serves as a name"
+
+
+def test_a_migrated_table_is_flagged_so_it_can_be_persisted():
+    """Otherwise the file on disk never converges on the documented shape."""
+    p = users.migrate_legacy(LEGACY)
+    assert p is not None
+    p.migrated = True          # load() sets this; render/parse must not care
+    again = users.parse(users.render(p))
+    assert again.migrated is False, "a file already in the new shape is not a migration"
+    assert sorted(u.username for u in again.users) == ["ana", "sam"]
