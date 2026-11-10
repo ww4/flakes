@@ -115,3 +115,31 @@ def test_trash_only_with_the_flag(tmp_path):
 def test_relative_round_trip(tmp_path):
     p = paths.resolve(tmp_path, "Notes/x.md")
     assert paths.relative(tmp_path, p) == "Notes/x.md"
+
+
+# --- the handler that turns a refusal into an answer -------------------------
+
+def test_an_out_of_scope_id_answers_404_rather_than_crashing():
+    """The boundary must REFUSE, not crash.
+
+    A block edit once dropped the PathError handler, and every rejected id
+    became a 500 with a traceback in the journal. The scoping still worked —
+    it just stopped being able to say so. This asserts the handler is
+    registered AND what it answers, which is the pair that regressed.
+    """
+    import asyncio
+
+    from notes import paths
+    from notes.app import create_app
+    from notes.config import Settings
+
+    app = create_app(Settings(space_dir="/nonexistent"))
+    handler = app.exception_handlers.get(paths.PathError)
+    assert handler is not None, "an unhandled PathError is a 500"
+
+    reply = asyncio.run(handler(None, paths.PathError("out of scope: Journal/secret.md")))
+    assert reply.status_code == 404
+    assert b"no such note" in reply.body
+    # The reply must not echo back which path was asked for, or what rule it
+    # broke: a refusal that explains itself is a map of what exists.
+    assert b"Journal" not in reply.body

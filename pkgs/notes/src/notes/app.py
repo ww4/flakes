@@ -155,6 +155,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     store.HUMAN = users.make_username(cfg.default_author) or store.HUMAN
     app = FastAPI(title="Notes", docs_url=None, redoc_url=None)
 
+    @app.exception_handler(paths.PathError)
+    async def _path_error(_request, exc: paths.PathError):
+        # Deliberately terse: the client never needs to learn which of the
+        # three scope conditions it tripped. Without this an out-of-scope id
+        # is a 500 with a traceback in the journal — the boundary still holds,
+        # but it says so by crashing, which is neither quiet nor useful.
+        log.warning("rejected out-of-scope path: %s", exc)
+        return JSONResponse({"error": "no such note"}, status_code=404)
+
     def roster() -> users.People:
         return users.load(space, paths.PEOPLE_FILE)
 
