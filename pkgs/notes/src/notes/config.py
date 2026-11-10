@@ -11,3 +11,21 @@ class Settings(BaseSettings):
     space_dir: str = "/var/lib/silverbullet"
     host: str = "127.0.0.1"
     port: int = 3337
+
+    # ---- identity from a reverse proxy (OFF by default) ----
+    # This app has no accounts and never will: there are no per-note
+    # permissions to express, so access is all-or-nothing, and a proxy does
+    # all-or-nothing better than we could — before the request reaches Python.
+    # What it CAN do is believe a proxy that has already authenticated the
+    # user, and use that name as the identity that archives and pins notes.
+    #
+    # ⚠️ Trusting the header is only safe when nothing can reach this port
+    # except the proxy. Anyone who can talk to it directly can send
+    # "Remote-User: anyone". That is why this is opt-in and not a default.
+    trust_proxy_auth: bool = False
+    auth_user_header: str = "Remote-User"
+
+    # Required to bind a non-loopback address with no proxy auth configured.
+    # The point is not to stop anyone — it is to make exposing an unprotected
+    # notes app a thing you typed, rather than a thing you didn't notice.
+    allow_public_bind: bool = False

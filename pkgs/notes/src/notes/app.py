@@ -5,6 +5,14 @@ the perimeter is the nginx source-gate (Tailscale/LAN) plus the tailnet ACL,
 and adding a login here would reintroduce the friction that made the notes
 app go unused in the first place (Chris, 2026-07-09).
 
+There are no accounts and there will not be. This app has no per-note
+permissions to express, so access is all-or-nothing — and a reverse proxy
+does all-or-nothing better than we could, before a request reaches Python.
+What it does support is BELIEVING a proxy that has already authenticated
+someone (``trust_proxy_auth``): that name then becomes the identity that
+archives and pins notes, so authentication and attribution are one thing
+instead of two stacked on each other.
+
 Note ids travel in the request BODY rather than the URL path. An id is a
 space-relative path like ``Keep/2017-03-04 Bring from Kentucky.md`` — spaces,
 unicode and slashes in a path segment make URL-encoded ids a source of
@@ -36,9 +44,56 @@ WHO_COOKIE = "notes_who"
 WHO_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 
-def who(request: Request) -> str | None:
-    raw = (request.cookies.get(WHO_COOKIE) or "").strip().lower()
-    return raw if WHO_RE.match(raw) else None
+def normalize_who(raw: str | None) -> str | None:
+    """A display name from any source, reduced to a usable identity or None.
+
+    Proxies hand back whatever their directory holds — ``mary``,
+    ``mary@example.com``, ``MARY``. The part before the ``@`` is the name
+    worth keeping; the rest is folded to the same shape a cookie would carry,
+    since this string ends up in frontmatter as ``archived_by: mary``.
+    """
+    name = (raw or "").strip().lower().split("@", 1)[0]
+    name = re.sub(r"[^a-z0-9_-]+", "-", name).strip("-")[:32]
+    return name if WHO_RE.match(name) else None
+
+
+def proxy_who(request: Request, cfg: Settings) -> str | None:
+    """The user an upstream proxy says this is — only when told to believe it.
+
+    ⚠️ This header is trustworthy ONLY because nothing can reach the port
+    except the proxy. If the app is directly reachable, anyone can send it.
+    ``trust_proxy_auth`` is therefore opt-in, and ``main()`` refuses to bind a
+    public address without either it or an explicit override.
+    """
+    if not cfg.trust_proxy_auth:
+        return None
+    return normalize_who(request.headers.get(cfg.auth_user_header))
+
+
+def who(request: Request, cfg: Settings) -> str | None:
+    """Who this request is from: the proxy's word first, else the browser's.
+
+    The proxy WINS. A cookie is a claim the browser makes about itself, which
+    is the right weight when there is nothing to protect; once something has
+    actually authenticated the person, that answer outranks it.
+    """
+    return proxy_who(request, cfg) or normalize_who(request.cookies.get(WHO_COOKIE))
+
+
+def viewer_for(request: Request, cfg: Settings, me: str | None) -> str:
+    """Whose feed the listing should be built for.
+
+    ``?me=`` exists so one browser can preview another person's wall, and so
+    the service worker's cache entry is keyed per person rather than shared.
+    It is a QUERY PARAMETER, so it must never outrank an authenticated
+    identity — otherwise proxy auth would be bypassable with a URL.
+    """
+    authed = proxy_who(request, cfg)
+    if authed:
+        return authed
+    if me and WHO_RE.match(me):
+        return me
+    return who(request, cfg) or store.HUMAN
 
 STATIC = Path(__file__).parent / "static"
 
@@ -98,7 +153,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The query param keeps the CACHE key honest: the service worker stores
         # this response, and two people on one box must not share an entry. The
         # cookie stays authoritative for writes, which are never cached.
-        viewer = (me if me and WHO_RE.match(me) else who(request)) or store.HUMAN
+        viewer = viewer_for(request, cfg, me)
         notes = store.listing(space, q)
         # The census has to describe the WHOLE space, not the search result, or
         # a category vanishes from the chips the moment you type its name.
@@ -130,7 +185,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # code path created it.
         # No invented "Untitled": a Keep note may have only a body, and so
         # may one made here.
-        return store.create(space, req.title, req.body, author=who(request)).summary()
+        return store.create(space, req.title, req.body, author=who(request, cfg)).summary()
 
     @app.put("/api/notes")
     async def update_note(req: NoteWrite, request: Request):
@@ -141,7 +196,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             title=req.title, body=req.body,
             pinned=req.pinned, archived=req.archived, shared=req.shared, order=req.order,
             category=req.category, author=req.author,
-            actor=who(request) or store.HUMAN,
+            actor=who(request, cfg) or store.HUMAN,
         ).summary()
 
     @app.get("/api/trash")
