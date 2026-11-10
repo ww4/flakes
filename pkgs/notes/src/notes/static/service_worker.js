@@ -1,6 +1,6 @@
 /* SilverBullet's service worker URL, replaced by a self-destructing one.
  *
- * notes.rosemaryacres.com served SilverBullet's PWA until 2026-11-09. Its
+ * notes.example.com served SilverBullet's PWA until 2026-11-09. Its
  * worker registered at THIS path with scope "/" and is still installed in
  * every browser that ever opened the old app. It intercepts navigations and
  * answers them from its own cache, whose assets are now gone — which is why

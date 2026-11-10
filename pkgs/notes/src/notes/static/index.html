@@ -558,6 +558,72 @@ body.selecting .pin{display:none}
   color:var(--ink-faint); overflow-wrap:anywhere; flex:none;
 }
 
+/* users */
+.users-title{
+  flex:1; font:600 15px/1.2 "IBM Plex Sans",system-ui,sans-serif; color:var(--ink);
+}
+.u-intro{
+  padding:4px 2px 16px; color:var(--ink-soft);
+  font:400 13px/1.55 "IBM Plex Sans",system-ui,sans-serif; max-width:62ch;
+}
+.u-person{
+  display:flex; align-items:center; gap:12px; padding:12px 0 10px;
+  border-top:1px solid var(--line);
+}
+.u-person:first-of-type{border-top:0}
+.av{
+  flex:none; width:38px; height:38px; border-radius:999px;
+  display:grid; place-items:center; color:#fff;
+  font:600 14px/1 "IBM Plex Sans",system-ui,sans-serif; letter-spacing:.02em;
+}
+.av.sm{width:22px; height:22px; font-size:9px}
+.u-name{
+  flex:1; min-width:0; background:none; border:0; border-bottom:1px solid transparent;
+  padding:4px 2px; color:var(--ink);
+  font:500 15px/1.3 "IBM Plex Sans",system-ui,sans-serif;
+}
+.u-name:hover{border-bottom-color:var(--line)}
+.u-name:focus{outline:none; border-bottom-color:var(--accent)}
+.u-slug{
+  flex:none; color:var(--ink-faint);
+  font:400 10px/1 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.04em;
+}
+.u-ids{margin:0 0 14px 50px; display:flex; flex-direction:column; gap:2px}
+@media (max-width:480px){.u-ids{margin-left:14px}}
+.u-id{
+  display:flex; align-items:center; gap:9px; flex-wrap:wrap; padding:3px 0;
+  font:400 11px/1.5 "IBM Plex Mono",ui-monospace,monospace; color:var(--ink-soft);
+}
+.u-id .src{
+  flex:none; padding:1px 6px; border-radius:4px; background:var(--line);
+  color:var(--ink-soft); font-size:9.5px; letter-spacing:.06em; text-transform:uppercase;
+}
+/* Source chip and identity share the first line; the dropdown drops to the
+   second on a phone. Squeezing them all onto one line broke
+   "sam@example.com" into "sam@e / xample. / com", which is worse. */
+.idline{display:flex; align-items:center; gap:9px; flex:1 1 100%; min-width:0}
+.u-id .who{overflow-wrap:anywhere}
+.u-id select{margin-left:auto}
+@media (min-width:560px){
+  .idline{flex:1 1 auto}
+  .u-id select{margin-left:0}
+}
+.u-id select{
+  background:none; border:1px solid var(--line); border-radius:6px;
+  color:var(--ink-soft); padding:2px 5px; font:inherit; font-size:10.5px;
+}
+.u-unclaimed{
+  margin-top:18px; padding:14px; border:1px dashed var(--line-strong); border-radius:var(--r);
+}
+.u-unclaimed h3{
+  margin:0 0 4px; font:500 9.5px/1 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.16em; text-transform:uppercase; color:var(--brass);
+}
+.u-unclaimed p{
+  margin:0 0 12px; color:var(--ink-soft);
+  font:400 12px/1.5 "IBM Plex Sans",system-ui,sans-serif;
+}
+
 /* undo toast */
 .toast{
   position:fixed; left:16px; bottom:18px; z-index:60; display:flex; align-items:center; gap:14px;
@@ -642,6 +708,19 @@ body.selecting .pin{display:none}
   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
   New note
 </button>
+
+<div class="scrim" id="usersScrim" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Users">
+    <div class="ed-top">
+      <button class="tool" id="usersClose" aria-label="Close" title="Close">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+      </button>
+      <span class="users-title">Users</span>
+    </div>
+    <div class="ed-scroll" id="usersBody"></div>
+    <div class="ed-path" id="usersPath"></div>
+  </div>
+</div>
 
 <div class="scrim" id="scrim" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-label="Edit note">
@@ -803,6 +882,7 @@ body.selecting .pin{display:none}
       return n;
     });
     if (d.cats) CATS = d.cats;          // full census, never filtered by q
+    if (d.people) PEOPLE = d.people;    // slug -> label, for faces and bylines
     if (d.authors) AUTHORS = d.authors;
     shownCount = PAGE;
     render();
@@ -863,12 +943,12 @@ body.selecting .pin{display:none}
     });
   }
 
-  // Default to Chris's own notes. The agent has written into this space for
-  // months, and on first open the wall was almost entirely agent pages — his
-  // actual notes were buried (Chris, 2026-11-09).
+  // Default to the owner's own notes. The agent has written into this space for
+  // months, and on first open the wall was almost entirely agent pages — the
+  // actual notes were buried (decided 2026-11-09).
   // "wall" | "archive" | "trash". Trash is a real view because delete has
  // always MOVED a note rather than unlinking it — that only helps if there is
- // a way to get it back without an agent and a shell (2026-11-09: Chris
+ // a way to get it back without an agent and a shell (2026-11-09: the owner
  // deleted a note by accident and could not).
   var q = "", view = "wall", openId = null, who = "mine";
   function showArchive(){ return view === "archive"; }
@@ -896,6 +976,8 @@ body.selecting .pin{display:none}
     edRaw:document.getElementById("edRaw"), edArch:document.getElementById("edArch"),
     edDel:document.getElementById("edDel"), edSaved:document.getElementById("edSaved"),
     netTip:document.getElementById("netTip"),
+    usersScrim:document.getElementById("usersScrim"), usersBody:document.getElementById("usersBody"),
+    usersClose:document.getElementById("usersClose"), usersPath:document.getElementById("usersPath"),
     toast:document.getElementById("toast"), toastMsg:document.getElementById("toastMsg"),
     toastUndo:document.getElementById("toastUndo"), newBtn:document.getElementById("newBtn")
   };
@@ -1058,7 +1140,10 @@ body.selecting .pin{display:none}
     meta.appendChild(node("span", "cat", n.pending ? "queued" : n.cat));
     // Say who wrote it only when that is not you — otherwise every card on
     // your own wall carries your own name, which is noise.
-    if (!n.pending && n.author !== meName()) meta.appendChild(node("span", "by", n.author));
+    if (!n.pending && n.author !== meName()) {
+      meta.appendChild(avatar(n.author, true));
+      meta.appendChild(node("span", "by", nameOf(n.author)));
+    }
     if (n.shared) {
       var sh = node("span", "shared-mark");
       sh.setAttribute("title", "In the shared space");
@@ -1109,6 +1194,7 @@ body.selecting .pin{display:none}
     if (!LAYER) return;                 // not one of ours; let it be
     var k = LAYER; LAYER = null;
     if (k === "note") close(true);
+    else if (k === "users") closeUsers(true);
     else if (k === "drawer") closeDrawer(true);
     else if (k === "sel") exitSel(true);
   });
@@ -1424,7 +1510,7 @@ body.selecting .pin{display:none}
   }
 
   // ---- drag a pinned note to reorder it ----
-  // Scoped to pinned notes (Chris, 2026-11-09). That also makes the hard part
+  // Scoped to pinned notes (decided 2026-11-09). That also makes the hard part
   // vanish: the pinned set is small, so a drop RENUMBERS it 10, 20, 30… and
   // writes only the ones whose number actually changed — no fractional
   // indexing, no drift, nothing to rebalance later.
@@ -1535,7 +1621,7 @@ body.selecting .pin{display:none}
 
     document.addEventListener("touchstart", function(ev){
       mode = null;
-      if (ed || !el.scrim.hidden || DRAG || ev.touches.length !== 1) return;
+      if (ed || !el.scrim.hidden || usersOpen() || DRAG || ev.touches.length !== 1) return;
       var t = ev.touches[0];
       if (isOpen()) { mode = "close"; }
       else if (t.clientX <= drawerZone()) { mode = "open"; fillDrawer(); }
@@ -1583,7 +1669,7 @@ body.selecting .pin{display:none}
   (function(){
     if (!("ontouchstart" in window)) return;
     var y0 = 0, pulling = false, dist = 0, THRESH = 72;
-    function busy(){ return ed || !el.scrim.hidden || el.drawer.classList.contains("open"); }
+    function busy(){ return ed || !el.scrim.hidden || usersOpen() || el.drawer.classList.contains("open"); }
     document.addEventListener("touchstart", function(ev){
       if (busy() || window.scrollY > 0 || ev.touches.length !== 1) { pulling = false; return; }
       y0 = ev.touches[0].clientY; pulling = true; dist = 0;
@@ -1645,7 +1731,7 @@ body.selecting .pin{display:none}
       return {
         id: "pending:" + p.key, title: p.title, preview: p.body,
         lines: p.body.split("\n").filter(function(l){ return l.trim(); }).length,
-        truncated: p.body.length > 700, cat: "inbox", author: "chris",
+        truncated: p.body.length > 700, cat: "inbox", author: meName(),
         date: new Date(p.at).toISOString().slice(0, 10),
         pinned: false, archived: false, pending: true
       };
@@ -1840,27 +1926,27 @@ body.selecting .pin{display:none}
   // Owner and sharing are one menu because they are one question — "who is
   // this note for" — and two adjacent person icons were two things to guess at.
   function fillPeopleMenu(){
-    var now = (ed && ed.note && ed.note.author) || "chris";
+    var now = (ed && ed.note && ed.note.author) || DEFAULT_AUTHOR;
     var isShared = !!(ed && ed.note && ed.note.shared);
     el.peopleMenu.textContent = "";
     el.peopleMenu.appendChild(node("div", "head", "Owner"));
-    var names = Object.keys(AUTHORS).filter(function(a){ return a !== "claude"; });
-    if (names.indexOf("chris") < 0) names.unshift("chris");
+    // People who exist, and nobody else. Typing a name here used to conjure
+    // one, which made sense when a cookie was the only notion of identity;
+    // now that sign-ins are recorded and named in Users, an owner invented
+    // at this prompt is one nothing can ever resolve to a real person.
+    var names = Object.keys(PEOPLE);
+    Object.keys(AUTHORS).forEach(function(a){
+      if (a !== "claude" && names.indexOf(a) < 0) names.push(a);
+    });
+    if (names.indexOf(DEFAULT_AUTHOR) < 0) names.unshift(DEFAULT_AUTHOR);
     if (now !== "claude" && names.indexOf(now) < 0) names.push(now);
     names.forEach(function(p){
-      var b = node("button", null, p);
+      var b = node("button", null, nameOf(p));
       b.setAttribute("aria-pressed", p === now ? "true" : "false");
       if (AUTHORS[p]) b.appendChild(node("span", "n", AUTHORS[p]));
       b.addEventListener("click", function(){ closeMenus(null); setOwner(p); });
       el.peopleMenu.appendChild(b);
     });
-    var other = node("button", null, "someone else…");
-    other.addEventListener("click", function(ev){
-      ev.stopPropagation();
-      var nm = window.prompt("First name (lowercase, no spaces):", "");
-      if (nm) { closeMenus(null); setOwner(nm); }
-    });
-    el.peopleMenu.appendChild(other);
     el.peopleMenu.appendChild(node("div", "sep"));
     var sh = node("button", null, (isShared ? "\u2713 " : "") + "Share note");
     sh.setAttribute("aria-pressed", isShared ? "true" : "false");
@@ -1882,10 +1968,10 @@ body.selecting .pin{display:none}
 
   function setOwner(value){
     if (!ed || !ed.note) return;
-    if (value === (ed.note.author || "chris")) return;
+    if (value === (ed.note.author || DEFAULT_AUTHOR)) return;
     var n = ed.note;
     persist(n, {author:value}, "Couldn't change who owns this").then(function(){
-      el.edWhoNow.textContent = n.author || "chris";
+      el.edWhoNow.textContent = nameOf(n.author || meName());
       return refresh();
     }).catch(function(){});
   }
@@ -1931,19 +2017,19 @@ body.selecting .pin{display:none}
   }
 
   // "Mine" needs to know who you are. Without a device identity everyone is
-  // Chris, which is exactly what the 545 notes predating this assume.
-  function meName(){ return ME || "chris"; }
+  // the owner, which is exactly what the 545 notes predating this assume.
+  function meName(){ return ME || DEFAULT_AUTHOR; }
 
   // "Ours" is a place, not a union. A note is in it because somebody put it
   // there, exactly like archived — so your own feed is YOUR notes, plus the
   // shared ones if you want them (you do, by default).
-  // Archived FOR ME. A shared note Mary put away is still on my wall, and
+  // Archived FOR ME. A shared note the other person put away is still on my wall, and
   // vice versa — archive is "I am done with this", not a claim about anyone
   // else. A note with no named archiver falls back to the old global flag,
   // which is what the 764 imported from Keep carry.
   // Pinned FOR ME, and MY position in the pinned row. A pin means "keep this
-  // at the top for me" — Mary pinning the grocery list should not pin it for
-  // Chris, and his arrangement of his pinned row is not hers.
+  // at the top for me" — the other person pinning the grocery list should not pin it for
+  // one person, and one person's arrangement of their pinned row is not the other's.
   function pinnedForMe(n){
     if (n.pinned_by && n.pinned_by.length) return n.pinned_by.indexOf(meName()) >= 0;
     return !!n.pinned;
@@ -1989,7 +2075,7 @@ body.selecting .pin{display:none}
   }
 
   // ---- who is on this device ----
-  // A cookie, not an account. Chris: "I don't want to set up auth or accounts
+  // A cookie, not an account. The ask was "I don't want to set up auth or accounts
   // really... There's no secrets here to protect." It replaces Keep's
   // add-collaborator dance; the server reads the same cookie when stamping a
   // new note, so attribution does not depend on the client asking nicely.
@@ -2022,13 +2108,51 @@ body.selecting .pin{display:none}
     if (ev.key === "Escape" && OPEN_MENU) { closeMenus(null); }
   });
 
-  function setMe(name){
+  // Who this browser's sign-in belongs to, from /api/whoami. Deliberately
+  // NOT from the listing: that response is cached, and identity in a cached
+  // body is what made the app forget who you were on every reload.
+  var WHOAMI = null;
+
+  // Who an unlabelled note belongs to. This MUST agree with the store's own
+  // default (NOTES_DEFAULT_AUTHOR) — it decides which notes read as archived
+  // and pinned for you, so a client-side literal that drifts from the server
+  // silently shows the wrong wall. Cached so an offline first paint, which
+  // happens before /api/whoami lands, still agrees.
+  var DEFAULT_AUTHOR = "owner";
+  try { DEFAULT_AUTHOR = localStorage.getItem("notes_default_author") || DEFAULT_AUTHOR; } catch (e) {}
+
+  function setMe(name, display){
     var v = (name || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
     if (!v) return;
-    writeCookieMe(v);
+    // Record the association, so the answer survives this browser: an
+    // identity from a directory is not ours to store in a cookie, and even a
+    // cookie one is worth writing down so the other person's device knows
+    // the name too.
+    var id = WHOAMI && WHOAMI.identity;
+    var p = id
+      ? api("PUT", "/api/people", {identity: id, person: v,
+                                   display: display && display !== v ? display : null})
+          .catch(function(e){ fail("Couldn't save that", e); })
+      : Promise.resolve();
+    // A proxy owns the identity; a cookie is only meaningful without one.
+    if (!(WHOAMI && WHOAMI.fixed)) { writeCookieMe(v); }
     ME = v;
     closeMenus(null);
-    refresh().catch(function(){});
+    p.then(loadWhoami).then(function(){ return refresh(); }).catch(function(){});
+  }
+
+  function loadWhoami(){
+    return api("GET", "/api/whoami").then(function(d){
+      WHOAMI = d;
+      if (d.default_author) {
+        DEFAULT_AUTHOR = d.default_author;
+        try { localStorage.setItem("notes_default_author", DEFAULT_AUTHOR); } catch (e) {}
+      }
+      if (d.people) PEOPLE = d.people;
+      if (d.person) ME = d.person;
+      drawMe();
+      return d;
+    }).catch(function(){ return null; });
   }
 
   function drawMe(){
@@ -2038,24 +2162,36 @@ body.selecting .pin{display:none}
   }
 
   function fillMeMenu(){
+    var fresh = WHOAMI && WHOAMI.unclaimed;
     el.meMenu.textContent = "";
-    el.meMenu.appendChild(node("div", "head", "This device is"));
+    el.meMenu.appendChild(node("div", "head",
+      fresh ? "New here — who are you?" : (WHOAMI && WHOAMI.fixed ? "Signed in as" : "This device is")));
     // Offer whoever already writes here, so a second person appears on the
     // first device that names them rather than being hardcoded.
-    var names = Object.keys(AUTHORS).filter(function(a){ return a !== "claude"; });
-    if (names.indexOf("chris") < 0) names.unshift("chris");
+    var names = Object.keys(PEOPLE);
+    Object.keys(AUTHORS).forEach(function(a){
+      if (a !== "claude" && names.indexOf(a) < 0) names.push(a);
+    });
+    if (names.indexOf(DEFAULT_AUTHOR) < 0) names.unshift(DEFAULT_AUTHOR);
     names.forEach(function(nm){
-      var b = node("button", null, nm);
+      var b = node("button", null, nameOf(nm));
       b.setAttribute("aria-pressed", ME === nm ? "true" : "false");
       b.addEventListener("click", function(){ setMe(nm); });
       el.meMenu.appendChild(b);
     });
-    var other = node("button", null, "someone else…");
+    var other = node("button", null, fresh ? "none of these — I'm…" : "someone else…");
     other.addEventListener("click", function(){
-      var nm = window.prompt("First name (lowercase, no spaces):", "");
-      if (nm) setMe(nm);
+      // Pre-filled with whatever we can guess: the name the proxy gave, or
+      // the login itself. Accepting it is one tap; it is still only a guess.
+      var guess = (WHOAMI && WHOAMI.suggest) || ME || "";
+      var nm = window.prompt("What should we call you?", guess);
+      if (nm) setMe(nm, nm);
     });
     el.meMenu.appendChild(other);
+    if (fresh && WHOAMI.identity) {
+      var sub = node("div", "head", "signed in as " + WHOAMI.identity);
+      el.meMenu.appendChild(sub);
+    }
     el.meMenu.appendChild(node("div", "sep"));
     var sh = node("button", null, (SHOW_SHARED ? "\u2713 " : "") + "show Ours in my feed");
     sh.setAttribute("aria-pressed", SHOW_SHARED ? "true" : "false");
@@ -2080,8 +2216,8 @@ body.selecting .pin{display:none}
     return m ? m[1] : "";
   }
 
-  // Picking a category REPLACES the query. Chris searched "wood", clicked the
-  // suggested woodgas category and got "cat:woodgas wood" — the terms he had
+  // Picking a category REPLACES the query. Someone searched "wood", clicked the
+  // suggested woodgas category and got "cat:woodgas wood" — the terms typed
   // typed to FIND the category then narrowed it. Clicking a category means
   // that category.
   function setCat(value){
@@ -2350,7 +2486,7 @@ body.selecting .pin{display:none}
     el.edCat.value = "";
     el.edCatNow.textContent = n ? (n.cat || "none") : "";
     el.edCatBtn.disabled = !n;       // a new note gets its category on first save
-    el.edWhoNow.textContent = n ? (n.author || "chris") : "";
+    el.edWhoNow.textContent = n ? nameOf(n.author || meName()) : "";
     closeMenus(null);
     el.scrim.hidden = false;
     enterLayer("note");                 // so the system back gesture closes THIS
@@ -2533,6 +2669,40 @@ body.selecting .pin{display:none}
     if (!el.sug.hidden && !el.sug.contains(ev.target) && ev.target !== el.q) closeSug();
   });
 
+  // ---- people: a name to show, and a face to go with it ----
+  // PEOPLE maps a person slug to their display name. A slug is what a note
+  // records (archived_by: ana); the name is only ever a label, so anything
+  // missing falls back to the slug rather than to blank.
+  var PEOPLE = {};
+  function nameOf(slug){
+    if (!slug) return "";
+    return (PEOPLE[slug] || "").trim() || slug;
+  }
+  // Initials on a colour derived from the slug — not an upload. Storing
+  // images would mean a binary file type in a space whose entire security
+  // story is "only .md under these dirs", which is a lot of new surface for
+  // decoration. This is deterministic, needs no network, and is what Keep
+  // does for anyone without a photo anyway.
+  function initials(name){
+    var parts = String(name || "").trim().split(/[\s._-]+/).filter(Boolean);
+    if (!parts.length) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  function hueOf(slug){
+    var h = 0, str = String(slug || "");
+    for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) % 360;
+    return h;
+  }
+  function avatar(slug, small){
+    var a = node("span", "av" + (small ? " sm" : ""), initials(nameOf(slug)));
+    // Fixed saturation and lightness so every face reads against both themes
+    // and against each other; only the hue varies.
+    a.style.background = "hsl(" + hueOf(slug) + " 42% 38%)";
+    a.setAttribute("title", nameOf(slug));
+    return a;
+  }
+
   // ---- the drawer: every filter, on a screen with no room for a chip row ----
   function icon(d){
     var w = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -2550,16 +2720,24 @@ body.selecting .pin{display:none}
     mine: "M12 8a3.4 3.4 0 1 0 0-.1zM5.5 20a6.5 6.5 0 0 1 13 0",
     ours: "M9 8a3.2 3.2 0 1 0 0-.1zM3 19a6 6 0 0 1 12 0M18 7v6M21 10h-6",
     all: "M4 6h16M4 12h16M4 18h16",
-    tag: "M3 11V5a2 2 0 0 1 2-2h6l10 10-8 8z"
+    tag: "M3 11V5a2 2 0 0 1 2-2h6l10 10-8 8z",
+    users: "M9 8.5a3.2 3.2 0 1 0 0-.1zM2.5 19.5a6.5 6.5 0 0 1 13 0M16 5.3a3.2 3.2 0 0 1 0 6.4M18 19.5a6.4 6.4 0 0 0-2-4.6"
   };
 
-  function drawerRow(label, ico, pressed, count, onClick){
+  function drawerRow(label, ico, pressed, count, onClick, ownsLayer){
     var b = node("button");
     b.setAttribute("aria-pressed", pressed ? "true" : "false");
     b.appendChild(icon(ICONS[ico] || ICONS.tag));
     b.appendChild(document.createTextNode(label));
     if (count !== undefined && count !== null) b.appendChild(node("span", "n", count));
-    b.addEventListener("click", function(){ closeDrawer(); onClick(); });
+    b.addEventListener("click", function(){
+      // A row that opens its own layer INHERITS the drawer's history entry.
+      // Popping it here and pushing a new one in the action does not work:
+      // history.back() is asynchronous, so its popstate lands after the new
+      // layer is in place and dismisses it the instant it opens.
+      if (ownsLayer) hideDrawer(); else closeDrawer();
+      onClick();
+    });
     return b;
   }
 
@@ -2581,6 +2759,9 @@ body.selecting .pin{display:none}
       }));
     });
     el.drawer.appendChild(node("div", "sep"));
+    el.drawer.appendChild(node("h2", null, "People"));
+    el.drawer.appendChild(drawerRow("Users", "users", usersOpen(), null, openUsers, true));
+    el.drawer.appendChild(node("div", "sep"));
     el.drawer.appendChild(node("h2", null, "Categories"));
     var active = activeCat();
     var keys = Object.keys(CATS).sort(function(a, b){ return CATS[b] - CATS[a] || (a < b ? -1 : 1); });
@@ -2589,6 +2770,147 @@ body.selecting .pin{display:none}
       el.drawer.appendChild(drawerRow(k.replace(/-/g, " "), "tag", active === k, CATS[k], function(){ setCat(k); }));
     });
   }
+
+  // ---- Users: the one page that edits a file instead of a note ----
+  // It is a view over Notes/People.md — a markdown table in the space. The
+  // path is shown at the bottom on purpose: pretending this is app state
+  // would misrepresent the only promise the project makes.
+  var USERS = null;
+
+  function usersOpen(){ return !el.usersScrim.hidden; }
+
+  function openUsers(){
+    el.usersScrim.hidden = false;
+    if (LAYER === "drawer") LAYER = "users";   // inherited from the drawer row
+    else enterLayer("users");
+    el.usersBody.textContent = "";
+    el.usersBody.appendChild(node("div", "empty", "Loading…"));
+    api("GET", "/api/people").then(function(d){
+      USERS = d;
+      PEOPLE = d.people || PEOPLE;
+      drawUsers();
+    }).catch(function(e){
+      el.usersBody.textContent = "";
+      el.usersBody.appendChild(node("div", "empty",
+        "Couldn't load the people table — " + ((e && e.message) || "unknown error")));
+    });
+  }
+
+  function closeUsers(fromHistory){
+    if (el.usersScrim.hidden) return;
+    el.usersScrim.hidden = true;
+    if (fromHistory !== true) exitLayer();
+    render();
+  }
+
+  function saveperson(identity, person, display){
+    return api("PUT", "/api/people", {identity: identity, person: person, display: display})
+      .then(function(d){
+        if (d && d.me) { ME = d.me; }
+        return api("GET", "/api/people");
+      }).then(function(d){
+        USERS = d; PEOPLE = d.people || PEOPLE; drawUsers();
+      }).catch(function(e){ fail("Couldn't save that", e); });
+  }
+
+  // "github:aparker" -> GITHUB. A bare name has no source to show.
+  function sourceOf(identity){
+    var i = String(identity || "");
+    var colon = i.indexOf(":");
+    if (colon > 0) return i.slice(0, colon);
+    if (i.indexOf("@") > 0) return i.slice(i.indexOf("@") + 1);
+    return "";
+  }
+
+  function drawUsers(){
+    var d = USERS;
+    el.usersBody.textContent = "";
+    el.usersPath.textContent = d.file + "  ·  a markdown table you can also edit by hand";
+
+    var intro = node("div", "u-intro");
+    intro.appendChild(document.createTextNode(
+      d.proxy_auth
+        ? "Your sign-in comes from the proxy in front of this app. Names here are labels only — change them freely; notes record the short id beneath each name."
+        : "Names here are labels only. A note records the short id beneath each name, so renaming someone never rewrites what they have already touched."));
+    el.usersBody.appendChild(intro);
+
+    var people = Object.keys(d.people).sort();
+    var claimed = {}, loose = [];
+    d.rows.forEach(function(r){
+      if (r.person) { (claimed[r.person] = claimed[r.person] || []).push(r); }
+      else loose.push(r);
+    });
+    people.forEach(function(slug){ claimed[slug] = claimed[slug] || []; });
+
+    people.forEach(function(slug){
+      var row = node("div", "u-person");
+      row.appendChild(avatar(slug));
+      var inp = node("input", "u-name");
+      inp.value = nameOf(slug);
+      inp.setAttribute("aria-label", "Display name for " + slug);
+      inp.addEventListener("change", function(){
+        saveperson(slug, slug, inp.value);
+      });
+      row.appendChild(inp);
+      row.appendChild(node("span", "u-slug", slug + (slug === d.me ? " · you" : "")));
+      el.usersBody.appendChild(row);
+
+      var ids = node("div", "u-ids");
+      (claimed[slug] || []).forEach(function(r){
+        ids.appendChild(idRow(r, people, d));
+      });
+      el.usersBody.appendChild(ids);
+    });
+
+    if (loose.length) {
+      var box = node("div", "u-unclaimed");
+      box.appendChild(node("h3", null, "Not yet matched"));
+      box.appendChild(node("p", null,
+        loose.length === 1
+          ? "One sign-in has been seen that nobody owns yet. Pick who it is, or leave it — it works on its own."
+          : loose.length + " sign-ins have been seen that nobody owns yet. Pick who each one is, or leave them — they work on their own."));
+      loose.forEach(function(r){ box.appendChild(idRow(r, people, d)); });
+      el.usersBody.appendChild(box);
+    }
+  }
+
+  function idRow(r, people, d){
+    var line = node("div", "u-id");
+    var head = node("span", "idline");
+    head.appendChild(node("span", "src", sourceOf(r.identity) || "local"));
+    head.appendChild(node("span", "who", r.identity));
+    line.appendChild(head);
+    var sel = node("select");
+    sel.setAttribute("aria-label", "Who is " + r.identity + "?");
+    var none = node("option", null, "— nobody —");
+    none.value = "";
+    sel.appendChild(none);
+    people.forEach(function(p){
+      var o = node("option", null, nameOf(p));
+      o.value = p;
+      if (p === r.person) o.selected = true;
+      sel.appendChild(o);
+    });
+    // An identity can also become a person in its own right, which is how
+    // the first sign-in from a new source gets a seat at all.
+    if (people.indexOf(r.identity) < 0) {
+      var own = node("option", null, "new person");
+      own.value = "\u0000new";
+      sel.appendChild(own);
+    }
+    sel.addEventListener("change", function(){
+      var v = sel.value === "\u0000new" ? r.identity : sel.value;
+      saveperson(r.identity, v, null);
+    });
+    line.appendChild(sel);
+    if (r.first_seen) line.appendChild(node("span", "u-slug", r.first_seen));
+    return line;
+  }
+
+  el.usersClose.addEventListener("click", function(){ closeUsers(); });
+  el.usersScrim.addEventListener("click", function(ev){
+    if (ev.target === el.usersScrim) closeUsers();
+  });
 
   function openDrawer(){
     fillDrawer();
@@ -2599,17 +2921,22 @@ body.selecting .pin{display:none}
     // app — it was the one layer that never pushed a history entry.
     enterLayer("drawer");
   }
-  function closeDrawer(fromHistory){
+  // Visual only: the caller keeps the drawer's history entry. Used when the
+  // thing being opened is itself a layer — see openUsers.
+  function hideDrawer(){
     el.drawer.classList.remove("open");
     el.drawerScrim.classList.remove("open");
     el.drawer.style.transform = "";
     el.menuBtn.setAttribute("aria-expanded", "false");
-    if (!fromHistory) exitLayer();
+  }
+  function closeDrawer(fromHistory){
+    hideDrawer();
+    if (fromHistory !== true) exitLayer();
   }
   el.menuBtn.addEventListener("click", function(){
     if (el.drawer.classList.contains("open")) closeDrawer(); else openDrawer();
   });
-  el.drawerScrim.addEventListener("click", closeDrawer);
+  el.drawerScrim.addEventListener("click", function(){ closeDrawer(); });
   document.addEventListener("keydown", function(ev){
     if (ev.key === "Escape" && el.drawer.classList.contains("open")) closeDrawer();
   });
@@ -2680,7 +3007,7 @@ body.selecting .pin{display:none}
         // The last listing we successfully loaded. The app owns its offline
         // copy rather than relying on HTTP cache semantics: "if we have ever
         // loaded the app before it should have something to start with and
-        // then sync from there" (Chris, 2026-11-09).
+        // then sync from there" (decided 2026-11-09).
         if (!d.objectStoreNames.contains("snap")) d.createObjectStore("snap");
       };
       rq.onsuccess = function(){ DB = rq.result; res(DB); };
@@ -2868,10 +3195,13 @@ body.selecting .pin{display:none}
   }).catch(function(){});
 
   refresh().then(function(){
-    // Ask once, on a device that has never said who it is. Everything works
-    // without answering — the note is simply attributed to Chris, which is
-    // what every note before this was.
-    if (!ME) openWhoBar();
+    // Ask once, when nobody has said whose this sign-in is. That is a device
+    // with no cookie, or a login from a directory that nothing has claimed
+    // yet. Everything works without answering — the note is attributed to the
+    // best guess, which is what every note before this was.
+    loadWhoami().then(function(d){
+      if (!ME || (d && d.unclaimed)) openWhoBar();
+    });
     // No adaptive default any more: "Mine" already includes the shared space,
     // so a second person sees the household's notes from their first visit
     // without being switched to a different view behind their back.

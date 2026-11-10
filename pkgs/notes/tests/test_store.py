@@ -73,7 +73,7 @@ def test_no_frontmatter_no_h1_survives_a_write(space):
     before = (space / "Grocery List.md").read_text()
     store.write(space, "Grocery List.md", pinned=True)
     after = (space / "Grocery List.md").read_text()
-    assert after.startswith("---\npinned_by: chris\n---\n")
+    assert after.startswith("---\npinned_by: sam\n---\n")
     assert "## Walmart" in after and "## Frankfort house" in after
     assert "# Grocery List" not in after          # no invented heading
     assert before.strip() in after                # body untouched
@@ -86,7 +86,7 @@ def test_unknown_frontmatter_keys_are_preserved_verbatim(space):
     for line in ("date: 2017-03-04", "category: logistics",
                  "source: Keep.json", "tags: keep-import"):
         assert line in text, line
-    assert "pinned_by: chris" in text
+    assert "pinned_by: sam" in text
 
 
 def test_unpinning_drops_the_key_rather_than_writing_false(space):
@@ -165,13 +165,13 @@ def test_atomic_write_leaves_no_temp_files(space):
 
 
 # --- authorship -------------------------------------------------------------
-# Only the agent's own notes carry the key; unlabelled means Chris's. The
+# Only the agent's own notes carry the key; unlabelled means the owner's. The
 # default wall filter depends on this, so a silent flip either way is a bug
-# that hides his notes or buries them again.
+# that hides the default author's notes or buries them again.
 
-def test_unlabelled_notes_are_chris(space):
-    assert store.read(space, "Keep/2017-03-04 Bring from Kentucky.md").author == "chris"
-    assert store.read(space, "Grocery List.md").author == "chris"
+def test_unlabelled_notes_are_the_default_author(space):
+    assert store.read(space, "Keep/2017-03-04 Bring from Kentucky.md").author == "sam"
+    assert store.read(space, "Grocery List.md").author == "sam"
 
 
 def test_author_key_is_read(space):
@@ -187,7 +187,7 @@ def test_author_is_case_and_space_insensitive(space):
 
 
 def test_author_survives_an_unrelated_write(space):
-    """Pinning an agent note must not quietly re-attribute it to Chris."""
+    """Pinning an agent note must not quietly re-attribute it to the owner."""
     rel = "Notes/agent page.md"
     (space / rel).write_text("---\nauthor: claude\ncategory: homelab\n---\n\nbody\n")
     store.write(space, rel, pinned=True)
@@ -196,10 +196,10 @@ def test_author_survives_an_unrelated_write(space):
     assert "author: claude" in (space / rel).read_text()
 
 
-def test_notes_created_here_are_chris(space):
-    """Anything made in this app is his by construction — no key written."""
+def test_notes_created_here_use_the_default_author(space):
+    """Anything made in this app is theirs by construction — no key written."""
     n = store.create(space, "deck screws", "3 inch")
-    assert n.author == "chris"
+    assert n.author == "sam"
     assert "author:" not in (space / n.id).read_text()
 
 
@@ -298,11 +298,11 @@ def test_empty_category_clears_the_key(space):
 def test_category_cannot_smuggle_frontmatter(space):
     """A newline here would inject arbitrary keys into the file."""
     rel = "Keep/2017-03-04 Bring from Kentucky.md"
-    store.write(space, rel, category="x\nauthor: chris\npinned: true")
+    store.write(space, rel, category="x\nauthor: sam\npinned: true")
     text = (space / rel).read_text()
-    assert "author: chris" not in text
+    assert "author: sam" not in text
     assert text.count("pinned:") == 0
-    assert store.read(space, rel).author == "chris"  # unchanged, not injected
+    assert store.read(space, rel).author == "sam"  # unchanged, not injected
 
 
 def test_census_counts_every_category_unfiltered(space):
@@ -314,7 +314,7 @@ def test_census_counts_every_category_unfiltered(space):
 
 
 def test_search_returns_any_term_ranked_like_keep(space):
-    """Keep's semantics, which is what Chris expects from this box.
+    """Keep's semantics, which is what the owner expects from this box.
 
     Searching "wood gas" must return the note that says "woodgas", the one
     that only says "wood", and the one that only says "gas" -- and rank the
@@ -366,7 +366,7 @@ def test_whole_word_hits_rank_above_in_word_hits(space):
 
 def test_category_name_pulls_in_the_whole_category(space):
     """A note in the woodgas category counts as a hit for "woodgas" even if
-    its text never says the word — Chris: "if the category name is a high
+    its text never says the word — the owner: "if the category name is a high
     grade match for the search term you should pull in the whole category"."""
     rel = "Notes/chunker.md"
     (space / rel).write_text("---\ncategory: woodgas\n---\n\n# chunker\n\nspare tire mount\n")
@@ -412,92 +412,92 @@ def test_split_query_separates_filters_from_terms(space):
 
 # --- who wrote it ------------------------------------------------------------
 # Attribution between two people who trust each other, not authentication.
-# Chris: "There's no secrets here to protect."
+# the owner: "There's no secrets here to protect."
 
 def test_create_stamps_a_named_author(space):
-    n = store.create(space, "milk", "2%", author="mary")
-    assert n.author == "mary"
-    assert "author: mary" in (space / n.id).read_text()
+    n = store.create(space, "milk", "2%", author="ana")
+    assert n.author == "ana"
+    assert "author: ana" in (space / n.id).read_text()
 
 
 def test_create_without_a_device_identity_stays_unlabelled(space):
-    """545 notes predate this; unlabelled must keep reading as Chris."""
+    """545 notes predate this; unlabelled must keep reading as the owner."""
     n = store.create(space, "milk", "2%")
-    assert n.author == "chris"
+    assert n.author == "sam"
     assert "author:" not in (space / n.id).read_text()
 
 
-def test_chris_is_not_written_redundantly(space):
-    n = store.create(space, "milk", "2%", author="chris")
-    assert n.author == "chris"
+def test_the_default_author_is_not_written_redundantly(space):
+    n = store.create(space, "milk", "2%", author="sam")
+    assert n.author == "sam"
     assert "author:" not in (space / n.id).read_text()
 
 
 def test_by_filter_selects_one_persons_notes(space):
-    store.create(space, "hers", "x", author="mary")
-    store.create(space, "his", "y")
-    mary = [n.title for n in store.listing(space, "by:mary")]
-    assert mary == ["hers"]
-    his = [n.title for n in store.listing(space, "by:chris")]
-    assert "his" in his and "hers" not in his
+    store.create(space, "theirs", "x", author="ana")
+    store.create(space, "mine", "y")
+    ana = [n.title for n in store.listing(space, "by:ana")]
+    assert ana == ["theirs"]
+    mine = [n.title for n in store.listing(space, "by:sam")]
+    assert "mine" in mine and "theirs" not in mine
 
 
 def test_by_composes_with_terms_and_categories(space):
-    store.create(space, "hers bread", "bread", author="mary")
-    store.create(space, "hers paint", "paint", author="mary")
-    assert [n.title for n in store.listing(space, "by:mary bread")] == ["hers bread"]
+    store.create(space, "theirs bread", "bread", author="ana")
+    store.create(space, "theirs paint", "paint", author="ana")
+    assert [n.title for n in store.listing(space, "by:ana bread")] == ["theirs bread"]
 
 
 def test_split_query_separates_all_three(space):
-    assert store.split_query("cat:woodgas by:mary truck") == (["woodgas"], ["mary"], ["truck"])
+    assert store.split_query("cat:woodgas by:ana truck") == (["woodgas"], ["ana"], ["truck"])
     assert store.split_query("by:") == ([], [], ["by:"])
 
 
 def test_authors_census_counts_everyone(space):
-    store.create(space, "hers", "x", author="mary")
+    store.create(space, "theirs", "x", author="ana")
     a = store.authors(space)
-    assert a["mary"] == 1
-    assert a["chris"] >= 1
+    assert a["ana"] == 1
+    assert a["sam"] >= 1
     assert sum(a.values()) == len(store.listing(space))
 
 
 def test_ownership_can_be_reassigned(space):
-    n = store.create(space, "hers", "x", author="mary")
-    assert n.author == "mary"
-    moved = store.write(space, n.id, author="chris")
-    assert moved.author == "chris"
-    assert "author:" not in (space / n.id).read_text()   # chris == unlabelled
-    back = store.write(space, n.id, author="mary")
-    assert back.author == "mary"
+    n = store.create(space, "theirs", "x", author="ana")
+    assert n.author == "ana"
+    moved = store.write(space, n.id, author="sam")
+    assert moved.author == "sam"
+    assert "author:" not in (space / n.id).read_text()   # sam == unlabelled
+    back = store.write(space, n.id, author="ana")
+    assert back.author == "ana"
     assert (space / n.id).read_text().count("author:") == 1
 
 
 def test_editing_a_note_never_changes_its_owner(space):
-    """Mary adding a line to Chris's grocery list must not take it over."""
-    n = store.create(space, "list", "bread", author="chris")
+    """Ana adding a line to the owner's grocery list must not take it over."""
+    n = store.create(space, "list", "bread", author="sam")
     store.write(space, n.id, body="bread\nmilk")
-    assert store.read(space, n.id).author == "chris"
-    m = store.create(space, "hers", "x", author="mary")
+    assert store.read(space, n.id).author == "sam"
+    m = store.create(space, "theirs", "x", author="ana")
     store.write(space, m.id, body="x\ny", pinned=True)
-    assert store.read(space, m.id).author == "mary"
+    assert store.read(space, m.id).author == "ana"
 
 
 def test_reassigned_author_is_slugged(space):
     n = store.create(space, "x", "y")
-    store.write(space, n.id, author="Mary Jo\npinned: true")
+    store.write(space, n.id, author="Ana Jo\npinned: true")
     text = (space / n.id).read_text()
-    assert "author: maryjopinnedtrue" in text or "author: maryjo" in text
+    assert "author: anajopinnedtrue" in text or "author: anajo" in text
     assert text.count("pinned:") == 0
 
 
 # --- the shared space --------------------------------------------------------
 # "Ours" is a place a note is put, like archived -- not a computed union of
-# everyone's notes. Chris, 2026-11-09: "I don't want 'ours' to be a mashup of
+# everyone's notes. the owner, 2026-11-09: "I don't want 'ours' to be a mashup of
 # every human note. I want that to be a shared space we can intentionally add
 # things to, like 'archived'."
 
 def test_notes_are_not_shared_by_default(space):
-    n = store.create(space, "mine", "x", author="mary")
+    n = store.create(space, "mine", "x", author="ana")
     assert n.shared is False
     assert "shared:" not in (space / n.id).read_text()
 
@@ -514,9 +514,9 @@ def test_sharing_is_a_flag_that_toggles(space):
 
 def test_sharing_does_not_change_who_owns_it(space):
     """A shared note still belongs to whoever wrote it."""
-    n = store.create(space, "hers", "x", author="mary")
+    n = store.create(space, "theirs", "x", author="ana")
     shared = store.write(space, n.id, shared=True)
-    assert shared.author == "mary" and shared.shared is True
+    assert shared.author == "ana" and shared.shared is True
 
 
 def test_sharing_is_independent_of_pinned_and_archived(space):
@@ -570,26 +570,26 @@ def test_trashed_notes_stay_out_of_the_normal_listing(space):
 # "mine", a chip reading 83 that yields 4 notes is worse than no chip.
 
 def test_census_scoped_to_mine_counts_only_my_notes(space):
-    store.create(space, "hers", "x", author="mary")
+    store.create(space, "theirs", "x", author="ana")
     store.write(space, "Keep/2017-03-04 Bring from Kentucky.md", category="travel")
-    mine = store.census(space, scope="mine", me="chris", show_shared=False)
-    theirs = store.census(space, scope="mine", me="mary", show_shared=False)
+    mine = store.census(space, scope="mine", me="sam", show_shared=False)
+    theirs = store.census(space, scope="mine", me="ana", show_shared=False)
     assert theirs == {"inbox": 1}
     assert "inbox" not in mine or mine.get("inbox", 0) == 0
     assert mine.get("travel") == 1
 
 
 def test_mine_includes_the_shared_space_when_asked(space):
-    n = store.create(space, "hers", "x", author="mary")
+    n = store.create(space, "theirs", "x", author="ana")
     store.write(space, n.id, shared=True)
-    with_shared = store.census(space, scope="mine", me="chris", show_shared=True)
-    without = store.census(space, scope="mine", me="chris", show_shared=False)
+    with_shared = store.census(space, scope="mine", me="sam", show_shared=True)
+    without = store.census(space, scope="mine", me="sam", show_shared=False)
     assert with_shared.get("inbox") == 1
     assert without.get("inbox") is None
 
 
 def test_census_all_counts_everything_including_the_agent(space):
-    store.create(space, "hers", "x", author="mary")
+    store.create(space, "theirs", "x", author="ana")
     (space / "Notes/agent.md").write_text("---\nauthor: claude\n---\n\n# a\n\nx\n")
     everything = store.census(space, scope="all")
     assert sum(everything.values()) == len(store.listing(space))
@@ -603,7 +603,7 @@ def test_census_shared_counts_only_the_shared_space(space):
 
 
 # --- untitled notes ----------------------------------------------------------
-# Keep treats a title as optional and Mary mostly leaves it off. Those notes get
+# Keep treats a title as optional and many notes have none. Those get
 # a "<date> <keep_id>" FILENAME for uniqueness; that must never surface as a
 # title (it did, on 347 of her cards).
 
@@ -679,33 +679,33 @@ def test_filing_a_note_moves_it_out_of_cat_none(space):
 
 
 # --- archive is personal, trash is not ---------------------------------------
-# Chris asked what happens when he archives a SHARED note. It used to archive
-# for Mary too, because the flag lived on the one file they both read.
+# The question was what happens when you archive a SHARED note. It used to archive
+# for the other person too, because the flag lived on the one file both read.
 
 def test_archiving_names_who_did_it(space):
     n = store.create(space, "list", "bread")
     store.write(space, n.id, shared=True)
-    store.write(space, n.id, archived=True, actor="chris")
+    store.write(space, n.id, archived=True, actor="sam")
     got = store.read(space, n.id)
-    assert got.archived_by == ["chris"]
-    assert "archived_by: chris" in (space / n.id).read_text()
+    assert got.archived_by == ["sam"]
+    assert "archived_by: sam" in (space / n.id).read_text()
 
 
 def test_one_person_archiving_leaves_the_other_alone(space):
     n = store.create(space, "list", "bread")
     store.write(space, n.id, shared=True)
-    store.write(space, n.id, archived=True, actor="chris")
-    assert store.read(space, n.id).archived_by == ["chris"]   # not mary
-    store.write(space, n.id, archived=True, actor="mary")
-    assert store.read(space, n.id).archived_by == ["chris", "mary"]
-    store.write(space, n.id, archived=False, actor="chris")
-    assert store.read(space, n.id).archived_by == ["mary"]    # hers survives
+    store.write(space, n.id, archived=True, actor="sam")
+    assert store.read(space, n.id).archived_by == ["sam"]   # not ana
+    store.write(space, n.id, archived=True, actor="ana")
+    assert store.read(space, n.id).archived_by == ["ana", "sam"]
+    store.write(space, n.id, archived=False, actor="sam")
+    assert store.read(space, n.id).archived_by == ["ana"]    # theirs survives
 
 
 def test_unarchiving_the_last_person_clears_the_key(space):
     n = store.create(space, "list", "bread")
-    store.write(space, n.id, archived=True, actor="chris")
-    store.write(space, n.id, archived=False, actor="chris")
+    store.write(space, n.id, archived=True, actor="sam")
+    store.write(space, n.id, archived=False, actor="sam")
     text = (space / n.id).read_text()
     assert "archived" not in text
     assert store.read(space, n.id).archived_by == []
@@ -714,19 +714,19 @@ def test_unarchiving_the_last_person_clears_the_key(space):
 def test_a_legacy_global_flag_is_preserved_for_the_other_party(space):
     """The 764 notes imported from Keep carry a plain `archived: true`."""
     rel = "Notes/old.md"
-    (space / rel).write_text("---\narchived: true\nauthor: mary\n---\n\n# old\n\nx\n")
+    (space / rel).write_text("---\narchived: true\nauthor: ana\n---\n\n# old\n\nx\n")
     assert store.read(space, rel).archived is True
-    # Chris unarchiving it for himself must not un-archive it for Mary
-    store.write(space, rel, archived=False, actor="chris")
-    assert store.read(space, rel).archived_by == ["mary"]
+    # one person unarchiving it must not un-archive it for the other
+    store.write(space, rel, archived=False, actor="sam")
+    assert store.read(space, rel).archived_by == ["ana"]
 
 
 def test_archiving_does_not_disturb_sharing_or_owner(space):
-    n = store.create(space, "hers", "x", author="mary")
+    n = store.create(space, "theirs", "x", author="ana")
     store.write(space, n.id, shared=True)
-    store.write(space, n.id, archived=True, actor="chris")
+    store.write(space, n.id, archived=True, actor="sam")
     got = store.read(space, n.id)
-    assert got.author == "mary" and got.shared is True and got.archived_by == ["chris"]
+    assert got.author == "ana" and got.shared is True and got.archived_by == ["sam"]
 
 
 def test_trash_is_global_and_that_is_deliberate(space):
@@ -738,62 +738,62 @@ def test_trash_is_global_and_that_is_deliberate(space):
     assert (space / trashed).exists()           # and recoverable by anyone
 
 # --- pins and their order are personal ---------------------------------------
-# Chris asked whether pins are individual "as they should be". They were not:
+# the owner asked whether pins are individual "as they should be". They were not:
 # a pin was one flag on the one file, so pinning a SHARED note pinned it for
-# Mary too — and a manual order would have rearranged her row as well as his.
+# the other person too — and a manual order would have rearranged both rows.
 
 def test_pinning_names_who_did_it(space):
     n = store.create(space, "list", "bread")
     store.write(space, n.id, shared=True)
-    store.write(space, n.id, pinned=True, actor="chris")
+    store.write(space, n.id, pinned=True, actor="sam")
     got = store.read(space, n.id)
-    assert got.pinned_by == ["chris"] and got.pinned is True
-    assert "pinned_by: chris" in (space / n.id).read_text()
+    assert got.pinned_by == ["sam"] and got.pinned is True
+    assert "pinned_by: sam" in (space / n.id).read_text()
 
 
 def test_one_person_pinning_leaves_the_other_alone(space):
     n = store.create(space, "list", "bread")
     store.write(space, n.id, shared=True)
-    store.write(space, n.id, pinned=True, actor="chris")
-    store.write(space, n.id, pinned=True, actor="mary")
-    assert store.read(space, n.id).pinned_by == ["chris", "mary"]
-    store.write(space, n.id, pinned=False, actor="chris")
-    assert store.read(space, n.id).pinned_by == ["mary"]
+    store.write(space, n.id, pinned=True, actor="sam")
+    store.write(space, n.id, pinned=True, actor="ana")
+    assert store.read(space, n.id).pinned_by == ["ana", "sam"]
+    store.write(space, n.id, pinned=False, actor="sam")
+    assert store.read(space, n.id).pinned_by == ["ana"]
 
 
 def test_pin_order_is_per_person(space):
     n = store.create(space, "list", "bread")
-    store.write(space, n.id, pinned=True, actor="chris")
-    store.write(space, n.id, pinned=True, actor="mary")
-    store.write(space, n.id, order=10, actor="chris")
-    store.write(space, n.id, order=70, actor="mary")
+    store.write(space, n.id, pinned=True, actor="sam")
+    store.write(space, n.id, pinned=True, actor="ana")
+    store.write(space, n.id, order=10, actor="sam")
+    store.write(space, n.id, order=70, actor="ana")
     got = store.read(space, n.id)
-    assert got.pin_order == {"chris": 10, "mary": 70}
+    assert got.pin_order == {"sam": 10, "ana": 70}
     # one person rearranging must not move the other
-    store.write(space, n.id, order=50, actor="chris")
-    assert store.read(space, n.id).pin_order == {"chris": 50, "mary": 70}
+    store.write(space, n.id, order=50, actor="sam")
+    assert store.read(space, n.id).pin_order == {"sam": 50, "ana": 70}
 
 
 def test_unpinning_drops_only_that_persons_position(space):
     n = store.create(space, "list", "bread")
-    store.write(space, n.id, pinned=True, actor="chris")
-    store.write(space, n.id, pinned=True, actor="mary")
-    store.write(space, n.id, order=10, actor="chris")
-    store.write(space, n.id, order=70, actor="mary")
-    store.write(space, n.id, pinned=False, actor="chris")
+    store.write(space, n.id, pinned=True, actor="sam")
+    store.write(space, n.id, pinned=True, actor="ana")
+    store.write(space, n.id, order=10, actor="sam")
+    store.write(space, n.id, order=70, actor="ana")
+    store.write(space, n.id, pinned=False, actor="sam")
     got = store.read(space, n.id)
-    assert got.pinned_by == ["mary"] and got.pin_order == {"mary": 70}
+    assert got.pinned_by == ["ana"] and got.pin_order == {"ana": 70}
 
 
 def test_a_legacy_global_pin_is_kept_for_the_other_party(space):
     rel = "Notes/old.md"
-    (space / rel).write_text("---\npinned: true\nauthor: mary\n---\n\n# old\n\nx\n")
+    (space / rel).write_text("---\npinned: true\nauthor: ana\n---\n\n# old\n\nx\n")
     assert store.read(space, rel).pinned is True
-    store.write(space, rel, pinned=False, actor="chris")
-    assert store.read(space, rel).pinned_by == ["mary"]
+    store.write(space, rel, pinned=False, actor="sam")
+    assert store.read(space, rel).pinned_by == ["ana"]
 
 
 def test_a_junk_pin_order_reads_as_empty(space):
     rel = "Notes/odd.md"
-    (space / rel).write_text("---\npin_order: banana, chris=x, mary=20\n---\n\n# odd\n\ny\n")
-    assert store.read(space, rel).pin_order == {"mary": 20}
+    (space / rel).write_text("---\npin_order: banana, sam=x, ana=20\n---\n\n# odd\n\ny\n")
+    assert store.read(space, rel).pin_order == {"ana": 20}

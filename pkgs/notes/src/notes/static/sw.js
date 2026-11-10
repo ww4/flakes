@@ -1,6 +1,6 @@
 /* Service worker: read offline, and keep the app shell instant.
  *
- * ⚠️ THIS ORIGIN PREVIOUSLY RAN SILVERBULLET'S PWA. notes.rosemaryacres.com
+ * ⚠️ THIS ORIGIN PREVIOUSLY RAN SILVERBULLET'S PWA. notes.example.com
  * served SilverBullet until 2026-11-09, so a phone that installed it still has
  * that service worker and its caches registered here. This worker therefore
  * claims control immediately and deletes every cache that is not ours —
