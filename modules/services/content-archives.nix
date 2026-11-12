@@ -104,7 +104,18 @@ in
       description = "Weekly refresh of the podcast transcript archives";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
-      path = with pkgs; [ git python3 ];
+      # bash/curl/jq are not for the refresh script itself — they are for
+      # `claude`'s global core.hooksPath pre-push hook, which git runs inside
+      # this unit. That hook is `#!/usr/bin/env bash`; with no bash on PATH it
+      # cannot exec, git counts that as a hook failure, and the push is
+      # REFUSED. Every archive push had failed that way since the hook landed
+      # (2026-09-13), surfacing only as "push failed … next run will retry" —
+      # and the freshness stamp is written after the BUILD, not after the
+      # push, so STALE_DAYS never caught it. Nine weeks of commits sat local.
+      # curl/jq are the hook's other two tools: it short-circuits on `main`
+      # before reaching them today, but a PATH that only half-satisfies a hook
+      # is the same bug waiting on a different branch name.
+      path = with pkgs; [ git python3 bash curl jq ];
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;
