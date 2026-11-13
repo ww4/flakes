@@ -47,6 +47,7 @@ netdiag-priv <subcommand> [args]      (invoked through sudo by `netdiag`)
   vlan-offload <iface> on|off         NIC VLAN-tag stripping (must be OFF to see tags)
   addr-add <iface> <cidr> [secs]      temporary secondary IP (default 1800s, self-expiring)
   addr-clear <iface>                  drop every netdiag-added address
+  dhcp-serve <iface> [cidr] [secs]    temporary DHCP server (default 10.54.0.1/24, 1800s)
 EOF
 }
 
@@ -79,6 +80,17 @@ valid_ip() {
   for octet in $(echo "$a" | tr '.' ' '); do
     (( octet <= 255 )) || die "octet out of range in '${a}'"
   done
+}
+
+# Dotted-quad <-> 32-bit integer, for carving a DHCP pool out of a server CIDR.
+ip2int() {
+  local IFS=. a b c d
+  read -r a b c d <<<"${1}"
+  echo "$(( (a << 24) | (b << 16) | (c << 8) | d ))"
+}
+int2ip() {
+  local n=${1}
+  echo "$(( (n >> 24) & 255 )).$(( (n >> 16) & 255 )).$(( (n >> 8) & 255 )).$(( n & 255 ))"
 }
 
 # Fixed capture vocabulary. The caller picks a NAME; the filter text is ours.
@@ -291,6 +303,119 @@ cmd_addr_clear() {
   (( found )) || echo "$PROG: no netdiag-added addresses on ${iface}"
 }
 
+# Reverts everything dhcp-serve put in place. Values come from globals (not the
+# function's locals) because the EXIT trap fires AFTER cmd_dhcp_serve has
+# returned on the normal path, when its locals are already out of scope — a
+# cleanup reading locals would silently leave the address and the firewall hole
+# behind. Each step is guarded so a partial setup still tears down cleanly.
+DHCP_IFACE="" DHCP_CIDR="" DHCP_LEASEFILE="" DHCP_PIDFILE="" DHCP_FW_ADDED=0 DHCP_ADDR_ADDED=0
+dhcp_cleanup() {
+  if (( DHCP_FW_ADDED )); then
+    iptables -D nixos-fw -i "$DHCP_IFACE" -p udp --dport 67 -j ACCEPT 2>/dev/null || true
+  fi
+  if (( DHCP_ADDR_ADDED )); then
+    ip addr del "$DHCP_CIDR" dev "$DHCP_IFACE" 2>/dev/null || true
+  fi
+  if [[ -n $DHCP_LEASEFILE ]]; then
+    rm -f "$DHCP_LEASEFILE" "$DHCP_PIDFILE" 2>/dev/null || true
+  fi
+}
+
+# dhcp-serve — stand up a bounded, self-cleaning DHCP server on ONE interface.
+#
+# For bringing a DHCP-only device up on a direct cable where nothing hands out
+# leases: a factory-reset NAS, a PXE box, a locked appliance. dnsmasq runs in
+# DHCP-ONLY mode (DNS disabled with --port=0), hands out a small pool carved
+# from the server CIDR, and both the address and the firewall hole are reverted
+# on exit. The serve is time-boxed; the lease outlives it enough to keep the
+# client usable while you log in.
+#
+# Safety, in the same spirit as the rest of this file:
+#   - refuses a wireless iface (you cannot bridge a DHCP server onto wifi)
+#   - refuses an iface that carries the default route (never serve toward an
+#     uplink — that is a rogue DHCP server on someone's real LAN)
+#   - DNS is off; this cannot become a resolver
+#   - the UDP/67 accept is scoped to this one iface and removed on exit
+cmd_dhcp_serve() {
+  local iface=${1-} cidr=${2-10.54.0.1/24} secs=${3-1800}
+  valid_iface "$iface"
+  valid_cidr "$cidr"
+  valid_secs "$secs" 7200
+
+  [[ -d /sys/class/net/${iface}/wireless ]] &&
+    die "${iface} is wireless; serve DHCP on a WIRED port only"
+  if ip route show default dev "$iface" | grep -q .; then
+    die "${iface} carries the default route; refusing to serve DHCP toward an uplink"
+  fi
+  if [[ $(cat "/sys/class/net/${iface}/carrier" 2>/dev/null || echo 0) != 1 ]]; then
+    echo "$PROG: warning: ${iface} has no carrier — no client can reach the server until it links" >&2
+  fi
+
+  local addr pfx mask net bcast server_int ps pe netmask lease=3600
+  addr=${cidr%/*}; pfx=${cidr#*/}
+  server_int=$(ip2int "$addr")
+  mask=$(( (0xFFFFFFFF << (32 - pfx)) & 0xFFFFFFFF ))
+  net=$(( server_int & mask ))
+  bcast=$(( net | (~mask & 0xFFFFFFFF) ))
+  netmask=$(int2ip "$mask")
+  # Pool: start 10 into the subnet, up to 100 addresses, clamped to the usable
+  # range and never overlapping the server's own address.
+  ps=$(( net + 10 )); pe=$(( ps + 99 ))
+  (( ps < net + 1 )) && ps=$(( net + 1 ))
+  (( ps > bcast - 1 )) && ps=$(( net + 1 ))
+  (( pe > bcast - 1 )) && pe=$(( bcast - 1 ))
+  (( server_int >= ps && server_int <= pe )) && ps=$(( server_int + 1 ))
+  (( pe >= ps )) || die "${cidr} is too small to carve a DHCP pool"
+
+  DHCP_IFACE=$iface
+  DHCP_CIDR=$cidr
+  DHCP_LEASEFILE="/run/${PROG}-dhcp-${iface}.leases"
+  DHCP_PIDFILE="/run/${PROG}-dhcp-${iface}.pid"
+  trap dhcp_cleanup EXIT
+
+  # The server needs an address in the pool's subnet to source replies from.
+  # Only tear down what we actually added.
+  if ! ip -4 -j addr show dev "$iface" |
+       jq -e --arg c "$cidr" '[.[0].addr_info[]? | "\(.local)/\(.prefixlen)"] | index($c)' >/dev/null; then
+    ip addr add "$cidr" dev "$iface"
+    DHCP_ADDR_ADDED=1
+  fi
+
+  # Open UDP/67 inbound on THIS iface only. The default NixOS firewall drops the
+  # broadcast DISCOVER (nixos-fw-log-refuse catches non-unicast), so without
+  # this dnsmasq runs but never hears a client — a silent failure. Fail loud if
+  # the chain we expect is not there rather than serve into a black hole.
+  if iptables -n -L nixos-fw >/dev/null 2>&1; then
+    iptables -I nixos-fw 1 -i "$iface" -p udp --dport 67 -j ACCEPT
+    DHCP_FW_ADDED=1
+  else
+    die "no nixos-fw chain — refusing to serve DHCP behind an unrecognised firewall"
+  fi
+
+  echo "$PROG: serving DHCP on ${iface} for ${secs}s" >&2
+  echo "$PROG:   server ${addr}  pool $(int2ip "$ps")-$(int2ip "$pe")  mask ${netmask}  lease ${lease}s" >&2
+
+  local rc
+  set +e
+  timeout "$secs" dnsmasq \
+    --keep-in-foreground \
+    --conf-file=/dev/null \
+    --port=0 \
+    --interface="$iface" --bind-interfaces --except-interface=lo \
+    --no-resolv --no-hosts --no-ping \
+    --dhcp-authoritative \
+    --dhcp-leasefile="$DHCP_LEASEFILE" \
+    --pid-file="$DHCP_PIDFILE" \
+    --dhcp-range="$(int2ip "$ps"),$(int2ip "$pe"),${netmask},${lease}" \
+    --log-dhcp --log-facility=-
+  rc=$?
+  set -e
+  case $rc in
+    0|124|143) : ;;
+    *) die "dnsmasq exited $rc" ;;
+  esac
+}
+
 main() {
   local sub=${1-}
   [[ -n $sub ]] || { usage; exit 1; }
@@ -308,6 +433,7 @@ main() {
     vlan-offload) cmd_vlan_offload "$@" ;;
     addr-add)     cmd_addr_add "$@" ;;
     addr-clear)   cmd_addr_clear "$@" ;;
+    dhcp-serve)   cmd_dhcp_serve "$@" ;;
     -h|--help|help) usage ;;
     *)            die "unknown subcommand: '${sub}'" ;;
   esac
