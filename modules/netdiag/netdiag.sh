@@ -59,6 +59,7 @@ netdiag <subcommand> [args]
     legs <targets...>     which LEG is failing — groups targets that fail together
     hop <cidr> [secs]     temporarily join a foreign subnet and scan it
     hop-clear             drop the temporary address early
+    dhcp-serve <iface> [cidr] [secs]  lease an address to a DHCP-only device on a direct cable
 
 [WIRE] = needs a wired port; the answer over wifi is absent or misleading.
 EOF
@@ -727,6 +728,18 @@ cmd_hop_clear() {
   priv addr-clear "$iface"
 }
 
+# Stand up a temporary DHCP server so a DHCP-only device (a reset NAS, a locked
+# appliance) gets an address on a direct cable with no DHCP server. Blocks for
+# the duration, logging each lease; Ctrl-C stops early and the privileged half
+# tears down the address and the firewall hole on exit. The iface is explicit on
+# purpose — serving DHCP toward the wrong port is how you become a rogue server.
+cmd_dhcp_serve() {
+  local iface=${1-} cidr=${2-10.54.0.1/24} secs=${3-1800}
+  [[ -n $iface ]] || die "usage: netdiag dhcp-serve <iface> [cidr] [secs]"
+  hdr "serving DHCP on ${iface} (${cidr}) for ${secs}s — Ctrl-C to stop early"
+  priv dhcp-serve "$iface" "$cidr" "$secs"
+}
+
 main() {
   local sub=${1-}
   [[ -n $sub ]] || { usage; exit 1; }
@@ -752,6 +765,7 @@ main() {
     legs)       netdiag-legs "$@" ;;
     hop)        cmd_hop "$@" ;;
     hop-clear)  cmd_hop_clear "$@" ;;
+    dhcp-serve) cmd_dhcp_serve "$@" ;;
     -h|--help|help) usage ;;
     *)          die "unknown subcommand: '${sub}' (try: netdiag --help)" ;;
   esac

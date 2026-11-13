@@ -54,6 +54,7 @@ the fault that cost an afternoon at Craigmyle on 2026-08-18.
 | `hop <cidr>` / `hop-clear` | temporarily join a foreign subnet |
 | `legs <targets...>` | **which LEG is failing** — groups devices that fail *together* |
 | `plc [iface] [n]` | **powerline (HomePlug) adapters** + per-link PHY rate |
+| `dhcp-serve <iface> [cidr] [secs]` | **lease an address to a DHCP-only device** on a direct cable |
 
 ## Which leg is failing?
 
@@ -214,6 +215,27 @@ networks:
 `services.lldpd` runs **receive-only** (`-r`) for the same reason: a
 consultant's laptop should not advertise itself as network infrastructure in a
 client's L2 domain.
+
+## Leasing a DHCP-only device on a direct cable
+
+Some devices only speak DHCP and have no fallback static — a factory-reset NAS, a
+PXE box, a locked appliance. Cabled straight to the laptop there is no server to
+answer, so they sit broadcasting `DISCOVER` forever and never get an address.
+`netdiag dhcp-serve <iface>` stands up a bounded dnsmasq (DHCP only — DNS is
+disabled) that hands out a small pool and logs each lease:
+
+```
+netdiag dhcp-serve enp0s31f6                 # defaults: 10.54.0.1/24, 1800s
+netdiag dhcp-serve enp0s31f6 10.0.5.1/24 600
+```
+
+It is deliberately **not** magic about the interface — you name the wired port,
+because serving DHCP toward the wrong one makes you a rogue server on someone's
+real LAN. It refuses a wireless iface and refuses the iface that carries the
+default route. Receiving `DISCOVER` needs UDP/67 open, which the host firewall
+drops by default; the tool opens it on that one interface and, like the temporary
+addresses, reverts both the address and the firewall hole when it exits (or on
+Ctrl-C). Confirm the client actually leased with a fresh `census`/`arpscan`.
 
 ## Before you leave a site
 

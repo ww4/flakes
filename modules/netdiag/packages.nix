@@ -69,6 +69,9 @@ rec {
     runtimeInputs = with pkgs; [
       coreutils gnused gnugrep gawk
       iproute2 jq tcpdump arp-scan nmap lldpd ndisc6 ethtool
+      # dhcp-serve: dnsmasq is the DHCP server; iptables (nft backend on these
+      # hosts) opens UDP/67 in nixos-fw for the serve's lifetime only.
+      dnsmasq iptables
     ] ++ [
       # HomePlug AV management tools. NOT in nixpkgs — packaged in pkgs/.
       (pkgs.callPackage ../../pkgs/open-plc-utils { })
