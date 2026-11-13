@@ -1,0 +1,209 @@
+{
+  "title": "Craigmyle \u2014 60 GHz link",
+  "uid": "craigmyle-link",
+  "tags": [
+    "craigmyle",
+    "lock3"
+  ],
+  "timezone": "America/New_York",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Now",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "probe_success{job=\"craigmyle-link\"}",
+          "legendFormat": "{{name}}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "meraki-gateway is the CONTROL. If it is down too, the fault is our route or Tailscale, not Craigmyle.",
+      "options": {
+        "colorMode": "background",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "up",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Link state",
+      "type": "state-timeline",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "probe_success{job=\"craigmyle-link\"}",
+          "legendFormat": "{{name}} ({{ipv4}})",
+          "refId": "A",
+          "instant": false
+        }
+      ],
+      "description": "Read it top to bottom: office radio dark = the REBOOTER FIRED. Far radio dark while the office radio is up = the RF path dropped, most likely rain.",
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "down",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "up",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Rebooter firings per week",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(changes(probe_success{job=\"craigmyle-link\",role=\"near\"}[7d])) / 2",
+          "legendFormat": "firings (7d rolling)",
+          "refId": "A"
+        }
+      ],
+      "description": "THE NUMBER THIS WHOLE THING EXISTS FOR. An auto-rebooter hides decay: a daily reboot is ~2 flap-counter units against a camera threshold of 24, so the link could degrade from monthly to daily with nothing reporting it. NOTE changes() counts BOTH edges of an episode, hence the /2 - an episode still in progress reads as a half."
+    },
+    {
+      "id": 4,
+      "title": "Minutes down per day",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum_over_time(((probe_success{job=\"craigmyle-link\",role=\"near\"} == bool 0))[1d:30s]) * 30 / 60",
+          "legendFormat": "office radio dark (rebooter)",
+          "refId": "A"
+        },
+        {
+          "expr": "sum_over_time(((probe_success{job=\"craigmyle-link\",role=\"far\"}  == bool 0) * (probe_success{job=\"craigmyle-link\",role=\"near\"} == bool 1))[1d:30s]) * 30 / 60",
+          "legendFormat": "RF path only (rain etc)",
+          "refId": "B"
+        }
+      ],
+      "description": "Separates the two causes. Scraped every 30 s, so each sample is 0.5 min of downtime.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Round-trip time",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "probe_duration_seconds{job=\"craigmyle-link\"}",
+          "legendFormat": "{{name}}",
+          "refId": "A",
+          "instant": false
+        }
+      ],
+      "description": "RTT to the radios is NOT link quality - it is partly the radio's own management CPU. Use it to spot something obviously wrong, never as a measure of RF health. (A loco M5 at another site once read 240 ms while hosts behind it read 4 ms clean.)",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    }
+  ]
+}
