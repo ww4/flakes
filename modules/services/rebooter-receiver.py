@@ -34,6 +34,20 @@ MAX_BODY = 65536
 EVENTS_FILE = "events.ndjson"
 
 
+def _first_forwarded(headers):
+    """The original client from X-Forwarded-For, or None.
+
+    XFF is a comma-separated chain, oldest first, so entry [0] is whoever
+    actually originated the request -- here, the rebooter's public address.
+    Returns None rather than guessing when the header is absent or empty.
+    """
+    raw = headers.get("X-Forwarded-For")
+    if not raw:
+        return None
+    first = raw.split(",")[0].strip()
+    return first or None
+
+
 def build_record(now, method, path, peer, headers, raw, truncated=False):
     """Everything known about one request, as a single JSON-serialisable dict.
 
@@ -48,8 +62,12 @@ def build_record(now, method, path, peer, headers, raw, truncated=False):
         "method": method,
         "path": path,
         "peer": peer,
-        # X-Real-IP is set by gromit's nginx; without it `peer` is just 127.0.0.1.
-        "client": headers.get("X-Real-IP") or peer,
+        # ⚠️ X-Real-IP is NOT the device. There are TWO proxy hops -- lock3's
+        # nginx then gromit's -- and gromit's sets X-Real-IP to $remote_addr,
+        # which is lock3's tailnet address. So X-Real-IP always reads
+        # 100.125.31.125 and never the rebooter. X-Forwarded-For is appended to
+        # rather than overwritten, so its FIRST entry is the original client.
+        "client": _first_forwarded(headers) or peer,
         "headers": dict(headers),
         "body_bytes": len(raw),
     }

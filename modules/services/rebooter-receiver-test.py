@@ -44,7 +44,10 @@ rec = rr.build_record(1700000000.5, "POST", "/notify", "127.0.0.1", hdrs,
 check("valid json parsed", rec.get("json", {}).get("event") == "reboot", rec)
 check("raw kept alongside json", '"event"' in rec["raw"], rec["raw"])
 check("no parse_error on valid body", "parse_error" not in rec, rec)
-check("X-Real-IP becomes client", rec["client"] == "24.106.142.194", rec)
+# ⚠️ This assertion used to read `X-Real-IP becomes client` and PASS, which
+# encoded the bug: gromit's nginx overwrites X-Real-IP with lock3's address, so
+# trusting it names the proxy, never the device. X-Real-IP alone is now ignored.
+check("X-Real-IP alone does NOT name the client", rec["client"] == "127.0.0.1", rec["client"])
 check("body_bytes counted", rec["body_bytes"] == 39, rec["body_bytes"])
 
 # 2. A malformed body must still be RECORDED, not dropped.
@@ -53,6 +56,20 @@ rec = rr.build_record(1700000000.0, "POST", "/notify", "127.0.0.1", {},
 check("malformed body still recorded", rec["raw"] == "this is not json", rec)
 check("malformed body flags parse_error", "parse_error" in rec, rec)
 check("no client header falls back to peer", rec["client"] == "127.0.0.1", rec)
+
+# 2b. The client field must name the DEVICE, not the last proxy. Two hops sit in
+#     front of this service and gromit's nginx overwrites X-Real-IP with lock3's
+#     address, so trusting it would silently attribute every event to the VPS.
+two_hops = {"X-Real-IP": "100.125.31.125",
+            "X-Forwarded-For": "24.106.142.194, 100.125.31.125"}
+rec = rr.build_record(1700000000.0, "POST", "/notify", "127.0.0.1", two_hops, b"{}")
+check("client is the ORIGINAL client, not the last proxy",
+      rec["client"] == "24.106.142.194", rec["client"])
+rec = rr.build_record(1700000000.0, "POST", "/notify", "9.9.9.9", {}, b"{}")
+check("no XFF falls back to the peer", rec["client"] == "9.9.9.9", rec["client"])
+rec = rr.build_record(1700000000.0, "POST", "/notify", "9.9.9.9",
+                      {"X-Forwarded-For": "  "}, b"{}")
+check("blank XFF falls back, does not yield empty", rec["client"] == "9.9.9.9", rec["client"])
 
 # 3. Non-UTF-8 bytes must not raise -- this is the one that would lose the event.
 rec = rr.build_record(1700000000.0, "POST", "/notify", "127.0.0.1", {},
