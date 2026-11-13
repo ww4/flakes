@@ -49,23 +49,62 @@
 # WHICH VERSION TO TAKE. Upstream publishes two channel pointers, both plain
 # text:
 #
-#   curl -sS https://downloads.claude.ai/claude-code-releases/stable   # e.g. 2.1.311
-#   curl -sS https://downloads.claude.ai/claude-code-releases/latest   # e.g. 2.1.318
+#   curl -sS https://downloads.claude.ai/claude-code-releases/stable   # 2.1.311 on 2026-11-13
+#   curl -sS https://downloads.claude.ai/claude-code-releases/latest   # 2.1.323 on 2026-11-13
 #
-# TRACK `stable`, NOT `latest`. This box runs ~10 unattended `claude -p` units
-# (daybook am/pm, weekly digest, queue consumer, inbox triage, podcast triage,
-# newsdesk, wx, and the sentinel every 120 s). A regression in any of them is
-# discovered by its output being wrong, hours later, with nobody watching — so
-# the few days `stable` lags `latest` are worth having.
+# ⭐ POLICY, set by Chris 2026-11-13: **TAKE `latest`, UNLESS KNOWN ISSUES EXIST.**
+#
+# This REVERSES the stable-not-latest rule this file carried until now. That rule
+# reasoned that ~10 unattended `claude -p` units (daybook am/pm, weekly digest,
+# queue consumer, inbox triage, podcast triage, newsdesk, wx, sentinel every
+# 120 s) discover a regression hours later with nobody watching, so the few days
+# `stable` lags were worth having.
+#
+# WHY IT CHANGED. That argument weighs a POSSIBLE regression against a CERTAIN
+# one. Reading the actual 2.1.318 -> 2.1.323 diff on 11-13, the delta was almost
+# entirely fixes to permission enforcement — the thing this box's whole safety
+# model rests on:
+#
+#   2.1.321  deny rules and protected-file prompts not applying to the file a
+#            `cp` or `mv` INTO A DIRECTORY writes  (a deny rule you can walk around)
+#   2.1.321  Bash permission checks judging a file write from the wrong folder
+#   2.1.321  a read-only Bash command running outside the sandbox with no prompt
+#   2.1.321  MCP OAuth sending refresh tokens to another host on redirect
+#   2.1.323  `rm` judged from the wrong folder, skipping the dangerous-removal prompt
+#   2.1.323  `sandbox.excludedCommands` letting an unnamed command out of the sandbox
+#
+# Lagging on `stable` does not avoid risk here, it RETAINS known holes in the
+# managed-settings deny list and the PreToolUse guard. For this package
+# specifically, security fixes dominate the stability lag.
+#
+# ⚠️ "UNLESS KNOWN ISSUES EXIST" IS THE OPERATIVE HALF, and it is work, not a
+# formality. Before taking a version, read the changelog from the pinned version
+# forward and look for: changes to auto mode, permissions or sandboxing (this box
+# runs auto mode in ~29 panes); anything touching `claude -p` startup or exit
+# codes; model deprecations. If something looks like it could change unattended
+# behaviour, say so and let Chris decide rather than bumping quietly.
+#
+#   curl -sS https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md
+#
+# Worked example from this bump: 2.1.319 changes auto mode when telemetry OR
+# feature flags are off — calls the server cannot check are asked about or denied
+# with no fallback to the built-in classifier. That would have been a real
+# regression across every pane. CHECKED BEFORE BUMPING: on gromit
+# CLAUDE_CODE_ENABLE_TELEMETRY, DISABLE_TELEMETRY and
+# CLAUDE_CODE_DISABLE_FEATURE_FLAGS are all UNSET (only DISABLE_AUTOUPDATER=1 is
+# set, which is this pin), so the change does not apply. `CLAUDE_CODE_AUTO_MODE_SERVER=0`
+# is the escape hatch if it ever does.
 #
 # ⚠️ AND CHECK THE CHANGELOG AGAINST THE VERSION YOU TAKE. Capability gating is
 # real and easy to get wrong in both directions: on 2026-11-04 a review found
-# this box 48 releases behind and named features that turn out to need 2.1.314
+# this box 48 releases behind and named features needing 2.1.314
 # (`permissions.blockWritesOutsideWorkingDirectories`), 2.1.317
 # (`onFailure: "block"` for SDK hooks) and 2.1.318 (`loginExpiresAt` in
-# `/auth status`) — none of which this bump to `stable` 2.1.311 brings. Read the
-# version a feature landed in BEFORE designing against it; a feature absent from
-# the pinned build fails silently, not loudly.
+# `/auth status` — the native replacement for the bespoke login-expiry detector in
+# `claude-queue-consumer-start`, which shipped INVERTED and reported "resolved" as
+# the token died). 2.1.323 carries all three. Read the version a feature landed in
+# BEFORE designing against it; a feature absent from the pinned build fails
+# silently, not loudly.
 # See docs/native-capability-review-2026-11-04.md in nixos-homelab-improvements.
 #
 # ⚠️ REMOVE THIS FILE once nixos-26.05 (or whatever channel this box is on) ships
