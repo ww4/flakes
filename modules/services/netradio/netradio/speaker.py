@@ -189,7 +189,16 @@ class Mixer:
     # How often to check the real level against the one we set, and how far
     # apart they may be before it counts. A ramp holds the lock, so nothing
     # here can catch a change in flight.
-    WATCH_S = 10.0
+    #
+    # This interval is not a sampling rate — it is HOW LONG THE ROOM IS LOUD.
+    # The watchdog cannot stop the rise, only end it, so the number is the
+    # worst case a sleeping person is exposed to. It caught the third
+    # occurrence at 10:47 p.m. on 2026-10-22 and pulled 100% back to 0 in
+    # 120 ms, but it had been sounding for up to ten seconds first, which at
+    # that hour is the entire harm (Chris, 2026-10-23). Two seconds costs one
+    # `amixer sget` every two seconds — a fork and a few milliseconds — and
+    # buys back eight.
+    WATCH_S = 2.0
     DRIFT = 3
 
     def watch(self, stop: threading.Event) -> None:
