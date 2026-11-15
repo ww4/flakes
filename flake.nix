@@ -123,7 +123,7 @@
         # the wallace/gromit split. No media pool yet — drives stay on gromit.
         wallace = lib.nixosSystem {
           inherit system;
-          specialArgs = { inherit agent-modules; };
+          specialArgs = { inherit agent-modules homelab-modules; };
           modules = [
             disko.nixosModules.disko
             comin.nixosModules.comin

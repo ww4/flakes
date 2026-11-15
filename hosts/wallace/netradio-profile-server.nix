@@ -1,6 +1,6 @@
 # gromit's music-library profiler, served from the 5900X.
 #
-# gromit's netradio-profile (modules/services/netradio) listens to every track
+# gromit's netradio-profile (homelab-modules' netradio) listens to every track
 # once — YAMNet + a pitch tracker + the era measurements — and on its
 # i5-4690K that is ~1.5 s a track, hours for the library. This box answers
 # the same measurement over HTTP: gromit POSTs a file, gets the Facts JSON.
@@ -8,10 +8,10 @@
 # powering wallace down costs time, not correctness (the whisper/Kokoro shape,
 # switchboard-inference.nix). Stateless: each file is a private temp file,
 # measured, deleted. No auth — the firewall admits the port on tailscale0 only.
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, homelab-modules, ... }:
 let
-  netradio = pkgs.callPackage ../../modules/services/netradio/package.nix { };
-  yamnet = pkgs.callPackage ../../modules/services/netradio/yamnet.nix { };
+  netradio = pkgs.callPackage "${homelab-modules}/modules/services/netradio/package.nix" { };
+  yamnet = pkgs.callPackage "${homelab-modules}/modules/services/netradio/yamnet.nix" { };
   port = 8790;
 in
 {

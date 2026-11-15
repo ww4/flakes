@@ -104,7 +104,7 @@ let
   };
 
   # The renderer is the test output, not the source file — the netradio pattern
-  # (modules/services/netradio/default.nix:378). What the unit runs only exists
+  # (homelab-modules: modules/services/netradio/default.nix). What the unit runs only exists
   # if the 23 renderer tests passed, so a board that would have silently dropped
   # an unreadable project, or rendered a blank page, cannot deploy.
   renderer = pkgs.runCommand "project-board.py"

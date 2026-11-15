@@ -63,7 +63,7 @@ let hm = homelab-modules.nixosModules; in
     hm.nginx-log-paths-check                # eval-time guard: an nginx log outside its writable set = every vhost down
     ./modules/services/blocky.nix           # local split-horizon DNS: rosemaryacres.com -> LAN IP so hostnames resolve with the WAN down
     hm.jellyfin
-    ./modules/services/netradio             # Yamaha Net Radio: vTuner stand-in (YCast) + library stations (Icecast/Liquidsoap, on demand)
+    hm.netradio                           # Yamaha Net Radio: vTuner stand-in (YCast) + library stations (Icecast/Liquidsoap, on demand)
     hm.audiobookshelf
     hm.tandoor
     ./modules/services/tandoor-frontend.nix  # gromit-only: inline ingredient notes + recipe auto-refresh
@@ -303,9 +303,9 @@ let hm = homelab-modules.nixosModules; in
     host = "192.168.1.89";          # Roku Express 4K+, 3941X, on wifi
   };
 
-  # --- the radio: this box's values for modules/services/netradio -------------
+  # --- the radio: this box's values for homelab-modules' netradio -------------
   # The module itself is generic (options only); everything here is local fact.
-  services.netradio = {
+  homelab.netradio = {
     enable = true;
     domain = "radio.rosemaryacres.com";
     title = "Rosemary Acres Radio";
