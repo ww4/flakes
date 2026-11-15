@@ -79,4 +79,12 @@
   # failure shouldn't cascade-stop it, and litestream retries if the DB is missing.
   systemd.services.litestream.after = [ "vaultwarden.service" ];
   systemd.services.litestream.wants = [ "vaultwarden.service" ];
+
+  # The module has no `settings.logging` passthrough, and litestream logs a
+  # no-op "replica sync" line at INFO once a second even when replica txid ==
+  # db txid — ~90k journald lines/day for a steady-state backup doing nothing.
+  # `-log-level` overrides the config file setting; `warn` keeps real sync
+  # errors and drops the per-second heartbeat.
+  systemd.services.litestream.serviceConfig.ExecStart =
+    lib.mkForce "${config.services.litestream.package}/bin/litestream replicate -log-level warn";
 }

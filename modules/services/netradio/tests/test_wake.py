@@ -1,4 +1,6 @@
+import socket
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from urllib.parse import urlparse
@@ -128,6 +130,117 @@ class Qualities(unittest.TestCase):
             ctl = wake.Controller({"rock", "rock-lo"}, ls, ic, pl, idle_after=300, start_timeout=1)
             self.assertEqual(ctl.wake("rock-lo")[0], 200)
             self.assertEqual(ls.log, ["rock-lo.start"])
+
+
+class FakeLiquidsoapServer:
+    """A minimal stand-in for liquidsoap's unix control socket: accepts
+    connections, answers every line with "OK\\nEND\\n", and counts how many
+    separate connections it ever accepted — the number the real fix is about."""
+
+    def __init__(self, path):
+        self.path = path
+        self.accepted = 0
+        self._srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._srv.bind(str(path))
+        self._srv.listen(5)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self):
+        while not self._stop.is_set():
+            try:
+                self._srv.settimeout(0.2)
+                conn, _ = self._srv.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            self.accepted += 1
+            threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
+
+    def _handle(self, conn):
+        with conn:
+            buf = b""
+            while not self._stop.is_set():
+                try:
+                    chunk = conn.recv(4096)
+                except OSError:
+                    return
+                if not chunk:
+                    return
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    if line == b"__close__":
+                        return
+                    conn.sendall(b"OK\nEND\n")
+
+    def close(self):
+        self._stop.set()
+        self._srv.close()
+        self._thread.join(timeout=2)
+
+
+class LiquidsoapClientTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.sock_path = Path(self.tmp.name) / "liq.sock"
+        self.server = FakeLiquidsoapServer(self.sock_path)
+        self.clients = []
+
+    def tearDown(self):
+        for ls in self.clients:
+            if ls._sock is not None:
+                ls._sock.close()
+        self.server.close()
+        self.tmp.cleanup()
+
+    def _client(self):
+        ls = wake.Liquidsoap(self.sock_path)
+        self.clients.append(ls)
+        return ls
+
+    def test_many_commands_reuse_one_connection(self):
+        """This is the whole fix: 26 stations polling every 5s must not mean
+        26 connects every 5s. One client, many commands, one accept()."""
+        ls = self._client()
+        for _ in range(20):
+            self.assertEqual(ls.command("q_rock.queue"), "OK")
+        self.assertEqual(self.server.accepted, 1)
+
+    def test_shared_client_is_thread_safe(self):
+        """dj.py's main() builds exactly one Liquidsoap and hands it to every
+        StationDJ thread — concurrent callers must not see each other's reply
+        on a shared connection."""
+        ls = self._client()
+        errors = []
+
+        def hammer():
+            try:
+                for _ in range(30):
+                    reply = ls.command("q_rock.queue")
+                    if reply != "OK":
+                        errors.append(reply)
+            except Exception as e:  # pragma: no cover - failure path reported via errors
+                errors.append(repr(e))
+
+        threads = [threading.Thread(target=hammer) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+        self.assertEqual(errors, [])
+
+    def test_reconnects_after_the_connection_drops(self):
+        """A liquidsoap restart mid-deploy drops the socket; the next command
+        must transparently reconnect rather than wedging the DJ forever."""
+        ls = self._client()
+        self.assertEqual(ls.command("q_rock.queue"), "OK")
+        self.assertEqual(self.server.accepted, 1)
+        ls._sock.close()  # simulate the peer going away between polls; _sock is still set
+        self.assertEqual(ls.command("q_rock.queue"), "OK")
+        self.assertEqual(self.server.accepted, 2)
 
 
 class StreamPathRegex(unittest.TestCase):
