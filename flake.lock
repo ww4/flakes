@@ -117,11 +117,11 @@
     },
     "homelab-modules": {
       "locked": {
-        "lastModified": 1794332320,
-        "narHash": "sha256-hKtkyGojm/GBxzVdjio3Nrg+chOBNxtUppGpEBBPJtg=",
+        "lastModified": 1794838683,
+        "narHash": "sha256-ne0M6U1cXRYp5YKdHypUGDgqnavqPI5hGHpj+WLG6LI=",
         "ref": "refs/heads/main",
-        "rev": "6efd2f8e7a8d669e60626337395138203734bfd5",
-        "revCount": 98,
+        "rev": "e8fbaf055fb037ba1499d8e31e813571e6c556ad",
+        "revCount": 104,
         "type": "git",
         "url": "https://git.rosemaryacres.com/ww4/homelab-modules.git"
       },
