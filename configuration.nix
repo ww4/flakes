@@ -79,6 +79,13 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/vscode-server.nix
     hm.acme                                 # shared ACME DNS-01 defaults (email + token in homelab-values)
     hm.nextcloud                            # admin/OIDC secrets in homelab-values; pg backups below
+    # nixos-26.05 (2026-11-18) marks Nextcloud 32 EOL/insecure. We were already
+    # on 32 (32.0.13); this keeps us on the newest 32.x patch so the nginx +
+    # vaultwarden security bump can land. Moving to nextcloud33 is a major app
+    # upgrade (occ upgrade, app compat) and gets its own PR. Remove this then.
+    # Same story for Immich 2.7.5 (unchanged by this bump — already live): 2.x is
+    # EOL with open CVEs; 3.x exists only in 26.11/unstable. Separate decision.
+    { nixpkgs.config.permittedInsecurePackages = [ "nextcloud-32.0.15" "immich-2.7.5" ]; }
     hm.backup                                # restic critical tier; paths + secrets in homelab-values
     ./modules/services/dow-uploads-backup.nix # DOW uploads bucket -> fusion pool (into restic)
     hm.ntfy                                 # write-only anon access; baseUrl/topic in homelab-values
