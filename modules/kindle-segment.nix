@@ -137,6 +137,11 @@ let
   apMAC = "68:d7:9a:d6:bd:10";
   apIP = "192.168.50.11";
 
+  # The Turbro mini split (Tuya). Reserved so the CLI and MCP tools can find it,
+  # and gated BY MAC below, so a lost reservation still cannot open its cloud
+  # path. See services/minisplit.nix.
+  miniSplit = import ../pkgs/minisplit/site.nix;
+
   # unifi.broadlinc.com, resolved 2026-11-01 — identical from 1.1.1.1 and
   # 8.8.8.8. Pinned as an address like the Sanctuary host: if the controller
   # ever moves, the AP loses it, which is the safe direction.
@@ -297,7 +302,8 @@ let
 
   reservations =
     [{ hw-address = kindleMAC; ip-address = kindleIP; }]
-    ++ lib.optional (apMAC != null) { hw-address = apMAC; ip-address = apIP; };
+    ++ lib.optional (apMAC != null) { hw-address = apMAC; ip-address = apIP; }
+    ++ [{ hw-address = miniSplit.mac; ip-address = miniSplit.ip; }];
 
   # The genuine Kindle reachability probe, byte-for-byte. Fetched from the real
   # http://spectrum.s3.amazonaws.com/kindle-wifi/wifistub.html on 2026-11-01:
@@ -557,6 +563,16 @@ in
 
     iptables -A kindle-fwd -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     iptables -A kindle-fwd -i ${iface} -d ${houseNet} -j DROP  # no reaching the house LAN
+
+    # Mini split: matched BY MAC, ahead of the pinholes and the open IoT range,
+    # so its address does not matter. Its traffic goes to `minisplit-cloud`
+    # (EMPTY unless `minisplit-cloud on` filled it), then LOG + DROP. Rebuilt
+    # empty on every firewall start, so a reload or reboot closes the cloud.
+    iptables -N minisplit-cloud 2>/dev/null || true
+    iptables -F minisplit-cloud
+    iptables -A kindle-fwd -i ${iface} -m mac --mac-source ${miniSplit.mac} -j minisplit-cloud
+    iptables -A kindle-fwd -i ${iface} -m mac --mac-source ${miniSplit.mac} -m limit --limit 10/min --limit-burst 20 -j LOG --log-prefix "minisplit-blocked: " --log-level 6
+    iptables -A kindle-fwd -i ${iface} -m mac --mac-source ${miniSplit.mac} -j DROP
     ${acceptRules}
 
     # IoT range: internet only. Private/CGNAT/link-local destinations dropped
@@ -605,6 +621,8 @@ in
     iptables -D FORWARD -o ${iface} -j kindle-fwd 2>/dev/null || true
     iptables -F kindle-fwd 2>/dev/null || true
     iptables -X kindle-fwd 2>/dev/null || true
+    iptables -F minisplit-cloud 2>/dev/null || true
+    iptables -X minisplit-cloud 2>/dev/null || true
     ip6tables -D FORWARD -i ${iface} -j DROP 2>/dev/null || true
     ip6tables -D FORWARD -o ${iface} -j DROP 2>/dev/null || true
   '';

@@ -150,6 +150,20 @@ class Settings(BaseSettings):
         description="The blueiris CLI the camera tools shell out to.",
     )
 
+    # --- mini split (heat pump) ----------------------------------------------
+    minisplit_tools: bool = Field(
+        default=False,
+        description=(
+            "Expose minisplit_status / minisplit_set. OFF by default: a "
+            "setpoint is a physical action in the house, so enabling it is a "
+            "deliberate per-deployment act."
+        ),
+    )
+    minisplit_binary: str = Field(
+        default="minisplit",
+        description="The minisplit CLI the climate tools shell out to.",
+    )
+
     @field_validator("path_prefix")
     @classmethod
     def _clean_prefix(cls, value: str) -> str:
