@@ -7,6 +7,7 @@ addition is argued for in writing:
   writes  save_note, append_note, request_work
 
   cameras camera_status, camera_mute, camera_unmute   [off by default]
+  climate minisplit_status, minisplit_set              [off by default]
 
 There is deliberately no delete tool, no arbitrary-path write, and no
 "call any SilverBullet endpoint" passthrough.
@@ -32,6 +33,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from . import audit
 from . import cameras
+from . import minisplit
 from .config import Settings
 from .context import build_context
 from .paths import PathRejected
@@ -314,6 +316,35 @@ def build_server(settings: Settings) -> FastMCP:
             result = cameras.unmute(settings.blueiris_binary, chosen, camera)
             audit.record_write("camera_unmute", f"{chosen}/{camera}", 0)
             return {"result": result}
+
+    # ------------------------------------------------------------- mini split
+
+    if settings.minisplit_tools:
+        @mcp.tool(name="minisplit_status")
+        def minisplit_status_tool() -> dict[str, Any]:
+            """Current state of the mini split (heat pump) in Chris's house.
+
+            Reads the unit live over the LAN: power, mode (heat/cool/dry/fan/
+            auto), setpoint and room temperature (°F), fan, eco, sleep. An
+            unreachable unit raises an error rather than returning stale data.
+            """
+            return minisplit.status(settings.minisplit_binary)
+
+        @mcp.tool(name="minisplit_set")
+        def minisplit_set_tool(power: bool | None = None,
+                               temp_f: float | None = None,
+                               mode: str | None = None) -> dict[str, Any]:
+            """Change the mini split: power on/off, setpoint, and/or mode.
+
+            Give only what should change. `temp_f` is a whole degree, 60-86.
+            `mode` is one of heat, cool, dry, fan, auto. The whole request is
+            validated before anything is sent, and every change is read back
+            from the unit; the returned state is what the unit now reports.
+            """
+            result = minisplit.apply(settings.minisplit_binary, power, temp_f, mode)
+            audit.record_write("minisplit_set",
+                               f"power={power} temp_f={temp_f} mode={mode}", 0)
+            return result
 
     return mcp
 

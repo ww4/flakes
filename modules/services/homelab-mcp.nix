@@ -99,6 +99,10 @@ let
   # broader than a /32 would.
   cameraNvrs = [ "100.68.224.97/32" ];  # craigmyle-blueiris
 
+  # Second exception, same reasoning: the mini split, one /32 on the isolated
+  # segment, reachable only through the minisplit tools anyway.
+  miniSplitHosts = [ "${(import ../../pkgs/minisplit/site.nix).ip}/32" ];
+
   # This box's Tailscale address. The listener below binds it specifically
   # rather than the wildcard, so the port cannot appear on the LAN or the WAN
   # even if the firewall rule below were ever loosened.
@@ -253,6 +257,13 @@ in
       HOMELAB_MCP_CAMERA_SITES = builtins.toJSON cameraSites;
       HOMELAB_MCP_BLUEIRIS_BINARY = lib.getExe blueiris;
 
+      # Mini split: read state; set power/setpoint/mode. Shells out to the
+      # same wrapped CLI as the box (services/minisplit.nix); its key file is
+      # in ~claude/.config/minisplit, read-only under ProtectHome. The cloud
+      # gate is NOT reachable from here (root-only, and NoNewPrivileges).
+      HOMELAB_MCP_MINISPLIT_TOOLS = "true";
+      HOMELAB_MCP_MINISPLIT_BINARY = "/run/current-system/sw/bin/minisplit";
+
       # Set explicitly rather than left to the pwd lookup: the CLI resolves its
       # credentials at ~/.config/blueiris/<site>.env, and a service that fell
       # back to a different HOME would report every site as unconfigured.
@@ -315,7 +326,7 @@ in
       # Loopback only — it cannot reach the LAN or the internet, so a bug in
       # request handling cannot be turned into an outbound connection.
       RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
-      IPAddressAllow = [ "localhost" ] ++ cameraNvrs;
+      IPAddressAllow = [ "localhost" ] ++ cameraNvrs ++ miniSplitHosts;
       IPAddressDeny = "any";
     };
   };

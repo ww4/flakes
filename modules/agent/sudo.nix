@@ -74,6 +74,11 @@ in
         # dropped) without Chris having to relay terminal output.
         { command = "${sw}/kindle-watch";                           options = nopw; }
         { command = "${sw}/kindle-watch *";                         options = nopw; }
+        # The mini split's cloud gate (services/minisplit.nix). Opens a bounded
+        # window or closes it; nothing else. Chris asked that WE control the
+        # apps' access (2026-11-22), and the agent is who he asks.
+        { command = "${sw}/minisplit-cloud";                       options = nopw; }
+        { command = "${sw}/minisplit-cloud *";                     options = nopw; }
 
         # --- Read-only container + firewall diagnostics (added 2026-07-06) ---
         # Evidence-driven (Chris asked the agent to request capabilities rather
