@@ -109,8 +109,20 @@ let
   gateway = "192.168.50.1";
   prefixLength = 24;
   subnet = "192.168.50.0/24";
-  poolFrom = "192.168.50.100";
-  poolTo = "192.168.50.150";
+  # The dynamic pool lives in the IoT range (2026-11-21, the mini split).
+  # An UNKNOWN device on this segment now gets internet but no LAN; the
+  # fenced devices (Kindle, AP) are fenced by their MAC RESERVATIONS below
+  # .192, not by being the default. Chris approved opening the segment to the
+  # internet (the Kindle is jailbroken, SpiderCat blocks OTA on-device, and it
+  # is not near this AP). The one residual risk: if the Kindle's reservation
+  # ever failed to apply it would land in this pool and be online.
+  poolFrom = "192.168.50.200";
+  poolTo = "192.168.50.250";
+
+  # Internet-only range: out the uplink, never to any private/CGNAT/link-local
+  # destination. Matches the blocky split in services/blocky.nix.
+  iotNet = "192.168.50.192/26";
+  nonPublic = [ "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "100.64.0.0/10" "169.254.0.0/16" ];
 
   # The Kindle's own Wi-Fi MAC, read off its Device Info screen.
   kindleMAC = "34:af:b3:27:e8:7a";
@@ -325,6 +337,15 @@ let
     for u in kea-dhcp4-server blocky; do
       printf "  [%s] %s\n" "$(${pkgs.systemd}/bin/systemctl is-active $u >/dev/null 2>&1 && echo ' ok ' || echo FAIL)" "$u"
     done
+    # Active is not listening (2026-11-21, see service-sockets-max-retries
+    # below): ask the kernel whether kea actually holds a packet socket here.
+    if [ "$(id -u)" -ne 0 ]; then
+      echo "  [ -- ] kea socket on ${iface}: needs root to check"
+    elif ${pkgs.iproute2}/bin/ss -0 -n -p 2>/dev/null | ${pkgs.gnugrep}/bin/grep -F "${iface}" | ${pkgs.gnugrep}/bin/grep -q kea-dhcp4; then
+      echo "  [ ok ] kea holds a DHCP socket on ${iface}"
+    else
+      echo "  [FAIL] kea has NO socket on ${iface} -- running but answering nothing"
+    fi
     if ${pkgs.iptables}/bin/iptables -L kindle-fwd -n >/dev/null 2>&1; then
       echo "  [ ok ] kindle-fwd chain present"
     elif [ "$(id -u)" -ne 0 ]; then
@@ -414,7 +435,18 @@ in
   services.kea.dhcp4 = {
     enable = true;
     settings = {
-      interfaces-config.interfaces = [ iface ];
+      interfaces-config = {
+        interfaces = [ iface ];
+        # ⚠️ FOUND 2026-11-21: kea started at boot before this USB NIC had
+        # link, logged DHCPSRV_OPEN_SOCKET_FAIL "interface enp6s0u1 is not
+        # running" + DHCPSRV_NO_SOCKETS_OPEN, and with the default of ZERO
+        # retries it stayed deaf for 7 h while systemctl still said active.
+        # The AP got no lease and fell back to UniFi's built-in 192.168.1.20,
+        # so it could not reach its controller either. Retry every 5 s for an
+        # hour instead; kindle-watch now flags the no-sockets state too.
+        service-sockets-max-retries = 720;
+        service-sockets-retry-wait-time = 5000;
+      };
       lease-database = {
         type = "memfile";
         persist = true;
@@ -526,6 +558,12 @@ in
     iptables -A kindle-fwd -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     iptables -A kindle-fwd -i ${iface} -d ${houseNet} -j DROP  # no reaching the house LAN
     ${acceptRules}
+
+    # IoT range: internet only. Private/CGNAT/link-local destinations dropped
+    # first, then ACCEPT strictly out the uplink -- never tailscale0, never
+    # back into the segment, never the house (also covered by the DROP above).
+    ${lib.concatMapStringsSep "\n    " (d: "iptables -A kindle-fwd -i ${iface} -s ${iotNet} -d ${d} -j DROP") nonPublic}
+    iptables -A kindle-fwd -i ${iface} -o ${uplink} -s ${iotNet} -j ACCEPT  # IoT -> internet
 
     # Log before dropping — this is what makes "observe, then allow" possible,
     # and the ONLY place a client dialling a hardcoded IP shows up.

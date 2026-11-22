@@ -40,7 +40,15 @@ let
 
   # The isolated Kindle segment (see ../kindle-segment.nix). Kept in sync with
   # the subnet defined there.
-  kindleSegment = "192.168.50.0/24";
+  # The segment is SPLIT (2026-11-21): .0-.191 stays allowlist-only (the
+  # Kindle at .10, the AP at .11, everything reserved below .192), while
+  # .192/26 is the internet-only IoT range (the mini split) and resolves
+  # normally. Two CIDRs rather than the old /24 because blocky UNIONS every
+  # matching CIDR group (read in resolver/blocking_resolver.go,
+  # groupsToCheckForClient) -- a more specific "[]" entry for .192/26 would
+  # NOT override a /24 fence, it would just be added to it.
+  kindleFenceA = "192.168.50.0/25";
+  kindleFenceB = "192.168.50.128/26";
   kindleGateway = "192.168.50.1";
 
   # Upstreams for everything that ISN'T a local override.
@@ -164,7 +172,9 @@ in
         ];
         clientGroupsBlock = {
           default = [ ];
-          "${kindleSegment}" = [ "everything" "kindle-permitted" ];
+          "${kindleFenceA}" = [ "everything" "kindle-permitted" ];
+          "${kindleFenceB}" = [ "everything" "kindle-permitted" ];
+          # 192.168.50.192/26 (IoT range) deliberately has no entry -> default.
         };
         blockType = "zeroIp";
       };
