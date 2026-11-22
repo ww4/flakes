@@ -40,31 +40,29 @@ in
   # Mesa RADV Vulkan userspace for the RX 580 (headless — no X pulled in).
   hardware.graphics.enable = true;
 
-  # ---- GPU instance: Qwen2.5-3B on the RX 580 (Vulkan) ----
-  systemd.services.llama-gpu = {
-    description = "llama.cpp — Qwen2.5-3B on RX 580 (Vulkan)";
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    wantedBy = [ "multi-user.target" ];
-    environment = vkEnv;
-    serviceConfig = {
-      DynamicUser = true;
-      StateDirectory = "llama-gpu";
-      SupplementaryGroups = [ "render" "video" ];     # /dev/dri/renderD128 access
-      TimeoutStartSec = "3600";                        # first-run model download
-      ExecStartPre = mkFetch "Qwen2.5-3B-Instruct-Q4_K_M"
-        "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf";
-      ExecStart = ''
-        ${llamaVulkan}/bin/llama-server \
-          --model ''${STATE_DIRECTORY}/Qwen2.5-3B-Instruct-Q4_K_M.gguf \
-          --alias qwen2.5-3b-gpu \
-          --host 127.0.0.1 --port 8080 \
-          --n-gpu-layers 99 --ctx-size 8192
-      '';
-      Restart = "on-failure";
-      RestartSec = "10s";
-    };
-  };
+  # ---- GPU instance REMOVED 2026-11-22 ----
+  # `llama-gpu` served Qwen2.5-3B on the RX 580 and held **3.48 of the card's
+  # 4.00 GiB** — 87% of the VRAM — leaving about half a gig free. Chris:
+  # "I never actually used the local AI Quinn model ... it's not useful
+  # enough for me at this point to leave it running all the time. I kind of
+  # forgot about it." Removing it is what makes gaming on this box possible
+  # (hosts/wallace/gaming.nix); nothing else here touches the GPU.
+  #
+  # The CPU instance below STAYS, deliberately, and is not what he asked to
+  # keep — it is what two other things need:
+  #   * the 146-book RAG library, ingested into Open WebUI as 6 topic KBs.
+  #     Its own notes say to use `qwen2.5-32b-cpu` for real answers because
+  #     the 3B "synthesizes poorly" and fabricated on a test the 32B answered
+  #     honestly. So the model being removed is the one that library already
+  #     told us not to use.
+  #   * Open Notebook, which points at chat.rosemaryacres.com/api as its
+  #     model backend.
+  # It is also nearly free to keep: the 20 GiB is mmap'd, and the box still
+  # reports ~22 GiB available with it loaded.
+  #
+  # The 3B GGUF is left on disk in its StateDirectory rather than deleted —
+  # DynamicUser state is not removed by taking the unit out, and re-fetching
+  # from HuggingFace on this host is flaky for large files.
 
   # ---- CPU instance: Qwen2.5-32B on the 5900X (the "quality, async" model) ----
   # ~20 GB Q4 in system RAM (fits 31 GB), ~2 tok/s on the 5900X → email-paced:
