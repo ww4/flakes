@@ -112,7 +112,7 @@
       # greetd requires a default; agreety is built in, so no extra greeter
       # package. It is the fallback if the autologin session exits.
       default_session = {
-        command = "${pkgs.greetd.greetd}/bin/agreety --cmd steam-gamescope";
+        command = "${pkgs.greetd}/bin/agreety --cmd steam-gamescope";
         user = "greeter";
       };
     };
