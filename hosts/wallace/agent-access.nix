@@ -110,6 +110,24 @@ in
         { command = "${sw}/systemctl isolate graphical.target";  options = nopw; }
         { command = "${sw}/systemctl isolate multi-user.target"; options = nopw; }
 
+        # --- Logitech Unifying pairing (added 2026-11-22) ------------------
+        # The logitech-udev-rules grant access with TAG+="uaccess" only (the
+        # MODE/GROUP="plugdev" line is commented out upstream). uaccess gives
+        # an ACL to the user with an ACTIVE LOCAL SEAT session — chris at the
+        # console — and nothing at all to an SSH session, so without this the
+        # agent cannot reach the receiver and every pairing is a Chris job.
+        #
+        # `pair` is bounded and reversible: it claims a free slot on the
+        # receiver (a Unifying receiver holds six) and does nothing until a
+        # device actually announces itself. `show` is read-only.
+        #
+        # ⚠️ `unpair` is deliberately ABSENT. It is the one verb here that can
+        # take away a working keyboard, and on a box whose console is the
+        # point, that is not a mistake worth being able to make remotely.
+        { command = "${sw}/solaar pair";   options = nopw; }
+        { command = "${sw}/solaar show";   options = nopw; }
+        { command = "${sw}/solaar show *"; options = nopw; }
+
         # ⚠️ `reboot`, but deliberately NOT `poweroff`, `halt` or `suspend`.
         # The asymmetry is the whole point: a reboot is self-recovering, since
         # boot-order.nix re-asserts NixOS first on every NixOS boot, so the
