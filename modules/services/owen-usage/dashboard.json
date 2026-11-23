@@ -1,0 +1,225 @@
+{
+  "uid": "owen-usage",
+  "title": "Electric usage",
+  "tags": ["energy", "owen-electric"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-1y", "to": "now" },
+  "refresh": "",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Household kWh (Owen Electric meter)",
+      "description": "From the co-op's portal, a day behind. Same 30 days last year is the 30 days ending on the same date a year earlier.",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "owen-usage-infinity" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "owen-usage-infinity" },
+          "type": "json",
+          "source": "url",
+          "url": "http://127.0.0.1:9208/summary.json",
+          "url_options": { "method": "GET", "data": "" },
+          "parser": "backend",
+          "format": "table",
+          "root_selector": "",
+          "columns": [
+            { "selector": "latest_kwh", "text": "Latest day", "type": "number" },
+            { "selector": "last_7_kwh", "text": "Last 7 days", "type": "number" },
+            { "selector": "last_30_kwh", "text": "Last 30 days", "type": "number" },
+            { "selector": "same_30_last_year_kwh", "text": "Same 30 days last year", "type": "number" },
+            { "selector": "year_to_date_kwh", "text": "Year to date", "type": "number" }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "kwatth",
+          "decimals": 0,
+          "color": { "mode": "fixed", "fixedColor": "blue" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Daily kWh and outdoor temperature",
+      "description": "Bars: kWh per day. Lines: the day's low and high °F, as reported by the co-op. 2025-04-20 to 2025-05-05 are real zero days (flood evacuation). Days before 2023-11-01, if present, come from scanned paper bills spread evenly across each billing period, so they show as flat steps.",
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 5 },
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "owen-usage-infinity" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "owen-usage-infinity" },
+          "type": "json",
+          "source": "url",
+          "url": "http://127.0.0.1:9208/daily.json",
+          "url_options": { "method": "GET", "data": "" },
+          "parser": "backend",
+          "format": "timeseries",
+          "root_selector": "",
+          "columns": [
+            { "selector": "time", "text": "time", "type": "timestamp_epoch" },
+            { "selector": "kwh", "text": "kWh", "type": "number" }
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "owen-usage-infinity" },
+          "type": "json",
+          "source": "url",
+          "url": "http://127.0.0.1:9208/daily.json",
+          "url_options": { "method": "GET", "data": "" },
+          "parser": "backend",
+          "format": "timeseries",
+          "root_selector": "",
+          "columns": [
+            { "selector": "time", "text": "time", "type": "timestamp_epoch" },
+            { "selector": "temp_min_f", "text": "Low °F", "type": "number" },
+            { "selector": "temp_max_f", "text": "High °F", "type": "number" }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "kwatth",
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "barAlignment": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisLabel": "kWh / day"
+          },
+          "color": { "mode": "fixed", "fixedColor": "blue" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".*°F" },
+            "properties": [
+              { "id": "unit", "value": "fahrenheit" },
+              { "id": "min" },
+              { "id": "custom.drawStyle", "value": "line" },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "custom.lineWidth", "value": 1 },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.axisLabel", "value": "°F" },
+              { "id": "custom.spanNulls", "value": true }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Low °F" },
+            "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "light-green" } } ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "High °F" },
+            "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } } ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Monthly kWh",
+      "description": "Calendar-month totals. The current month is partial.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "owen-usage-infinity" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "owen-usage-infinity" },
+          "type": "json",
+          "source": "url",
+          "url": "http://127.0.0.1:9208/monthly.json",
+          "url_options": { "method": "GET", "data": "" },
+          "parser": "backend",
+          "format": "timeseries",
+          "root_selector": "",
+          "columns": [
+            { "selector": "time", "text": "time", "type": "timestamp_epoch" },
+            { "selector": "kwh", "text": "kWh", "type": "number" }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "kwatth",
+          "decimals": 0,
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "barAlignment": -1,
+            "showPoints": "never",
+            "axisLabel": "kWh / month"
+          },
+          "color": { "mode": "fixed", "fixedColor": "blue" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "showLegend": false, "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "id": 4,
+      "type": "xychart",
+      "title": "kWh vs heating degree days (all days)",
+      "description": "Each dot is one day. Heating degree days = how far the day's average temperature fell below 65 °F. Points sliding down and to the right over time mean heating is costing fewer kWh per cold degree (for example, after the mini split went in, November 2026).",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "owen-usage-infinity" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "owen-usage-infinity" },
+          "type": "json",
+          "source": "url",
+          "url": "http://127.0.0.1:9208/daily.json",
+          "url_options": { "method": "GET", "data": "" },
+          "parser": "backend",
+          "format": "table",
+          "root_selector": "",
+          "columns": [
+            { "selector": "hdd", "text": "Heating degree days", "type": "number" },
+            { "selector": "kwh", "text": "kWh", "type": "number" }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "show": "points", "pointSize": { "fixed": 4 } },
+          "color": { "mode": "fixed", "fixedColor": "blue" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "mapping": "auto",
+        "series": [ {} ],
+        "legend": { "showLegend": false, "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    }
+  ]
+}

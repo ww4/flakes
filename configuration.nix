@@ -55,6 +55,7 @@ let hm = homelab-modules.nixosModules; in
     ./modules/services/podcast-triage.nix    # mine the discovery archives for episodes worth Chris's time
     ./modules/services/blueiris.nix          # CLI for customer Blue Iris NVRs (Craigmyle) over Tailscale
     ./modules/services/minisplit.nix         # local Tuya control of the mini split + its cloud gate
+    ./modules/services/owen-usage            # daily household kWh from the Owen Electric portal -> Grafana
     ./modules/services/newsdesk              # personal RSS news digest (collect -> rank -> claude -p -> page)
     ./modules/services/wx                    # NWS alerts (fast) + Ryan Hall lead time (into the newsdesk)
     ./modules/services/briefing              # the dashboard's briefing card (sentinel + daybook + newsdesk)
