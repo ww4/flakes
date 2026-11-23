@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Is Chris's Chrome reachable over the reverse tunnel, and which tabs are open?
+
+Standard library only, so it runs before any nix shell. Prints tab URLs with the
+query string and any long token-shaped path segment removed: a tab URL can carry a
+session id or a signed link, and this output lands in the session log.
+
+Exit 0: Chrome answered. Exit 2: nothing listening here (tunnel not open).
+Exit 3: tunnel open but Chrome not answering at the far end (no debug flag).
+"""
+import json, re, socket, sys, urllib.error, urllib.request
+from urllib.parse import urlsplit
+
+PORT = 9222
+
+
+def red(u: str) -> str:
+    s = urlsplit(u)
+    path = re.sub(r"[A-Za-z0-9_\-.]{32,}", lambda m: f"<{len(m.group())}ch>", s.path)
+    return f"{s.scheme}://{s.netloc}{path}" + ("?…" if s.query else "")
+
+
+def get(path):
+    with urllib.request.urlopen(f"http://127.0.0.1:{PORT}{path}", timeout=8) as r:
+        return json.load(r)
+
+
+with socket.socket() as sk:
+    sk.settimeout(3)
+    if sk.connect_ex(("127.0.0.1", PORT)) != 0:
+        print(f"DOWN: nothing listening on 127.0.0.1:{PORT} here. The reverse tunnel "
+              "is not open (Chris's ssh -N -R window).")
+        sys.exit(2)
+try:
+    v = get("/json/version")
+    tabs = get("/json/list")
+except (urllib.error.URLError, ConnectionError, socket.timeout, OSError) as e:
+    print(f"TUNNEL UP, CHROME NOT ANSWERING: {type(e).__name__}. The tunnel is open but "
+          "nothing listens on 9222 on Chris's PC. Usually Chrome joined an instance that "
+          "was already running and ignored --remote-debugging-port: every Chrome window "
+          "has to be closed first, tray icon included.")
+    sys.exit(3)
+print("OK:", v.get("Browser", "?"))
+pages = [t for t in tabs if t.get("type") == "page"]
+print(f"{len(pages)} tab(s):")
+for t in pages:
+    print("  ", red(t.get("url", "")), "|", (t.get("title") or "")[:60])
