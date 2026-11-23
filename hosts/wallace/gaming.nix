@@ -35,11 +35,35 @@
     gamescopeSession.enable = true;
   };
 
-  # capSysNice lets gamescope raise its own scheduling priority, which is what
-  # keeps frame pacing steady when the 5900X is also chewing on a 32B model.
+  # ⚠️ capSysNice MUST stay false, and the reason is not obvious from here.
+  #
+  # Setting it true wraps gamescope with `cap_sys_nice+eip`. That `i` is
+  # INHERITABLE, so every child gamescope spawns carries the capability —
+  # including Steam, which on NixOS runs inside a bubblewrap FHS sandbox.
+  # bwrap deliberately refuses to start when it inherits capabilities from a
+  # parent that is not setuid, so the session dies the moment Steam launches:
+  #
+  #   bwrap: Unexpected capabilities but not setuid, old file caps config?
+  #   [gamescope] launch: Primary child shut down!
+  #
+  # Measured on wallace 2026-11-22, not inferred. gamescope itself came up
+  # perfectly every time — Vulkan on the RX 580, Xwayland on :0, pipewire
+  # connected — and then exited about a second in, on every boot, with greetd
+  # falling back to a greeter nobody could log into (chris had no password).
+  # The whole thing reads as "the graphical session is broken" when it is
+  # really "Steam refused to start".
+  #
+  # The known workarounds are worse than the problem. Patching out bwrap's
+  # guard circumvents an intentional security mechanism and lets anything
+  # launched by steam-run inherit the capability too, and it no longer works
+  # anyway: Steam restores its own pressure-vessel srt-bwrap on startup.
+  #
+  # What we give up is gamescope renicing itself. At 1080p on an RX 580, with
+  # LEGO-era titles, that is not the binding constraint. A session that starts
+  # is worth more than frame pacing under CPU contention.
   programs.gamescope = {
     enable = true;
-    capSysNice = true;
+    capSysNice = false;
   };
 
   # Game audio has to reach the stream, and wallace has had no sound stack at
