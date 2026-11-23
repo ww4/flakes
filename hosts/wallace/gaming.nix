@@ -68,6 +68,28 @@
 
   # Game audio has to reach the stream, and wallace has had no sound stack at
   # all until now — it was built as a headless compute node.
+
+  # Wireless input for the couch. A Logitech Unifying receiver (046d:c52b) is
+  # plugged in and already holds ONE K400 Plus; a receiver takes up to six
+  # devices, so a second keyboard is another slot, not a replacement.
+  #
+  # `enable` brings ltunify plus the udev rules; `enableGraphical` adds solaar,
+  # which is the one worth having — it has a CLI (`solaar pair`, `solaar show`)
+  # so pairing does not need a GUI, which matters because gamescope owns the
+  # display and there is nowhere to put a window.
+  #
+  # ⚠️ The udev rules grant access with TAG+="uaccess" only — the
+  # MODE/GROUP="plugdev" line is commented out upstream. uaccess gives an ACL
+  # to the user holding an ACTIVE LOCAL SEAT session, i.e. chris at the
+  # console. It grants nothing to an SSH session, so the agent reaches the
+  # receiver through the scoped sudo rule in agent-access.nix instead.
+  #
+  # Side benefit: a Unifying receiver speaks HID boot protocol, so these
+  # keyboards work in GRUB and BIOS setup, not just once NixOS is up.
+  hardware.logitech.wireless = {
+    enable = true;
+    enableGraphical = true;
+  };
   services.pipewire = {
     enable = true;
     alsa.enable = true;
