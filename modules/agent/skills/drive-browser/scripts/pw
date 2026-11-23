@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Run a Playwright script against Chris's Chrome: pw <script.py> [args...]
+# The first run builds python3+playwright into the store (about a minute); later
+# runs start in seconds. No browser is downloaded: the script attaches to the
+# remote Chrome with connect_over_cdp, it does not launch one.
+# -I keeps Python from importing anything from the script's or the current
+# directory. Extra packages: PW_PKGS="p.pillow p.requests" pw script.py
+set -euo pipefail
+[ $# -ge 1 ] || { echo "usage: pw <script.py> [args...]" >&2; exit 64; }
+exec nix shell --impure --expr \
+  "with import <nixpkgs> {}; python3.withPackages (p: [ p.playwright ${PW_PKGS:-} ])" \
+  -c python3 -I "$@"
