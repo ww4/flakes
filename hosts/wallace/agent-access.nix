@@ -82,6 +82,50 @@ in
         # Covers podman-immich-ml, podman-kokoro, podman-open-webui.
         { command = "${sw}/systemctl restart podman-*"; options = nopw; }
 
+        # --- Session + reboot control (added 2026-11-22) -------------------
+        # WHY. On 2026-11-22 three separate dead ends in one evening were all
+        # the same missing verb on this list:
+        #   1. wallace sat in multi-user.target for 25 days with a display
+        #      manager that had never started (comin switched the default
+        #      target, but `switch-to-configuration switch` does not isolate),
+        #      so the attached monitor showed nothing and the only fix was to
+        #      walk Chris through `systemctl start` by hand.
+        #   2. With no display server the RX 580 entered BACO runtime suspend,
+        #      and a chip that is off cannot do hot-plug detect — so plugging a
+        #      monitor in read as "no cable" on both sides. A modeset fixes it;
+        #      starting the display manager is a modeset.
+        #   3. The box then came up in Windows, and the only route back was the
+        #      Windows-side SSH, because nothing here could reboot it.
+        #
+        # `start`/`restart` on the EXACT display-manager unit. No `stop`, for
+        # the same reason the podman rule above is restart-only: a restart
+        # cannot leave something down, and `reboot` below is the backstop.
+        { command = "${sw}/systemctl start display-manager.service";   options = nopw; }
+        { command = "${sw}/systemctl restart display-manager.service"; options = nopw; }
+
+        # Exact targets, never `isolate *`. graphical.target REQUIRES
+        # multi-user.target, so isolating up from multi-user starts the display
+        # stack without stopping anything already running; multi-user.target is
+        # the direct undo.
+        { command = "${sw}/systemctl isolate graphical.target";  options = nopw; }
+        { command = "${sw}/systemctl isolate multi-user.target"; options = nopw; }
+
+        # ⚠️ `reboot`, but deliberately NOT `poweroff`, `halt` or `suspend`.
+        # The asymmetry is the whole point: a reboot is self-recovering, since
+        # boot-order.nix re-asserts NixOS first on every NixOS boot, so the
+        # machine comes back reachable on its own. A poweroff is NOT — wallace
+        # has no out-of-band power control, so an agent-initiated poweroff
+        # could only be undone by Chris walking to the machine.
+        { command = "${sw}/systemctl reboot"; options = nopw; }
+
+        # One-shot BootNext, for deliberately booting the other OS once.
+        # `-n` is consumed by the firmware on the next boot and reverts itself,
+        # whereas the already-granted `-o` changes the order DURABLY — so for
+        # "boot Windows this once", `-n` is the correct and safer verb. `-N`
+        # clears a BootNext that is no longer wanted.
+        { command = "${pkgs.efibootmgr}/bin/efibootmgr -n *"; options = nopw; }
+        { command = "${pkgs.efibootmgr}/bin/efibootmgr -N";   options = nopw; }
+
         # --- Read-only container + firewall diagnostics --------------------
         # (sudoers gotcha, learned on gromit: "cmd *" does NOT match a bare
         # "cmd" — both must be listed.)
