@@ -156,6 +156,23 @@
     # /var/lib/silverbullet, the silverbullet group, "notes", 3337.
   };
 
+  # market-agent: Facebook Marketplace watcher (homelab-modules #105). Briefs
+  # are data, not config: /var/lib/market-agent/briefs/*.toml, edited by hand
+  # or by the agent. The first one is a friend's winter-commuter car search.
+  homelab.marketAgent = {
+    # Scores with the claude CLI under the agent account, which holds the
+    # Claude Code login (subscription, not API-billed) — same as the digest.
+    user = "claude";
+    judge = "cli";
+    claudeBin = "/etc/profiles/per-user/claude/bin/claude";
+    # A new "worth contacting" listing, or Facebook refusing every search,
+    # goes to ntfy like the other gromit alerts. Runs are 07/12/17, all
+    # inside waking hours, so quiet hours never come into it.
+    notifyCommand = "/run/current-system/sw/bin/notify";
+    # subdomain ("market"), stateDir, schedule (07:00 12:00 17:00) and model
+    # take the library defaults.
+  };
+
   # ── wave 3c service values ─────────────────────────────────────────────────
   homelab.acme = {
     email = "chris@saenzmail.com";
