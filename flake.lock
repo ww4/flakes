@@ -117,11 +117,11 @@
     },
     "homelab-modules": {
       "locked": {
-        "lastModified": 1795540538,
-        "narHash": "sha256-sz+TVOJiRtnhEN0cYFnp2hsaTqvE4OMf2wqYSrZW9rU=",
-        "ref": "market-agent",
-        "rev": "f3bd1effdf93e19ca40135f710312dd0ad86599e",
-        "revCount": 109,
+        "lastModified": 1795544892,
+        "narHash": "sha256-soe3bgA9VZzbQbyamscQpwMH6/vh9AaS9K3NBLiMbDs=",
+        "ref": "market-agent-tracking",
+        "rev": "daf0e0112d3379cb7ed9fee66368ac5600d71001",
+        "revCount": 111,
         "type": "git",
         "url": "https://git.rosemaryacres.com/ww4/homelab-modules.git"
       },
