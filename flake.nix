@@ -132,6 +132,7 @@
             ./hosts/wallace/hardware-configuration.nix
             ./hosts/wallace/configuration.nix
             ./hosts/wallace/gaming.nix # Steam + Sunshine, streamed over the tailnet
+            ./hosts/wallace/house-radio.nix # gromit's netradio on wallace's own speakers
             ./modules/agent/comin.nix   # GitOps applier — builds nixosConfigurations.wallace
             # sops on wallace, added 2026-11-02 for the homelab-watch heartbeat
             # key. wallace decrypts with its OWN SSH host key (modules/sops.nix
