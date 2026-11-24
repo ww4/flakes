@@ -904,6 +904,11 @@ let
             href: https://books.rosemaryacres.com
             icon: mdi-bookshelf
             # Link-only: Homepage has no widget for this; it is ours.
+        - Marketplace Watch:
+            description: Facebook Marketplace searches, scored against what we're looking for
+            href: https://market.rosemaryacres.com
+            icon: mdi-store-search-outline
+            # Link-only: a static page market-agent rewrites after each run.
 
     # Bitcoin / Lightning. mempool has a native Homepage widget (fee + block
     # stats, no key). Alby Hub has no widget, so it's an href tile. bitcoind and
