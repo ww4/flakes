@@ -169,6 +169,8 @@
     # goes to ntfy like the other gromit alerts. Runs are 07/12/17, all
     # inside waking hours, so quiet hours never come into it.
     notifyCommand = "/run/current-system/sw/bin/notify";
+    # CLAUDE_CODE_OAUTH_TOKEN (see the sops declaration below).
+    environmentFile = config.sops.secrets."claude-oauth-token".path;
     # subdomain ("market"), stateDir, schedule (07:00 12:00 17:00) and model
     # take the library defaults.
   };
@@ -180,8 +182,6 @@
     owner = "claude";
     mode = "0400";
   };
-  systemd.services.market-agent.serviceConfig.EnvironmentFile =
-    config.sops.secrets."claude-oauth-token".path;
 
   # ── wave 3c service values ─────────────────────────────────────────────────
   homelab.acme = {
