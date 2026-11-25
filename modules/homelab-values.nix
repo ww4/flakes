@@ -172,6 +172,16 @@
     # subdomain ("market"), stateDir, schedule (07:00 12:00 17:00) and model
     # take the library defaults.
   };
+  # The interactive login expires and cannot be renewed past its end date, and
+  # an expired login scores nothing while the runs still exit 0. A long-lived
+  # `claude setup-token` token (2026-11-25) is used instead when it is set.
+  sops.secrets."claude-oauth-token" = {
+    sopsFile = ../secrets/claude-oauth-token.yaml;
+    owner = "claude";
+    mode = "0400";
+  };
+  systemd.services.market-agent.serviceConfig.EnvironmentFile =
+    config.sops.secrets."claude-oauth-token".path;
 
   # ── wave 3c service values ─────────────────────────────────────────────────
   homelab.acme = {
