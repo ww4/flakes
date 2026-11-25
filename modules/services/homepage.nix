@@ -608,6 +608,40 @@ let
     }
   '';
 
+  # ── Icon colour ──────────────────────────────────────────────────────────
+  # Every homemade service carries an `mdi-` icon with a `-#rrggbb` suffix.
+  # That suffix is Homepage's documented way to colour a prefixed icon, and
+  # without it they all render in the DEFAULT gradient — measured on the live
+  # page 2026-11-24 as `linear-gradient(rgb(148,163,184), rgb(51,65,85))`,
+  # i.e. slate-400 to slate-700. That is not grey by accident: it is the same
+  # slate family as the background customCss paints, so our own apps dissolved
+  # into it while every vendor icon (a full-colour PNG from dashboard-icons)
+  # stood out. Chris, 2026-11-24: "all of our homemade apps are getting
+  # grayscale icons which makes them a little hard to tell apart."
+  #
+  # Colours are MATERIAL 200 tones (Blue 300 for the river gauge, to separate
+  # it from the sky blue beside it on the same tab). Material's dark-theme
+  # guidance is to use the 200 level on dark surfaces, because a saturated
+  # colour vibrates against them — and the first pass at this, in Tailwind
+  # 400s, was exactly that. Chris: "a little too vibrant ... slightly more
+  # washed out ... try to match what else is in the app already."
+  #
+  # What else IS in the app: customCss uses #818cf8 and #22d3ee, but always at
+  # LOW OPACITY — fills at .07-.30, borders at .45. Nothing on the page is
+  # painted at full strength except these icons were. The 200 tones bake that
+  # same softness into the hex, which a colour suffix cannot express as alpha.
+  #
+  # Picked for the thing, not for decoration — sticky-note amber, money green,
+  # thermometer red — and separated WITHIN A TAB, which is the only place two
+  # of them are ever seen together. ⚠️ Brown 200 was the obvious choice for
+  # Stacks and is not used: on this background it reads as grey, which is the
+  # complaint that started all of this.
+  #
+  # ⚠️ An `mdi-` icon is a CSS mask over a div, and the mask is fetched FROM A
+  # CDN (cdn.jsdelivr.net) by the browser, not bundled with Homepage. The
+  # colour is ours; the glyph is not. A device with no internet gets a blank
+  # square where a vendor PNG would also fail — worth knowing before relying
+  # on this dashboard from somewhere without a route out.
   servicesYaml = pkgs.writeText "homepage-services.yaml" ''
     # ── Projects ─────────────────────────────────────────────────────────
     # The LAST group on the Lab tab. One row per project: percent complete
@@ -623,7 +657,7 @@ let
         - Project board:
             description: Where the agent's multi-day work stands
             href: https://digest.rosemaryacres.com/board/
-            icon: mdi-clipboard-text-clock
+            icon: mdi-clipboard-text-clock-#9fa8da
             id: embed-projects
             widget:
               type: iframe
@@ -649,7 +683,7 @@ let
         - Today:
             description: What is open, what today is about, and something to read
             href: https://silverbullet.rosemaryacres.com
-            icon: mdi-script-text-outline
+            icon: mdi-script-text-outline-#80deea
             id: embed-briefing
             widget:
               type: iframe
@@ -712,7 +746,7 @@ let
         - Library radio:
             description: The house radio, and the living-room receiver
             href: https://radio.rosemaryacres.com
-            icon: mdi-radio
+            icon: mdi-radio-#ffcc80
             widget:
               # the receiver's JSON API (yamaha-ync-api on the host-gateway
               # port, opened to br-+ by services.yamaha-ync.exposeApiToContainers)
@@ -816,7 +850,7 @@ let
         - Music Requests:
             description: Request music (Aurral → Lidarr)
             href: https://music.rosemaryacres.com
-            icon: mdi-music
+            icon: mdi-music-#f48fb1
             # Link-only: Aurral has no Homepage widget integration.
         - qBittorrent:
             description: Downloads (via AirVPN)
@@ -858,7 +892,7 @@ let
         - Open Notebook:
             description: NotebookLM-alt — chat + podcasts over your source docs
             href: https://notebook.rosemaryacres.com
-            icon: mdi-notebook-outline
+            icon: mdi-notebook-outline-#ce93d8
             # Link-only: no Homepage widget for open-notebook.
 
     # Household — the second half of the Home tab, and the merger of the old
@@ -884,7 +918,7 @@ let
         - Notes:
             description: Notes as cards — 13 years of Keep, the grocery list, quick capture
             href: https://notes.rosemaryacres.com
-            icon: mdi-card-text-outline
+            icon: mdi-card-text-outline-#ffe082
             # Link-only: no Homepage widget exists for this; it's ours.
         - Vaultwarden:
             description: Password vault
@@ -902,12 +936,12 @@ let
         - Stacks:
             description: Book catalog — scan at a sale, browse the shelves
             href: https://books.rosemaryacres.com
-            icon: mdi-bookshelf
+            icon: mdi-bookshelf-#ffab91
             # Link-only: Homepage has no widget for this; it is ours.
         - Marketplace Watch:
             description: Facebook Marketplace searches, scored against what we're looking for
             href: https://market.rosemaryacres.com
-            icon: mdi-store-search-outline
+            icon: mdi-store-search-outline-#a5d6a7
             # Link-only: a static page market-agent rewrites after each run.
 
     # Bitcoin / Lightning. mempool has a native Homepage widget (fee + block
@@ -1041,7 +1075,7 @@ let
         - Gromit temperatures:
             description: CPU / NVMe / ambient °C — warn & critical alerts armed
             href: https://grafana.rosemaryacres.com/d/gromit-temps
-            icon: mdi-thermometer
+            icon: mdi-thermometer-#ef9a9a
             # `id` lands verbatim on the <li class="service">; customCss sizes
             # the iframe by it. See the ⚠️ below about why not `classes`.
             id: embed-temps
@@ -1074,7 +1108,7 @@ let
         - Forecast:
             description: Current conditions, the Ryan Hall read, and ten days
             href: https://forecast.weather.gov/
-            icon: mdi-weather-partly-cloudy
+            icon: mdi-weather-partly-cloudy-#81d4fa
             id: embed-wx-strip
             widget:
               type: iframe
@@ -1089,7 +1123,7 @@ let
         - Kentucky River — observed + NWPS forecast:
             description: Stage at Lockport & Gratz with flood thresholds
             href: https://grafana.rosemaryacres.com/d/riverwatch
-            icon: mdi-chart-line
+            icon: mdi-chart-line-#80cbc4
             id: embed-river
             widget:
               # Embeds panel 1 (Stage time series + flood-threshold reference
@@ -1116,7 +1150,7 @@ let
         - Lockport (Lock 2):
             description: Kentucky River
             href: https://water.noaa.gov/gauges/lptk2
-            icon: mdi-waves
+            icon: mdi-waves-#64b5f6
             widget:
               type: customapi
               url: https://api.water.noaa.gov/nwps/v1/gauges/LPTK2
