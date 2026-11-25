@@ -63,6 +63,18 @@
     # its secrets.yml from it — nothing is copied out of a UI any more.
     apiKeyEnvFile = config.sops.secrets."arr-api".path;   # declared in agent/arr-api-secret.nix
   };
+  # gluetun's built-in HTTP proxy, published on localhost only, so a host
+  # service can send selected traffic out through the VPN without joining
+  # its network namespace. First user: market-agent's Facebook reads, so a
+  # Facebook rate limit or block lands on the VPN exit, not the house IP
+  # (2026-11-25). Same exit IP as qBittorrent; nothing rotates it.
+  virtualisation.oci-containers.containers.gluetun = {
+    environment = {
+      HTTPPROXY = "on";
+      HTTPPROXY_LISTENING_ADDRESS = ":8888";
+    };
+    ports = [ "127.0.0.1:8888:8888" ];
+  };
 
   # The incomplete dir's actual home. Kept HERE, beside the scratchDir that
   # names it, for the reason #214 taught: a path that lives apart from its
