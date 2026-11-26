@@ -179,6 +179,13 @@ ${cfg.editionUrl}" default "newspaper" "${cfg.editionUrl}"
       # no-ops — an edition must never be derailed into doing /retro work.
       "CLAUDE_AUTONOMOUS=1"
     ];
+    # The long-lived `claude setup-token` (CLAUDE_CODE_OAUTH_TOKEN) the judge's
+    # `claude -p` uses instead of the interactive login, which has a hard end
+    # date. Same secret claude-run reads (modules/agent/claude-oauth-token-secret.nix);
+    # only where a host declares it, and "-" so a missing file falls back to the
+    # login instead of failing the edition.
+    EnvironmentFile = lib.optional (config.sops.secrets ? "claude-oauth-token")
+      "-${config.sops.secrets."claude-oauth-token".path}";
   };
 in
 {

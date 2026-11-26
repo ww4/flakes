@@ -1757,6 +1757,13 @@ in
         "PATH=/run/wrappers/bin:/etc/profiles/per-user/claude/bin:/run/current-system/sw/bin:/usr/bin:/bin"
         "CLAUDE_AUTONOMOUS=1"   # the reflection Stop-hook no-ops in headless runs
       ];
+      # The long-lived `claude setup-token` (CLAUDE_CODE_OAUTH_TOKEN), so the
+      # diagnosis `claude -p` survives the interactive login's hard end date.
+      # Same secret claude-run reads (modules/agent/claude-oauth-token-secret.nix).
+      # "-": if it is missing, fall back to the login rather than killing the
+      # watchdog, the way claude-run falls back.
+      EnvironmentFile = lib.optional (config.sops.secrets ? "claude-oauth-token")
+        "-${config.sops.secrets."claude-oauth-token".path}";
       ExecStart = "${watcher}/bin/gromit-sentinel";
     };
   };

@@ -29,6 +29,13 @@ let
   cfg = config.services.switchboard;
   switchboard = pkgs.callPackage ../../pkgs/switchboard { inherit (cfg) voice; };
   stateDir = "/var/lib/switchboard";
+  # The long-lived `claude setup-token` (CLAUDE_CODE_OAUTH_TOKEN) for the units
+  # whose slow path is `claude -p` (agi, standing, btcwatch), instead of the
+  # interactive login, which has a hard end date. Same secret claude-run reads
+  # (modules/agent/claude-oauth-token-secret.nix); "-" so a missing file falls
+  # back to the login instead of failing the unit.
+  claudeTokenEnv = lib.optional (config.sops.secrets ? "claude-oauth-token")
+    "-${config.sops.secrets."claude-oauth-token".path}";
   # As an attrset, NOT a serviceConfig.Environment list: NixOS quotes these,
   # whereas a bare `Environment=K=v with spaces` splits on whitespace and the
   # greeting shipped as the single word "This" (2026-09-11 — the same trap as
@@ -224,6 +231,7 @@ in
         User = "claude";
         SupplementaryGroups = [ "asterisk" ];
         WorkingDirectory = "/home/claude/nixos-homelab-improvements";
+        EnvironmentFile = claudeTokenEnv;
         ExecStart = "${switchboard}/bin/switchboard standing";
         TimeoutStartSec = "15min";
         Nice = 10;
@@ -246,6 +254,7 @@ in
         User = "claude";
         SupplementaryGroups = [ "asterisk" ];
         WorkingDirectory = "/home/claude/nixos-homelab-improvements";
+        EnvironmentFile = claudeTokenEnv;
         ExecStart = "${switchboard}/bin/switchboard btc-watch";
         TimeoutStartSec = "5min";
         Nice = 10;
@@ -370,7 +379,7 @@ in
         # on disk; read by systemd before the drop to `claude` — the same way
         # homepage.nix gets it). "-": absent on a fresh box until provisioning
         # runs; the notifications intent then says it couldn't read ntfy.
-        EnvironmentFile = [ "-/var/lib/ntfy-sh/homepage-ntfy.env" "-${config.sops.secrets."tandoor-api-token".path}" ];
+        EnvironmentFile = [ "-/var/lib/ntfy-sh/homepage-ntfy.env" "-${config.sops.secrets."tandoor-api-token".path}" ] ++ claudeTokenEnv;
         ExecStartPre = "${switchboard}/bin/switchboard render-prompts";
         TimeoutStartSec = "5min";
         ExecStart = "${switchboard}/bin/switchboard agi";
